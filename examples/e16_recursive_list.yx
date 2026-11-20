@@ -1,0 +1,13 @@
+struct Node {
+  value: Int,
+  next: Node,
+}
+
+enum Tree {
+  Leaf,
+  Branch(Tree, Tree),
+}
+
+fn main() {
+  let n = Node { value: 1, next: Node { value: 2, next: 0 } }
+}

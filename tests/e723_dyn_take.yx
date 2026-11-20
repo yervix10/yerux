@@ -1,0 +1,10 @@
+trait Shape {
+    fn area(view self) -> Int
+}
+impl Shape for Int {
+    fn area(view self) -> Int { return self }
+}
+fn main() {
+    let shape = Box<dyn Shape>.new(3)
+    let value = shape.take()
+}

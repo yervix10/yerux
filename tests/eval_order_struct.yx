@@ -1,0 +1,31 @@
+// Struct literal fields and enum payloads are evaluated in the order written in the source.
+struct P { a: Int, b: Int, c: Int }
+struct Q { x: P, y: Int }
+enum E { Pair(Int, Int), Solo(Int), None }
+
+fn t(tag: Int, v: Int) -> Int {
+  print(tag)
+  return v
+}
+
+fn mk(tag: Int) -> P { return P { a: t(tag, 1), b: t(tag + 1, 2), c: t(tag + 2, 3) } }
+
+fn main() {
+  // source order, not declaration order
+  let p = P { c: t(1, 30), a: t(2, 10), b: t(3, 20) }
+  print(p.a + p.b + p.c)
+  let q = Q { y: t(4, 7), x: mk(5) }
+  print(q.x.c + q.y)
+  let q2 = Q { x: mk(10), y: t(13, 8) }
+  print(q2.x.a + q2.y)
+  // enum payloads
+  let e = E.Pair(t(20, 1), t(21, 2))
+  match e {
+    Pair(a, b) => { print(a * 10 + b) }
+    Solo(a) => { print(a) }
+    None => { print(0) }
+  }
+  // struct literal as argument next to other calls
+  let r = P { a: t(31, 1), b: t(32, 2), c: t(33, 3) }
+  print(t(30, r.c) + t(34, 1))
+}

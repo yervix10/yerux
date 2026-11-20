@@ -1,0 +1,24 @@
+fn div_self(x: Int) -> Int {
+  return x / x
+}
+
+fn mod_one(x: Int) -> Int {
+  return x % 1
+}
+
+fn zero_div(x: Int) -> Int {
+  return 0 / x
+}
+
+fn mul_zero(x: Int) -> Int {
+  return x * 0
+}
+
+fn main() {
+  print(div_self(5))
+  print(mod_one(-19))
+  print(zero_div(3))
+  print(mul_zero(9223372036854775807))
+  print(8 - 8)
+  print(8 + 0)
+}

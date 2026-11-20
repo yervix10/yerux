@@ -1,0 +1,76 @@
+trait Sh {
+  fn a(view self) -> Int
+  fn bump(mut self)
+}
+
+struct P { n: Int, s: String }
+
+struct Q { items: List<Box<dyn Sh>>, name: String }
+
+impl Sh for P {
+  fn a(view self) -> Int { return self.n + self.s.len() }
+  fn bump(mut self) { self.n = self.n + 1 }
+}
+
+impl Sh for Q {
+  fn a(view self) -> Int {
+    var t = 0
+    for i in 0..self.items.len() { t = t + self.items.at(i).a() }
+    return t + self.name.len()
+  }
+  fn bump(mut self) { for mut b in self.items { b.bump() } }
+}
+
+struct Holder { sh: Box<dyn Sh>, tag: String, opt: Option<Box<dyn Sh>> }
+
+fn mk(n: Int) -> Option<Box<dyn Sh>> {
+  if n % 2 == 0 { return None }
+  return Some(Box<dyn Sh>.new(P { n: n, s: String.from("o") }))
+}
+
+fn try_mk(n: Int) -> Option<Int> {
+  let b = mk(n)?
+  let c = mk(n + 1)?
+  return Some(b.a() + c.a())
+}
+
+fn pairs() -> List < (Int, Box<dyn Sh>) > {
+  var l = List < (Int, Box<dyn Sh>) >.new()
+  l.push((1, Box<dyn Sh>.new(P { n: 5, s: String.from("x") })))
+  l.push((2, Box<dyn Sh>.new(P { n: 6, s: String.from("yy") })))
+  return l
+}
+
+fn main() {
+  var q = Q { items: List<Box<dyn Sh>>.new(), name: String.from("q") }
+  q.items.push(Box<dyn Sh>.new(P { n: 1, s: String.from("a") }))
+  q.items.push(Box<dyn Sh>.new(P { n: 2, s: String.from("bb") }))
+  var outer = Q { items: List<Box<dyn Sh>>.new(), name: String.from("outer") }
+  outer.items.push(Box<dyn Sh>.new(move q))
+  outer.items.push(Box<dyn Sh>.new(P { n: 9, s: String.new() }))
+  print(outer.a())
+  outer.bump()
+  print(outer.a())
+  var h = Holder { sh: Box<dyn Sh>.new(move outer), tag: String.from("h"), opt: mk(3) }
+  print(h.sh.a())
+  h.sh.bump()
+  print(h.sh.a())
+  match h.opt { Some(b) => { print(b.a()) }
+  None => { print(-1) } }
+  h.opt = None
+  h.sh = Box<dyn Sh>.new(P { n: 0, s: String.from("new") })
+  print(h.sh.a())
+  let r1 = try_mk(1)
+  print("{r1}")
+  let r2 = try_mk(2)
+  print("{r2}")
+  let ps = pairs()
+  var t = 0
+  for p in ps { t = t + p.0 + p.1.a() }
+  print(t)
+  var moved = pairs()
+  let last = moved.pop()
+  let (k, bx) = move last
+  print(k + bx.a())
+  for x in move moved { print(x.1.a()); break }
+}

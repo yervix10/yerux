@@ -1,0 +1,7 @@
+struct P { n: String, k: Int }
+fn main() {
+  var l = List<P>.new()
+  l.push(P { n: String.from("a"), k: 1 })
+  l.set(1, P { n: String.from("b"), k: 2 })
+  print("unreachable")
+}

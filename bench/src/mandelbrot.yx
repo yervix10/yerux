@@ -1,0 +1,30 @@
+fn main() {
+  let w = 800
+  let h = 600
+  let maxit = 200
+  var inside = 0
+  var total = 0
+  var py = 0
+  while py < h {
+    let ci = py.to_float() * (2.4 / 600.0) - 1.2
+    var px = 0
+    while px < w {
+      let cr = px.to_float() * (3.2 / 800.0) - 2.2
+      var zr = 0.0
+      var zi = 0.0
+      var it = 0
+      while it < maxit && zr * zr + zi * zi <= 4.0 {
+        let t = zr * zr - zi * zi + cr
+        zi = 2.0 * zr * zi + ci
+        zr = t
+        it = it + 1
+      }
+      if it == maxit { inside = inside + 1 }
+      total = total + it
+      px = px + 1
+    }
+    py = py + 1
+  }
+  print(inside)
+  print(total)
+}

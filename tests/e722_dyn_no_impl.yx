@@ -1,0 +1,6 @@
+trait Shape {
+    fn area(view self) -> Int
+}
+fn main() {
+    let shape = Box<dyn Shape>.new(3)
+}

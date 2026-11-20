@@ -1,0 +1,80 @@
+// Sized integers: literal typing, checked arithmetic, conversions, wrapping.
+fn mk_uint8(x: UInt8) -> UInt8 { return x }
+fn mk_int8(x: Int8) -> Int8 { return x }
+fn mk_int16(x: Int16) -> Int16 { return x }
+fn mk_int32(x: Int32) -> Int32 { return x }
+fn mk_uint32(x: UInt32) -> UInt32 { return x }
+fn mk_uint64(x: UInt64) -> UInt64 { return x }
+fn mk_int64(x: Int64) -> Int64 { return x }
+fn mk_int(x: Int) -> Int { return x }
+
+fn main() {
+    let a = mk_uint8(200)
+    let b = mk_uint8(55)
+    print(a + b)
+    print(a - b)
+    print(a / b)
+    print(a % b)
+    let c = 100u8
+    print(c * 2)
+    print(a > b)
+    let s = mk_int8(-128)
+    print(s)
+    print(s + 127)
+    print(-(s + 1))
+    let h = mk_int16(30000)
+    print(h + 2767)
+    let w = mk_int32(2147483647)
+    print(w - 1)
+    let u32 = mk_uint32(4294967295)
+    print(u32)
+    print(u32 / 3)
+    let big = mk_uint64(18446744073709551615)
+    print(big)
+    print(big / 10)
+    print(big % 10)
+    print(big > 1)
+    print(big - 1 < big)
+    let hx = mk_uint64(0xFFFF_FFFF_FFFF)
+    print(hx)
+    print(0b1010u8)
+    print(0xFFu8)
+
+    // conversions
+    print(a.to_int())
+    print(b.to_uint16() + 1000)
+    print(300.to_uint16())
+    print(255.to_uint8())
+    print((-5).to_int8())
+    print(a.truncate_int8())
+    print(300.truncate_uint8())
+    print((-1).truncate_uint8())
+    print((-1).truncate_uint32())
+    print(70000.truncate_int16())
+    print(big.truncate_int32())
+    print((-1).to_float().to_int())
+    let wa = mk_uint8(250)
+    print(wa.wrapping_add(10))
+    print(wa.wrapping_mul(3))
+    let z = mk_uint8(3)
+    print(z.wrapping_sub(5))
+    let i8 = mk_int8(127)
+    print(i8.wrapping_add(1))
+    print(big.wrapping_add(2))
+    print(big.wrapping_mul(big))
+    let i = mk_int64(5)
+    print(i + 1)
+    let k = mk_int(9)
+    print(k.to_uint8() + 1)
+    print(big.to_float())
+    print(a.to_float())
+    print(3.99.to_uint8())
+
+    // indexing uses Int only
+    var xs = List<Int>.new()
+    xs.push(10)
+    xs.push(20)
+    xs.push(30)
+    let idx = mk_uint8(2)
+    print(xs.get(idx.to_int()))
+}

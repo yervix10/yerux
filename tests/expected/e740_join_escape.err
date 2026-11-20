@@ -1,0 +1,7 @@
+error: a JoinHandle cannot leave its scope through a return
+ --> tests/e740_join_escape.yx:4:12
+  |
+4 |     return worker
+  |            ^^^^^^
+
+1 error(s). Nothing was generated.

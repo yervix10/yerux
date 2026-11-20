@@ -1,0 +1,21 @@
+mk 1
+temp
+mk 2
+4
+lit
+a1b
+6
+9
+30
+10
+mk 10
+mk 11
+mk 12
+2
+tag 1
+mk 3
+tag 2
+10
+mk 4
+10
+true

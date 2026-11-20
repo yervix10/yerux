@@ -1,0 +1,11 @@
+trait Handler {
+    fn handle(view self, input: Int)
+}
+impl Handler for Int {
+    fn handle(view self, input: Int) {}
+}
+fn consume(handler: Box<dyn Handler>) -> Int { return 0 }
+fn main() {
+    let handler = Box<dyn Handler>.new(0)
+    handler.handle(consume(move handler))
+}

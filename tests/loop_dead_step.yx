@@ -1,0 +1,26 @@
+// Regression: the step of a desugared `for` must be type-checked even when the body
+// never reaches its end (break/return, or a branch the range analysis proves impossible).
+// It used to leave an untyped `Int(1)` and cgen panicked with "not a number literal".
+fn early(n: Int) -> Int {
+  for i in 0..=n {
+    return i + 7
+  }
+  return 0
+}
+
+fn main() {
+  for i in 0..3 { break }
+  for v in 0..9 {
+    if 3037000499 < v {
+      for w in (-9223372036854775807)..=9 {
+      }
+    }
+  }
+  var k = 0
+  for i in 0..=5 step 2 {
+    k = k + i
+    break
+  }
+  print(k)
+  print(early(3))
+}

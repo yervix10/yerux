@@ -1,0 +1,42 @@
+// ranges: half-open, inclusive, step, extremes, empty, break/continue/defer in for
+fn main() {
+  var s = 0
+  for i in 0..5 { s = s + i }
+  print(s)
+  for i in 3..3 { print(-1) }
+  for i in 5..2 { print(-2) }
+  for i in 0..=0 { print(100 + i) }
+  for i in 0..10 step 3 { print(i) }
+  for i in 0..=9 step 3 { print(i) }
+  // extremes must not overflow
+  var n = 0
+  for i in 9223372036854775805..=9223372036854775807 { n = n + 1 }
+  print(n)
+  for i in 9223372036854775800..9223372036854775807 step 4 { print(i) }
+  for i in -3..=-1 { print(i) }
+  let st = 5
+  for i in 0..12 step st { print(i) }
+  // break / continue / labels / defer
+  outer: for a in 0..4 {
+    defer print(900 + a)
+    for b in 0..4 {
+      defer print(800 + b)
+      if b == 1 { continue }
+      if b == 3 { continue outer }
+      if a == 2 { break outer }
+      print(a * 10 + b)
+    }
+  }
+  var w = 0
+  while w < 10 {
+    w = w + 1
+    if w % 2 == 0 { continue }
+    if w > 7 { break }
+    print(w)
+  }
+  for _ in 0..2 { print(7) }
+  for mut k in 0..3 {
+    k = k * 2
+    print(k)
+  }
+}

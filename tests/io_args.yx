@@ -1,0 +1,12 @@
+// std.io: command-line arguments (tests/io_args.args holds the arguments, one per line)
+import std.io
+
+fn main() {
+  let a = io.args()
+  print(a.len())
+  var i = 1
+  while i < a.len() {
+    print("arg {i}: {a.at(i)}")
+    i = i + 1
+  }
+}

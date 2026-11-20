@@ -1,0 +1,59 @@
+// What a borrowing `match` arm may still do with its scrutinee (see the e73x error tests for what it may not)
+enum Msg { Text(String), Pair(String, Int), Nums(List<Int>), Quit }
+
+fn size(m: view Msg) -> Int {
+  match m {
+    Text(s) => { return s.len() }
+    Pair(s, n) => { return s.len() + n }
+    Nums(l) => { return l.len() }
+    Quit => { return 0 }
+  }
+}
+
+fn main() {
+  var m = Msg.Text(String.from("abc"))
+  // an arm without owned bindings may replace the scrutinee
+  match m {
+    Quit => { m = Msg.Text(String.from("never")) }
+    _ => { print("kept") }
+  }
+  // the change is fine once the match is over
+  match m {
+    Text(s) => { print(s) }
+    _ => { }
+  }
+  m = Msg.Pair(String.from("xy"), 7)
+  // Copy payloads are copies: the scrutinee may change inside the arm
+  match m {
+    Pair(_, n) => {
+      m = Msg.Quit
+      print(n)
+    }
+    _ => { }
+  }
+  print(size(m))
+  // `match move` takes the payloads out: the variable can be assigned again inside the arm
+  var m2 = Msg.Text(String.from("moved"))
+  match move m2 {
+    Text(s) => {
+      m2 = Msg.Nums(List<Int>.new())
+      print(s)
+    }
+    _ => { m2 = Msg.Quit }
+  }
+  print(size(m2))
+  // mutation through the bound names, and a read of another variable while the scrutinee is borrowed
+  var m3 = Msg.Nums(List<Int>.new())
+  var seen = 0
+  for i in 0..3 {
+    match mut m3 {
+      Nums(l) => {
+        l.push(i)
+        seen = seen + l.len()
+      }
+      _ => { }
+    }
+    seen = seen + size(m3)
+  }
+  print(seen)
+}

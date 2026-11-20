@@ -1,0 +1,16 @@
+@thread_bound
+struct Window {
+  id: Int,
+}
+
+struct Job {
+  window: Window,
+}
+
+fn main() {
+  let job = Job { window: Window { id: 1 } }
+  scope {
+    let worker = spawn move || job.window.id
+    print(worker.join().is_ok())
+  }
+}

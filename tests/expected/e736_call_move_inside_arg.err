@@ -1,0 +1,8 @@
+error: 'm' appears twice in the same call and one use modifies or moves it
+  --> tests/e736_call_move_inside_arg.yx:21:11
+   |
+21 |   show(m, takes(move m))
+   |           ^^^^^^^^^^^^^
+   = help: split the call in two steps, or pass a copy
+
+1 error(s). Nothing was generated.

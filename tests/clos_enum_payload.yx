@@ -1,0 +1,10 @@
+enum Handler { Run(fn(Int) -> Int), Empty }
+
+fn main() {
+  let base = 9
+  let handler = Handler.Run(move |x| x + base)
+  match move handler {
+    Run(f) => { print(f(3)) }
+    Empty => { print(0) }
+  }
+}

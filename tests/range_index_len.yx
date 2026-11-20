@@ -1,0 +1,73 @@
+// A range-typed index removes the bounds check when a length fact dominates the access: an `assert`, an
+// `if` that returns or panics, or an `&&` chain. Without such a fact the upper bound stays checked.
+type Byte = Int<0..255>
+
+fn by_assert(l: view List<Int>, i: Byte) -> Int {
+  assert(l.len() > 255)
+  return l.get(i)
+}
+
+fn by_assert_eq_len(l: view List<Int>, i: Byte) -> Int {
+  assert(l.len() == 256)
+  return l.get(i)
+}
+
+fn by_assert_and(l: view List<Int>, i: Byte) -> Int {
+  assert(l.len() >= 256 && l.len() < 100000)
+  return l.at(i) + l.get(i)
+}
+
+fn by_panic(l: view List<Int>, i: Byte) -> Int {
+  if l.len() <= 255 { panic("table too short") }
+  return l.get(i)
+}
+
+fn by_if(l: view List<Int>, i: Byte) -> Int {
+  if l.len() > 255 { return l.get(i) }
+  return -1
+}
+
+fn by_if_and(l: view List<Int>, i: Byte, j: Int<0..9>) -> Int {
+  if l.len() > 255 && l.len() < 1000 { return l.get(i) + l.get(j) }
+  return -1
+}
+
+fn by_or(l: view List<Int>, i: Byte) -> Int {
+  if l.len() < 256 || i > 200 { return -1 }
+  return l.get(i)
+}
+
+fn two_indices(l: view List<Int>, i: Int<0..9>, j: Int<0..9>) -> Int {
+  assert(l.len() >= 10)
+  return l.get(i) + l.get(j) + l.at(i)
+}
+
+struct Table { t: List<Int> }
+
+fn in_field(s: view Table, i: Byte) -> Int {
+  assert(s.t.len() > 255)
+  return s.t.get(i)
+}
+
+fn unchecked_len(l: view List<Int>, i: Byte) -> Int {
+  return l.get(i)
+}
+
+fn wrong_length(l: view List<Int>, i: Byte) -> Int {
+  assert(l.len() > 100)        // not enough for a Byte index: the upper check stays
+  return l.get(i)
+}
+
+fn main() {
+  var l = List.new()
+  for k in 0..256 { l.push(k * 2) }
+  print(by_assert(l, 3) + by_assert_eq_len(l, 4) + by_assert_and(l, 5) + by_panic(l, 6) + by_if(l, 7))
+  print(by_if_and(l, 255, 9))
+  print(by_or(l, 100))
+  print(by_or(l, 250))
+  print(two_indices(l, 1, 2))
+  let tb = Table { t: move l }
+  print(in_field(tb, 255))
+  print(unchecked_len(tb.t, 12))
+  print(wrong_length(tb.t, 200))
+}

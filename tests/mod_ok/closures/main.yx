@@ -1,0 +1,14 @@
+import ops
+
+fn main() {
+  print(ops.apply(ops.twice, 21))
+  let plus5 = ops.adder(5)
+  print(ops.apply(plus5, 1))
+  let c = ops.Counter { step: 3, on_tick: ops.adder(100) }
+  print(c.on_tick(c.step))
+  var xs = List.new()
+  xs.push(1)
+  xs.push(2)
+  let ys = ops.map(xs, |x| x + 10)
+  print(ys.get(1))
+}

@@ -1,0 +1,64 @@
+// many simultaneously live temporaries without calls (pure register pressure) + branches on them
+fn wide(a: Int, b: Int, c: Int, d: Int) -> Int {
+  let t0 = (a + 0) * (b - 0) + (c % 2) - d / 3
+  let t1 = (a + 1) * (b - 1) + (c % 3) - d / 4
+  let t2 = (a + 2) * (b - 2) + (c % 4) - d / 5
+  let t3 = (a + 3) * (b - 3) + (c % 5) - d / 6
+  let t4 = (a + 4) * (b - 4) + (c % 6) - d / 7
+  let t5 = (a + 5) * (b - 5) + (c % 7) - d / 8
+  let t6 = (a + 6) * (b - 6) + (c % 8) - d / 9
+  let t7 = (a + 7) * (b - 7) + (c % 9) - d / 10
+  let t8 = (a + 8) * (b - 8) + (c % 10) - d / 11
+  let t9 = (a + 9) * (b - 9) + (c % 11) - d / 12
+  let t10 = (a + 10) * (b - 10) + (c % 12) - d / 13
+  let t11 = (a + 11) * (b - 11) + (c % 13) - d / 14
+  let t12 = (a + 12) * (b - 12) + (c % 14) - d / 15
+  let t13 = (a + 13) * (b - 13) + (c % 15) - d / 16
+  let t14 = (a + 14) * (b - 14) + (c % 16) - d / 17
+  let t15 = (a + 15) * (b - 15) + (c % 17) - d / 18
+  let t16 = (a + 16) * (b - 16) + (c % 18) - d / 19
+  let t17 = (a + 17) * (b - 17) + (c % 19) - d / 20
+  let t18 = (a + 18) * (b - 18) + (c % 20) - d / 21
+  let t19 = (a + 19) * (b - 19) + (c % 21) - d / 22
+  let t20 = (a + 20) * (b - 20) + (c % 22) - d / 23
+  let t21 = (a + 21) * (b - 21) + (c % 23) - d / 24
+  let t22 = (a + 22) * (b - 22) + (c % 24) - d / 25
+  let t23 = (a + 23) * (b - 23) + (c % 25) - d / 26
+  var r = 0
+  if t0 > t5 && t0 != 0 { r = r + t0 % 97 } else { r = r - t7 % 89 }
+  if t1 > t6 && t1 != 1 { r = r + t1 % 97 } else { r = r - t8 % 89 }
+  if t2 > t7 && t2 != 2 { r = r + t2 % 97 } else { r = r - t9 % 89 }
+  if t3 > t8 && t3 != 3 { r = r + t3 % 97 } else { r = r - t10 % 89 }
+  if t4 > t9 && t4 != 4 { r = r + t4 % 97 } else { r = r - t11 % 89 }
+  if t5 > t10 && t5 != 5 { r = r + t5 % 97 } else { r = r - t12 % 89 }
+  if t6 > t11 && t6 != 6 { r = r + t6 % 97 } else { r = r - t13 % 89 }
+  if t7 > t12 && t7 != 7 { r = r + t7 % 97 } else { r = r - t14 % 89 }
+  if t8 > t13 && t8 != 8 { r = r + t8 % 97 } else { r = r - t15 % 89 }
+  if t9 > t14 && t9 != 9 { r = r + t9 % 97 } else { r = r - t16 % 89 }
+  if t10 > t15 && t10 != 10 { r = r + t10 % 97 } else { r = r - t17 % 89 }
+  if t11 > t16 && t11 != 11 { r = r + t11 % 97 } else { r = r - t18 % 89 }
+  if t12 > t17 && t12 != 12 { r = r + t12 % 97 } else { r = r - t19 % 89 }
+  if t13 > t18 && t13 != 13 { r = r + t13 % 97 } else { r = r - t20 % 89 }
+  if t14 > t19 && t14 != 14 { r = r + t14 % 97 } else { r = r - t21 % 89 }
+  if t15 > t20 && t15 != 15 { r = r + t15 % 97 } else { r = r - t22 % 89 }
+  if t16 > t21 && t16 != 16 { r = r + t16 % 97 } else { r = r - t23 % 89 }
+  if t17 > t22 && t17 != 17 { r = r + t17 % 97 } else { r = r - t0 % 89 }
+  if t18 > t23 && t18 != 18 { r = r + t18 % 97 } else { r = r - t1 % 89 }
+  if t19 > t0 && t19 != 19 { r = r + t19 % 97 } else { r = r - t2 % 89 }
+  if t20 > t1 && t20 != 20 { r = r + t20 % 97 } else { r = r - t3 % 89 }
+  if t21 > t2 && t21 != 21 { r = r + t21 % 97 } else { r = r - t4 % 89 }
+  if t22 > t3 && t22 != 22 { r = r + t22 % 97 } else { r = r - t5 % 89 }
+  if t23 > t4 && t23 != 23 { r = r + t23 % 97 } else { r = r - t6 % 89 }
+  return r + (t0 + t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8 + t9 + t10 + t11 + t12 + t13 + t14 + t15 + t16 + t17 + t18 + t19 + t20 + t21 + t22 + t23) % 1000
+}
+fn main() {
+  var i = 0
+  var tot = 0
+  while i < 200 {
+    tot = tot + wide(i, i * 3 + 1, 1000 - i, i + 17) % 1000
+    i = i + 1
+  }
+  print(tot)
+  print(wide(1, 2, 3, 4))
+  print(wide(-5, 9, 123456, -77))
+}

@@ -1,0 +1,9 @@
+error: 'xs' appears twice in the same call and one use modifies or moves it
+ --> tests/e707_closure_borrow_conflict.yx:8:12
+  |
+8 |   each(xs, |x| xs.push(x))
+  |            ^^^^^^^^^^^^^^
+  = the closure on line 8 borrows 'xs' for the whole call
+  = help: split the call in two steps, or pass a copy
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,11 @@
+// A panic inside generic code while owned values are alive: exit code 101, identical in every backend.
+struct Stack<T> { items: List<T> }
+fn pop<T>(s: mut Stack<T>) -> T { return s.items.pop() }
+fn main() {
+    var st = Stack<String> { items: List<String>.new() }
+    st.items.push(String.from("only"))
+    let a = pop(st)
+    print(a)
+    let b = pop(st)
+    print(b)
+}

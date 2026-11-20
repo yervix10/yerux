@@ -1,0 +1,9 @@
+error: cannot change 'b' while a `match` arm is borrowing its payloads
+  --> tests/e735_match_box_take.yx:15:15
+   |
+15 |       let c = b.take()
+   |               ^
+   = the `match` on line 13 lends the payloads of '*b' to the names its pattern binds; they would dangle if it changed or moved
+   = help: do the change after the `match`, or use `match move` to take the payloads out
+
+1 error(s). Nothing was generated.

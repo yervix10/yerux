@@ -1,0 +1,6 @@
+trait Consume {
+    fn consume(self) -> Int
+}
+fn main() {
+    var objects = List<Box<dyn Consume>>.new()
+}

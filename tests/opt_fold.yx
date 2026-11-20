@@ -1,0 +1,17 @@
+fn main() {
+  let a = 2 + 3 * 4
+  let b = (a - 4) / 5
+  print(a)
+  print(b)
+  print(a > b)
+  print(-a)
+  print(!(a == 14))
+  var c = 0
+  if a == 14 { c = 1 } else { c = 2 }
+  print(c)
+  if false { print("dead") }
+  while false { print("dead") }
+  print(-9223372036854775807 - 1)
+  print(0 * 5)
+  print(7 % 1)
+}

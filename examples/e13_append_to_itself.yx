@@ -1,0 +1,9 @@
+fn main() {
+  var s = String.from("ab")
+  s.push_str(s)
+
+  var names = List<String>.new()
+  names.push(String.from("x"))
+  names.push(String.from("y"))
+  names.at(0).push_str(names.at(1))
+}

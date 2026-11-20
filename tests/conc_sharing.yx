@@ -1,0 +1,58 @@
+fn main() {
+  let total = Shared.new(Atomic.new(0))
+  let locked = Shared.new(Locked.new(0))
+  scope {
+    let left = total.clone()
+    let right = total.clone()
+    let lock = locked.clone()
+    let a = spawn move {
+      for _ in 0..1000 { left.add(1) }
+    }
+    let b = spawn move {
+      for _ in 0..1000 {
+        right.add_wrapping(1)
+        lock.with(|value| { value = value + 1 })
+      }
+    }
+    for _ in 0..1000 { locked.with(|value| { value = value + 1 }) }
+    assert(a.join().is_ok())
+    assert(b.join().is_ok())
+  }
+  print(total.load())
+  print(locked.with_view(|value| value))
+  let flag = Atomic.new(false)
+  print(flag.compare_swap(false, true))
+  print(flag.swap(false))
+  flag.store(true)
+  print(flag.load())
+  let value = Locked.new(String.from("unlocked"))
+  let text = value.take()
+  print(text)
+  let name = Shared.new(String.from("shared"))
+  print(name.get())
+  print(name.len())
+
+  let poisoned = Shared.new(Locked.new(0))
+  let coordination = Shared.new(Atomic.new(0))
+  scope {
+    let first = poisoned.clone()
+    let owner_state = coordination.clone()
+    let worker = spawn move {
+      first.with(|value| {
+        value = 99
+        owner_state.store(1)
+        while owner_state.load() < 2 {}
+        panic("while locked")
+      })
+    }
+    let second = poisoned.clone()
+    let waiter_state = coordination.clone()
+    let retry = spawn move {
+      while waiter_state.load() == 0 {}
+      waiter_state.store(2)
+      return second.with_view(|value| value)
+    }
+    print(worker.join().is_err())
+    print(retry.join().is_err())
+  }
+}

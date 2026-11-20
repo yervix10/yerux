@@ -1,0 +1,37 @@
+error: type Map<String, String> has no method 'get'
+ --> examples/e37_collections_errors.yx:7:11
+  |
+7 |   let v = m.get(k)
+  |           ^^^^^^^^
+  = 'get' needs V: Copy, but String does not implement Copy; a String is owned, so it is moved, never copied (borrow with `at(i)` or move it out with `pop()`/`take`)
+
+error: Set<P> has no function 'new'
+ --> examples/e37_collections_errors.yx:8:11
+  |
+8 |   var s = Set<P>.new()
+  |           ^^^^^^^^^^^^
+  = 'new' needs T: Hash, but P does not implement Hash
+  = help: add `impl Hash for P { .. }`
+
+error: List<P> has no method 'sort' here
+  --> examples/e37_collections_errors.yx:10:3
+   |
+10 |   l.sort()
+   |   ^^^^^^^^
+   = 'sort' needs T: Ordered, but P does not implement Ordered
+   = help: add `impl Ordered for P { .. }`
+
+error: method 'get_or' of Map<Int, Int> expects 2 argument(s) besides the receiver but got 1
+  --> examples/e37_collections_errors.yx:12:11
+   |
+12 |   let w = n.get_or(1)
+   |           ^^^^^^^^^^^
+
+error: Map takes 2 type argument(s) but 1 given
+  --> examples/e37_collections_errors.yx:13:13
+   |
+13 |   let big = Map<Int>.new()
+   |             ^^^^^^^^^^^^^^
+   = help: write Map<K, V>
+
+5 error(s). Nothing was generated.

@@ -1,0 +1,20 @@
+// taking the value out of a Box whose contents are being matched
+enum Msg { Text(String), Nums(List<Int>), Quit }
+fn mgrow(m: mut Msg, k: Int) {
+  match mut m {
+    Text(s) => { s.push_str("!") }
+    Nums(l) => { l.push(k) }
+    Quit => { }
+  }
+}
+fn takes(m: Msg) { }
+fn main() {
+  let b = Box<Msg>.new(Msg.Text(String.from("a")))
+  match b.get() {
+    Text(s) => {
+      let c = b.take()
+      print(s.len())
+    }
+    _ => { }
+  }
+}

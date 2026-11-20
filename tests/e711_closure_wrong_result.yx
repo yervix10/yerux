@@ -1,0 +1,7 @@
+fn apply(f: view fn(Int) -> Int, x: Int) -> Int {
+  return f(x)
+}
+
+fn main() {
+  print(apply(|x| x > 1, 5))
+}

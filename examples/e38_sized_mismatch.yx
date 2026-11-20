@@ -1,0 +1,8 @@
+// Sized integers do not convert implicitly, and a literal must fit its type.
+fn takes_byte(b: UInt8) -> UInt8 { return b }
+fn main() {
+  let n = 5
+  let small = takes_byte(n)
+  let big = takes_byte(300)
+  print(small + big)
+}

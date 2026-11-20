@@ -1,0 +1,11 @@
+error: this value may be outside Int<10..29>
+ --> tests/e785_range_match_wildcard.yx:7:28
+  |
+7 |       let x: Int<10..29> = n
+  |                            ^
+  = it has type Int, so the compiler cannot prove that it fits Int<10..29>
+  = Int<10..29> holds the values from 10 to 29 (both ends included)
+  = help: test it first: `if n >= 10 && n <= 29 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<10..29>.try_from(n)` gives a Result, `Int<10..29>.from(n)` panics when it does not fit
+
+1 error(s). Nothing was generated.

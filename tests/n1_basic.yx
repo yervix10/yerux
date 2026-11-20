@@ -1,0 +1,42 @@
+fn fib(n: Int) -> Int {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn gcd(a: Int, b: Int) -> Int {
+  while b != 0 {
+    let t = a % b
+    a = b
+    b = t
+  }
+  return a
+}
+
+fn is_even(n: Int) -> Bool { return n % 2 == 0 }
+
+fn main() {
+  print("hello from native Yerux")
+  print(42)
+  print(-42)
+  print(0)
+  print(-9223372036854775807 - 1)
+  print(9223372036854775807)
+  print(fib(20))
+  print(gcd(48, 18))
+  print(is_even(10))
+  print(is_even(7))
+  print(3 < 5 && 5 < 3)
+  print(3 < 5 || 5 < 3)
+  print(!true)
+  print(7 / 2)
+  print(-7 / 2)
+  print(-7 % 3)
+  print(100 / -1)
+  var i = 0
+  var sum = 0
+  while i < 10 {
+    sum = sum + i
+    i = i + 1
+  }
+  print(sum)
+}

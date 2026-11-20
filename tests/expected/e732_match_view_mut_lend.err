@@ -1,0 +1,9 @@
+error: cannot change 'm' while a `match` arm is borrowing its payloads
+  --> tests/e732_match_view_mut_lend.yx:15:13
+   |
+15 |       mgrow(m, 1)
+   |             ^
+   = the `match` on line 13 lends the payloads of 'm' to the names its pattern binds; they would dangle if it changed or moved
+   = help: do the change after the `match`, or use `match move` to take the payloads out
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,11 @@
+error: this value may be outside Int<5..14>
+ --> tests/e769_range_mismatched_ranges.yx:2:10
+  |
+2 |   return a + 5
+  |          ^^^^^
+  = the compiler can only prove that it has type Int<5..15>
+  = Int<5..14> holds the values from 5 to 14 (both ends included)
+  = help: test it first: `if a >= 5 && a <= 14 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<5..14>.try_from(a)` gives a Result, `Int<5..14>.from(a)` panics when it does not fit
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+fn too_small(x: Int<0..255>) -> Int<0..100> {
+  return x
+}
+
+fn main() {
+  print(too_small(12))
+}

@@ -1,0 +1,4 @@
+fn main() {
+    let entries = Map<Int, Int>.new()
+    print(entries.get(42))
+}

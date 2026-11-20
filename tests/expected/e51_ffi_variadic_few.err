@@ -1,0 +1,7 @@
+error: 'printf' expects at least 1 argument(s) but got 0
+ --> tests/e51_ffi_variadic_few.yx:6:12
+  |
+6 |   unsafe { printf() }
+  |            ^^^^^^^^
+
+1 error(s). Nothing was generated.

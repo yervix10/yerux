@@ -1,0 +1,7 @@
+error: expected Int but this is Bool
+ --> tests/e731_futex_address.yx:2:16
+  |
+2 |   __futex_park(false, 0)
+  |                ^^^^^
+
+1 error(s). Nothing was generated.

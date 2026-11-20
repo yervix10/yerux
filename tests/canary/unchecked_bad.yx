@@ -1,0 +1,10 @@
+// `unchecked` with a value outside the range breaks the type's promise. Without --check-ranges that is the
+// programmer's responsibility (the program runs on); with --check-ranges it panics at the conversion.
+fn main() {
+  var b: Int<0..255> = 0
+  let n = 300
+  unsafe {
+    b = unchecked(n)
+  }
+  print(b)
+}

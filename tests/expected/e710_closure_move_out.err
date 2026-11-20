@@ -1,0 +1,9 @@
+error: cannot move 's' out of the closure that captured it
+ --> tests/e710_closure_move_out.yx:4:13
+  |
+4 |     let t = move s
+  |             ^^^^^^
+  = a closure can be called many times, and after the first call the captured value would be gone
+  = help: use it by reference inside the closure (`s.len()`, `s.push_str(..)`), or create the value you hand over inside the closure (`String.from(..)`)
+
+1 error(s). Nothing was generated.

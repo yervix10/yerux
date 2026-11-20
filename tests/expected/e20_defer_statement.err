@@ -1,0 +1,8 @@
+error: `defer` takes a single call or assignment
+ --> examples/e20_defer_statement.yx:3:9
+  |
+3 |   defer let x = 1
+  |         ^^^
+  = help: put the work in a function and defer the call: `defer cleanup(x)`
+
+1 error(s). Nothing was generated.

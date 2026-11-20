@@ -1,0 +1,7 @@
+error: parallel for cannot assign to captured variable 'total'
+ --> tests/e736_parallel_assign.yx:3:3
+  |
+3 |   parallel for i in 0..10 { total = total + i }
+  |   ^^^^^^^^
+
+1 error(s). Nothing was generated.

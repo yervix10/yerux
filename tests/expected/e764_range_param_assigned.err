@@ -1,0 +1,12 @@
+error: this value may be outside Int<0..>
+ --> tests/e764_range_param_assigned.yx:4:21
+  |
+4 |   let p: Int<0..> = n
+  |                     ^
+  = the compiler can only prove that it has type Int<-1..9223372036854775806>
+  = Int<0..> holds the values from 0 upwards
+  = n was narrower earlier, but it is assigned on line 3
+  = help: test it first: `if n >= 0 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..>.try_from(n)` gives a Result, `Int<0..>.from(n)` panics when it does not fit
+
+1 error(s). Nothing was generated.

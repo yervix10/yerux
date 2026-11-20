@@ -1,0 +1,39 @@
+// A struct that owns a List: moved as a whole, freed automatically
+struct Team {
+  name: Text,
+  scores: List,
+}
+
+fn add_score(t: mut Team, n: Int) {
+  t.scores.push(n)
+}
+
+fn total(t: view Team) -> Int {
+  var i = 0
+  var sum = 0
+  while i < t.scores.len() {
+    sum = sum + t.scores.get(i)
+    i = i + 1
+  }
+  return sum
+}
+
+fn make(name: Text) -> Team {
+  return Team { name: name, scores: List.new() }
+}
+
+fn finish(t: Team) {
+  print(t.name)
+  print(total(t))
+}   // t is dropped here, including its List
+
+fn main() {
+  var a = make("Wolves")
+  add_score(a, 10)
+  add_score(a, 32)
+  a.scores.push(8)
+  print(total(a))
+  a.scores = List.new()        // the old List is freed, the new one takes its place
+  add_score(a, 7)
+  finish(move a)
+}

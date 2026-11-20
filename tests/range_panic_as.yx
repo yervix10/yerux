@@ -1,0 +1,10 @@
+// `x as Int<lo..hi>` without `else` is a checked conversion.
+fn narrow(n: Int) -> Int {
+  let b = n as Int<0..99>
+  return b
+}
+fn main() {
+  print(narrow(42))
+  print(narrow(100))
+  print(7)
+}

@@ -1,0 +1,7 @@
+error: pass a variable here (the function borrows it)
+ --> tests/e801_mut_temporary.yx:4:7
+  |
+4 |   add(mk())
+  |       ^^^^
+
+1 error(s). Nothing was generated.

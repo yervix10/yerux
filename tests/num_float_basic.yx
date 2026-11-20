@@ -1,0 +1,67 @@
+// Float arithmetic, comparisons, NaN / infinity semantics, printing.
+fn to32(x: Float) -> Float32 { return x.to_float32() }
+
+fn main() {
+    let a = 3.5
+    let b = 2.0
+    print(a + b)
+    print(a - b)
+    print(a * b)
+    print(a / b)
+    print(-a)
+    print(0.1 + 0.2)
+    print(1e-3)
+    print(1.5e300)
+    print(1e16)
+    print(123456789.125)
+    print(1e-7)
+    print(100.0)
+    print(a < b)
+    print(a >= b)
+    print(a == 3.5)
+    print(a != 3.5)
+
+    let zero = 0.0
+    let inf = 1.0 / zero
+    let ninf = -1.0 / zero
+    let nan = zero / zero
+    print(inf)
+    print(ninf)
+    print(nan)
+    print(-zero)
+    print(nan == nan)
+    print(nan != nan)
+    print(nan < 1.0)
+    print(nan > 1.0)
+    print(nan <= nan)
+    print(inf > 1e308)
+    print(inf - inf)
+    print(inf * 0.0)
+    print(zero == -zero)
+
+    // Float32
+    let f = to32(0.1)
+    let g = to32(0.2)
+    print(f + g)
+    print(f * 3.0f32)
+    print(1.5f32 / 0.0f32)
+    let wide = f.to_float()
+    print(0.1f32.to_float() + 0.2)
+    print(1.0f32 / 3.0f32)
+    print(16777217.0f32)
+
+    // conversions
+    let n = 7
+    print(n.to_float() / 2.0)
+    print(2.9.to_int())
+    print((-2.9).to_int())
+    print(2.5.floor_int())
+    print((-2.5).floor_int())
+    print((-2.5).ceil_int())
+    print(2.5.round_int())
+    print((-2.5).round_int())
+    print(f.to_float())
+    print(wide.to_float32())
+    print(9007199254740993.to_float())
+    print((-9223372036854775807 - 1).to_float())
+}

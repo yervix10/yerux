@@ -1,0 +1,9 @@
+error: cannot use 'm' inside the `match mut` arm that borrows it
+  --> tests/e734_match_mut_read_scrutinee.yx:15:26
+   |
+15 |       for x in l { mgrow(m, x) }
+   |                          ^
+   = `match mut` on line 13 borrows 'm' exclusively: the names the pattern binds are the only way to reach its payloads
+   = help: use the bound names inside the arm, or change/read the value after the `match`
+
+1 error(s). Nothing was generated.

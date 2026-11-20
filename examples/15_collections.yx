@@ -1,0 +1,110 @@
+// Collections and text formatting: Map, Set, sorting, the String API and "{interpolation}".
+// All of it is written in Yerux itself (src/prelude_*.yx) on top of generics and traits.
+
+struct Point { x: Int, y: Int }
+
+// Show makes a type printable and usable inside "{...}"
+impl Show for Point {
+  fn show(view self) -> String {
+    return "({self.x}, {self.y})"
+  }
+}
+
+// Hash + Equal make a type usable as a Map key
+impl Equal for Point {
+  fn eq(view self, other: view Point) -> Bool {
+    return self.x == other.x && self.y == other.y
+  }
+}
+impl Hash for Point {
+  fn hash(view self) -> Int {
+    return self.x.hash() + 31 * self.y.hash() % 1000003
+  }
+}
+
+fn main() {
+  // ---- Map: owned keys and values, insertion order, O(1) lookups ----
+  var ages = Map<String, Int>.new()
+  ages.insert(String.from("ann"), 31)
+  ages.insert(String.from("bob"), 27)
+  ages.insert(String.from("cy"), 45)
+  let who = String.from("bob")
+  print("bob is {ages.get(who)}, {ages.len()} people: {ages}")
+  ages.insert(String.from("bob"), 28)           // replaces the value
+  print("{ages.remove(who)} {ages.contains(who)}")
+  print("{ages.get_or(who, -1)}")
+
+  // owned values: find() gives the entry number, vals.at(e) borrows it
+  var groups = Map<Int, List<String>>.new()
+  var i = 0
+  while i < 6 {
+    let e = groups.find(i % 3)
+    if e < 0 {
+      var names = List<String>.new()
+      names.push("n{i}")
+      groups.insert(i % 3, move names)
+    } else {
+      groups.vals.at(e).push("n{i}")
+    }
+    i = i + 1
+  }
+  print("{groups}")
+  let moved = groups.take(1)                    // removes the entry and moves the list out
+  print("took {moved}, left {groups.len()}")
+
+  // user types as keys
+  var seen = Set<Point>.new()
+  let p = Point { x: 1, y: 2 }
+  let first = seen.insert(Point { x: 1, y: 2 })
+  let again = seen.insert(Point { x: 1, y: 2 })
+  print("{first} {again} {seen.len()} {seen.contains(p)}")
+  print("{seen}")
+
+  // ---- List: insert / remove / sort / reverse / slice / contains ----
+  var xs = List<Int>.new()
+  var seed = 7
+  i = 0
+  while i < 10 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push(seed % 100)
+    i = i + 1
+  }
+  print("{xs}")
+  xs.sort()
+  print("{xs} sorted={xs.is_sorted()}")
+  xs.reverse()
+  xs.insert(0, 1000)
+  let last = xs.remove(xs.len() - 1)
+  print("{xs.slice(0, 3)} removed {last}, has 1000: {xs.contains(1000)} at {xs.index_of(1000)}")
+  var words = List<String>.new()
+  words.push(String.from("pear"))
+  words.push(String.from("fig"))
+  words.push(String.from("apple"))
+  words.sort()
+  print(words.join(", "))
+
+  // ---- String API ----
+  let line = String.from("  The quick brown fox  ")
+  let t = line.trim()
+  print("[{t}] len={t.len()}")
+  print("{t.starts_with(t)} {t.find(t)}")
+  let parts = t.split(" ")
+  print("{parts.len()} words: {parts}")
+  let up = t.to_upper()
+  let rp = t.replace("quick", "slow")
+  let rep = parts.at(1).repeat(2)
+  print("{up} / {rp} / {rep}")
+  print("slice: {t.slice(4, 9)}  chars: {t.char_count()}")
+  var n = 0
+  let digits = String.from("-4096")
+  if digits.parse_int(n) {
+    print("parsed {n + 1}")
+  }
+  let bad = String.from("12ab")
+  print("12ab parses: {bad.parse_int(n)}")
+  let a = String.from("foo")
+  let b = a + "bar"
+  let same = a == "foo"
+  print("{b} {a < b} {same}")
+  print("braces: {{ok}} and a tab:\t|")
+}

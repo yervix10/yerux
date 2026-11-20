@@ -1,0 +1,93 @@
+// std.iter: map/filter/fold/any/all/enumerate/zip/take/skip/sum with closures and generics
+import std.iter
+
+fn show_ints(l: view List<Int>) {
+  var out = String.new()
+  var i = 0
+  while i < l.len() {
+    if i > 0 { out.push_str(" ") }
+    out.push_int(l.get(i))
+    i = i + 1
+  }
+  print("[{out}]")
+}
+
+fn main() {
+  let n = iter.range(1, 11)
+  show_ints(n)
+  let k = 3
+  let m = iter.map(n, |x: view Int| -> Int { return x * k })
+  show_ints(m)
+  let ev = iter.filter(m, |x: view Int| -> Bool { return x % 2 == 0 })
+  show_ints(ev)
+  print(iter.sum(n))
+  let r8 = iter.range(1, 8)
+  print(iter.product(r8))
+  let total = iter.fold(n, 0, |acc: Int, x: view Int| -> Int { return acc + x * x })
+  print(total)
+  print(iter.any(n, |x: view Int| -> Bool { return x == 7 }))
+  print(iter.all(n, |x: view Int| -> Bool { return x < 10 }))
+  print(iter.count(n, |x: view Int| -> Bool { return x % 3 == 0 }))
+  print(iter.position(n, |x: view Int| -> Bool { return x > 4 }))
+  print(iter.position(n, |x: view Int| -> Bool { return x > 40 }))
+  let f = iter.find(n, |x: view Int| -> Bool { return x * x > 50 })
+  print(f.unwrap_or(-1))
+  let t = iter.take(n, 3)
+  show_ints(t)
+  let s = iter.skip(n, 7)
+  show_ints(s)
+  let tk = iter.take(n, 100)
+  show_ints(tk)
+  let sk = iter.skip(n, 100)
+  show_ints(sk)
+  let sb = iter.step_by(n, 4)
+  show_ints(sb)
+  let ch = iter.chain(t, s)
+  show_ints(ch)
+  let mn = iter.min(m)
+  let mx = iter.max(m)
+  print("{mn} {mx}")
+  let r0 = iter.range(0, 0)
+  let none = iter.min(r0)
+  print("{none}")
+
+  let en = iter.enumerate(s)
+  var i = 0
+  while i < en.len() {
+    let p = en.at(i)
+    print("{p.0}: {p.1}")
+    i = i + 1
+  }
+  let z = iter.zip(t, s)
+  i = 0
+  while i < z.len() {
+    let p = z.at(i)
+    print("({p.0}, {p.1})")
+    i = i + 1
+  }
+
+  // owned elements
+  var words = List<String>.new()
+  words.push(String.from("one"))
+  words.push(String.from("three"))
+  words.push(String.from("fifteen"))
+  words.push(String.from("go"))
+  let lens = iter.map(words, |w: view String| -> Int { return w.len() })
+  show_ints(lens)
+  let up = iter.map(words, |w: view String| -> String { return w.to_upper() })
+  print(up.join(" "))
+  print(iter.any(words, |w: view String| -> Bool { return w.eq("go") }))
+  iter.retain(words, |w: view String| -> Bool { return w.len() > 2 })
+  print(words.join(","))
+  let longest = iter.fold(words, 0, |acc: Int, w: view String| -> Int {
+    if w.len() > acc { return w.len() }
+    return acc
+  })
+  print(longest)
+
+  var fl = List<Float>.new()
+  fl.push(1.5)
+  fl.push(2.25)
+  print(iter.sum_float(fl))
+  iter.for_each(n, |x: view Int| { print(x) })
+}

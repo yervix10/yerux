@@ -1,0 +1,12 @@
+error: this value may be outside Int<0..9>
+ --> tests/e780_range_var_assigned.yx:7:22
+  |
+7 |   let b: Int<0..9> = x
+  |                      ^
+  = the compiler can only prove that it has type Int<1..10>
+  = Int<0..9> holds the values from 0 to 9 (both ends included)
+  = x was narrower earlier, but it is assigned on line 6
+  = help: test it first: `if x >= 0 && x <= 9 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..9>.try_from(x)` gives a Result, `Int<0..9>.from(x)` panics when it does not fit
+
+1 error(s). Nothing was generated.

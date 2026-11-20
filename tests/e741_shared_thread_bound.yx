@@ -1,0 +1,9 @@
+@thread_bound
+enum Context {
+  Active(Int),
+}
+
+fn main() {
+  let handle = Context.Active(1)
+  let shared = Shared.new(handle)
+}

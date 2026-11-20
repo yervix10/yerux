@@ -1,0 +1,7 @@
+error: cannot wait or acquire a lock inside a with closure
+ --> tests/e739_locked_wait.yx:4:15
+  |
+4 |     lock.with(|value| {
+  |               ^
+
+1 error(s). Nothing was generated.

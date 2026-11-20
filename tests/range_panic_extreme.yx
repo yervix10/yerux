@@ -1,0 +1,8 @@
+// The extremes of Int are printed in full.
+fn tiny() -> Int { return 0 - 9223372036854775807 - 1 }
+fn main() {
+  let m = tiny()
+  print(Int<0..>.from(9223372036854775807))
+  print(Int<-5..5>.from(m))
+  print(1)
+}

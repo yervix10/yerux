@@ -1,0 +1,5 @@
+// `as` converts into a range type.
+fn main() {
+  let n = 3
+  print(n as Int)
+}

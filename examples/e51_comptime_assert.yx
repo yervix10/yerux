@@ -1,0 +1,8 @@
+fn square(x: Int) -> Int {
+  return x * x
+}
+
+fn main() {
+  comptime assert(square(7) == 50)
+  print("unreachable")
+}

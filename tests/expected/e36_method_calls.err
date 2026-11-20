@@ -1,0 +1,28 @@
+error: cannot lend 'c' as `mut`: it was declared with `let` (immutable)
+  --> examples/e36_method_calls.yx:14:5
+   |
+14 |     c.bump()
+   |     ^
+   = help: declare it with `var` (or receive it as `mut`)
+
+error: method 'add' of Counter expects 1 argument(s) besides the receiver but got 0
+  --> examples/e36_method_calls.yx:15:11
+   |
+15 |     print(c.add())
+   |           ^^^^^^^
+
+error: method 'add' of Counter expects 1 argument(s) besides the receiver but got 2
+  --> examples/e36_method_calls.yx:16:11
+   |
+16 |     print(c.add(1, 2))
+   |           ^^^^^^^^^^^
+
+error: cannot use 'nm': it was already moved
+  --> examples/e36_method_calls.yx:19:11
+   |
+19 |     print(nm.into_len())
+   |           ^^
+   = 'nm' was moved on line 18
+   = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+4 error(s). Nothing was generated.

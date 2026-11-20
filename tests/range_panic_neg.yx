@@ -1,0 +1,7 @@
+// The panic message of a failed conversion names the value and the bounds (negative value, negative bounds).
+fn main() {
+  let a = 0 - 5
+  print(Int<-3..3>.from(2))
+  print(Int<-3..3>.from(a))
+  print(3)
+}

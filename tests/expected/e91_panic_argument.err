@@ -1,0 +1,8 @@
+error: panic needs a Text or a String message, found Int
+ --> tests/e91_panic_argument.yx:2:11
+  |
+2 |     panic(42)
+  |           ^^
+  = help: build a message with interpolation: `panic("unexpected value {x}")`
+
+1 error(s). Nothing was generated.

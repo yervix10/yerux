@@ -1,0 +1,4 @@
+fn main() {
+  let x = Int<0..9>.wrap(12)
+  print(x)
+}

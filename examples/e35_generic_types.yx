@@ -1,0 +1,15 @@
+// Generic type problems: owned payload, missing type arguments, unknown trait in a bound, no such method.
+enum Maybe<T> { Some(T), None }
+struct Pair<A, B> { a: A, b: B }
+struct P { x: Int }
+
+fn f<T: Sortable>(x: T) { }
+
+
+fn main() {
+    let s = Maybe<String>.None
+    let p = P { x: 1 }
+    print(p.size())
+    let n = 5
+    print(n.show2())
+}

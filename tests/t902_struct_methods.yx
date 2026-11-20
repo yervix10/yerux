@@ -1,0 +1,51 @@
+struct Counter { name: String, hits: Int }
+struct Bag { items: List<Int> }
+
+impl Counter {
+  fn bump(mut self, by: Int) { self.hits = self.hits + by }
+  fn reset(mut self) { self.hits = 0 }
+  fn total(view self) -> Int { return self.hits }
+  fn label_len(view self) -> Int { return self.name.len() }
+  fn consume(self) -> Int { return self.hits + self.name.len() }
+}
+
+impl Bag {
+  fn add(mut self, x: Int) { self.items.push(x) }
+  fn sum(view self) -> Int {
+    var t = 0
+    var i = 0
+    while i < self.items.len() {
+      t = t + self.items.get(i)
+      i = i + 1
+    }
+    return t
+  }
+  fn grow(mut self, n: Int) {
+    var i = 0
+    while i < n {
+      self.items.push(i)
+      i = i + 1
+    }
+  }
+}
+
+fn main() {
+  var c = Counter { name: String.from("hits"), hits: 0 }
+  c.bump(3)
+  c.bump(4)
+  print(c.total())
+  print(c.label_len())
+  c.reset()
+  print(c.total())
+  c.bump(10)
+  let used = c.consume()
+  print(used)
+
+  var b = Bag { items: List<Int>.new() }
+  b.add(5)
+  b.add(6)
+  b.grow(4)
+  print(b.sum())
+  print("{b.items}")
+  print(b.items.len())
+}

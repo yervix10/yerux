@@ -1,0 +1,72 @@
+// Lists that own their elements: List<String>, List<List<Int>>, List<struct with a String>
+struct Item { name: String, qty: Int }
+
+fn total_len(names: view List<String>) -> Int {
+  var i = 0
+  var t = 0
+  while i < names.len() {
+    t = t + names.at(i).len()     // at(i) borrows the element for this call only
+    i = i + 1
+  }
+  return t
+}
+
+fn show(s: view String) {
+  print(s)
+}
+
+fn add_bang(s: mut String) {
+  s.push_str("!")
+}
+
+fn make_names() -> List<String> {
+  var names = List<String>.new()
+  names.push(String.from("ann"))
+  var b = String.from("bob")
+  b.push_str("by")
+  names.push(move b)              // push moves the String into the list
+  return names
+}
+
+fn main() {
+  var names = make_names()
+  print(total_len(names))
+  show(names.at(1))
+  add_bang(names.at(0))           // mutable borrow of one element
+  names.at(0).push_str("?")
+  print(names.at(0))
+  names.set(1, String.from("replaced"))   // the old element is freed
+  print(names.at(1))
+  print(names.at(0).eq("ann!?"))
+
+  let last = names.pop()          // pop moves the last element out
+  print(last)
+  print(names.len())
+
+  var grid = List<List<Int>>.new()
+  var row = 0
+  while row < 3 {
+    var r = List<Int>.new()
+    var c = 0
+    while c <= row {
+      r.push(row * 10 + c)
+      c = c + 1
+    }
+    grid.push(move r)
+    row = row + 1
+  }
+  grid.at(2).push(99)
+  print(grid.at(2).len())
+  print(grid.at(2).get(3))
+  print(grid.len())
+
+  var items = List<Item>.new()
+  items.push(Item { name: String.from("pen"), qty: 3 })
+  items.push(Item { name: String.from("book"), qty: 1 })
+  items.at(0).name.push_str("cil")
+  items.at(1).qty = items.at(1).qty + 4
+  print(items.at(0).name)
+  print(items.at(1).qty)
+  items.clear()
+  print(items.len())
+}

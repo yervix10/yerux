@@ -1,0 +1,54 @@
+// Owned structs nested in structs, reassigned and moved around
+struct Inner { tag: Int, items: List }
+struct Outer { name: Text, a: Inner, b: List }
+
+fn total(o: view Outer) -> Int {
+  var s = 0
+  var i = 0
+  while i < o.a.items.len() {
+    s = s + o.a.items.get(i)
+    i = i + 1
+  }
+  i = 0
+  while i < o.b.len() {
+    s = s + o.b.get(i)
+    i = i + 1
+  }
+  return s + o.a.tag
+}
+
+fn grow(o: mut Outer, n: Int) {
+  var i = 0
+  while i < n {
+    o.a.items.push(i)
+    o.b.push(i * 10)
+    i = i + 1
+  }
+}
+
+fn make() -> Outer {
+  return Outer { name: "o", a: Inner { tag: 5, items: List.new() }, b: List.new() }
+}
+
+fn consume(o: Outer) -> Int {
+  return total(o)
+}
+
+fn main() {
+  var o = make()
+  grow(o, 10)
+  print(total(o))
+  o.a.items = List.new()
+  o.a.items.push(100)
+  print(total(o))
+  o.a = Inner { tag: 1, items: List.new() }
+  print(total(o))
+  var p = make()
+  grow(p, 3)
+  o = move p
+  print(total(o))
+  print(consume(move o))
+  var q = make()
+  q.b.push(9)
+  print(consume(move q))
+}

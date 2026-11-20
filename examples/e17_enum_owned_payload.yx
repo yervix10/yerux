@@ -1,0 +1,16 @@
+enum Msg { Text(String), Items(List<Int>), Quit }
+
+fn size(m: Msg) -> Int {
+  match move m {
+    Text(s) => { return s.len() }
+    Items(l) => { return l.len() }
+    Quit => { return 0 }
+  }
+}
+
+fn main() {
+  let m = Msg.Text(String.from("hi"))
+  let copy = m
+  let n = size(move m)
+  print(size(move m))
+}

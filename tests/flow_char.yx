@@ -1,0 +1,31 @@
+// Char literals, UTF-8 encoding / decoding, chars()
+fn main() {
+  let s = String.from("aé中😀")
+  print(s.len())
+  var n = 0
+  for c in s.chars() {
+    n = n + 1
+    print(c.to_int())
+    print(c.utf8_len())
+  }
+  print(n)
+  var t = String.new()
+  for c in s.chars() {
+    t.push_char(c)
+    t.push_char('-')
+  }
+  print(t)
+  print(Char.from_int(65))
+  print(Char.is_valid(1114111))
+  print(Char.is_valid(1114112))
+  print(Char.is_valid(-1))
+  print('\u{e9}' == 'é')
+  print('a' < 'b')
+  print('\t'.to_int())
+  print(s.char_at(1).to_int())
+  print(s.char_size(3))
+  var cs = List<Char>.new()
+  cs.push('p')
+  cs.push('q')
+  for c in cs { print(c) }
+}

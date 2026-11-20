@@ -1,0 +1,47 @@
+error: expected Int but this is Text
+ --> examples/e15_list_type_errors.yx:5:10
+  |
+5 |   a.push("text")
+  |          ^^^^^^
+
+error: expected Bool but this is Int
+ --> examples/e15_list_type_errors.yx:7:10
+  |
+7 |   b.push(1)
+  |          ^
+
+error: expected P but this is Int
+ --> examples/e15_list_type_errors.yx:9:10
+  |
+9 |   c.push(3)
+  |          ^
+
+error: List has no method 'shuffle'
+  --> examples/e15_list_type_errors.yx:10:3
+   |
+10 |   a.shuffle()
+   |   ^^^^^^^^^^^
+   = methods: push(x), pop(), len(), get(i), at(i), set(i, x), clear(), swap(i, j), and the library methods (insert, remove, sort, ...)
+
+error: expected Text or String but this is Int
+  --> examples/e15_list_type_errors.yx:11:23
+   |
+11 |   let q = String.from(5)
+   |                       ^
+
+error: this only borrows its String argument: remove `move`
+  --> examples/e15_list_type_errors.yx:13:14
+   |
+13 |   s.push_str(move q)
+   |              ^^^^^^
+   = the String stays yours; it is only read during the call
+
+error: String has no method 'shout'
+  --> examples/e15_list_type_errors.yx:14:3
+   |
+14 |   s.shout()
+   |   ^^^^^^^^^
+   = methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)
+   = to visit the characters write `for c in s.chars() { .. }`
+
+7 error(s). Nothing was generated.

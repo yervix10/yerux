@@ -1,0 +1,9 @@
+error: the `else` block of `as Int<0..255>` must not continue
+ --> tests/e777_range_as_else_falls_through.yx:3:35
+  |
+3 |   let b = n as Int<0..255> else { print(0) }
+  |                                   ^^^^^
+  = when the value does not fit there is no value to give, so the block has to leave: `return`, `break`, `continue` or `panic(..)`
+  = help: to use a default instead, write `x.clamp(lo, hi)` or `Int<lo..hi>.try_from(x)` and `match` on the Result
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+error: expected String but this is Int
+ --> tests/e900_io_wrong_arg.yx:5:22
+  |
+5 |   match io.read_file(42) {
+  |                      ^^
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,31 @@
+enum Op { Fill(Int), Skip, Twice(Int, Int) }
+
+fn run(op: Op) -> Int {
+  match op {
+    Fill(n) => {
+      var l = List.new()
+      var i = 0
+      while i < n {
+        l.push(i)
+        i = i + 1
+      }
+      if n > 5 { return l.len() * 100 }
+      return l.len()
+    }
+    Twice(a, b) => {
+      var x = List.new()
+      var y = List.new()
+      x.push(a)
+      y.push(b)
+      return x.get(0) + y.get(0)
+    }
+    Skip => { return 0 - 1 }
+  }
+}
+
+fn main() {
+  print(run(Op.Fill(3)))
+  print(run(Op.Fill(8)))
+  print(run(Op.Twice(20, 22)))
+  print(run(Op.Skip))
+}

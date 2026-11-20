@@ -1,0 +1,9 @@
+error: cannot use 'l' inside the loop that is changing its elements in place
+ --> tests/e44_flow_4.yx:5:11
+  |
+5 |     print(l.len())
+  |           ^
+  = `for mut ..` on line 4 borrows 'l' exclusively until the loop ends
+  = help: use the loop variable to read or change the current element, or loop over indexes: `for i in 0..n { .. l.at(i) .. }`
+
+1 error(s). Nothing was generated.

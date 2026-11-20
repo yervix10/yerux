@@ -1,0 +1,25 @@
+enum Cell { Empty, Wall, Coin(Int) }
+struct Board { a: Cell, b: Cell, c: Cell, score: Int }
+
+fn collect(b: mut Board, c: view Cell) {
+  match c {
+    Coin(v) => { b.score = b.score + v }
+    Wall => { b.score = b.score - 1 }
+    Empty => { }
+  }
+}
+
+fn main() {
+  var b = Board { a: Cell.Coin(10), b: Cell.Wall, c: Cell.Empty, score: 0 }
+  collect(b, b.a)
+  collect(b, b.b)
+  collect(b, b.c)
+  print(b.score)
+  b.c = Cell.Coin(32)
+  collect(b, b.c)
+  print(b.score)
+  match b.c {
+    Coin(v) => { print(v) }
+    _ => { print("no coin") }
+  }
+}

@@ -1,0 +1,5 @@
+(1 + 2 * 3) = 7  [5 nodes]
+(1 + 2) * -4 = -12  [6 nodes]
+10 / (2 + -2) fails: division by zero
+(0 + 1 * (7 + 0 * 99)) = 7  [9 nodes]
+(7 + 0) = 7  [3 nodes]

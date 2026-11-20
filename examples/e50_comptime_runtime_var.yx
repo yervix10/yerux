@@ -1,0 +1,6 @@
+fn main() {
+  var n = 5
+  n = n + 1
+  let k = comptime n * 2
+  print(k)
+}

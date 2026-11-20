@@ -1,0 +1,12 @@
+// The catch-all arm of a `match` only knows what the earlier arms ruled out at the ends of the range.
+fn f(n: Int) -> Int {
+  match n {
+    0..=9 => { return 1 }
+    20..=29 => { return 2 }
+    _ => {
+      let x: Int<10..29> = n
+      return x
+    }
+  }
+}
+fn main() { print(f(3)) }

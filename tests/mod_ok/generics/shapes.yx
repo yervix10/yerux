@@ -1,0 +1,41 @@
+import util.algo
+
+pub trait Area { fn area(view self) -> Int }
+
+pub struct Pair<A, B> { first: A, second: B }
+pub enum Maybe<T> { Some(T), None }
+
+pub struct Square { side: Int }
+
+impl Area for Square {
+  fn area(view self) -> Int { return self.side * self.side }
+}
+impl Show for Square {
+  fn show(view self) -> String {
+    var s = String.from("Square ")
+    s.push_int(self.side)
+    return s
+  }
+}
+impl Ordered for Square {
+  fn cmp(view self, other: view Square) -> Int { return algo.max(self.side, other.side) - other.side }
+}
+
+pub fn make(side: Int) -> Square { return Square { side: side } }
+
+pub fn first_or<T: Copy>(m: Maybe<T>, d: T) -> T {
+  match m {
+    Some(v) => { return v }
+    None => { return d }
+  }
+}
+
+pub fn total_area<T: Area>(items: view List<T>) -> Int {
+  var t = 0
+  var i = 0
+  while i < items.len() {
+    t = t + items.at(i).area()
+    i = i + 1
+  }
+  return t
+}

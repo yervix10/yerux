@@ -1,0 +1,5 @@
+// `defer` takes one call or assignment, not a declaration.
+fn main() {
+  defer let x = 1
+  print(2)
+}

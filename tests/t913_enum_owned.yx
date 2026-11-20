@@ -1,0 +1,88 @@
+// enums with owned payloads: match by view, mut and move
+enum Msg {
+  Text(String),
+  Numbers(List<Int>),
+  Pair(String, Int),
+  Quit,
+}
+
+fn size(m: view Msg) -> Int {
+  match m {
+    Text(s) => { return s.len() }
+    Numbers(l) => { return l.len() }
+    Pair(s, n) => { return s.len() + n }
+    Quit => { return 0 }
+  }
+}
+
+fn grow(m: mut Msg) {
+  match mut m {
+    Text(s) => { s.push_str("!") }
+    Numbers(l) => { l.push(l.len()) }
+    Pair(s, n) => { s.push_str("+") }
+    Quit => { }
+  }
+}
+
+fn into_text(m: Msg) -> String {
+  match move m {
+    Text(s) => { return s }
+    Numbers(_) => { return String.from("numbers") }
+    Pair(s, n) => {
+      var out = move s
+      out.push_int(n)
+      return out
+    }
+    Quit => { return String.from("quit") }
+  }
+}
+
+struct Inbox {
+  msgs: List<Msg>,
+  last: Option<String>,
+}
+
+fn total(i: view Inbox) -> Int {
+  var t = 0
+  for m in i.msgs { t = t + size(m) }
+  return t
+}
+
+fn main() {
+  var m = Msg.Text(String.from("hi"))
+  grow(m)
+  print(size(m))
+  let s = into_text(move m)
+  print(s)
+
+  var n = Msg.Numbers(List<Int>.new())
+  grow(n)
+  grow(n)
+  grow(n)
+  print(size(n))
+  print(into_text(move n))
+
+  var p = Msg.Pair(String.from("ab"), 5)
+  grow(p)
+  print(size(p))
+  print(into_text(move p))
+  print(into_text(Msg.Quit))
+
+  var inbox = Inbox { msgs: List<Msg>.new(), last: None }
+  inbox.msgs.push(Msg.Text(String.from("hello")))
+  inbox.msgs.push(Msg.Quit)
+  inbox.msgs.push(Msg.Pair(String.from("x"), 9))
+  var nums = List<Int>.new()
+  nums.push(1)
+  nums.push(2)
+  inbox.msgs.push(Msg.Numbers(move nums))
+  print(total(inbox))
+  for i in 0..inbox.msgs.len() { grow(inbox.msgs.at(i)) }
+  print(total(inbox))
+  inbox.last = Some(into_text(inbox.msgs.pop()))
+  match inbox.last {
+    Some(t) => { print(t) }
+    None => { print("none") }
+  }
+  print(inbox.msgs.len())
+}

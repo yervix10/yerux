@@ -1,0 +1,67 @@
+// defer with owned values: deferred calls borrow, return values are captured first, drops stay correct
+struct Log { lines: List<String>, count: Int }
+
+fn note(l: mut Log, s: Text) {
+  l.lines.push(String.from(s))
+  l.count = l.count + 1
+}
+
+fn dump(l: view Log) {
+  var i = 0
+  while i < l.lines.len() {
+    print(l.lines.at(i))
+    i = i + 1
+  }
+  print(l.count)
+}
+
+fn build(flag: Bool, log: mut Log) -> List {
+  var out = List.new()
+  defer note(log, "build done")
+  out.push(1)
+  if flag {
+    var extra = List.new()
+    defer note(log, "flag branch")
+    extra.push(2)
+    out.push(extra.len())
+    return out
+  }
+  defer note(log, "tail")
+  out.push(3)
+  return out
+}
+
+fn pick(s: String, keep: Bool) -> String {
+  var tmp = String.from("tmp")
+  defer tmp.push_str("!")
+  if keep {
+    return s
+  }
+  var other = String.from("other")
+  return other
+}
+
+fn counter(n: Int) -> Int {
+  var c = 0
+  defer c = c + 100
+  while c < n {
+    defer c = c + 1
+    c = c + 1
+  }
+  return c
+}
+
+fn main() {
+  var log = Log { lines: List<String>.new(), count: 0 }
+  defer dump(log)
+  let a = build(true, log)
+  print(a.len())
+  let b = build(false, log)
+  print(b.len())
+  print(b.get(b.len() - 1))
+  let p1 = pick(String.from("kept"), true)
+  print(p1)
+  let p2 = pick(String.from("x"), false)
+  print(p2)
+  print(counter(6))
+}

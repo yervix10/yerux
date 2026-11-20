@@ -1,0 +1,38 @@
+// return with several live Lists in nested scopes
+fn find(limit: Int, target: Int) -> Int {
+  var outer = List.new()
+  var i = 0
+  while i < limit {
+    var inner = List.new()
+    inner.push(i)
+    inner.push(i * 2)
+    outer.push(i)
+    if inner.get(1) == target {
+      var extra = List.new()
+      extra.push(1)
+      return outer.len() * 1000 + inner.get(0)
+    }
+    i = i + 1
+  }
+  return 0 - 1
+}
+
+fn pick(flag: Bool) -> List {
+  var a = List.new()
+  var b = List.new()
+  a.push(1)
+  b.push(2)
+  b.push(3)
+  if flag { return a }
+  return b
+}
+
+fn main() {
+  print(find(10, 8))
+  print(find(10, 7))
+  print(find(0, 1))
+  let x = pick(true)
+  let y = pick(false)
+  print(x.len())
+  print(y.len())
+}

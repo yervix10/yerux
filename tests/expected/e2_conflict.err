@@ -1,0 +1,8 @@
+error: 'x' appears twice in the same call and one use modifies or moves it
+ --> examples/e2_conflict.yx:5:12
+  |
+5 |   merge(x, x)
+  |            ^
+  = help: split the call in two steps, or pass a copy
+
+1 error(s). Nothing was generated.

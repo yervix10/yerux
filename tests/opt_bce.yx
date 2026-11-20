@@ -1,0 +1,63 @@
+// Bounds-check elimination by loop versioning: the loop bound is a constant, the list length is not.
+// The guard holds for the first calls (check-free copy), fails for the last one (checked copy must panic at the
+// exact iteration, after the prints before it).
+fn fill(n: Int) -> List<Int> {
+  var a = List<Int>.new()
+  var k = 0
+  while k < n {
+    a.push(k * 2 + 1)
+    k = k + 1
+  }
+  return a
+}
+
+fn sum(n: Int) -> Int {
+  var a = fill(n)
+  var s = 0
+  var i = 0
+  while i < 64 {
+    s = s + a.get(i)
+    i = i + 1
+  }
+  return s
+}
+
+fn grid(n: Int) -> Int {
+  var a = fill(n)
+  var b = fill(n + 3)
+  var t = 0
+  var i = 0
+  while i < 8 {
+    var j = 0
+    while j < 8 {
+      t = t + a.get(i * 8 + j) * b.get(j * 8 + i)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  return t
+}
+
+fn store(n: Int) -> Int {
+  var a = fill(n)
+  var i = 0
+  while i < 40 {
+    a.set(i, i * i)
+    if i % 10 == 9 {
+      print(a.get(i))
+    }
+    i = i + 1
+  }
+  return a.get(39)
+}
+
+fn main() {
+  print(sum(64))
+  print(sum(100))
+  print(grid(64))
+  print(grid(70))
+  print(store(40))
+  print(store(100))
+  print(store(25))
+  print("never")
+}

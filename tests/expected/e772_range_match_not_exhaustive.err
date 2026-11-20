@@ -1,0 +1,8 @@
+error: `match` is not exhaustive: missing 2
+ --> tests/e772_range_match_not_exhaustive.yx:2:3
+  |
+2 |   match x {
+  |   ^^^^^
+  = help: add the missing arms, or a catch-all arm `_ => { }`
+
+1 error(s). Nothing was generated.

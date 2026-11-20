@@ -1,0 +1,50 @@
+fn result_text(a: view String) -> Result<Int, String> {
+    if a.len() == 0 { return Err(String.from("empty")) }
+    return Ok(a.len())
+}
+
+fn option_text(a: view String) -> Option<String> {
+    return Some(String.from(a))
+}
+
+fn nested(a: view String) -> Result<Option<Int>, String> {
+    return Ok(Some(a.len()))
+}
+
+fn propagated() -> Result<Int, String> {
+    return Ok(result_text("abc")?)
+}
+
+fn never() -> Int {
+    todo()
+}
+
+fn main() {
+    match result_text("20") {
+        Ok(n) => { print(n) }
+        Err(e) => { print(e) }
+    }
+    match option_text("xy") {
+        Some(s) => { print(s) }
+        None => { print("none") }
+    }
+    match nested("hey") {
+        Ok(Some(n)) => { print(n) }
+        Ok(None) => { print(0) }
+        Err(e) => { print(e) }
+    }
+    print(String.from("hello").to_upper())
+    var i = 0
+    while i < 2 {
+        defer print("loop done")
+        match result_text("loop") {
+            Ok(n) => { print(n) }
+            Err(e) => { print(e) }
+        }
+        i = i + 1
+    }
+    match propagated() {
+        Ok(n) => { print(n) }
+        Err(e) => { print(e) }
+    }
+}

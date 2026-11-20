@@ -1,0 +1,9 @@
+fn each(l: view List, f: view fn(Int)) {
+  for x in l { f(x) }
+}
+
+fn main() {
+  var xs = List.new()
+  xs.push(1)
+  each(xs, |x| xs.push(x))
+}

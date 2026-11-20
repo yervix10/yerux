@@ -1,0 +1,15 @@
+fn take(s: String) {
+  print(s)
+}
+
+fn main() {
+  let a = String.from("hi")
+  let b = a
+  var names = List<String>.new()
+  var s = String.from("x")
+  names.push(s)
+  names.push(String.from("y"))
+  take(move s)
+  s.push_str("!")
+  a.push_str("?")
+}

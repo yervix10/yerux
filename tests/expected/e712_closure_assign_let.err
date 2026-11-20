@@ -1,0 +1,9 @@
+error: this closure assigns 'total', but 'total' cannot be modified
+ --> tests/e712_closure_assign_let.yx:8:12
+  |
+8 |   each(xs, |x| total = total + x)
+  |            ^^^^^^^^^^^^^^^^^^^^^
+  = it was declared with `let` (immutable)
+  = help: declare it with `var` (or receive it as `mut`)
+
+1 error(s). Nothing was generated.

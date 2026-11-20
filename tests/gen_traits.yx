@@ -1,0 +1,123 @@
+struct Stack<T> { items: List<T> }
+struct Point { x: Int, y: Int }
+impl Show for Point {
+    fn show(view self) -> String {
+        var s = String.from("(")
+        s.push_int(self.x)
+        s.push_str(", ")
+        s.push_int(self.y)
+        s.push_str(")")
+        return s
+    }
+}
+impl Equal for Point {
+    fn eq(view self, other: view Point) -> Bool { return self.x == other.x && self.y == other.y }
+}
+enum Either<A, B> { Left(A), Right(B), Both(A, B) }
+enum Maybe<T> { Some(T), None }
+
+fn push<T>(s: mut Stack<T>, x: T) { s.items.push(move x) }
+fn pop<T>(s: mut Stack<T>) -> T { return s.items.pop() }
+fn size<T>(s: view Stack<T>) -> Int { return s.items.len() }
+
+fn show_all<T: Show>(l: view List<T>) {
+    var i = 0
+    while i < l.len() {
+        let s = l.at(i).show()
+        print(s)
+        i = i + 1
+    }
+}
+fn count_eq<T: Equal>(l: view List<T>, x: view T) -> Int {
+    var n = 0
+    var i = 0
+    while i < l.len() {
+        if l.at(i) == x { n = n + 1 }
+        i = i + 1
+    }
+    return n
+}
+fn fact<T: Copy>(n: Int, x: T) -> Int {
+    if n <= 1 { return 1 }
+    return n * fact(n - 1, x)
+}
+fn show_twice<T: Show>(x: view T) {
+    show_once(x)
+    show_once(x)
+}
+fn show_once<T: Show>(x: view T) {
+    let s = x.show()
+    print(s)
+}
+struct Token { name: String }
+impl Token {
+    fn consume(self) -> Int { return self.name.len() }
+    fn name_len(view self) -> Int { return self.name.len() }
+}
+fn flip<A: Copy, B: Copy>(e: Either<A, B>) -> Either<B, A> {
+    match e {
+        Left(a) => { return Either.Right(a) }
+        Right(b) => { return Either.Left(b) }
+        Both(a, b) => { return Either.Both(b, a) }
+    }
+}
+fn main() {
+    var s = Stack<String> { items: List<String>.new() }
+    push(s, String.from("one"))
+    push(s, String.from("two"))
+    print(size(s))
+    let t = pop(s)
+    print(t)
+    var si = Stack { items: List<Int>.new() }
+    push(si, 10)
+    push(si, 20)
+    print(pop(si) + pop(si))
+    var pts = List<Point>.new()
+    pts.push(Point { x: 1, y: 2 })
+    pts.push(Point { x: 3, y: 4 })
+    pts.push(Point { x: 1, y: 2 })
+    show_all(pts)
+    let probe = Point { x: 1, y: 2 }
+    print(count_eq(pts, probe))
+    var names = List<Text>.new()
+    names.push("a")
+    names.push("b")
+    names.push("a")
+    print(count_eq(names, "a"))
+    print(fact(5, true))
+    show_twice(7)
+    show_twice(true)
+    show_twice("hey")
+    let k = Token { name: String.from("abcd") }
+    print(k.name_len())
+    print(k.consume())
+    let e = flip(Either<Int, Bool>.Both(4, true))
+    match e {
+        Left(b) => { print("left") }
+        Right(a) => { print("right") }
+        Both(b, a) => { print(b)  print(a) }
+    }
+    let mp = Maybe.Some(Point { x: 8, y: 9 })
+    match mp {
+        Some(p) => { let q = p.show()  print(q) }
+        None => { print("none") }
+    }
+    let mm = Maybe.Some(Maybe.Some(3))
+    match mm {
+        Some(inner) => {
+            match inner {
+                Some(v) => { print(v) }
+                None => { print("inner none") }
+            }
+        }
+        None => { print("outer none") }
+    }
+    print(7 == 7)
+    let xx = "a"
+    print(xx == xx)
+    print(xx != xx)
+    let x = "abc"
+    let y = "abd"
+    print(x < y)
+    print(x >= y)
+}

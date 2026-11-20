@@ -1,0 +1,18 @@
+true
+true
+Some(1) None
+1
+-1
+found at 2
+hello
+None
+positive
+zero
+negative
+nothing
+4
+-1
+Ok(3)
+Err(div by zero)
+-96
+[Some(1), None, Some(3)]

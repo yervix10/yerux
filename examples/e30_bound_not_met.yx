@@ -1,0 +1,14 @@
+// A call whose type argument does not satisfy the bound of the generic function.
+struct Point { x: Int, y: Int }
+
+fn max<T: Ordered + Copy>(a: T, b: T) -> T {
+    if a < b { return b }
+    return a
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let q = Point { x: 3, y: 4 }
+    let m = max(p, q)
+    print(m.x)
+}

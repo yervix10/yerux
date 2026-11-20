@@ -1,0 +1,89 @@
+// String interpolation and Show for the library types. `"a {x} b"` is rewritten by the lexer into
+// std__fmt_lit(std__fmt_val(std__fmt_lit(String.new(), "a "), x), " b").
+
+fn std__fmt_lit(s: String, t: Text) -> String {
+    s.push_str(t)
+    return s
+}
+
+fn std__fmt_val<T: Show>(s: String, x: view T) -> String {
+    let t = x.show()
+    s.push_str(t)
+    return s
+}
+
+fn std__print_owned(s: String) {
+    print(s)
+}
+
+// `panic("..{x}..")` with a temporary String message
+fn std__panic_owned(s: String) {
+    panic(s)
+}
+
+fn todo() {
+    panic("not yet implemented")
+}
+
+fn unreachable() {
+    panic("internal error: entered unreachable code")
+}
+
+impl<T: Show> Show for List<T> {
+    fn show(view self) -> String {
+        var s = String.from("[")
+        var i = 0
+        while i < self.len() {
+            if i > 0 {
+                s.push_str(", ")
+            }
+            let t = self.at(i).show()
+            s.push_str(t)
+            i = i + 1
+        }
+        s.push_str("]")
+        return s
+    }
+}
+
+impl<T: Equal> Equal for List<T> {
+    fn eq(view self, other: view List<T>) -> Bool {
+        if self.len() != other.len() {
+            return false
+        }
+        var i = 0
+        while i < self.len() {
+            if self.at(i).eq(other.at(i)) == false {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+}
+
+impl<T: Ordered> Ordered for List<T> {
+    fn cmp(view self, other: view List<T>) -> Int {
+        var i = 0
+        while i < self.len() && i < other.len() {
+            let c = self.at(i).cmp(other.at(i))
+            if c != 0 {
+                return c
+            }
+            i = i + 1
+        }
+        if self.len() < other.len() {
+            return -1
+        }
+        if self.len() > other.len() {
+            return 1
+        }
+        return 0
+    }
+}
+
+fn std__fmt_own<T: Show>(s: String, x: T) -> String {
+    let t = x.show()
+    s.push_str(t)
+    return s
+}

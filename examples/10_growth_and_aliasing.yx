@@ -1,0 +1,48 @@
+// Stress: many reallocations, and borrowed elements while the list grows inside an argument
+fn grow(l: mut List<String>) -> Text {
+  var i = 0
+  while i < 50 {
+    l.push(String.from("filler"))   // forces the list to reallocate
+    i = i + 1
+  }
+  return "-tail"
+}
+
+fn main() {
+  var big = String.new()
+  var i = 0
+  while i < 20000 {
+    big.push_str("ab")
+    big.push_int(i % 10)
+    i = i + 1
+  }
+  print(big.len())
+
+  var names = List<String>.new()
+  names.push(String.from("head"))
+  // the argument is evaluated before the element is borrowed, so no dangling pointer
+  names.at(0).push_str(grow(names))
+  print(names.at(0))
+  print(names.len())
+
+  var nums = List<Int>.new()
+  i = 0
+  while i < 100000 {
+    nums.push(i)
+    i = i + 1
+  }
+  print(nums.get(99999))
+
+  var lists = List<List<String>>.new()
+  i = 0
+  while i < 200 {
+    var inner = List<String>.new()
+    inner.push(String.from("x"))
+    inner.at(0).push_int(i)
+    lists.push(move inner)
+    i = i + 1
+  }
+  print(lists.at(199).at(0))
+  lists.set(0, List<String>.new())
+  print(lists.at(0).len())
+}

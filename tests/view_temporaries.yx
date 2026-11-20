@@ -1,0 +1,71 @@
+// Owned temporaries (call results, struct literals, interpolated Strings, lists) lent to `view` parameters.
+struct Pt { x: Int, y: Int }
+struct Named { name: String, vals: List<Int> }
+
+fn mk(tag: Int) -> String {
+  print("mk {tag}")
+  return String.from("temp")
+}
+
+fn mk_pt(x: Int) -> Pt { return Pt { x: x, y: x * 2 } }
+
+fn mk_named() -> Named {
+  var v = List<Int>.new()
+  v.push(4)
+  v.push(5)
+  return Named { name: "n", vals: move v }
+}
+
+fn nums() -> List<Int> {
+  var v = List<Int>.new()
+  v.push(1)
+  v.push(2)
+  v.push(3)
+  return v
+}
+
+fn show(s: view String) { print(s) }
+fn width(s: view String) -> Int { return s.len() }
+fn sum(l: view List<Int>) -> Int {
+  var t = 0
+  for x in l { t = t + x }
+  return t
+}
+fn pt_sum(p: view Pt) -> Int { return p.x + p.y }
+fn named_total(n: view Named) -> Int { return n.name.len() + sum(n.vals) }
+
+fn tag(n: Int) -> Int {
+  print("tag {n}")
+  return n
+}
+
+fn mix(a: Int, s: view String, b: Int, l: view List<Int>) -> Int {
+  return a + s.len() + b + l.len()
+}
+
+fn main() {
+  show(mk(1))
+  print(width(mk(2)))
+  show(String.from("lit"))
+  show("a{1}b")
+  print(sum(nums()))
+  print(pt_sum(mk_pt(3)))
+  print(pt_sum(Pt { x: 10, y: 20 }))
+  print(named_total(mk_named()))
+  // inside conditions and loops: the temporary is made on every evaluation
+  var i = 0
+  while width(mk(10 + i)) == 4 && i < 2 {
+    i = i + 1
+  }
+  print(i)
+  if false && width(mk(99)) > 0 {
+    print("unreachable")
+  }
+  // evaluation order: the earlier arguments run first
+  print(mix(tag(1), mk(3), tag(2), nums()))
+  // nested temporaries
+  print(named_total(Named { name: mk(4), vals: nums() }))
+  // a method on a library type with a temporary argument
+  let s = String.from("hello world")
+  print(s.starts_with(String.from("hello")))
+}

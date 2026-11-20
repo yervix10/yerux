@@ -1,0 +1,17 @@
+error: lib.Point does not implement Ordered, which 'lib.biggest' needs for T
+ --> tests/mod_err/generic_bound/main.yx:6:11
+  |
+6 |   let m = lib.biggest(p, q)
+  |           ^^^^^^^^^^^^^^^^^
+  = 'lib.biggest' is declared `fn lib.biggest<T: Ordered + Copy>`
+  = help: add `impl Ordered for lib.Point { fn cmp(view self, other: view lib.Point) -> Int { .. } }`
+
+error: 'a' is a T and is not copied
+ --> tests/mod_err/generic_bound/lib.yx:8:11
+  |
+8 |   let b = a
+  |           ^
+  = T could be any type, including an owned one (String, List), so it is moved, not copied
+  = help: use `move a` to hand it over, or pass it to a function that takes it as `view`/`mut`; or declare the parameter `T: Copy` to allow copies
+
+2 error(s). Nothing was generated.

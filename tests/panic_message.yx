@@ -1,0 +1,9 @@
+fn message() -> String {
+    return String.from("stopped")
+}
+
+fn main() {
+    defer print("unexpected cleanup")
+    let s = message()
+    panic("operation {s}")
+}

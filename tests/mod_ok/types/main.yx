@@ -1,0 +1,22 @@
+import store
+import store.kinds as k
+
+fn main() {
+  var s = store.new_store("shop")
+  store.add_item(s, "apple", 3)
+  store.add_item(s, "pear", 5)
+  store.report(s)
+  print(store.total(s))
+  let kind = k.Kind.Fruit
+  print(k.weight(kind))
+  let n = store.take_names(move s)
+  print(n.len())
+  print(n.at(0))
+}
+
+test "total sums the prices" {
+  var s = store.new_store("t")
+  store.add_item(s, "a", 1)
+  store.add_item(s, "b", 2)
+  assert_eq(store.total(s), 3)
+}

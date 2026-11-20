@@ -1,0 +1,61 @@
+struct Node { val: Int, name: String, next: Option<Box<Node>> }
+struct Reg { items: List<Node>, tags: List<List<String>> }
+fn push_front(head: Option<Box<Node>>, v: Int) -> Option<Box<Node>> {
+  var nm = String.from("n")
+  nm.push_int(v)
+  return Some(Box.new(Node { val: v, name: move nm, next: move head }))
+}
+fn total(h: view Option<Box<Node>>) -> Int {
+  match h {
+    Some(b) => { return b.get().val + b.get().name.len() + total(b.get().next) }
+    None => { return 0 }
+  }
+}
+fn bump(h: mut Option<Box<Node>>) {
+  match mut h {
+    Some(b) => { b.get().val = b.get().val + 1
+                 b.get().name.push_str("+")
+                 bump(b.get().next) }
+    None => { }
+  }
+}
+fn find_big(items: List<Node>, lim: Int) -> Int {
+  for n in move items {
+    if n.val > lim { return n.val * 100 }
+    defer print("iter done")
+  }
+  return -1
+}
+fn main() {
+  var h = Option<Box<Node>>.None
+  for i in 0..5 { h = push_front(move h, i) }
+  print(total(h))
+  bump(h)
+  print(total(h))
+  print(total(h))
+  var reg = Reg { items: List<Node>.new(), tags: List<List<String>>.new() }
+  for i in 0..4 {
+    reg.items.push(Node { val: i * 3, name: String.from("it"), next: None })
+    var t = List<String>.new()
+    for j in 0..i { t.push(String.from("tag")) }
+    reg.tags.push(move t)
+  }
+  reg.tags.at(2).at(1).push_str("!!")
+  reg.items.at(1).name.push_str("zz")
+  print(reg.tags.at(2).at(1))
+  print(reg.items.at(1).name)
+  var s = String.from("one")
+  let s = String.from("shadow")
+  var acc = String.new()
+  for i in 0..3 {
+    acc = String.from("round")
+    acc.push_int(i)
+  }
+  print(acc)
+  var items2 = List<Node>.new()
+  items2.push(Node { val: 2, name: String.from("a"), next: None })
+  items2.push(Node { val: 9, name: String.from("b"), next: None })
+  items2.push(Node { val: 11, name: String.from("c"), next: None })
+  print(find_big(move items2, 4))
+  print(reg.tags.len())
+}

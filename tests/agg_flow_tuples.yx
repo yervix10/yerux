@@ -1,0 +1,49 @@
+fn divmod(a: Int, b: Int) -> (Int, Int) {
+  return (a / b, a % b)
+}
+
+fn named(n: Int) -> (Int, String) {
+  var s = String.new()
+  s.push_int(n)
+  return (n, move s)
+}
+
+fn swap(p: (Int, Text)) -> (Text, Int) {
+  return (p.1, p.0)
+}
+
+fn main() {
+  let (q, r) = divmod(17, 5)
+  print(q)
+  print(r)
+  let t = divmod(9, 4)
+  print(t.0 + t.1)
+  print(divmod(100, 7).0)
+  let (n, s) = named(42)
+  print(n)
+  print(s)
+  var (a, b) = (1, 2)
+  (a, b) = (b, a + b)
+  print(a)
+  print(b)
+  let sw = swap((7, "seven"))
+  print(sw.0)
+  print(sw.1)
+  var l = List < (Int, String) >.new()
+  l.push(named(1))
+  l.push(named(22))
+  for p in l { print(p.1) }
+  for p in move l {
+    let (x, y) = move p
+    print(x)
+    print(y)
+  }
+  let ((c, d), e) = ((1, 2), 3)
+  print(c + d + e)
+  let (_, z) = named(5)
+  print(z)
+  var big = (1, 'x', true, "t")
+  print(big.1)
+  big.0 = 50
+  print(big.0)
+}

@@ -1,0 +1,65 @@
+fn number(i: Int) -> Option<Int> {
+    print(i)
+    if i < 0 { return None }
+    return Some(i)
+}
+
+fn flag() -> Option<Bool> {
+    print("flag")
+    return None
+}
+
+struct Pair { a: String, b: Int }
+
+fn combine(a: String, b: Int) -> Pair {
+    return Pair { a: move a, b: b }
+}
+
+fn label() -> String {
+    print("label")
+    return String.from("owned temporary")
+}
+
+fn fallible() -> Option<Pair> {
+    defer print("cleanup")
+    let skipped = false && flag()?
+    while skipped || number(0)? > 0 { print("unexpected loop") }
+    let order = number(3)? + number(4)?
+    print(order)
+    return Some(combine(label(), number(-1)?))
+}
+
+fn assign() -> Option<Int> {
+    var pairs = List<Pair>.new()
+    pairs.push(Pair { a: String.from("original"), b: 1 })
+    pairs.at(number(-2)?).a = label()
+    return Some(1)
+}
+
+fn increment(n: mut Int) -> Option<Int> {
+    n = n + 1
+    return Some(n)
+}
+
+fn count() -> Option<Int> {
+    var n = 0
+    while increment(n)? < 3 { print(n) }
+    return Some(n)
+}
+
+fn main() {
+    match count() {
+        Some(n) => { print(n) }
+        None => { print("unexpected none") }
+    }
+    print(count().is_some())
+    let r = fallible()
+    print(r.is_none())
+    let a = assign()
+    print(a.is_none())
+    let s = Some(String.from("hello"))
+    match move s {
+        Some(text) => { print(text) }
+        None => { print("unexpected none") }
+    }
+}

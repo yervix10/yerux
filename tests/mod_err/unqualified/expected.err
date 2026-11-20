@@ -1,0 +1,15 @@
+error: 'Point' is not defined in this file
+ --> tests/mod_err/unqualified/main.yx:4:11
+  |
+4 |   let p = Point { x: 1, y: 2 }
+  |           ^^^^^
+  = help: it comes from module 'lib': write `lib.Point`
+
+error: 'add' is not defined in this file
+ --> tests/mod_err/unqualified/main.yx:5:9
+  |
+5 |   print(add(p.x, p.y))
+  |         ^^^
+  = help: it comes from module 'lib': write `lib.add`
+
+2 error(s). Nothing was generated.

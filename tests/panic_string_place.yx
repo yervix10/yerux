@@ -1,0 +1,10 @@
+fn index() -> Int {
+    print("index")
+    return 0
+}
+
+fn main() {
+    var messages = List<String>.new()
+    messages.push(String.from("from a list"))
+    panic(messages.at(index()))
+}

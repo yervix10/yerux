@@ -1,0 +1,211 @@
+struct ThreadPanic {}
+struct ThreadDone {}
+
+struct JoinHandle<T> {
+    thread_word: Int,
+}
+
+fn __spawn_owned<T>(f: fn() -> T) -> JoinHandle<T> {
+    let thread_word = __thread_start_recover(move || __thread_pack(Box<T>.new(f())))
+    return JoinHandle<T> { thread_word: thread_word }
+}
+
+impl<T> JoinHandle<T> {
+    fn join(self) -> Result<T, ThreadPanic> {
+        let thread = self.thread_word
+        self.thread_word = 0
+        let word = __thread_wait(thread)
+        if word == 0 {
+            return Err(ThreadPanic {})
+        }
+        let result = Box<T>.from_runtime_word(word)
+        return Ok(result.take())
+    }
+}
+
+impl Show for ThreadPanic {
+    fn show(view self) -> String {
+        return String.from("worker panicked")
+    }
+}
+
+struct Atomic<T> {
+    word: Box<Int>,
+}
+
+impl Atomic<Int> {
+    fn new(value: Int) -> Atomic<Int> {
+        return Atomic<Int> { word: Box.new(value) }
+    }
+
+    fn load(view self) -> Int {
+        return __atomic_load(__box_address(self.word))
+    }
+
+    fn store(view self, value: Int) {
+        __atomic_store(__box_address(self.word), value)
+    }
+
+    fn compare_swap(view self, expected: Int, value: Int) -> Bool {
+        return __atomic_cmpxchg(__box_address(self.word), expected, value) == expected
+    }
+
+    fn swap(view self, value: Int) -> Int {
+        while true {
+            let old = self.load()
+            if self.compare_swap(old, value) { return old }
+        }
+        return 0
+    }
+
+    fn add(view self, value: Int) -> Int {
+        while true {
+            let old = self.load()
+            if self.compare_swap(old, old + value) { return old }
+        }
+        return 0
+    }
+
+    fn add_wrapping(view self, value: Int) -> Int {
+        return __atomic_fetch_add(__box_address(self.word), value)
+    }
+}
+
+fn __atomic_bool_word(value: Bool) -> Int {
+    if value { return 1 }
+    return 0
+}
+
+impl Atomic<Bool> {
+    fn new(value: Bool) -> Atomic<Bool> {
+        return Atomic<Bool> { word: Box.new(__atomic_bool_word(value)) }
+    }
+
+    fn load(view self) -> Bool {
+        return __atomic_load(__box_address(self.word)) != 0
+    }
+
+    fn store(view self, value: Bool) {
+        __atomic_store(__box_address(self.word), __atomic_bool_word(value))
+    }
+
+    fn compare_swap(view self, expected: Bool, value: Bool) -> Bool {
+        let word = __atomic_bool_word(expected)
+        return __atomic_cmpxchg(__box_address(self.word), word, __atomic_bool_word(value)) == word
+    }
+
+    fn swap(view self, value: Bool) -> Bool {
+        while true {
+            let old = self.load()
+            if self.compare_swap(old, value) { return old }
+        }
+        return false
+    }
+}
+
+struct SharedCell<T> {
+    count: Int,
+    value: T,
+}
+
+struct Shared<T> {
+    cell: Box<SharedCell<T>>,
+}
+
+impl<T> Shared<T> {
+    fn new(value: T) -> Shared<T> {
+        __check_shared_content(value)
+        return Shared<T> { cell: Box.new(SharedCell<T> { count: 1, value: move value }) }
+    }
+
+    fn clone(view self) -> Shared<T> {
+        let address = __box_address(self.cell)
+        __atomic_fetch_add(address, 1)
+        return Shared<T> { cell: Box<SharedCell<T>>.from_runtime_word(address) }
+    }
+}
+
+struct Locked<T> {
+    mutex: Box<Int>,
+    value: Box<T>,
+}
+
+impl<T> Locked<T> {
+    fn new(value: T) -> Locked<T> {
+        __check_shared_content(value)
+        return Locked<T> { mutex: Box.new(0), value: Box.new(move value) }
+    }
+
+    fn take(self) -> T {
+        if __atomic_load(__box_address(self.mutex)) == 3 { panic("lock was poisoned by a worker panic") }
+        let value = __locked_unbox(move self)
+        return value.take()
+    }
+}
+
+struct LockGuard {
+    address: Int,
+}
+
+fn __lock_word(address: Int) -> LockGuard {
+    if __atomic_cmpxchg(address, 0, 1) != 0 {
+        while true {
+            let state = __atomic_load(address)
+            if state == 0 {
+                if __atomic_cmpxchg(address, 0, 2) == 0 { break }
+            } else {
+                if state == 3 { panic("lock was poisoned by a worker panic") }
+                if state == 1 { __atomic_cmpxchg(address, 1, 2) }
+                __futex_park(address, 2)
+            }
+        }
+    }
+    return LockGuard { address: address }
+}
+
+fn __locked_with<T, R>(lock: view Locked<T>, body: view fn(mut T) -> R) -> R {
+    let address = __box_address(lock.mutex)
+    let held = __lock_word(address)
+    return body(lock.locked_value())
+}
+
+fn __locked_with_view<T, R>(lock: view Locked<T>, body: view fn(view T) -> R) -> R {
+    let address = __box_address(lock.mutex)
+    let held = __lock_word(address)
+    return body(lock.locked_value())
+}
+
+fn __parallel_lane(first: Int, end: Int, inclusive: Bool, body: Int) {
+    var index = first
+    while index < end || (inclusive && index == end) {
+        __parallel_call(body, index)
+        if index > 9223372036854775803 { return }
+        index = index + 4
+    }
+}
+
+fn __parallel_range(first: Int, end: Int, inclusive: Bool, body: view fn(Int)) {
+    let address = __parallel_address(body)
+    var tasks = List<Int>.new()
+    for lane in 0..4 {
+        if first > 9223372036854775807 - lane { break }
+        let index = first + lane
+        if index > end || (index == end && !inclusive) { break }
+        tasks.push(__thread_start(move || {
+            __parallel_lane(index, end, inclusive, address)
+            return 0
+        }))
+    }
+    for task in tasks { __thread_wait(task) }
+}
+
+fn __parallel_list<T>(items: view List<T>, body: view fn(view T)) {
+    __parallel_range(0, items.len(), false, |index| body(items.at(index)))
+}
+
+
+// Own the replacement before a failing index can transfer control back to join.
+fn __worker_list_set<T>(items: mut List<T>, index: Int, value: T) {
+    if index < 0 || index >= items.len() { panic("index out of range") }
+    items.set(index, move value)
+}

@@ -1,0 +1,49 @@
+// IR structure of the flow facts (checked with --no-opt: the facts come from the checker, not from rangeopt).
+fn var_square(n: Int) -> Int {
+  var x = n
+  if x > -100 {
+    if x < 100 {
+      return x * x               // x in -99..99: unchecked
+    }
+  }
+  return 0
+}
+
+fn var_square_captured(n: Int) -> Int {
+  var x = n
+  let peek = || x
+  if x > -100 && x < 100 {
+    return x * x                 // x is used by a closure: no fact, checked
+  }
+  return peek()
+}
+
+fn var_assigned(n: Int) -> Int {
+  var x = n
+  if x > 0 && x < 100 {
+    x = 7
+    return x * x * x             // x is exactly 7 after the assignment: unchecked
+  }
+  return 0
+}
+
+fn match_square(n: Int) -> Int {
+  match n {
+    -9..=9 => { return n * n }   // the arm proves -9..9 (a `&&` test in the IR, so the checks stay; the checker accepts it)
+    _ => { return 0 }
+  }
+}
+
+fn as_free(b: Int<0..9>) -> Int {
+  let d = b as Int<0..255> else { return -1 }
+  return d + 1                   // provably fits: no test at all
+}
+
+fn as_tested(n: Int) -> Int {
+  let d = n as Int<0..255> else { return -1 }
+  return d + 1                   // one test (two comparisons); the add is unchecked
+}
+
+fn main() {
+  print(var_square(5) + var_square_captured(5) + var_assigned(5) + match_square(3) + as_free(4) + as_tested(9))
+}

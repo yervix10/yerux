@@ -1,0 +1,7 @@
+fn main() {
+  let r = Int<0..9>.try_from(2.5)
+  match r {
+    Ok(v) => { print(v) }
+    Err(_) => { print(-1) }
+  }
+}

@@ -1,0 +1,50 @@
+// Dynamic String: owned, growable, freed automatically
+struct Person {
+  name: String,
+  tag: Text,
+}
+
+fn greeting(name: view String) -> String {
+  var s = String.from("Hello, ")
+  s.push_str(name)          // a String argument is only borrowed: no `move`
+  s.push_str("!")
+  return s
+}
+
+fn shout(s: mut String) {
+  s.push_str("!!")
+}
+
+fn describe(p: view Person) {
+  print(p.name)
+  print(p.name.len())
+}
+
+fn consume(s: String) -> Int {
+  return s.len()            // s is freed here
+}
+
+fn main() {
+  var name = String.from("Yerux")
+  let g = greeting(name)
+  print(g)
+  shout(name)
+  print(name)
+  var n = String.new()
+  n.push_str("n = ")
+  n.push_int(-42)
+  print(n)
+  print(n.eq("n = -42"))
+  print(n.eq(g))
+  let both = String.concat(g, name)
+  print(both)
+  print(both.byte(0))       // 'H' = 72
+
+  var p = Person { name: String.from("Ada"), tag: "admin" }
+  p.name.push_str(" Lovelace")
+  describe(p)
+  p.name = String.from("Grace")   // old String freed, new one takes its place
+  describe(p)
+
+  print(consume(move name))
+}

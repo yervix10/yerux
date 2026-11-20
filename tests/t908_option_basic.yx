@@ -1,0 +1,84 @@
+fn find(l: view List<Int>, x: Int) -> Option<Int> {
+  for i in 0..l.len() {
+    if l.at(i) == x { return Some(i) }
+  }
+  return None
+}
+
+fn first_word(s: view String) -> Option<String> {
+  let parts = s.split(" ")
+  if parts.len() == 0 { return None }
+  if parts.at(0).is_empty() { return None }
+  return Some(String.from(parts.at(0)))
+}
+
+fn safe_div(a: Int, b: Int) -> Option<Int> {
+  if b == 0 { return None }
+  return Some(a / b)
+}
+
+fn describe(o: view Option<Int>) -> Text {
+  match o {
+    Some(n) if n < 0 => { return "negative" }
+    Some(0) => { return "zero" }
+    Some(_) => { return "positive" }
+    None => { return "nothing" }
+  }
+}
+
+fn main() {
+  var l = List<Int>.new()
+  l.push(10)
+  l.push(20)
+  l.push(30)
+  let a = find(l, 20)
+  let b = find(l, 99)
+  print(a.is_some())
+  print(b.is_none())
+  print("{a} {b}")
+  print(a.unwrap_or(-1))
+  print(b.unwrap_or(-1))
+
+  match find(l, 30) {
+    Some(i) => { print("found at {i}") }
+    None => { print("missing") }
+  }
+
+  let w = first_word("hello world")
+  match w {
+    Some(s) => { print(s) }
+    None => { print("no word") }
+  }
+  let empty = String.new()
+  let none = first_word(empty)
+  print("{none}")
+
+  print(describe(safe_div(7, 2)))
+  print(describe(safe_div(0, 5)))
+  print(describe(safe_div(-9, 2)))
+  print(describe(safe_div(1, 0)))
+
+  let c = safe_div(8, 2).or(Some(0))
+  print(c.unwrap())
+  let d = safe_div(8, 0).or(Some(-1))
+  print(d.expect("has a value"))
+
+  let r = ok_or(safe_div(9, 3), "div by zero")
+  print("{r}")
+  let r2 = ok_or(safe_div(9, 0), "div by zero")
+  print("{r2}")
+
+  var opts = List<Option<Int>>.new()
+  opts.push(Some(1))
+  opts.push(None)
+  opts.push(Some(3))
+  var total = 0
+  for o in opts {
+    match o {
+      Some(v) => { total = total + v }
+      None => { total = total - 100 }
+    }
+  }
+  print(total)
+  print("{opts}")
+}

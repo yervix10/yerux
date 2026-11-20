@@ -1,0 +1,8 @@
+error: expected Int but this is Bool
+ --> tests/e711_closure_wrong_result.yx:6:19
+  |
+6 |   print(apply(|x| x > 1, 5))
+  |                   ^^^^^
+  = this closure returns Bool, but the function type it is given to says it returns Int
+
+1 error(s). Nothing was generated.

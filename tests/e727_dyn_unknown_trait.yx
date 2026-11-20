@@ -1,0 +1,2 @@
+fn invoke(handler: view dyn Handler) {}
+fn main() {}

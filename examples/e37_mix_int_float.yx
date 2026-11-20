@@ -1,0 +1,7 @@
+// Int and Float never mix implicitly: convert with to_float() / to_int().
+fn main() {
+  let count = 3
+  let price = 2.5
+  let total = count * price
+  print(total)
+}

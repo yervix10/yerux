@@ -1,0 +1,66 @@
+// String API: search, slice, split/join, trim, case, replace, parse_int, +, escapes, interpolation
+fn show_all(items: view List<String>) {
+  var i = 0
+  while i < items.len() {
+    print("<{items.at(i)}>")
+    i = i + 1
+  }
+}
+
+fn main() {
+  let s = String.from("  Grüße, Welt! Ünï ΩΣ щ  ")
+  let t = s.trim()
+  print("[{t}] {t.len()} {t.char_count()}")
+  print(t.to_upper())
+  print(t.to_lower())
+  let sw = t.starts_with("Gr")
+  let ew = t.ends_with("щ")
+  let f1 = t.find("Welt")
+  let f2 = t.find("zzz")
+  let ct = t.contains("!")
+  print("{sw} {ew} {f1} {f2} {ct}")
+  let words = t.split(" ")
+  show_all(words)
+  let csv = String.from(",a,,b,")
+  let cells = csv.split(",")
+  let joined = cells.join("/")
+  print("{cells.len()} {joined}")
+  let e = String.from("")
+  let et = e.trim()
+  let es = e.split(",")
+  print("{e.is_empty()} {et.len()} {es.len()}")
+  print(t.slice(0, 2))
+  print(t.slice(2, 2))
+  let rep = String.from("aaa")
+  print(rep.replace("a", "bb"))
+  print(rep.replace("aa", "x"))
+  print(rep.replace("", "x"))
+  let none = rep.repeat(0)
+  print(none.len())
+  var n = 5
+  var all = List<String>.new()
+  all.push(String.from("0"))
+  all.push(String.from("-0"))
+  all.push(String.from("+7"))
+  all.push(String.from("9223372036854775807"))
+  all.push(String.from("-9223372036854775808"))
+  all.push(String.from("9223372036854775808"))
+  all.push(String.from("-9223372036854775809"))
+  all.push(String.from(""))
+  all.push(String.from("-"))
+  all.push(String.from("1 2"))
+  all.push(String.from("０"))
+  var i = 0
+  while i < all.len() {
+    let ok = all.at(i).parse_int(n)
+    print("{ok} {n}")
+    i = i + 1
+  }
+  let a = String.from("abc")
+  let b = String.from("abd")
+  let c = a + b
+  print("{c} {a < b} {b < a} {a <= a} {a != b} {c.cmp(a)}")
+  print("tab:\t|quote:\"|backslash:\\|braces:{{}}")
+  let word = "hi"
+  print("{word} {1 + 2} {true} {a}{b}")
+}

@@ -1,0 +1,15 @@
+error: integer overflow while evaluating a constant [E-K6]
+ --> examples/e52_comptime_overflow.yx:3:10
+  |
+3 |   return n * fact(n - 1)
+  |          ^^^^^^^^^^^^^^^
+  = why: this code was being evaluated by the compiler (comptime), where a panic is a compile error
+  = called from `fact` (line 3)
+  = called from `fact` (line 3)
+  = called from `fact` (line 3)
+  = called from `fact` (line 3)
+  = called from `fact` (line 3)
+  = called from `fact` (line 3)
+  = ... and 4 more calls
+
+1 error(s). Nothing was generated.

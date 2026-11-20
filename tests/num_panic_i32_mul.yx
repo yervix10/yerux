@@ -1,0 +1,5 @@
+fn mk(x: Int32) -> Int32 { return x }
+fn main() {
+    print(mk(46340) * mk(46340))
+    print(mk(46341) * mk(46341))
+}

@@ -1,0 +1,42 @@
+// Evaluation order is left to right: arguments, binary operands, nested calls.
+fn t(tag: Int, v: Int) -> Int {
+  print(tag)
+  return v
+}
+
+fn three(a: Int, b: Int, c: Int) -> Int { return a * 100 + b * 10 + c }
+
+fn two(a: Int, b: Int) -> Int { return a - b }
+
+fn id(x: Int) -> Int { return x }
+
+fn tb(tag: Int, v: Bool) -> Bool {
+  print(tag)
+  return v
+}
+
+fn main() {
+  // arguments
+  print(three(t(1, 1), t(2, 2), t(3, 3)))
+  // nested calls in arguments
+  print(two(two(t(1, 9), t(2, 4)), two(t(3, 8), t(4, 1))))
+  print(three(id(t(1, 1)), two(t(2, 7), t(3, 5)), id(id(t(4, 4)))))
+  // binary operands
+  print(t(1, 10) - t(2, 3))
+  print(t(1, 100) / t(2, 7) % t(3, 5))
+  print(t(1, 6) * t(2, 7) + t(3, 8) * t(4, 9))
+  // comparison operands
+  print(t(1, 1) < t(2, 2))
+  print(t(1, 5) == t(2, 5))
+  print(t(1, 5) >= t(2, 6))
+  // short-circuit operands keep their order and skip
+  print(tb(1, true) && tb(2, false) && tb(3, true))
+  print(tb(1, false) || tb(2, true) || tb(3, false))
+  print(tb(1, true) && t(2, 3) > t(3, 2))
+  // a call mixed with plain variables and constants
+  let x = 5
+  print(three(x, t(1, 2), 7))
+  print(t(1, 1) + x * t(2, 2))
+  // unary and negation
+  print(-t(1, 3) + t(2, 4))
+}

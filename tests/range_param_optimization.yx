@@ -1,0 +1,7 @@
+fn increment_bounded(x: Int<0..10>) -> Int {
+  return x + 1
+}
+
+fn main() {
+  print(increment_bounded(10))
+}

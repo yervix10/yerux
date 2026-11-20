@@ -1,0 +1,5 @@
+import lib
+
+fn main() {
+  print(lib.mul(2, 3))
+}

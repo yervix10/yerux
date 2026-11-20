@@ -1,0 +1,21 @@
+// The same program with plain Int: every product and sum keeps its overflow check, every lookup its bounds check.
+fn mix(a: Int, b: Int, t: Int) -> Int {
+  return a * (255 - t) + b * t
+}
+
+fn shade(lut: view List<Int>, v: Int) -> Int {
+  return lut.get(v)
+}
+
+fn main() {
+  var lut = List<Int>.new()
+  for k in 0..256 { lut.push(k * k % 251) }
+  var acc = 0
+  for i in 0..100000000 {
+    let a = i % 256
+    let b = (i * 7) % 256
+    let t = (i / 3) % 256
+    acc = (acc + mix(a, b, t) / 255 + shade(lut, a)) % 1000003
+  }
+  print(acc)
+}

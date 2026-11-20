@@ -1,0 +1,13 @@
+// Unbounded user recursion: the native backend reports `panic: stack overflow` (exit 101) instead of a bare SIGSEGV.
+fn down(n: Int, acc: mut List<Int>) {
+  acc.push(n)
+  down(n + 1, acc)
+  acc.push(n)
+}
+
+fn main() {
+  var l = List<Int>.new()
+  print("start")
+  down(0, l)
+  print("unreachable")
+}

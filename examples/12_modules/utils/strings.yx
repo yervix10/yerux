@@ -1,0 +1,9 @@
+pub fn greeting(name: Text) -> String {
+  var s = String.from("Hello, ")
+  s.push_str(name)
+  return s
+}
+
+pub fn shout(s: mut String) {
+  s.push_str("!")
+}

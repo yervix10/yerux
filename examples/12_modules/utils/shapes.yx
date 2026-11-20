@@ -1,0 +1,17 @@
+import math
+
+pub enum Shape {
+  Rect(Int, Int),
+  Square(Int),
+}
+
+pub fn area(s: Shape) -> Int {
+  match s {
+    Rect(w, h) => { return w * h }
+    Square(n) => { return math.square(n) }
+  }
+}
+
+pub fn unit() -> Shape {
+  return Shape.Square(1)
+}

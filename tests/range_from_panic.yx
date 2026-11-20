@@ -1,0 +1,8 @@
+// A checked conversion into a range type panics when the value does not fit.
+fn main() {
+  let a = 200
+  print(Int<0..255>.from(a))
+  let b = a + 100
+  print(Int<0..255>.from(b))
+  print(2)
+}

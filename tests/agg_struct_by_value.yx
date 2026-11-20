@@ -1,0 +1,25 @@
+struct P { x: Int, y: Int }
+
+fn shift(p: P) -> P {
+  p.x = p.x + 1
+  p.y = p.y + 1
+  return p
+}
+
+fn swap(p: P) -> P { return P { x: p.y, y: p.x } }
+
+fn sum(p: P) -> Int { return p.x + p.y }
+
+fn main() {
+  let a = P { x: 1, y: 2 }
+  let b = shift(a)
+  print(a.x)
+  print(b.x)
+  let c = swap(shift(shift(b)))
+  print(c.x)
+  print(c.y)
+  print(sum(c))
+  var d = swap(c)
+  d = swap(d)
+  print(d.x)
+}

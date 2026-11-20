@@ -1,0 +1,5 @@
+fn main() {
+  let s = String.from("añb")
+  print(s.slice(0, 1))
+  print(s.slice(0, 2))
+}

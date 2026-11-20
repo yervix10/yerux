@@ -1,0 +1,8 @@
+error: `import` must come before every other declaration
+ --> tests/mod_err/late_import/main.yx:5:1
+  |
+5 | import lib
+  | ^^^^^^
+  = help: move all `import` lines to the top of the file
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,6 @@
+import deep.er.core as c
+import deep.mid
+
+pub fn via_core() -> Int {
+  return c.base() + mid.via_core()
+}

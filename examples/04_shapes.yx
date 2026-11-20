@@ -1,0 +1,43 @@
+// Enums with payloads, match, structs and Text
+struct Point {
+  x: Int,
+  y: Int,
+}
+
+enum Shape {
+  Circle(Int),
+  Rect(Int, Int),
+  Dot,
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => { return 3 * r * r }
+    Rect(w, h) => { return w * h }
+    Dot => { return 0 }
+  }
+}
+
+fn describe(s: Shape) {
+  match s {
+    Circle(r) => { print("circle") }
+    Rect(w, h) => { print("rectangle") }
+    _ => { print("something else") }
+  }
+}
+
+fn manhattan(p: Point) -> Int {
+  return p.x + p.y
+}
+
+fn main() {
+  var origin = Point { x: 3, y: 4 }
+  origin.x = origin.x + 10
+  print(manhattan(origin))
+
+  let shapes = Shape.Rect(4, 5)
+  describe(shapes)
+  print(area(shapes))
+  print(area(Shape.Circle(2)))
+  describe(Shape.Dot)
+}

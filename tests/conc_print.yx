@@ -1,0 +1,14 @@
+fn say() {
+  let word = String.from("thread")
+  for _ in 0..8 { print(word) }
+}
+
+fn main() {
+  scope {
+    let a = spawn move { say() }
+    let b = spawn move { say() }
+    say()
+    assert(a.join().is_ok())
+    assert(b.join().is_ok())
+  }
+}

@@ -1,0 +1,8 @@
+error: this function value takes 1 argument(s) but 2 were given
+ --> tests/e703_closure_arity.yx:3:9
+  |
+3 |   print(f(1, 2))
+  |         ^^^^^^^
+  = its type is fn(Int) -> Int
+
+1 error(s). Nothing was generated.

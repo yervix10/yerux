@@ -1,0 +1,97 @@
+// sized integers, wrapping, truncation, conversions, floats and math
+struct Vec2 { x: Float, y: Float }
+
+fn length(v: view Vec2) -> Float {
+  return sqrt(v.x * v.x + v.y * v.y)
+}
+
+fn pack(r: UInt8, g: UInt8, b: UInt8) -> UInt32 {
+  let hi = r.to_uint32().wrapping_mul(65536)
+  let mid = g.to_uint32().wrapping_mul(256)
+  return hi.wrapping_add(mid).wrapping_add(b.to_uint32())
+}
+
+fn channel(x: Float) -> UInt8 {
+  return (min(max(x, 0.0), 1.0) * 255.0).round().to_uint8()
+}
+
+fn gcd(a: Int, b: Int) -> Int {
+  var x = a
+  var y = b
+  while y != 0 {
+    let t = x % y
+    x = y
+    y = t
+  }
+  return x
+}
+
+fn main() {
+  let c = 250u8
+  print(c.wrapping_add(10))
+  print(c.wrapping_sub(251))
+  print(300.truncate_uint8())
+  print((-1).truncate_uint8())
+  print(200u8.to_int() + 100)
+  let small = -128i8
+  print(small)
+  print(small.to_int() - 1)
+  let big = 18446744073709551615u64
+  print(big)
+  print(big.wrapping_add(2))
+  let i32max = 2147483647i32
+  print(i32max.wrapping_add(1))
+  print(i32max.to_int() + 1)
+  print(0xFF + 0b1010 + 1_000)
+  print(pack(channel(1.0), channel(0.5), 0u8))
+
+  print(gcd(84, 36))
+  print(-7 / 2)
+  print(-7 % 3)
+  print(7 / -2)
+
+  let v = Vec2 { x: 3.0, y: 4.0 }
+  print(length(v))
+  print(0.1 + 0.2)
+  print(1.0 / 3.0)
+  print(100.0)
+  print(1e21)
+  print(1.5e-7)
+  print(2.5f32 * 1.1f32)
+  let zero = 0.0
+  print(1.0 / zero)
+  print(-1.0 / zero)
+  print(zero / zero == zero / zero)
+  print(zero / zero != zero / zero)
+  print(-0.0 == 0.0)
+
+  print(7.to_float() / 2.0)
+  print(3.99.to_int())
+  print((-3.99).to_int())
+  print((-3.5).floor_int())
+  print(2.5.ceil_int())
+  print(2.5.round_int())
+  print((-2.5).round_int())
+  print(floor(2.7))
+  print(ceil(2.1))
+  print(trunc(-2.7))
+  print(abs(-5.5))
+  print(pow(2.0, 10.0))
+  print(sqrt(2.0))
+  print(exp(0.0))
+  print(ln(1.0))
+  print(min(3.0, 4.0))
+  print(max(3, 9))
+  print(copysign(2.0, -1.0))
+  print(is_nan(zero / zero))
+  print(is_finite(1.0 / zero))
+
+  var angle = 0.0
+  for i in 0..3 {
+    print((cos(angle) * 1000.0).round_int())
+    angle = angle + 1.5707963267948966
+  }
+  var acc = 0.0
+  for i in 1..=10 { acc = acc + 1.0 / i.to_float() }
+  print(acc)
+}

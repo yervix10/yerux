@@ -1,0 +1,7 @@
+error: trait 'Wrong' is not object-safe: method 'get' declares a receiver type other than Self
+ --> tests/e728_dyn_receiver_type.yx:9:20
+  |
+9 |     let item = Box<dyn Wrong>.new(Thing { n: 7 })
+  |                    ^^^
+
+1 error(s). Nothing was generated.

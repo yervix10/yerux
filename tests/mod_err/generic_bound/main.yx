@@ -1,0 +1,9 @@
+import lib
+
+fn main() {
+  let p = lib.Point { x: 1 }
+  let q = lib.Point { x: 2 }
+  let m = lib.biggest(p, q)
+  let pr = lib.Pair { a: 1, b: 2 }
+  print(lib.bad(pr.a))
+}

@@ -1,0 +1,9 @@
+// std.io: exit(code) ends the process at once with that status; output before it is kept
+import std.io
+
+fn main() {
+  print("before")
+  io.eprintln("bye")
+  io.exit(7)
+  print("never printed")
+}

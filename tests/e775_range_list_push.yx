@@ -1,0 +1,6 @@
+fn main() {
+  var l = List<Int<0..9>>.new()
+  let n = 12
+  l.push(n)
+  print(l.len())
+}

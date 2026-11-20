@@ -1,0 +1,120 @@
+// binary search tree with Option<Box<Node>> children
+struct Node {
+  key: Int,
+  left: Option<Box<Node>>,
+  right: Option<Box<Node>>,
+}
+
+struct Tree {
+  root: Option<Box<Node>>,
+  size: Int,
+}
+
+fn new_node(key: Int) -> Box<Node> {
+  return Box.new(Node { key: key, left: None, right: None })
+}
+
+fn insert_node(n: mut Node, key: Int) -> Bool {
+  if key == n.key { return false }
+  if key < n.key {
+    match mut n.left {
+      Some(child) => { return insert_node(child.get(), key) }
+      None => { }
+    }
+    n.left = Some(new_node(key))
+    return true
+  }
+  match mut n.right {
+    Some(child) => { return insert_node(child.get(), key) }
+    None => { }
+  }
+  n.right = Some(new_node(key))
+  return true
+}
+
+fn insert(t: mut Tree, key: Int) {
+  match mut t.root {
+    Some(r) => {
+      if insert_node(r.get(), key) { t.size = t.size + 1 }
+      return
+    }
+    None => { }
+  }
+  t.root = Some(new_node(key))
+  t.size = 1
+}
+
+fn contains_node(n: view Node, key: Int) -> Bool {
+  if key == n.key { return true }
+  if key < n.key {
+    match n.left {
+      Some(c) => { return contains_node(c.get(), key) }
+      None => { return false }
+    }
+  }
+  match n.right {
+    Some(c) => { return contains_node(c.get(), key) }
+    None => { return false }
+  }
+}
+
+fn height(n: view Node) -> Int {
+  var l = 0
+  var r = 0
+  match n.left {
+    Some(c) => { l = height(c.get()) }
+    None => { }
+  }
+  match n.right {
+    Some(c) => { r = height(c.get()) }
+    None => { }
+  }
+  if l > r { return l + 1 }
+  return r + 1
+}
+
+fn collect(n: view Node, out: mut List<Int>) {
+  match n.left {
+    Some(c) => { collect(c.get(), out) }
+    None => { }
+  }
+  out.push(n.key)
+  match n.right {
+    Some(c) => { collect(c.get(), out) }
+    None => { }
+  }
+}
+
+fn main() {
+  var t = Tree { root: None, size: 0 }
+  var keys = List<Int>.new()
+  keys.push(50)
+  keys.push(30)
+  keys.push(70)
+  keys.push(20)
+  keys.push(40)
+  keys.push(60)
+  keys.push(80)
+  keys.push(30)
+  keys.push(65)
+  keys.push(10)
+  for k in keys { insert(t, k) }
+  print(t.size)
+
+  var out = List<Int>.new()
+  var h = 0
+  var found = 0
+  match t.root {
+    Some(r) => {
+      collect(r.get(), out)
+      h = height(r.get())
+      if contains_node(r.get(), 65) { found = found + 1 }
+      if contains_node(r.get(), 66) { found = found + 10 }
+      if contains_node(r.get(), 10) { found = found + 100 }
+    }
+    None => { }
+  }
+  print("{out}")
+  print(h)
+  print(found)
+}

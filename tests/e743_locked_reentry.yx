@@ -1,0 +1,7 @@
+fn main() {
+  let lock = Shared.new(Locked.new(0))
+  let alias = lock.clone()
+  lock.with(|value| {
+    alias.with(|other| { other = value })
+  })
+}

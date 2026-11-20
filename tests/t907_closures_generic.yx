@@ -1,0 +1,51 @@
+// generic functions that take closures
+fn map_ints(xs: view List<Int>, f: view fn(Int) -> Int) -> List<Int> {
+  var out = List<Int>.new()
+  for x in xs { out.push(f(x)) }
+  return out
+}
+
+fn fold<T: Copy, A: Copy>(xs: view List<T>, init: A, f: view fn(A, T) -> A) -> A {
+  var acc = init
+  for x in xs { acc = f(acc, x) }
+  return acc
+}
+
+fn count_if<T: Copy>(xs: view List<T>, pred: view fn(T) -> Bool) -> Int {
+  var n = 0
+  for x in xs {
+    if pred(x) { n = n + 1 }
+  }
+  return n
+}
+
+fn twice<T: Copy>(x: T, f: view fn(T) -> T) -> T {
+  return f(f(x))
+}
+
+fn main() {
+  var xs = List<Int>.new()
+  for i in 1..=6 { xs.push(i) }
+
+  let sq = map_ints(xs, |x| x * x)
+  print("{sq}")
+  let k = 10
+  let shifted = map_ints(xs, |x| x + k)
+  print("{shifted}")
+
+  print(fold(xs, 0, |a, x| a + x))
+  print(fold(xs, 1, |a, x| a * x))
+  print(fold(xs, 0.5, |a, x| a + x.to_float()))
+
+  print(count_if(xs, |x| x % 2 == 0))
+  print(count_if(xs, |x| x > k))
+
+  var cs = List<Char>.new()
+  cs.push('a')
+  cs.push('Z')
+  cs.push('q')
+  print(count_if(cs, |c| c >= 'a'))
+
+  print(twice(3, |x| x * x))
+  print(twice(1.5, |x| x * 2.0))
+}

@@ -1,0 +1,95 @@
+fn f1(n: Int, k: Int) -> Int {
+  var t = 0
+  var i = 0
+  while i < n {
+    t = t + i * k
+    i = i + 1
+  }
+  return t
+}
+fn f2(l: mut List<Int>, n: Int) -> Int {
+  var s = 0
+  var i = 0
+  while i < n {
+    s = s + l.get(i)
+    if i == 3 { l.push(1) }
+    i = i + 1
+  }
+  return s
+}
+fn f3(l: mut List<Int>, n: Int) -> Int {
+  var s = 0
+  var i = 0
+  while i < n {
+    s = s + l.get(i * 2)
+    if i == 2 { l.clear() }
+    i = i + 1
+  }
+  return s
+}
+fn f4(l: view List<Int>, start: Int, n: Int) -> Int {
+  var s = 0
+  var i = start
+  while i < n {
+    s = s + l.get(i)
+    i = i + 1
+  }
+  return s
+}
+fn f5(n: Int) -> Int {
+  var i = 9223372036854775800
+  var c = 0
+  while i < 9223372036854775807 && c < n {
+    c = c + 1
+    i = i + 3
+  }
+  return c * 1000 + (i % 1000)
+}
+fn f6(l: view List<Int>, n: Int, k: Int) -> Int {
+  var i = n
+  var s = 0
+  while i > 0 {
+    i = i - 1
+    s = s + l.get(i * k)
+  }
+  return s
+}
+fn f7(n: Int, k: Int) -> Int {
+  var i = -5
+  var t = 0
+  while i < n {
+    t = t + i * k + (i * k) / 2
+    i = i + 2
+  }
+  return t
+}
+fn f8(n: Int) -> Int {
+  var i = 0
+  var t = 0
+  while i < n {
+    var j = 0
+    while j < i { t = t + i * j; j = j + 1 }
+    i = i + 1
+  }
+  return t
+}
+fn f9(n: Int, k: Int) -> Int {
+  var i = 0
+  var t = 0
+  while i < n {
+    t = t + i * k
+    i = i + 1
+    if t > 1000000 { i = i + 1000000000000 }
+  }
+  return t
+}
+fn main() {
+  var l = List<Int>.new()
+  for i in 0..10 { l.push(i * 7) }
+  print(f1(0, 5)); print(f1(10, -3)); print(f1(-4, 3));
+  print(f2(l, 8))
+  print(f4(l, 0, 10)); print(f4(l, 5, 5)); print(f4(l, -0, 3));
+  print(f6(l, 5, 2)); print(f6(l, 0, 99)); print(f7(10, 3)); print(f7(-9, 3)); print(f8(30)); print(f9(100, 7))
+  print(f9(100, 3037000500))
+  print(f3(l, 10))
+}

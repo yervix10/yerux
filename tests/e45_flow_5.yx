@@ -1,0 +1,8 @@
+fn eat(s: String) { }
+fn main() {
+  var s = String.from("a")
+  for i in 0..3 {
+    eat(move s)
+    if i == 1 { break }
+  }
+}

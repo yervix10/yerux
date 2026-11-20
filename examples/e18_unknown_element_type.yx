@@ -1,0 +1,3 @@
+fn main() {
+  let z = List<Foo>.new()
+}

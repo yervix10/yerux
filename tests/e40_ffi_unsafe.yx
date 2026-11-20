@@ -1,0 +1,7 @@
+extern "C" {
+  fn abs(value: Int32) -> Int32
+}
+
+fn main() {
+  print(abs(-1))
+}

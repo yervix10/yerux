@@ -1,0 +1,7 @@
+error: spawn cannot capture 'value' because it is borrowed
+ --> tests/e733_spawn_mut_capture.yx:3:18
+  |
+3 |     let worker = spawn move { value = value + 1 }
+  |                  ^^^^^
+
+1 error(s). Nothing was generated.

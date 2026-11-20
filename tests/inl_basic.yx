@@ -1,0 +1,91 @@
+struct P { x: Int, y: Int }
+struct Q { p: P, k: Int, tag: Int }
+
+fn add(a: Int, b: Int) -> Int { return a + b }
+fn sq(a: Int) -> Int { return a * a }
+fn noisy(a: Int) -> Int {
+  print(a)
+  return a + 1
+}
+fn pick(c: Bool, a: Int, b: Int) -> Int {
+  if c { return a }
+  return b
+}
+fn shift(p: P, d: Int) -> P { return P { x: p.x + d, y: p.y - d } }
+fn swap(p: P) -> P { return P { x: p.y, y: p.x } }
+fn norm1(p: view P) -> Int { return p.x + p.y }
+fn bump(p: mut P) {
+  p.x = p.x + 1
+  p.y = p.y * 2
+}
+fn bump_q(q: mut Q) {
+  bump(q.p)
+  q.k = q.k + norm1(q.p)
+}
+fn mkq(a: Int) -> Q { return Q { p: P { x: a, y: a + 1 }, k: 0, tag: 7 } }
+fn clamp(v: Int, lo: Int, hi: Int) -> Int {
+  if v < lo { return lo }
+  if v > hi { return hi }
+  return v
+}
+fn fib(n: Int) -> Int {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+fn even(n: Int) -> Bool {
+  if n == 0 { return true }
+  return odd(n - 1)
+}
+fn odd(n: Int) -> Bool {
+  if n == 0 { return false }
+  return even(n - 1)
+}
+fn step(p: P) -> P {
+  var q = p
+  q.x = q.x + q.y
+  q.y = q.y + 1
+  if q.x > 100 { q.x = 0 - q.x }
+  return q
+}
+fn mix(a: Int, b: Int) -> Int { return noisy(a) * 10 + noisy(b) }
+
+fn main() {
+  print(add(sq(3), sq(4)))
+  print(pick(true, add(1, 2), noisy(100)))
+  print(pick(false, noisy(5), add(10, 20)))
+  print(mix(1, 2))
+  var p = P { x: 1, y: 2 }
+  p = shift(swap(p), 10)
+  print(p.x)
+  print(p.y)
+  var q = mkq(5)
+  bump_q(q)
+  bump_q(q)
+  print(q.p.x)
+  print(q.p.y)
+  print(q.k)
+  print(q.tag)
+  print(clamp(-5, 0, 10))
+  print(clamp(50, 0, 10))
+  print(clamp(5, 0, 10))
+  print(fib(15))
+  print(even(10))
+  print(odd(7))
+  var s = P { x: 1, y: 1 }
+  var i = 0
+  while i < 20 {
+    s = step(s)
+    i = i + 1
+  }
+  print(s.x)
+  print(s.y)
+  var t = 0
+  i = 0
+  while i < 10 {
+    var r = shift(P { x: i, y: t }, 3)
+    bump(r)
+    t = t + norm1(r)
+    i = i + 1
+  }
+  print(t)
+}

@@ -1,0 +1,8 @@
+import shapes
+
+fn area(shape: view dyn shapes.Shape) -> Int { return shape.area() }
+
+fn main() {
+    let shape = Box<dyn shapes.Shape>.new(shapes.Square { side: 6 })
+    print(area(shape.get()))
+}

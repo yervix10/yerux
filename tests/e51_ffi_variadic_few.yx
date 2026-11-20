@@ -1,0 +1,7 @@
+extern "C" {
+  fn printf(fmt: Text, ...) -> Int32
+}
+
+fn main() {
+  unsafe { printf() }
+}

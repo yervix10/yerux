@@ -1,0 +1,16 @@
+fn p(n: Int) -> Int { print(n); return n }
+fn mkf(tag: Int) -> fn(Int, Int) -> Int {
+  print(tag)
+  return move |a: Int, b: Int| { print(1000); return a * 10 + b }
+}
+struct S { f: fn(Int) -> Int, g: List<fn(Int) -> Int> }
+fn bad(n: Int) -> Int { print(n); return 100 / (n - n) }
+fn main() {
+  print(mkf(1)(p(2), p(3)))
+  var s = S { f: move |x: Int| { print(77); return x }, g: List<fn(Int) -> Int>.new() }
+  s.g.push(move |x: Int| x + 1)
+  print(s.f(p(4)) + s.g.at(0)(p(5)))
+  let fs = mkf(6)
+  print(fs(p(7), p(8)) + fs(p(9), p(10)))
+  print(mkf(11)(p(12), bad(13)))
+}

@@ -1,0 +1,8 @@
+error: call to extern function 'abs' requires an unsafe block
+ --> tests/e40_ffi_unsafe.yx:6:9
+  |
+6 |   print(abs(-1))
+  |         ^^^^^^^
+  = help: wrap the call in `unsafe { ... }` after checking its pointer and lifetime requirements
+
+1 error(s). Nothing was generated.

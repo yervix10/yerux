@@ -1,0 +1,96 @@
+// Built-in traits and their implementations for the primitive types.
+// Parsed with every program; the method bodies are only compiled when something uses them.
+
+// marker: `T: Copy` lets generic code copy a value instead of moving it
+trait Copy { }
+
+trait Equal { fn eq(view self, other: view Self) -> Bool }
+trait Ordered { fn cmp(view self, other: view Self) -> Int }
+trait Show { fn show(view self) -> String }
+
+impl Equal for Int { fn eq(view self, other: view Int) -> Bool { return self == other } }
+impl Equal for Char { fn eq(view self, other: view Char) -> Bool { return self == other } }
+impl Equal for Bool { fn eq(view self, other: view Bool) -> Bool { return self == other } }
+impl Equal for Text {
+    fn eq(view self, other: view Text) -> Bool {
+        let a = String.from(self)
+        return a.eq(other)
+    }
+}
+impl Equal for String { fn eq(view self, other: view String) -> Bool { return self.eq(other) } }
+
+impl Ordered for Int {
+    fn cmp(view self, other: view Int) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Ordered for Char {
+    fn cmp(view self, other: view Char) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Ordered for Bool {
+    fn cmp(view self, other: view Bool) -> Int {
+        if self == other { return 0 }
+        if other { return -1 }
+        return 1
+    }
+}
+impl Ordered for String {
+    fn cmp(view self, other: view String) -> Int {
+        var i = 0
+        while i < self.len() && i < other.len() {
+            if self.byte(i) < other.byte(i) { return -1 }
+            if self.byte(i) > other.byte(i) { return 1 }
+            i = i + 1
+        }
+        if self.len() < other.len() { return -1 }
+        if self.len() > other.len() { return 1 }
+        return 0
+    }
+}
+impl Ordered for Text {
+    fn cmp(view self, other: view Text) -> Int {
+        let a = String.from(self)
+        let b = String.from(other)
+        return a.cmp(b)
+    }
+}
+
+impl Show for Int {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_int(self)
+        return s
+    }
+}
+impl Show for Char {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_char(self)
+        return s
+    }
+}
+impl Show for Bool {
+    fn show(view self) -> String {
+        if self { return String.from("true") }
+        return String.from("false")
+    }
+}
+impl Show for Text { fn show(view self) -> String { return String.from(self) } }
+impl Show for String { fn show(view self) -> String { return String.from(self) } }
+
+// Hash: the key of a Map / element of a Set. Deterministic (the same value always gives the same
+// hash, in every backend and every run), non-negative, and spread over [0, 2^31 - 1).
+trait Hash { fn hash(view self) -> Int }
+
+// tuples: `(A, B)` is Tuple2<A, B>, the elements are the fields `_0`, `_1`, ... (written `t.0`, `t.1`)
+struct Tuple2<A, B> { _0: A, _1: B }
+struct Tuple3<A, B, C> { _0: A, _1: B, _2: C }
+struct Tuple4<A, B, C, D> { _0: A, _1: B, _2: C, _3: D }
+struct Tuple5<A, B, C, D, E> { _0: A, _1: B, _2: C, _3: D, _4: E }
+struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }

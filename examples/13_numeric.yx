@@ -1,0 +1,63 @@
+// Numbers for graphics and systems code: Float, Float32 and sized integers.
+// Nothing converts implicitly; every conversion is a visible, checked method call.
+
+struct Vec2 { x: Float, y: Float }
+
+fn length(v: view Vec2) -> Float {
+  return sqrt(v.x * v.x + v.y * v.y)
+}
+
+fn lerp(a: Float, b: Float, t: Float) -> Float {
+  return a + (b - a) * t
+}
+
+// Pack three 0..255 colour channels into one UInt32 (0x00RRGGBB).
+fn pack(r: UInt8, g: UInt8, b: UInt8) -> UInt32 {
+  let hi = r.to_uint32().wrapping_mul(65536)
+  let mid = g.to_uint32().wrapping_mul(256)
+  return hi.wrapping_add(mid).wrapping_add(b.to_uint32())
+}
+
+// Float -> colour channel: clamp, scale, round. to_uint8() would panic on 256.0.
+fn channel(x: Float) -> UInt8 {
+  return (min(max(x, 0.0), 1.0) * 255.0).round().to_uint8()
+}
+
+fn main() {
+  let v = Vec2 { x: 3.0, y: 4.0 }
+  print(length(v))
+  print(lerp(10.0, 20.0, 0.25))
+
+  // floats print as the shortest text that reads back exactly
+  print(0.1 + 0.2)
+  print(1.0 / 3.0)
+  print(1e21)
+  print(1.5f32 * 1.1f32)
+
+  // IEEE special values: no traps, no undefined behaviour
+  let zero = 0.0
+  print(1.0 / zero)
+  print(zero / zero == zero / zero)
+
+  // explicit conversions
+  let n = 7
+  print(n.to_float() / 2.0)
+  print(3.99.to_int())
+  print((-3.5).floor_int())
+
+  // sized integers are checked like Int
+  let c = pack(channel(1.0), channel(0.5), channel(0.0))
+  print(c)
+  let big = 250u8
+  print(big.wrapping_add(10))
+  print(300.truncate_uint8())
+
+  // trigonometry, no libm
+  var angle = 0.0
+  var i = 0
+  while i < 4 {
+    print(cos(angle))
+    angle = angle + 1.5707963267948966
+    i = i + 1
+  }
+}

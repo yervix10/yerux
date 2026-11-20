@@ -1,0 +1,4 @@
+fn main() {
+    let n = Option<Int>.Some(5)?
+    print(n)
+}

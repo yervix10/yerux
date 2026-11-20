@@ -1,0 +1,19 @@
+import left
+import right
+
+struct Item { id: Int }
+
+fn helper() -> Int {
+  return 1
+}
+
+fn main() {
+  let mine = Item { id: helper() }
+  let l = left.Item { id: left.helper() }
+  let r = right.Item { id: right.helper(), tag: 7 }
+  print(mine.id)
+  print(l.id)
+  print(r.id + r.tag)
+  print(left.twice(l))
+  print(right.twice(r))
+}

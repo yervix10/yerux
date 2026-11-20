@@ -1,0 +1,24 @@
+error: cannot use `+` on a value of type T: it is a type parameter
+ --> examples/e31_generic_body_ops.yx:3:12
+  |
+3 |     return a + b
+  |            ^^^^^
+  = generic code can only do what the bounds of T promise, and `+` is not available through any bound
+  = help: take the operation as a function parameter, or make the function work on Int
+
+error: cannot use `>` on values of type T: it does not implement Ordered
+ --> examples/e31_generic_body_ops.yx:7:12
+  |
+7 |     return a > b
+  |            ^^^^^
+  = help: add the bound `T: Ordered` to the function's type parameters
+
+error: type T has no method 'show'
+  --> examples/e31_generic_body_ops.yx:11:13
+   |
+11 |     let s = x.show()
+   |             ^^^^^^^^
+   = T is a type parameter with no bounds: it only has the methods its bounds promise
+   = help: add the bound `T: Show` to the function's type parameters
+
+3 error(s). Nothing was generated.

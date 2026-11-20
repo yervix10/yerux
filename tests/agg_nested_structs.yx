@@ -1,0 +1,39 @@
+struct Vec2 { x: Int, y: Int }
+struct Body { pos: Vec2, vel: Vec2, id: Int }
+struct World { a: Body, b: Body, name: Text }
+
+fn step(b: mut Body) {
+  b.pos.x = b.pos.x + b.vel.x
+  b.pos.y = b.pos.y + b.vel.y
+}
+
+fn energy(b: view Body) -> Int {
+  return b.vel.x * b.vel.x + b.vel.y * b.vel.y
+}
+
+fn main() {
+  var w = World {
+    a: Body { pos: Vec2 { x: 0, y: 0 }, vel: Vec2 { x: 1, y: 2 }, id: 1 },
+    b: Body { pos: Vec2 { x: 10, y: 10 }, vel: Vec2 { x: -1, y: -2 }, id: 2 },
+    name: "two bodies",
+  }
+  var i = 0
+  while i < 5 {
+    step(w.a)
+    step(w.b)
+    i = i + 1
+  }
+  print(w.name)
+  print(w.a.pos.x)
+  print(w.a.pos.y)
+  print(w.b.pos.x)
+  print(w.b.pos.y)
+  print(energy(w.a) + energy(w.b))
+  var copy = w.a
+  copy.pos.x = 999
+  print(w.a.pos.x)
+  print(copy.pos.x)
+  w.b = copy
+  print(w.b.pos.x)
+  print(w.b.id)
+}

@@ -1,0 +1,1611 @@
+// Yerux native backend for AArch64 (ARM64) Linux.
+// Hand-written A64 encoder + runtime (raw syscalls, no libc) + ELF64 writer (EM_AARCH64).
+// Mirrors x64.rs: every virtual register lives in a stack slot; same panic messages,
+// output format and exit codes. Syscalls (number in x8): write = 64, mmap = 222, munmap = 215, exit_group = 94.
+//
+// Register use: x0/x1/x2/x3 scratch (x0 = results, print args), x8 syscall number,
+// x16 address scratch, x29 frame pointer, x30 link register.
+// Calling convention (internal): all arguments on the stack, argument i at
+// [x29 + 16 + 8*i] in the callee; result in x0.
+use crate::ir::*;
+
+const X0: u32 = 0;
+const X1: u32 = 1;
+const X2: u32 = 2;
+const X3: u32 = 3;
+const X4: u32 = 4;
+const X5: u32 = 5;
+const X6: u32 = 6;
+const X7: u32 = 7;
+const X8: u32 = 8;
+const X9: u32 = 9;
+const X10: u32 = 10;
+const X11: u32 = 11;
+const X16: u32 = 16;
+const X29: u32 = 29;
+const X30: u32 = 30;
+const XZR: u32 = 31; // zero register in most encodings
+const SP: u32 = 31; // stack pointer in add/sub-immediate, ldr/str base, extended forms
+
+// condition codes
+const EQ: u32 = 0;
+const NE: u32 = 1;
+const HS: u32 = 2;
+const LO: u32 = 3;
+const LS: u32 = 9;
+const MI: u32 = 4;
+const HI: u32 = 8;
+const VS: u32 = 6;
+const PL: u32 = 5;
+const GE: u32 = 10;
+const LT: u32 = 11;
+const GT: u32 = 12;
+const LE: u32 = 13;
+
+#[derive(Clone, Copy)]
+enum Fix {
+    B26,      // b / bl: imm26 words
+    B19,      // b.cond / cbz / cbnz: imm19 words
+}
+
+// ───────────────────────── Encoder ─────────────────────────
+
+pub struct Asm {
+    pub code: Vec<u8>,
+    labels: Vec<Option<usize>>,
+    fix: Vec<(usize, Fix, usize)>, // (instruction position, kind, label)
+    dfix: Vec<(usize, usize)>,     // (position of ADRP; ADD follows, data blob id)
+    lfix: Vec<(usize, usize)>,     // (position of ADRP; ADD follows, code label): address of a function
+}
+
+impl Asm {
+    pub fn new() -> Asm {
+        Asm { code: vec![], labels: vec![], fix: vec![], dfix: vec![], lfix: vec![] }
+    }
+    pub fn emit(&mut self, w: u32) {
+        self.code.extend_from_slice(&w.to_le_bytes());
+    }
+    pub fn label(&mut self) -> usize {
+        self.labels.push(None);
+        self.labels.len() - 1
+    }
+    pub fn bind(&mut self, l: usize) {
+        self.labels[l] = Some(self.code.len());
+    }
+
+    // --- moves / constants
+    pub fn movz(&mut self, rd: u32, imm16: u32, hw: u32) {
+        self.emit(0xD280_0000 | hw << 21 | imm16 << 5 | rd);
+    }
+    pub fn movk(&mut self, rd: u32, imm16: u32, hw: u32) {
+        self.emit(0xF280_0000 | hw << 21 | imm16 << 5 | rd);
+    }
+    pub fn movn(&mut self, rd: u32, imm16: u32, hw: u32) {
+        self.emit(0x9280_0000 | hw << 21 | imm16 << 5 | rd);
+    }
+    pub fn mov_imm(&mut self, rd: u32, v: i64) {
+        let u = v as u64;
+        let chunks = |x: u64| [(x & 0xFFFF) as u32, ((x >> 16) & 0xFFFF) as u32, ((x >> 32) & 0xFFFF) as u32, ((x >> 48) & 0xFFFF) as u32];
+        let zeros = chunks(u).iter().filter(|c| **c == 0).count();
+        let ones = chunks(u).iter().filter(|c| **c == 0xFFFF).count();
+        if ones > zeros {
+            let c = chunks(!u);
+            let first = c.iter().position(|x| *x != 0).unwrap_or(0);
+            self.movn(rd, c[first], first as u32);
+            for (i, x) in c.iter().enumerate() {
+                if i != first && *x != 0 {
+                    self.movk(rd, (!*x) & 0xFFFF, i as u32); // restore original chunk
+                }
+            }
+        } else {
+            let c = chunks(u);
+            let first = c.iter().position(|x| *x != 0).unwrap_or(0);
+            self.movz(rd, c[first], first as u32);
+            for (i, x) in c.iter().enumerate() {
+                if i != first && *x != 0 {
+                    self.movk(rd, *x, i as u32);
+                }
+            }
+        }
+    }
+    /// mov xd, xm  (orr xd, xzr, xm); neither may be SP.
+    pub fn mov(&mut self, rd: u32, rm: u32) {
+        self.emit(0xAA00_03E0 | rm << 16 | rd);
+    }
+    /// mov xd, sp / mov sp, xn  (add #0)
+    pub fn mov_sp(&mut self, rd: u32, rn: u32) {
+        self.add_imm(rd, rn, 0);
+    }
+
+    // --- arithmetic
+    pub fn add_imm(&mut self, rd: u32, rn: u32, imm12: u32) {
+        assert!(imm12 < 4096);
+        self.emit(0x9100_0000 | imm12 << 10 | rn << 5 | rd);
+    }
+    pub fn sub_imm(&mut self, rd: u32, rn: u32, imm12: u32) {
+        assert!(imm12 < 4096);
+        self.emit(0xD100_0000 | imm12 << 10 | rn << 5 | rd);
+    }
+    /// sub rd, rn, #imm (any 24-bit amount, as two instructions if needed)
+    pub fn sub_sp_const(&mut self, rd: u32, rn: u32, imm: u32, add: bool) {
+        assert!(imm < (1 << 24));
+        let (hi, lo) = (imm >> 12, imm & 0xFFF);
+        let base = if add { 0x9100_0000u32 } else { 0xD100_0000 };
+        let mut src = rn;
+        if hi != 0 {
+            self.emit(base | 1 << 22 | hi << 10 | src << 5 | rd);
+            src = rd;
+        }
+        if lo != 0 || hi == 0 {
+            self.emit(base | lo << 10 | src << 5 | rd);
+        }
+    }
+    pub fn add_reg(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x8B00_0000 | rm << 16 | rn << 5 | rd);
+    }
+    /// add xd, xn, xm, uxtx  (valid with SP as xd/xn)
+    pub fn add_ext(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x8B20_6000 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn adds(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0xAB00_0000 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn subs(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0xEB00_0000 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn sub_reg(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0xCB00_0000 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn cmp(&mut self, rn: u32, rm: u32) {
+        self.subs(XZR, rn, rm);
+    }
+    /// cmn xn, #1  (adds xzr, xn, #1): sets Z when xn == -1
+    pub fn cmn_1(&mut self, rn: u32) {
+        self.emit(0xB100_0400 | rn << 5 | XZR);
+    }
+    pub fn mul(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x9B00_7C00 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn smulh(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x9B40_7C00 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn sdiv(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x9AC0_0C00 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn udiv(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x9AC0_0800 | rm << 16 | rn << 5 | rd);
+    }
+    /// msub rd, rn, rm, ra : rd = ra - rn*rm
+    pub fn msub(&mut self, rd: u32, rn: u32, rm: u32, ra: u32) {
+        self.emit(0x9B00_8000 | rm << 16 | ra << 10 | rn << 5 | rd);
+    }
+    /// cmp xn, xm, asr #63  (subs xzr, xn, xm, asr #63)
+    pub fn cmp_asr63(&mut self, rn: u32, rm: u32) {
+        self.emit(0xEB80_0000 | rm << 16 | 63 << 10 | rn << 5 | XZR);
+    }
+    pub fn eor1(&mut self, rd: u32, rn: u32) {
+        self.emit(0xD240_0000 | rn << 5 | rd); // eor xd, xn, #1
+    }
+    /// cset xd, cond  (csinc xd, xzr, xzr, !cond)
+    pub fn cset(&mut self, rd: u32, cond: u32) {
+        self.emit(0x9A9F_07E0 | (cond ^ 1) << 12 | rd);
+    }
+
+    // --- memory. `mem` picks scaled-unsigned, unscaled-signed (ldur/stur) or an x16-computed address.
+    fn mem(&mut self, scaled_op: u32, unscaled_op: u32, scale: u32, rt: u32, rn: u32, off: i32) {
+        if off >= 0 && off as u32 % scale == 0 && (off as u32 / scale) < 4096 {
+            self.emit(scaled_op | (off as u32 / scale) << 10 | rn << 5 | rt);
+        } else if (-256..256).contains(&off) {
+            self.emit(unscaled_op | ((off as u32) & 0x1FF) << 12 | rn << 5 | rt);
+        } else {
+            self.mov_imm(X16, off as i64);
+            self.add_ext(X16, rn, X16);
+            self.emit(scaled_op | X16 << 5 | rt);
+        }
+    }
+    pub fn ldr_i(&mut self, rt: u32, rn: u32, off: i32) {
+        self.mem(0xF940_0000, 0xF840_0000, 8, rt, rn, off);
+    }
+    pub fn str_i(&mut self, rt: u32, rn: u32, off: i32) {
+        self.mem(0xF900_0000, 0xF800_0000, 8, rt, rn, off);
+    }
+    pub fn ldrb_i(&mut self, rt: u32, rn: u32, off: i32) {
+        self.mem(0x3940_0000, 0x3840_0000, 1, rt, rn, off);
+    }
+    pub fn strb_i(&mut self, rt: u32, rn: u32, off: i32) {
+        self.mem(0x3900_0000, 0x3800_0000, 1, rt, rn, off);
+    }
+    pub fn ldr(&mut self, rt: u32, rn: u32, off: u32) {
+        self.ldr_i(rt, rn, off as i32);
+    }
+    pub fn str(&mut self, rt: u32, rn: u32, off: u32) {
+        self.str_i(rt, rn, off as i32);
+    }
+    pub fn strb(&mut self, rt: u32, rn: u32, off: u32) {
+        self.strb_i(rt, rn, off as i32);
+    }
+    /// ldrb wt, [xn], #1  /  strb wt, [xn], #1  (post-index)
+    pub fn ldrb_post1(&mut self, rt: u32, rn: u32) {
+        self.emit(0x3840_1400 | rn << 5 | rt);
+    }
+    pub fn strb_post1(&mut self, rt: u32, rn: u32) {
+        self.emit(0x3800_1400 | rn << 5 | rt);
+    }
+    /// clz xd, xn
+    pub fn clz(&mut self, rd: u32, rn: u32) {
+        self.emit(0xDAC0_1000 | rn << 5 | rd);
+    }
+    /// lsl xd, xn, xm (variable shift)
+    pub fn lslv(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x9AC0_2000 | rm << 16 | rn << 5 | rd);
+    }
+    /// ldr wt, [xn, #off] / str wt, [xn, #off] (32-bit, zero-extends)
+    pub fn ldr32_i(&mut self, rt: u32, rn: u32, off: i32) {
+        self.mem(0xB940_0000, 0xB840_0000, 4, rt, rn, off);
+    }
+    pub fn str32_i(&mut self, rt: u32, rn: u32, off: i32) {
+        self.mem(0xB900_0000, 0xB800_0000, 4, rt, rn, off);
+    }
+    /// ldp xt, xt2, [xn]  /  stp xt, xt2, [xn]
+    pub fn ldp0(&mut self, rt: u32, rt2: u32, rn: u32) {
+        self.emit(0xA940_0000 | rt2 << 10 | rn << 5 | rt);
+    }
+    pub fn stp0(&mut self, rt: u32, rt2: u32, rn: u32) {
+        self.emit(0xA900_0000 | rt2 << 10 | rn << 5 | rt);
+    }
+    /// ldp xt, xt2, [xn], #16  /  stp xt, xt2, [xn], #16 (post-index)
+    pub fn ldp_post16_r(&mut self, rt: u32, rt2: u32, rn: u32) {
+        self.emit(0xA8C1_0000 | rt2 << 10 | rn << 5 | rt);
+    }
+    pub fn stp_post16_r(&mut self, rt: u32, rt2: u32, rn: u32) {
+        self.emit(0xA881_0000 | rt2 << 10 | rn << 5 | rt);
+    }
+    /// `size` = smallest power of two >= n (at least 16), `cls` = its log2. Clobbers size, cls, x16 and flags.
+    pub fn size_class(&mut self, n: u32, size: u32, cls: u32) {
+        let done = self.label();
+        self.mov_imm(cls, 4);
+        self.mov_imm(size, 16);
+        self.mov_imm(X16, 16);
+        self.cmp(n, X16);
+        self.bcond(LS, done);
+        self.sub_imm(size, n, 1);
+        self.clz(cls, size);
+        self.mov_imm(X16, 64);
+        self.sub_reg(cls, X16, cls);
+        self.mov_imm(X16, 1);
+        self.lslv(size, X16, cls);
+        self.bind(done);
+    }
+    pub fn lsl_imm(&mut self, rd: u32, rn: u32, s: u32) {
+        self.emit(0xD340_0000 | ((64 - s) & 63) << 16 | (63 - s) << 10 | rn << 5 | rd);
+    }
+    pub fn and_reg(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x8A00_0000 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn orr_reg(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0xAA00_0000 | rm << 16 | rn << 5 | rd);
+    }
+    /// tst xn, xm  (ands xzr, xn, xm)
+    pub fn tst(&mut self, rn: u32, rm: u32) {
+        self.emit(0xEA00_0000 | rm << 16 | rn << 5 | XZR);
+    }
+    /// stp xt, xt2, [sp, #-16]!  (pre-index, used for the frame record)
+    pub fn stp_pre16(&mut self, rt: u32, rt2: u32) {
+        self.emit(0xA9BF_0000 | rt2 << 10 | SP << 5 | rt);
+    }
+    /// ldp xt, xt2, [sp], #16  (post-index)
+    pub fn ldp_post16(&mut self, rt: u32, rt2: u32) {
+        self.emit(0xA8C1_0000 | rt2 << 10 | SP << 5 | rt);
+    }
+
+    // --- floating point (d0..d31 are only used as scratch; values live in GPR slots as bit patterns)
+    pub fn fmov_dx(&mut self, d: u32, x: u32) {
+        self.emit(0x9E67_0000 | x << 5 | d);
+    }
+    pub fn fmov_xd(&mut self, x: u32, d: u32) {
+        self.emit(0x9E66_0000 | d << 5 | x);
+    }
+    pub fn fmov_sw(&mut self, s: u32, w: u32) {
+        self.emit(0x1E27_0000 | w << 5 | s);
+    }
+    pub fn fmov_ws(&mut self, w: u32, s: u32) {
+        self.emit(0x1E26_0000 | s << 5 | w);
+    }
+    /// fadd/fsub/fmul/fdiv dd, dn, dm  (`k` = 0x2800 / 0x3800 / 0x0800 / 0x1800)
+    pub fn farith(&mut self, k: u32, dd: u32, dn: u32, dm: u32) {
+        self.emit(0x1E60_0000 | k | dm << 16 | dn << 5 | dd);
+    }
+    pub fn fsqrt(&mut self, dd: u32, dn: u32) {
+        self.emit(0x1E61_C000 | dn << 5 | dd);
+    }
+    pub fn fcmp(&mut self, dn: u32, dm: u32) {
+        self.emit(0x1E60_2000 | dm << 16 | dn << 5);
+    }
+    /// scvtf dd, xn
+    pub fn scvtf_d(&mut self, dd: u32, xn: u32) {
+        self.emit(0x9E62_0000 | xn << 5 | dd);
+    }
+    /// scvtf sd, xn
+    pub fn scvtf_s(&mut self, sd: u32, xn: u32) {
+        self.emit(0x9E22_0000 | xn << 5 | sd);
+    }
+    /// fcvtzs xd, dn  (saturating; NaN -> 0)
+    pub fn fcvtzs(&mut self, xd: u32, dn: u32) {
+        self.emit(0x9E78_0000 | dn << 5 | xd);
+    }
+    /// fcvt dd, sn
+    pub fn fcvt_ds(&mut self, dd: u32, sn: u32) {
+        self.emit(0x1E22_C000 | sn << 5 | dd);
+    }
+    /// fcvt sd, dn  (round to nearest even)
+    pub fn fcvt_sd(&mut self, sd: u32, dn: u32) {
+        self.emit(0x1E62_4000 | dn << 5 | sd);
+    }
+    pub fn umulh(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0x9BC0_7C00 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn eor_reg(&mut self, rd: u32, rn: u32, rm: u32) {
+        self.emit(0xCA00_0000 | rm << 16 | rn << 5 | rd);
+    }
+    pub fn lsr_imm(&mut self, rd: u32, rn: u32, s: u32) {
+        self.emit(0xD340_FC00 | s << 16 | rn << 5 | rd);
+    }
+    pub fn asr_imm(&mut self, rd: u32, rn: u32, s: u32) {
+        self.emit(0x9340_FC00 | s << 16 | rn << 5 | rd);
+    }
+
+    // --- control flow
+    pub fn b(&mut self, l: usize) {
+        self.fix.push((self.code.len(), Fix::B26, l));
+        self.emit(0x1400_0000);
+    }
+    pub fn bl(&mut self, l: usize) {
+        self.fix.push((self.code.len(), Fix::B26, l));
+        self.emit(0x9400_0000);
+    }
+    pub fn bcond(&mut self, cond: u32, l: usize) {
+        self.fix.push((self.code.len(), Fix::B19, l));
+        self.emit(0x5400_0000 | cond);
+    }
+    pub fn cbz(&mut self, rt: u32, l: usize) {
+        self.fix.push((self.code.len(), Fix::B19, l));
+        self.emit(0xB400_0000 | rt);
+    }
+    pub fn cbnz(&mut self, rt: u32, l: usize) {
+        self.fix.push((self.code.len(), Fix::B19, l));
+        self.emit(0xB500_0000 | rt);
+    }
+    pub fn ret(&mut self) {
+        self.emit(0xD65F_03C0);
+    }
+    pub fn svc(&mut self) {
+        self.emit(0xD400_0001);
+    }
+    pub fn udf(&mut self) {
+        self.emit(0x0000_0000);
+    }
+    /// adrp rd, data; add rd, rd, :lo12:data  (position-independent, any distance)
+    /// rd = address of code label `l` (adrp + add, resolved in `finalize`)
+    pub fn lea_label(&mut self, rd: u32, l: usize) {
+        self.lfix.push((self.code.len(), l));
+        self.emit(0x9000_0000 | rd);
+        self.emit(0x9100_0000 | rd << 5 | rd);
+    }
+    /// blr xn
+    pub fn blr(&mut self, rn: u32) {
+        self.emit(0xD63F_0000 | rn << 5);
+    }
+    pub fn lea_data(&mut self, rd: u32, id: usize) {
+        self.dfix.push((self.code.len(), id));
+        self.emit(0x9000_0000 | rd);
+        self.emit(0x9100_0000 | rd << 5 | rd);
+    }
+    fn sys_write(&mut self, fd: i64) {
+        self.mov_imm(X0, fd);
+        self.mov_imm(X8, 64);
+        self.svc();
+    }
+    fn sys_exit(&mut self, code: i64) {
+        self.mov_imm(X0, code);
+        self.mov_imm(X8, 93);
+        self.svc();
+    }
+
+    /// `base` = virtual address of code[0]; `data_start` = offset of the data blobs in code.
+    fn finalize(&mut self, base: u64, data_start: usize, data_offs: &[usize]) {
+        for (p, kind, l) in self.fix.clone() {
+            let target = self.labels[l].expect("unbound label") as i64;
+            let words = (target - p as i64) / 4;
+            let mut w = u32::from_le_bytes(self.code[p..p + 4].try_into().unwrap());
+            match kind {
+                Fix::B26 => {
+                    assert!(words >= -(1 << 25) && words < (1 << 25), "branch out of range");
+                    w |= (words as u32) & 0x03FF_FFFF;
+                }
+                Fix::B19 => {
+                    assert!(words >= -(1 << 18) && words < (1 << 18), "conditional branch out of range");
+                    w |= ((words as u32) & 0x7FFFF) << 5;
+                }
+            }
+            self.code[p..p + 4].copy_from_slice(&w.to_le_bytes());
+        }
+        let mut addr_fix: Vec<(usize, u64)> = self.dfix.iter().map(|&(p, id)| (p, base + (data_start + data_offs[id]) as u64)).collect();
+        for &(p, l) in &self.lfix {
+            addr_fix.push((p, base + self.labels[l].expect("unbound label") as u64));
+        }
+        for (p, target) in addr_fix {
+            let pc = base + p as u64;
+            let pages = ((target >> 12) as i64) - ((pc >> 12) as i64);
+            assert!(pages >= -(1 << 20) && pages < (1 << 20), "adrp out of range");
+            let imm = (pages as u32) & 0x1F_FFFF;
+            let mut w = u32::from_le_bytes(self.code[p..p + 4].try_into().unwrap());
+            w |= (imm & 3) << 29 | (imm >> 2) << 5;
+            self.code[p..p + 4].copy_from_slice(&w.to_le_bytes());
+            let lo = (target & 0xFFF) as u32;
+            let mut w2 = u32::from_le_bytes(self.code[p + 4..p + 8].try_into().unwrap());
+            w2 |= lo << 10;
+            self.code[p + 4..p + 8].copy_from_slice(&w2.to_le_bytes());
+        }
+    }
+}
+
+// ───────────────────────── Data blobs ─────────────────────────
+
+const D_PANIC: usize = 0; // "panic: "
+const D_NL: usize = 1; // "\n"
+const D_TRUE: usize = 2;
+const D_FALSE: usize = 3;
+const D_MSG0: usize = 4; // panic messages
+const D_DBG0: usize = D_MSG0 + PANIC_MSGS.len(); // "allocs: ", "frees: ", "live: "
+const D_RNG0: usize = D_DBG0 + 3; // ": ", " not in ", ".." (the message of a failed range conversion)
+const D_TEXT0: usize = D_DBG0 + 6; // user text literals start here
+
+const PANIC_MSGS: [&str; 14] = [
+    "integer overflow in addition",
+    "integer overflow in subtraction",
+    "integer overflow in multiplication",
+    "integer overflow in division",
+    "integer overflow in negation",
+    "division by zero",
+    "modulo by zero",
+    "index out of range",
+    "out of memory",
+    "double free (debug)",
+    "pop from an empty list",
+    "assertion failed",
+    "integer conversion out of range",
+    "float is NaN or out of range for the integer type",
+];
+const P_ADD: usize = 0;
+const P_SUB: usize = 1;
+const P_MUL: usize = 2;
+const P_DIV: usize = 3;
+const P_NEG: usize = 4;
+const P_DIV0: usize = 5;
+const P_MOD0: usize = 6;
+const P_INDEX: usize = 7;
+const P_OOM: usize = 8;
+const P_DOUBLE_FREE: usize = 9; // only reachable in --native-debug-alloc builds
+const P_POP: usize = 10;
+const P_ASSERT: usize = 11;
+const P_CONV: usize = 12;
+const P_F2I: usize = 13;
+const CHK_PANIC: [usize; 7] = [P_ADD, P_SUB, P_MUL, P_DIV, P_NEG, P_CONV, P_F2I];
+const FREED: i64 = 1 << 62; // debug builds tag the header of a block sitting on a free list
+
+// Runtime heap state: a second, writable PT_LOAD segment (zero-filled, no bytes in the file).
+const G: i64 = 0x600000;
+const G_BUMP: i32 = 0; // next free byte of the current arena
+const G_END: i32 = 8; // end of the current arena
+const G_NALLOC: i32 = 16; // debug counters
+const G_NFREE: i32 = 24;
+const G_FREE: i32 = 32; // free-list heads, one per size class 2^k (k = 4..=16)
+const ARENA: i64 = 1 << 20;
+const SMALL_MAX: i64 = 65536;
+
+/// Byte offset of vreg `v` from sp (slots live at the bottom of the frame).
+fn slot(v: V) -> u32 {
+    8 * v as u32
+}
+
+// ───────────────────────── Compiler ─────────────────────────
+
+pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
+    let mut a = Asm::new();
+
+    let mut data: Vec<Vec<u8>> = vec![b"panic: ".to_vec(), b"\n".to_vec(), b"true\n".to_vec(), b"false\n".to_vec()];
+    for m in PANIC_MSGS {
+        data.push(m.as_bytes().to_vec());
+    }
+    for m in ["allocs: ", "frees: ", "live: "] {
+        data.push(m.as_bytes().to_vec());
+    }
+    for m in [": ", " not in ", ".."] {
+        data.push(m.as_bytes().to_vec());
+    }
+    for t in &ir.texts {
+        let mut b = (t.len() as u64).to_le_bytes().to_vec();
+        b.extend_from_slice(t);
+        data.push(b);
+    }
+
+    let l_start = a.label();
+    let l_print_int = a.label();
+    let l_print_bool = a.label();
+    let l_print_text = a.label();
+    let l_write2 = a.label();
+    let l_print_bytes = a.label();
+    let l_panic_bytes = a.label();
+    let l_range_panic = a.label();
+    let l_write_int2 = a.label();
+    let (l_mmap, l_alloc, l_free, l_push, l_get) = (a.label(), a.label(), a.label(), a.label(), a.label());
+    let (l_realloc, l_memcpy) = (a.label(), a.label());
+    let l_panic: Vec<usize> = (0..PANIC_MSGS.len()).map(|_| a.label()).collect();
+    let l_funcs: Vec<usize> = ir.funcs.iter().map(|_| a.label()).collect();
+
+    // _start: main(); exit(0)
+    a.bind(l_start);
+    a.bl(l_funcs[ir.main]);
+    if debug_alloc {
+        // report allocations, frees and the difference on stderr
+        for (i, name_len) in [8i64, 7, 6].iter().enumerate() {
+            a.lea_data(X1, D_DBG0 + i);
+            a.mov_imm(X2, *name_len);
+            a.bl(l_write2);
+            a.mov_imm(X4, G);
+            if i == 0 {
+                a.ldr_i(X0, X4, G_NALLOC);
+            } else if i == 1 {
+                a.ldr_i(X0, X4, G_NFREE);
+            } else {
+                a.ldr_i(X0, X4, G_NALLOC);
+                a.ldr_i(X1, X4, G_NFREE);
+                a.sub_reg(X0, X0, X1);
+            }
+            a.mov_imm(X6, 2);
+            a.bl(l_print_int);
+        }
+    }
+    a.sys_exit(0);
+
+    // write2: x1 = buf, x2 = len -> write(2, buf, len)
+    a.bind(l_write2);
+    a.sys_write(2);
+    a.ret();
+
+    // panic stubs: "panic: <msg>\n" to stderr, exit(101)
+    for (i, l) in l_panic.iter().enumerate() {
+        a.bind(*l);
+        a.lea_data(X1, D_PANIC);
+        a.mov_imm(X2, 7);
+        a.bl(l_write2);
+        a.lea_data(X1, D_MSG0 + i);
+        a.mov_imm(X2, PANIC_MSGS[i].len() as i64);
+        a.bl(l_write2);
+        a.lea_data(X1, D_NL);
+        a.mov_imm(X2, 1);
+        a.bl(l_write2);
+        a.sys_exit(101);
+    }
+
+    // write_int2: value in x0. Writes its decimal digits (no newline) to stderr. Leaf routine; keeps x9-x11.
+    a.bind(l_write_int2);
+    a.sub_imm(SP, SP, 32);
+    a.mov(X3, X0);
+    a.cmp(X0, XZR);
+    let l_wpos = a.label();
+    a.bcond(PL, l_wpos);
+    a.sub_reg(X0, XZR, X0);
+    a.bind(l_wpos);
+    a.add_imm(X1, SP, 32);
+    a.mov_imm(X2, 10);
+    let l_wdig = a.label();
+    a.bind(l_wdig);
+    a.udiv(X4, X0, X2);
+    a.msub(X5, X4, X2, X0);
+    a.add_imm(X5, X5, b'0' as u32);
+    a.sub_imm(X1, X1, 1);
+    a.strb(X5, X1, 0);
+    a.mov(X0, X4);
+    a.cbnz(X0, l_wdig);
+    a.cmp(X3, XZR);
+    let l_wnosign = a.label();
+    a.bcond(PL, l_wnosign);
+    a.sub_imm(X1, X1, 1);
+    a.mov_imm(X4, b'-' as i64);
+    a.strb(X4, X1, 0);
+    a.bind(l_wnosign);
+    a.add_imm(X2, SP, 32);
+    a.sub_reg(X2, X2, X1);
+    a.mov_imm(X0, 2);
+    a.mov_imm(X8, 64);
+    a.svc();
+    a.add_imm(SP, SP, 32);
+    a.ret();
+
+    // range_panic: x9 = value, x10 = lo, x11 = hi. "panic: integer conversion out of range: V not in LO..HI", exit(101).
+    a.bind(l_range_panic);
+    a.lea_data(X1, D_PANIC);
+    a.mov_imm(X2, 7);
+    a.bl(l_write2);
+    a.lea_data(X1, D_MSG0 + P_CONV);
+    a.mov_imm(X2, PANIC_MSGS[P_CONV].len() as i64);
+    a.bl(l_write2);
+    for (k, (len, src)) in [(2i64, X9), (8, X10), (2, X11)].into_iter().enumerate() {
+        a.lea_data(X1, D_RNG0 + k);
+        a.mov_imm(X2, len);
+        a.bl(l_write2);
+        a.mov(X0, src);
+        a.bl(l_write_int2);
+    }
+    a.lea_data(X1, D_NL);
+    a.mov_imm(X2, 1);
+    a.bl(l_write2);
+    a.sys_exit(101);
+
+    // print_int: value in x0, fd in x6. Prints decimal + newline to stdout. Leaf routine.
+    a.bind(l_print_int);
+    a.sub_imm(SP, SP, 32);
+    a.mov(X3, X0); // remember the sign
+    a.cmp(X0, XZR);
+    let l_pos = a.label();
+    a.bcond(PL, l_pos);
+    a.sub_reg(X0, XZR, X0); // neg (INT64_MIN stays 2^63, fine as unsigned)
+    a.bind(l_pos);
+    a.add_imm(X1, SP, 31);
+    a.mov_imm(X4, 10);
+    a.strb(X4, X1, 0); // '\n'
+    a.mov_imm(X2, 10);
+    let l_dig = a.label();
+    a.bind(l_dig);
+    a.udiv(X4, X0, X2);
+    a.msub(X5, X4, X2, X0); // x5 = x0 % 10
+    a.add_imm(X5, X5, b'0' as u32);
+    a.sub_imm(X1, X1, 1);
+    a.strb(X5, X1, 0);
+    a.mov(X0, X4);
+    a.cbnz(X0, l_dig);
+    a.cmp(X3, XZR);
+    let l_nosign = a.label();
+    a.bcond(PL, l_nosign);
+    a.sub_imm(X1, X1, 1);
+    a.mov_imm(X4, b'-' as i64);
+    a.strb(X4, X1, 0);
+    a.bind(l_nosign);
+    a.add_imm(X2, SP, 32);
+    a.sub_reg(X2, X2, X1); // length
+    a.mov(X0, X6); // fd (x6) is chosen by the caller
+    a.mov_imm(X8, 64);
+    a.svc();
+    a.add_imm(SP, SP, 32);
+    a.ret();
+
+    // print_bool: value in x0
+    a.bind(l_print_bool);
+    let (l_false, l_wr) = (a.label(), a.label());
+    a.cbz(X0, l_false);
+    a.lea_data(X1, D_TRUE);
+    a.mov_imm(X2, 5);
+    a.b(l_wr);
+    a.bind(l_false);
+    a.lea_data(X1, D_FALSE);
+    a.mov_imm(X2, 6);
+    a.bind(l_wr);
+    a.sys_write(1);
+    a.ret();
+
+    // print_text: x0 = pointer to [len][bytes]. Needs lr preserved (calls nothing, uses svc only).
+    a.bind(l_print_text);
+    a.ldr(X2, X0, 0);
+    a.add_imm(X1, X0, 8);
+    a.sys_write(1);
+    a.lea_data(X1, D_NL);
+    a.mov_imm(X2, 1);
+    a.sys_write(1);
+    a.ret();
+
+    // print_bytes: x1 = pointer, x2 = length. Writes the bytes (if any) and a newline.
+    {
+        let l_nl = a.label();
+        a.bind(l_print_bytes);
+        a.cbz(X2, l_nl);
+        a.sys_write(1);
+        a.bind(l_nl);
+        a.lea_data(X1, D_NL);
+        a.mov_imm(X2, 1);
+        a.sys_write(1);
+        a.ret();
+    }
+
+    // panic_bytes: x1 = pointer, x2 = length. "panic: " + the bytes + newline on stderr, exit(101).
+    {
+        let l_nl = a.label();
+        a.bind(l_panic_bytes);
+        a.mov(X9, X1);
+        a.mov(X10, X2);
+        a.lea_data(X1, D_PANIC);
+        a.mov_imm(X2, 7);
+        a.bl(l_write2);
+        a.mov(X1, X9);
+        a.mov(X2, X10);
+        a.cbz(X2, l_nl);
+        a.bl(l_write2);
+        a.bind(l_nl);
+        a.lea_data(X1, D_NL);
+        a.mov_imm(X2, 1);
+        a.bl(l_write2);
+        a.sys_exit(101);
+    }
+
+    // ── heap runtime ──
+    // rt_mmap: x1 = length -> x0 = fresh zeroed pages (panics when the kernel refuses). Leaf; clobbers x0-x5, x8.
+    a.bind(l_mmap);
+    a.mov_imm(X0, 0);
+    a.mov_imm(X2, 3); // PROT_READ | PROT_WRITE
+    a.mov_imm(X3, 0x22); // MAP_PRIVATE | MAP_ANONYMOUS
+    a.mov_imm(X4, -1);
+    a.mov_imm(X5, 0);
+    a.mov_imm(X8, 222);
+    a.svc();
+    a.cmp(X0, XZR);
+    a.bcond(LT, l_panic[P_OOM]);
+    a.ret();
+
+    // rt_alloc: x0 = bytes -> x0 = payload pointer. Block = [size header][payload].
+    // Small blocks (<= 64 KiB) are power-of-two size classes served from per-class free lists,
+    // then bumped out of 1 MiB arenas. Larger blocks get their own mmap (page rounded).
+    // Clobbers x0-x7, x9, x16. lr is kept in x7 (rt_mmap is a leaf that does not touch it).
+    {
+        let (l_large, l_found, l_bump, l_newarena, l_done) =
+            (a.label(), a.label(), a.label(), a.label(), a.label());
+        a.bind(l_alloc);
+        a.mov(X7, X30);
+        a.add_imm(X0, X0, 8);
+        a.mov_imm(X16, SMALL_MAX);
+        a.cmp(X0, X16);
+        a.bcond(HI, l_large);
+        a.size_class(X0, X1, X2); // x1 = block size (smallest 2^k >= x0), x2 = k
+        a.bind(l_found);
+        a.lsl_imm(X4, X2, 3);
+        a.mov_imm(X3, G + G_FREE as i64);
+        a.add_reg(X3, X3, X4); // x3 = &free_list[class]
+        a.ldr_i(X0, X3, 0);
+        a.cbz(X0, l_bump);
+        a.ldr_i(X4, X0, 0); // pop: head = head.next
+        a.str_i(X4, X3, 0);
+        if debug_alloc {
+            a.ldr_i(X4, X0, -8); // clear the FREED tag
+            a.mov_imm(X5, !FREED);
+            a.and_reg(X4, X4, X5);
+            a.str_i(X4, X0, -8);
+        }
+        a.b(l_done);
+        a.bind(l_bump);
+        a.mov_imm(X6, G);
+        a.ldr_i(X0, X6, G_BUMP);
+        a.add_reg(X4, X0, X1); // x4 = bump + size
+        a.ldr_i(X5, X6, G_END);
+        a.cmp(X4, X5);
+        a.bcond(HI, l_newarena);
+        a.str_i(X4, X6, G_BUMP);
+        a.str_i(X1, X0, 0); // header = block size
+        a.add_imm(X0, X0, 8);
+        a.b(l_done);
+        a.bind(l_newarena);
+        a.mov(X9, X1);
+        a.mov_imm(X1, ARENA);
+        a.bl(l_mmap);
+        a.mov(X1, X9);
+        a.mov_imm(X6, G);
+        a.str_i(X0, X6, G_BUMP);
+        a.mov_imm(X4, ARENA);
+        a.add_reg(X4, X0, X4);
+        a.str_i(X4, X6, G_END);
+        a.b(l_bump);
+        a.bind(l_large);
+        a.add_imm(X0, X0, 4095);
+        a.mov_imm(X16, -4096);
+        a.and_reg(X0, X0, X16);
+        a.mov(X1, X0);
+        a.bl(l_mmap);
+        a.str_i(X1, X0, 0); // header = mapping size
+        a.add_imm(X0, X0, 8);
+        a.bind(l_done);
+        if debug_alloc {
+            a.mov_imm(X6, G);
+            a.ldr_i(X4, X6, G_NALLOC);
+            a.add_imm(X4, X4, 1);
+            a.str_i(X4, X6, G_NALLOC);
+        }
+        a.mov(X30, X7);
+        a.ret();
+    }
+
+    // rt_free: x0 = payload pointer (0 is ignored). Leaf; clobbers x0-x6, x8, x16.
+    {
+        let (l_ret, l_large, l_found) = (a.label(), a.label(), a.label());
+        a.bind(l_free);
+        a.cbz(X0, l_ret);
+        if debug_alloc {
+            a.mov_imm(X6, G);
+            a.ldr_i(X4, X6, G_NFREE);
+            a.add_imm(X4, X4, 1);
+            a.str_i(X4, X6, G_NFREE);
+        }
+        a.ldr_i(X1, X0, -8); // block size
+        if debug_alloc {
+            a.mov_imm(X4, FREED);
+            a.tst(X4, X1);
+            a.bcond(NE, l_panic[P_DOUBLE_FREE]);
+        }
+        a.mov_imm(X16, SMALL_MAX);
+        a.cmp(X1, X16);
+        a.bcond(HI, l_large);
+        a.clz(X2, X1); // class = 63 - clz(size): the header holds the class size 2^k
+        a.mov_imm(X3, 63);
+        a.sub_reg(X2, X3, X2);
+        a.bind(l_found);
+        a.lsl_imm(X4, X2, 3);
+        a.mov_imm(X5, G + G_FREE as i64);
+        a.add_reg(X4, X4, X5); // x4 = &free_list[class]
+        if debug_alloc {
+            a.mov_imm(X5, FREED);
+            a.orr_reg(X5, X5, X1);
+            a.str_i(X5, X0, -8);
+        }
+        a.ldr_i(X5, X4, 0);
+        a.str_i(X5, X0, 0); // block.next = head
+        a.str_i(X0, X4, 0); // head = block
+        a.ret();
+        a.bind(l_large);
+        a.sub_imm(X0, X0, 8);
+        a.mov_imm(X8, 215); // munmap(x0 = block, x1 = size)
+        a.svc();
+        a.bind(l_ret);
+        a.ret();
+    }
+
+    // rt_memcpy: x0 = dst, x1 = src, x2 = n (no overlap). Leaf; clobbers x0-x5, x16.
+    {
+        let (l_lt8, l_lt4, l_byte, l_big, l_words, l_ret) =
+            (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+        a.bind(l_memcpy);
+        a.mov_imm(X16, 16);
+        a.cmp(X2, X16);
+        a.bcond(HI, l_big);
+        a.mov_imm(X16, 8);
+        a.cmp(X2, X16);
+        a.bcond(LO, l_lt8);
+        a.ldr_i(X3, X1, 0); // 8..=16: first and last word
+        a.add_reg(X1, X1, X2);
+        a.ldr_i(X4, X1, -8);
+        a.str_i(X3, X0, 0);
+        a.add_reg(X0, X0, X2);
+        a.str_i(X4, X0, -8);
+        a.ret();
+        a.bind(l_lt8);
+        a.mov_imm(X16, 4);
+        a.cmp(X2, X16);
+        a.bcond(LO, l_lt4);
+        a.ldr32_i(X3, X1, 0); // 4..=7: first and last dword
+        a.add_reg(X1, X1, X2);
+        a.ldr32_i(X4, X1, -4);
+        a.str32_i(X3, X0, 0);
+        a.add_reg(X0, X0, X2);
+        a.str32_i(X4, X0, -4);
+        a.ret();
+        a.bind(l_lt4);
+        a.cbz(X2, l_ret);
+        a.bind(l_byte);
+        a.ldrb_post1(X3, X1);
+        a.strb_post1(X3, X0);
+        a.sub_imm(X2, X2, 1);
+        a.cbnz(X2, l_byte);
+        a.bind(l_ret);
+        a.ret();
+        a.bind(l_big); // n > 16: 16-byte pairs while more than 16 remain, then the last 16 bytes of the range
+        a.bind(l_words);
+        a.ldp_post16_r(X3, X4, X1);
+        a.stp_post16_r(X3, X4, X0);
+        a.sub_imm(X2, X2, 16);
+        a.mov_imm(X16, 16);
+        a.cmp(X2, X16);
+        a.bcond(HI, l_words);
+        a.sub_reg(X5, X16, X2); // 16 - remaining
+        a.sub_reg(X1, X1, X5);
+        a.sub_reg(X0, X0, X5);
+        a.ldp0(X3, X4, X1);
+        a.stp0(X3, X4, X0);
+        a.ret();
+    }
+
+    // rt_realloc: x0 = old payload (0 = none), x1 = new payload bytes, x2 = bytes to keep -> x0 = payload.
+    // Same policy as x64: fits -> unchanged; large block -> mremap (syscall 216, MAYMOVE); otherwise
+    // alloc + copy + free. Clobbers x0-x10, x16.
+    {
+        let (l_same, l_alloc0, l_move, l_large) = (a.label(), a.label(), a.label(), a.label());
+        a.bind(l_realloc);
+        a.cbz(X0, l_alloc0);
+        a.ldr_i(X3, X0, -8); // x3 = block size S
+        if debug_alloc {
+            a.mov_imm(X4, FREED);
+            a.tst(X4, X3);
+            a.bcond(NE, l_panic[P_DOUBLE_FREE]);
+        }
+        a.add_imm(X4, X1, 8); // x4 = needed block size N
+        a.cmp(X4, X3);
+        a.bcond(LS, l_same);
+        a.mov_imm(X16, SMALL_MAX);
+        a.cmp(X3, X16);
+        a.bcond(HI, l_large);
+        a.cmp(X4, X16);
+        a.bcond(HI, l_move);
+        a.b(l_move); // small -> small: always a move (see x64.rs)
+        a.bind(l_same);
+        a.ret();
+        a.bind(l_alloc0);
+        a.mov(X0, X1);
+        a.b(l_alloc);
+        a.bind(l_large);
+        a.add_imm(X4, X4, 4095);
+        a.mov_imm(X16, -4096);
+        a.and_reg(X4, X4, X16); // new mapping length
+        a.sub_imm(X0, X0, 8);
+        a.mov(X1, X3); // old length
+        a.mov(X2, X4); // new length
+        a.mov_imm(X3, 1); // MREMAP_MAYMOVE
+        a.mov_imm(X8, 216);
+        a.svc();
+        a.cmp(X0, XZR);
+        a.bcond(LT, l_panic[P_OOM]);
+        a.str_i(X2, X0, 0); // header = mapping size
+        a.add_imm(X0, X0, 8);
+        a.ret();
+        a.bind(l_move);
+        a.stp_pre16(X29, X30);
+        a.sub_imm(SP, SP, 32);
+        a.str_i(X0, SP, 0); // old
+        a.str_i(X2, SP, 8); // bytes to keep
+        a.mov(X0, X1);
+        a.bl(l_alloc);
+        a.str_i(X0, SP, 16); // new
+        a.ldr_i(X1, SP, 0);
+        a.ldr_i(X2, SP, 8);
+        a.bl(l_memcpy);
+        a.ldr_i(X0, SP, 0);
+        a.bl(l_free);
+        a.ldr_i(X0, SP, 16);
+        a.add_imm(SP, SP, 32);
+        a.ldp_post16(X29, X30);
+        a.ret();
+    }
+
+    // rt_push: x0 = &list, x1 = value. List = {ptr, len, cap}; capacity 7, then 2*cap+1, grown via rt_realloc.
+    {
+        let (l_store, l_nz) = (a.label(), a.label());
+        a.bind(l_push);
+        a.stp_pre16(X29, X30);
+        a.sub_imm(SP, SP, 32);
+        a.str_i(X1, SP, 0); // value
+        a.str_i(X0, SP, 8); // list
+        a.ldr_i(X2, X0, 8);
+        a.ldr_i(X3, X0, 16);
+        a.cmp(X2, X3);
+        a.bcond(NE, l_store);
+        a.lsl_imm(X4, X3, 1);
+        a.add_imm(X4, X4, 1);
+        a.cbnz(X3, l_nz);
+        a.mov_imm(X4, 7);
+        a.bind(l_nz);
+        a.str_i(X4, X0, 16); // cap = new capacity
+        a.lsl_imm(X1, X4, 3); // new payload bytes
+        a.lsl_imm(X2, X2, 3); // bytes to keep
+        a.ldr_i(X0, X0, 0); // old buffer
+        a.bl(l_realloc);
+        a.ldr_i(X1, SP, 8);
+        a.str_i(X0, X1, 0);
+        a.bind(l_store);
+        a.ldr_i(X0, SP, 8);
+        a.ldr_i(X1, SP, 0);
+        a.ldr_i(X2, X0, 8);
+        a.lsl_imm(X3, X2, 3);
+        a.ldr_i(X4, X0, 0);
+        a.add_reg(X4, X4, X3);
+        a.str_i(X1, X4, 0);
+        a.add_imm(X2, X2, 1);
+        a.str_i(X2, X0, 8);
+        a.add_imm(SP, SP, 32);
+        a.ldp_post16(X29, X30);
+        a.ret();
+    }
+
+    // rt_get: x0 = &list, x1 = index -> x0. Unsigned compare also rejects negative indices.
+    a.bind(l_get);
+    a.ldr_i(X2, X0, 8);
+    a.cmp(X1, X2);
+    a.bcond(HS, l_panic[P_INDEX]);
+    a.ldr_i(X3, X0, 0);
+    a.lsl_imm(X1, X1, 3);
+    a.add_reg(X3, X3, X1);
+    a.ldr_i(X0, X3, 0);
+    a.ret();
+
+    // user functions
+    for (fi, f) in ir.funcs.iter().enumerate() {
+        a.bind(l_funcs[fi]);
+        a.stp_pre16(X29, X30);
+        a.mov_sp(X29, SP);
+        // frame: [vreg slots][aggregate slots] above sp
+        let mut slot_off = vec![];
+        let mut tot = f.nvregs * 8;
+        for w in &f.slots {
+            slot_off.push(tot as u32);
+            tot += w * 8;
+        }
+        let frame = ((tot + 15) & !15) as u32;
+        if frame > 0 {
+            a.sub_sp_const(SP, SP, frame, false);
+        }
+        for i in 0..f.nparams {
+            a.ldr(X0, X29, 16 + 8 * i as u32); // arg i lives at [x29+16+8i]
+            a.str(X0, SP, slot(i));
+        }
+        let bl: Vec<usize> = f.blocks.iter().map(|_| a.label()).collect();
+        for (bi, b) in f.blocks.iter().enumerate() {
+            a.bind(bl[bi]);
+            for ins in &b.insts {
+                match ins {
+                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Syscall(..) | Inst::Global(..) => unreachable!("rejected by os_intrinsics_error"),
+                    Inst::Const(d, n) => {
+                        a.mov_imm(X0, *n);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Text(d, id) => {
+                        a.lea_data(X0, D_TEXT0 + id);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::N(op, d, x, y) => {
+                        a.ldr(X0, SP, slot(*x));
+                        a.ldr(X1, SP, slot(*y));
+                        match *op {
+                            NOp::FAdd | NOp::FSub | NOp::FMul | NOp::FDiv => {
+                                a.fmov_dx(0, X0);
+                                a.fmov_dx(1, X1);
+                                let k = match op {
+                                    NOp::FAdd => 0x2800,
+                                    NOp::FSub => 0x3800,
+                                    NOp::FMul => 0x0800,
+                                    _ => 0x1800,
+                                };
+                                a.farith(k, 0, 0, 1);
+                                a.fmov_xd(X0, 0);
+                            }
+                            NOp::FSqrt => {
+                                a.fmov_dx(0, X0);
+                                a.fsqrt(0, 0);
+                                a.fmov_xd(X0, 0);
+                            }
+                            NOp::FLt | NOp::FLe | NOp::FEq | NOp::FNe => {
+                                // unordered sets NZCV = 0011: MI, LS and EQ are false, NE is true
+                                a.fmov_dx(0, X0);
+                                a.fmov_dx(1, X1);
+                                a.fcmp(0, 1);
+                                let cc = match op {
+                                    NOp::FLt => MI,
+                                    NOp::FLe => LS,
+                                    NOp::FEq => EQ,
+                                    _ => NE,
+                                };
+                                a.cset(X0, cc);
+                            }
+                            NOp::FNeg => {
+                                a.mov_imm(X1, i64::MIN);
+                                a.eor_reg(X0, X0, X1);
+                            }
+                            NOp::I2F => {
+                                a.scvtf_d(0, X0);
+                                a.fmov_xd(X0, 0);
+                            }
+                            NOp::I2S => {
+                                a.scvtf_s(0, X0);
+                                a.fmov_ws(X0, 0); // zero-extends into x0
+                            }
+                            NOp::S2F => {
+                                a.fmov_sw(0, X0);
+                                a.fcvt_ds(0, 0);
+                                a.fmov_xd(X0, 0);
+                            }
+                            NOp::F2S => {
+                                a.fmov_dx(0, X0);
+                                a.fcvt_sd(0, 0);
+                                a.fmov_ws(X0, 0);
+                            }
+                            NOp::F2I => {
+                                // fcvtzs saturates and maps NaN to 0: reject NaN, i64::MAX (>= 2^63), and i64::MIN unless exactly -2^63
+                                let ok = a.label();
+                                a.fmov_dx(0, X0);
+                                a.fcmp(0, 0);
+                                a.bcond(VS, l_panic[P_F2I]);
+                                a.fcvtzs(X2, 0);
+                                a.mov_imm(X1, i64::MAX);
+                                a.cmp(X2, X1);
+                                a.bcond(EQ, l_panic[P_F2I]);
+                                a.mov_imm(X1, i64::MIN);
+                                a.cmp(X2, X1);
+                                a.bcond(NE, ok);
+                                a.mov_imm(X1, 0xC3E0_0000_0000_0000u64 as i64);
+                                a.cmp(X0, X1);
+                                a.bcond(NE, l_panic[P_F2I]);
+                                a.bind(ok);
+                                a.mov(X0, X2);
+                            }
+                            NOp::Chk(rng, msg) => {
+                                let (lo, hi) = rng.bounds();
+                                let l = l_panic[CHK_PANIC[msg as usize]];
+                                if rng == Rng::NonNeg {
+                                    a.cmp(X0, XZR);
+                                    a.bcond(MI, l);
+                                } else if let (Rng::Iv(..), MSG_CONV) = (rng, msg) {
+                                    // the message names the value and the bounds
+                                    let l_ok = a.label();
+                                    a.mov_imm(X2, lo);
+                                    a.sub_reg(X2, X0, X2);
+                                    a.mov_imm(X3, hi.wrapping_sub(lo));
+                                    a.cmp(X2, X3);
+                                    a.bcond(LS, l_ok);
+                                    a.mov(X9, X0);
+                                    a.mov_imm(X10, lo);
+                                    a.mov_imm(X11, hi);
+                                    a.b(l_range_panic);
+                                    a.bind(l_ok);
+                                } else {
+                                    a.mov_imm(X2, lo);
+                                    a.sub_reg(X2, X0, X2);
+                                    a.mov_imm(X3, hi.wrapping_sub(lo));
+                                    a.cmp(X2, X3);
+                                    a.bcond(HI, l);
+                                }
+                            }
+                            NOp::Ext(rng) => {
+                                let sh = 64 - rng.bits();
+                                a.lsl_imm(X0, X0, sh);
+                                if rng.signed() {
+                                    a.asr_imm(X0, X0, sh);
+                                } else {
+                                    a.lsr_imm(X0, X0, sh);
+                                }
+                            }
+                            NOp::WAdd => a.add_reg(X0, X0, X1),
+                            NOp::WSub => a.sub_reg(X0, X0, X1),
+                            NOp::WMul => a.mul(X0, X0, X1),
+                            NOp::UAdd => {
+                                a.adds(X0, X0, X1);
+                                a.bcond(HS, l_panic[P_ADD]);
+                            }
+                            NOp::USub => {
+                                a.subs(X0, X0, X1);
+                                a.bcond(LO, l_panic[P_SUB]);
+                            }
+                            NOp::UMul => {
+                                a.umulh(X2, X0, X1);
+                                a.mul(X0, X0, X1);
+                                a.cbnz(X2, l_panic[P_MUL]);
+                            }
+                            NOp::UDiv | NOp::UMod => {
+                                let is_div = *op == NOp::UDiv;
+                                a.cbz(X1, l_panic[if is_div { P_DIV0 } else { P_MOD0 }]);
+                                a.udiv(X2, X0, X1);
+                                if is_div {
+                                    a.mov(X0, X2);
+                                } else {
+                                    a.msub(X0, X2, X1, X0);
+                                }
+                            }
+                            NOp::ULt | NOp::ULe => {
+                                a.cmp(X0, X1);
+                                a.cset(X0, if *op == NOp::ULt { LO } else { LS });
+                            }
+                        }
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Mov(d, s) => {
+                        a.ldr(X0, SP, slot(*s));
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Neg(d, s) => {
+                        a.ldr(X0, SP, slot(*s));
+                        a.subs(X0, XZR, X0);
+                        a.bcond(VS, l_panic[P_NEG]);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Not(d, s) => {
+                        a.ldr(X0, SP, slot(*s));
+                        a.eor1(X0, X0);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Bin(d, op, x, y) => {
+                        a.ldr(X0, SP, slot(*x));
+                        a.ldr(X1, SP, slot(*y));
+                        match op.checked() {
+                            Op::Add => {
+                                a.adds(X0, X0, X1);
+                                a.bcond(VS, l_panic[P_ADD]);
+                            }
+                            Op::Sub => {
+                                a.subs(X0, X0, X1);
+                                a.bcond(VS, l_panic[P_SUB]);
+                            }
+                            Op::Mul => {
+                                // overflow iff high 64 bits != sign-extension of the low 64 bits
+                                a.mul(X2, X0, X1);
+                                a.smulh(X3, X0, X1);
+                                a.cmp_asr63(X3, X2);
+                                a.bcond(NE, l_panic[P_MUL]);
+                                a.mov(X0, X2);
+                            }
+                            Op::Div | Op::Mod => {
+                                let is_div = op.checked() == Op::Div;
+                                let (l_do, l_done) = (a.label(), a.label());
+                                a.cbz(X1, l_panic[if is_div { P_DIV0 } else { P_MOD0 }]);
+                                a.cmn_1(X1); // divisor == -1 ?
+                                a.bcond(NE, l_do);
+                                if is_div {
+                                    a.subs(X0, XZR, X0); // x / -1 = -x
+                                    a.bcond(VS, l_panic[P_DIV]);
+                                } else {
+                                    a.mov_imm(X0, 0); // x % -1 == 0
+                                }
+                                a.b(l_done);
+                                a.bind(l_do);
+                                a.sdiv(X2, X0, X1);
+                                if is_div {
+                                    a.mov(X0, X2);
+                                } else {
+                                    a.msub(X0, X2, X1, X0);
+                                }
+                                a.bind(l_done);
+                            }
+                            cmp => {
+                                a.cmp(X0, X1);
+                                let cc = match cmp {
+                                    Op::Eq => EQ,
+                                    Op::Ne => NE,
+                                    Op::Lt => LT,
+                                    Op::Le => LE,
+                                    Op::Gt => GT,
+                                    _ => GE,
+                                };
+                                a.cset(X0, cc);
+                            }
+                        }
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::VTableAddr(d, id) => {
+                        a.lea_data(X0, data.len() + id);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::FnAddr(d, fid) => {
+                        a.lea_label(X0, l_funcs[*fid]);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Call(dst, _, args) | Inst::CallInd(dst, _, args) | Inst::ExternCall(dst, _, args, ..) => {
+                        let sz = ((8 * args.len() + 15) & !15) as u32;
+                        if sz > 0 {
+                            a.sub_sp_const(SP, SP, sz, false);
+                        }
+                        for (i, arg) in args.iter().enumerate() {
+                            a.ldr(X0, SP, slot(*arg) + sz); // slots are sp-relative: skip the arg area
+                            a.str(X0, SP, 8 * i as u32);
+                        }
+                        match ins {
+                            Inst::Call(_, fid, _) => a.bl(l_funcs[*fid]),
+                            Inst::ExternCall(..) => unreachable!("extern calls are unsupported on aarch64"),
+                            Inst::CallInd(_, code, _) => {
+                                a.ldr(X16, SP, slot(*code) + sz);
+                                a.blr(X16);
+                            }
+                            _ => unreachable!(),
+                        }
+                        if sz > 0 {
+                            a.sub_sp_const(SP, SP, sz, true);
+                        }
+                        if let Some(d) = dst {
+                            a.str(X0, SP, slot(*d));
+                        }
+                    }
+                    Inst::PrintInt(v) => {
+                        a.ldr(X0, SP, slot(*v));
+                        a.mov_imm(X6, 1);
+                        a.bl(l_print_int);
+                    }
+                    Inst::PrintBool(v) => {
+                        a.ldr(X0, SP, slot(*v));
+                        a.bl(l_print_bool);
+                    }
+                    Inst::PrintText(v) => {
+                        a.ldr(X0, SP, slot(*v));
+                        a.bl(l_print_text);
+                    }
+                    Inst::Slot(d, k) => {
+                        a.sub_sp_const(X0, SP, slot_off[*k], true);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Load(d, ad, off) | Inst::LoadH(d, ad, off) => {
+                        a.ldr(X1, SP, slot(*ad));
+                        a.ldr_i(X0, X1, *off);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Store(ad, off, v) => {
+                        a.ldr(X1, SP, slot(*ad));
+                        a.ldr(X0, SP, slot(*v));
+                        a.str_i(X0, X1, *off);
+                    }
+                    Inst::LoadX(d, b, i, 0) => {
+                        a.ldr(X1, SP, slot(*b));
+                        a.ldr(X2, SP, slot(*i));
+                        a.add_reg(X1, X1, X2);
+                        a.ldrb_i(X0, X1, 0);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::StoreX(b, i, 0, v) => {
+                        a.ldr(X1, SP, slot(*b));
+                        a.ldr(X2, SP, slot(*i));
+                        a.add_reg(X1, X1, X2);
+                        a.ldr(X0, SP, slot(*v));
+                        a.strb_i(X0, X1, 0);
+                    }
+                    Inst::LoadX(d, b, i, k) => {
+                        a.ldr(X1, SP, slot(*b));
+                        a.ldr(X2, SP, slot(*i));
+                        a.lsl_imm(X2, X2, k.trailing_zeros());
+                        a.add_reg(X1, X1, X2);
+                        a.ldr_i(X0, X1, 0);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::StoreX(b, i, k, v) => {
+                        a.ldr(X1, SP, slot(*b));
+                        a.ldr(X2, SP, slot(*i));
+                        a.lsl_imm(X2, X2, k.trailing_zeros());
+                        a.add_reg(X1, X1, X2);
+                        a.ldr(X0, SP, slot(*v));
+                        a.str_i(X0, X1, 0);
+                    }
+                    Inst::LeaX(d, b, i, k) => {
+                        a.ldr(X1, SP, slot(*b));
+                        a.ldr(X2, SP, slot(*i));
+                        a.lsl_imm(X2, X2, k.trailing_zeros());
+                        a.add_reg(X0, X1, X2);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Lea(d, ad, off) => {
+                        a.ldr(X0, SP, slot(*ad));
+                        a.mov_imm(X1, *off as i64);
+                        a.add_reg(X0, X0, X1);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Copy(dst, src, n) => {
+                        a.ldr(X1, SP, slot(*dst));
+                        a.ldr(X2, SP, slot(*src));
+                        for i in 0..*n as i32 {
+                            a.ldr_i(X0, X2, 8 * i);
+                            a.str_i(X0, X1, 8 * i);
+                        }
+                    }
+                    Inst::ListPush(l, v) => {
+                        a.ldr(X0, SP, slot(*l));
+                        a.ldr(X1, SP, slot(*v));
+                        a.bl(l_push);
+                    }
+                    Inst::ListGet(d, l, i) => {
+                        a.ldr(X0, SP, slot(*l));
+                        a.ldr(X1, SP, slot(*i));
+                        a.bl(l_get);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::ListFree(l) => {
+                        a.ldr(X1, SP, slot(*l));
+                        a.ldr_i(X0, X1, 0);
+                        a.bl(l_free);
+                    }
+                    Inst::Alloc(d, n) => {
+                        a.ldr(X0, SP, slot(*n));
+                        a.bl(l_alloc);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Free(p) => {
+                        a.ldr(X0, SP, slot(*p));
+                        a.bl(l_free);
+                    }
+                    Inst::MemCpy(dst, src, n) => {
+                        a.ldr(X0, SP, slot(*dst));
+                        a.ldr(X1, SP, slot(*src));
+                        a.ldr(X2, SP, slot(*n));
+                        a.bl(l_memcpy);
+                    }
+                    Inst::Realloc(d, old, n, used) => {
+                        a.ldr(X0, SP, slot(*old));
+                        a.ldr(X1, SP, slot(*n));
+                        a.ldr(X2, SP, slot(*used));
+                        a.bl(l_realloc);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Load8(d, ad, off) => {
+                        a.ldr(X1, SP, slot(*ad));
+                        a.ldrb_i(X0, X1, *off);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Store8(ad, off, v) => {
+                        a.ldr(X1, SP, slot(*ad));
+                        a.ldr(X0, SP, slot(*v));
+                        a.strb_i(X0, X1, *off);
+                    }
+                    Inst::PrintBytes(p, n) => {
+                        a.ldr(X1, SP, slot(*p));
+                        a.ldr(X2, SP, slot(*n));
+                        a.bl(l_print_bytes);
+                    }
+                    Inst::Panic(p, n) => {
+                        a.ldr(X1, SP, slot(*p));
+                        a.ldr(X2, SP, slot(*n));
+                        a.bl(l_panic_bytes);
+                    }
+                    Inst::Check(i, n) => {
+                        a.ldr(X0, SP, slot(*i));
+                        a.ldr(X1, SP, slot(*n));
+                        a.cmp(X0, X1);
+                        a.bcond(HS, l_panic[P_INDEX]); // unsigned: negative indices fail too
+                    }
+                    Inst::CheckNonEmpty(n) => {
+                        a.ldr(X0, SP, slot(*n));
+                        a.cbz(X0, l_panic[P_POP]);
+                    }
+                    Inst::Assert(n) => {
+                        a.ldr(X0, SP, slot(*n));
+                        a.cbz(X0, l_panic[P_ASSERT]);
+                    }
+                }
+            }
+            match &b.term {
+                Term::Jmp(t) => {
+                    if *t != bi + 1 {
+                        a.b(bl[*t]);
+                    }
+                }
+                Term::Br(c, t, e) => {
+                    a.ldr(X0, SP, slot(*c));
+                    a.cbnz(X0, bl[*t]);
+                    if *e != bi + 1 {
+                        a.b(bl[*e]);
+                    }
+                }
+                Term::Ret(v) => {
+                    if let Some(v) = v {
+                        a.ldr(X0, SP, slot(*v));
+                    }
+                    a.mov_sp(SP, X29);
+                    a.ldp_post16(X29, X30);
+                    a.ret();
+                }
+                Term::Unreachable => a.udf(),
+            }
+        }
+    }
+
+    // lay out: code, padding to 16, then data blobs (each 8-aligned)
+    while a.code.len() % 16 != 0 {
+        a.code.push(0);
+    }
+    let data_start = a.code.len();
+    let mut offs = vec![];
+    let mut blob: Vec<u8> = vec![];
+    for d in &data {
+        while blob.len() % 8 != 0 {
+            blob.push(0);
+        }
+        offs.push(blob.len());
+        blob.extend_from_slice(d);
+    }
+    for table in &ir.vtables {
+        blob.resize((blob.len() + 7) & !7, 0);
+        offs.push(blob.len());
+        let address = (data_start + blob.len()) as i64;
+        for &func in table {
+            let code = a.labels[l_funcs[func]].unwrap() as i64;
+            blob.extend_from_slice(&(code - address).to_le_bytes());
+        }
+    }
+    a.finalize(BASE + HDR, data_start, &offs);
+    let entry = a.labels[l_start].unwrap();
+    a.code.extend_from_slice(&blob);
+    elf64(&a.code, entry)
+}
+
+// ───────────────────────── ELF64 writer ─────────────────────────
+// One PT_LOAD segment (R+X) holding headers + code + read-only data. EM_AARCH64 = 183.
+
+const BASE: u64 = 0x400000;
+const HDR: u64 = 64 + 2 * 56;
+
+fn elf64(blob: &[u8], entry_off: usize) -> Vec<u8> {
+    let total = HDR + blob.len() as u64;
+    let mut o: Vec<u8> = vec![];
+    o.extend_from_slice(&[0x7F, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    o.extend_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+    o.extend_from_slice(&183u16.to_le_bytes()); // EM_AARCH64
+    o.extend_from_slice(&1u32.to_le_bytes());
+    o.extend_from_slice(&(BASE + HDR + entry_off as u64).to_le_bytes());
+    o.extend_from_slice(&64u64.to_le_bytes()); // phoff
+    o.extend_from_slice(&0u64.to_le_bytes()); // shoff
+    o.extend_from_slice(&0u32.to_le_bytes()); // flags
+    o.extend_from_slice(&64u16.to_le_bytes());
+    o.extend_from_slice(&56u16.to_le_bytes());
+    o.extend_from_slice(&2u16.to_le_bytes()); // phnum
+    o.extend_from_slice(&64u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+    o.extend_from_slice(&5u32.to_le_bytes()); // R + X
+    o.extend_from_slice(&0u64.to_le_bytes());
+    o.extend_from_slice(&BASE.to_le_bytes());
+    o.extend_from_slice(&BASE.to_le_bytes());
+    o.extend_from_slice(&total.to_le_bytes());
+    o.extend_from_slice(&total.to_le_bytes());
+    o.extend_from_slice(&0x1000u64.to_le_bytes());
+    // second segment: zero-filled RW heap state at G (no bytes in the file)
+    o.extend_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+    o.extend_from_slice(&6u32.to_le_bytes()); // R + W
+    o.extend_from_slice(&0u64.to_le_bytes());
+    o.extend_from_slice(&(G as u64).to_le_bytes());
+    o.extend_from_slice(&(G as u64).to_le_bytes());
+    o.extend_from_slice(&0u64.to_le_bytes());
+    o.extend_from_slice(&4096u64.to_le_bytes());
+    o.extend_from_slice(&0x1000u64.to_le_bytes());
+    o.extend_from_slice(blob);
+    o
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enc(f: impl FnOnce(&mut Asm)) -> u32 {
+        let mut a = Asm::new();
+        f(&mut a);
+        u32::from_le_bytes(a.code[0..4].try_into().unwrap())
+    }
+
+    // Known-good encodings (ARM ARM / objdump).
+    #[test]
+    fn known_encodings() {
+        assert_eq!(enc(|a| a.movz(0, 1, 0)), 0xD280_0020);
+        assert_eq!(enc(|a| a.adds(0, 0, 1)), 0xAB01_0000);
+        assert_eq!(enc(|a| a.subs(0, 0, 1)), 0xEB01_0000);
+        assert_eq!(enc(|a| a.mul(2, 0, 1)), 0x9B01_7C02);
+        assert_eq!(enc(|a| a.smulh(3, 0, 1)), 0x9B41_7C03);
+        assert_eq!(enc(|a| a.sdiv(2, 0, 1)), 0x9AC1_0C02);
+        assert_eq!(enc(|a| a.msub(0, 2, 1, 0)), 0x9B01_8040);
+        assert_eq!(enc(|a| a.ret()), 0xD65F_03C0);
+        assert_eq!(enc(|a| a.svc()), 0xD400_0001);
+        assert_eq!(enc(|a| a.stp_pre16(29, 30)), 0xA9BF_7BFD);
+        assert_eq!(enc(|a| a.ldp_post16(29, 30)), 0xA8C1_7BFD);
+        assert_eq!(enc(|a| a.cset(0, EQ)), 0x9A9F_17E0);
+        assert_eq!(enc(|a| a.mov(29, 1)), 0xAA01_03FD);
+        assert_eq!(enc(|a| a.ldr(0, 31, 8)), 0xF940_07E0);
+        assert_eq!(enc(|a| a.eor1(0, 0)), 0xD240_0000);
+        assert_eq!(enc(|a| a.fmov_dx(0, 0)), 0x9E67_0000);
+        assert_eq!(enc(|a| a.fmov_xd(0, 0)), 0x9E66_0000);
+        assert_eq!(enc(|a| a.farith(0x2800, 0, 0, 1)), 0x1E61_2800);
+        assert_eq!(enc(|a| a.farith(0x3800, 0, 0, 1)), 0x1E61_3800);
+        assert_eq!(enc(|a| a.farith(0x0800, 0, 0, 1)), 0x1E61_0800);
+        assert_eq!(enc(|a| a.farith(0x1800, 0, 0, 1)), 0x1E61_1800);
+        assert_eq!(enc(|a| a.fsqrt(0, 0)), 0x1E61_C000);
+        assert_eq!(enc(|a| a.fcmp(0, 1)), 0x1E61_2000);
+        assert_eq!(enc(|a| a.scvtf_d(0, 0)), 0x9E62_0000);
+        assert_eq!(enc(|a| a.fcvtzs(2, 0)), 0x9E78_0002);
+        assert_eq!(enc(|a| a.fcvt_ds(0, 0)), 0x1E22_C000);
+        assert_eq!(enc(|a| a.fcvt_sd(0, 0)), 0x1E62_4000);
+        assert_eq!(enc(|a| a.umulh(2, 0, 1)), 0x9BC1_7C02);
+        assert_eq!(enc(|a| a.lsr_imm(0, 0, 56)), 0xD378_FC00);
+        assert_eq!(enc(|a| a.asr_imm(0, 0, 56)), 0x9378_FC00);
+    }
+}

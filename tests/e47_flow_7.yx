@@ -1,0 +1,9 @@
+fn main() {
+  var l = List<String>.new()
+  l.push(String.from("a"))
+  for s in l {
+    let t = s
+    consume(move s)
+  }
+}
+fn consume(s: String) { }

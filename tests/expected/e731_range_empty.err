@@ -1,0 +1,8 @@
+error: empty integer range 5..2
+ --> tests/e731_range_empty.yx:1:15
+  |
+1 | fn invalid(x: Int<5..2>) -> Int {
+  |               ^^^
+  = the bounds of `Int<lo..hi>` are inclusive and `lo` must not exceed `hi`
+
+1 error(s). Nothing was generated.

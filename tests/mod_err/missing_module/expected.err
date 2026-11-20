@@ -1,0 +1,9 @@
+error: cannot find module 'utils.maths'
+ --> tests/mod_err/missing_module/main.yx:1:1
+  |
+1 | import utils.maths
+  | ^^^^^^^^^^^^^^^^^^
+  = looked for tests/mod_err/missing_module/utils/maths.yx
+  = help: `import utils.maths` loads utils/maths.yx from the folder of the file you compile (tests/mod_err/missing_module); create it, or fix the name
+
+1 error(s). Nothing was generated.

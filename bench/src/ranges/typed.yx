@@ -1,0 +1,25 @@
+// Pixel blending with range types: Byte = Int<0..255>. The type system proves every product and sum below,
+// and one length test hoists the lookup-table bounds check out of the loop.
+type Byte = Int<0..255>
+
+fn mix(a: Byte, b: Byte, t: Byte) -> Int<0..130050> {
+  return a * (255 - t) + b * t
+}
+
+fn shade(lut: view List<Int>, v: Byte) -> Int {
+  if lut.len() < 256 { return 0 }
+  return lut.get(v)
+}
+
+fn main() {
+  var lut = List<Int>.new()
+  for k in 0..256 { lut.push(k * k % 251) }
+  var acc = 0
+  for i in 0..100000000 {
+    let a: Byte = i % 256
+    let b: Byte = (i * 7) % 256
+    let t: Byte = (i / 3) % 256
+    acc = (acc + mix(a, b, t) / 255 + shade(lut, a)) % 1000003
+  }
+  print(acc)
+}

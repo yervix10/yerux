@@ -1,0 +1,143 @@
+// loops that read list headers (ptr/len) while something in the loop changes them: header loads must not be hoisted
+struct Box { items: List<Int>, tag: Int }
+
+fn grow_to(l: mut List<Int>, n: Int) {
+  while l.len() < n { l.push(l.len() * 3) }
+}
+fn shrink(l: mut List<Int>) { l.pop() }
+fn swap_in(l: mut List<Int>, other: view List<Int>) {
+  l.clear()
+  var i = 0
+  while i < other.len() {
+    l.push(other.get(i) + 1)
+    i = i + 1
+  }
+}
+fn sum(l: view List<Int>) -> Int {
+  var s = 0
+  var i = 0
+  while i < l.len() {
+    s = s + l.get(i)
+    i = i + 1
+  }
+  return s
+}
+fn fill_and_sum(src: view List<Int>, dst: mut List<Int>) -> Int {
+  var s = 0
+  var i = 0
+  while i < src.len() {
+    dst.set(i, src.get(i) * 2)
+    s = s + dst.get(i)
+    i = i + 1
+  }
+  return s
+}
+
+fn main() {
+  // push inside the loop that also reads len/ptr (growth moves the buffer)
+  var a = List<Int>.new()
+  var i = 0
+  var acc = 0
+  while i < 100 {
+    a.push(i)
+    acc = acc + a.get(a.len() - 1) + a.len()
+    i = i + 1
+  }
+  print(acc)
+  // pop in a loop that reads len
+  var n = 0
+  while a.len() > 10 {
+    n = n + a.get(a.len() - 1)
+    a.pop()
+  }
+  print(n)
+  print(a.len())
+  // clear then read through the stale index: must panic-free via len check
+  var b = List<Int>.new()
+  var k = 0
+  while k < 5 {
+    b.clear()
+    var j = 0
+    while j < 3 + k {
+      b.push(j * k)
+      j = j + 1
+    }
+    print(sum(b))
+    k = k + 1
+  }
+  // calls that change the list in the loop
+  var c = List<Int>.new()
+  var r = 0
+  while r < 6 {
+    grow_to(c, 4 * r + 4)
+    print(sum(c))
+    if r % 2 == 1 { shrink(c) }
+    r = r + 1
+  }
+  // whole-list assignment through a call
+  var d = List<Int>.new()
+  var t = 0
+  while t < 4 {
+    swap_in(d, c)
+    print(d.len() + sum(d))
+    t = t + 1
+  }
+  // set/get on two lists in one loop
+  var e = List<Int>.new()
+  var q = 0
+  while q < c.len() {
+    e.push(0)
+    q = q + 1
+  }
+  print(fill_and_sum(c, e))
+  print(sum(e))
+  // lists inside a struct: the header lives in a struct field
+  var bx = Box { items: List<Int>.new(), tag: 7 }
+  var z = 0
+  while z < 20 {
+    bx.items.push(z * bx.tag)
+    bx.tag = bx.tag + bx.items.len()
+    z = z + 1
+  }
+  print(sum(bx.items))
+  print(bx.tag)
+  // nested lists
+  var rows = List<List<Int>>.new()
+  var y = 0
+  while y < 5 {
+    rows.push(List<Int>.new())
+    var x = 0
+    while x <= y {
+      rows.at(y).push(x * y)
+      x = x + 1
+    }
+    y = y + 1
+  }
+  var tot = 0
+  y = 0
+  while y < rows.len() {
+    var x = 0
+    while x < rows.at(y).len() {
+      tot = tot + rows.at(y).get(x)
+      x = x + 1
+    }
+    y = y + 1
+  }
+  print(tot)
+  // string headers in loops
+  var s = String.new()
+  var w = 0
+  while w < 50 {
+    s.push_int(w)
+    s.push_str(",")
+    w = w + 1
+  }
+  var cnt = 0
+  var p = 0
+  while p < s.len() {
+    if s.byte(p) == 44 { cnt = cnt + 1 }
+    p = p + 1
+  }
+  print(cnt)
+  print(s.len())
+}

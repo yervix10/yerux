@@ -1,0 +1,9 @@
+fn f(x: Int<0..3>) -> Int {
+  match x {
+    0 => { return 10 }
+    1 => { return 11 }
+    3 => { return 13 }
+  }
+  return -1
+}
+fn main() { print(f(2)) }

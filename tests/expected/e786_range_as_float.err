@@ -1,0 +1,8 @@
+error: `as Int<0..9>` converts an integer, but this is Float
+ --> tests/e786_range_as_float.yx:4:11
+  |
+4 |   let b = f as Int<0..9> else { return }
+  |           ^
+  = help: convert a Float to an integer first: `x.to_int()`, `x.floor_int()`, ...
+
+1 error(s). Nothing was generated.

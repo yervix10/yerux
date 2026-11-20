@@ -1,0 +1,27 @@
+// std.io: one line, then the rest with read_all (tests/io_stdin_all.stdin)
+import std.io
+
+fn main() {
+  match io.read_line() {
+    Ok(opt) => {
+      match opt {
+        Some(l) => { print("first: {l}") }
+        None => { print("empty") }
+      }
+    }
+    Err(e) => { print("error: {e}") }
+  }
+  match io.read_all() {
+    Ok(rest) => {
+      print(rest.len())
+      let parts = rest.split("\n")
+      print(parts.len())
+    }
+    Err(e) => { print("error: {e}") }
+  }
+  // end of input stays end of input
+  match io.read_line() {
+    Ok(opt) => { print(opt.is_none()) }
+    Err(e) => { print("error: {e}") }
+  }
+}

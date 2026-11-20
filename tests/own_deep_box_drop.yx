@@ -1,0 +1,80 @@
+// Dropping very long chains of Box must not use stack proportional to their length
+// (linked lists, a single recursive path through an enum or an Option, trees with several
+// recursive children, owned payloads released exactly once).
+struct Chain { val: Int, next: Option<Box<Chain>> }
+enum L { Nil, Cons(Int, Box<L>) }
+enum T { Leaf, Node(Box<T>, Int, Box<T>) }
+struct Named { name: String, next: Option<Box<Named>> }
+struct Pair { left: Option<Box<Pair>>, tag: String, right: Option<Box<Pair>> }
+
+// node counts are multiples of scale() (tests/a64_emu.py shrinks it: the emulator is slow)
+fn scale() -> Int { return 1000000 }
+
+fn build_chain(n: Int) -> Option<Box<Chain>> {
+  var head = Option<Box<Chain>>.None
+  for i in 0..n { head = Some(Box.new(Chain { val: i, next: move head })) }
+  return head
+}
+
+fn build_list(n: Int) -> L {
+  var l = L.Nil
+  for i in 0..n { l = L.Cons(i, Box.new(move l)) }
+  return l
+}
+
+fn head_val(l: view L) -> Int {
+  match l {
+    Nil => { return -1 }
+    Cons(v, rest) => { return v }
+  }
+}
+
+// the parameter owns the list and drops it on return
+fn consume_list(l: L) -> Int {
+  return head_val(l)
+}
+
+fn main() {
+  // 1. Option<Box<Struct>> chain, built and dropped in other scopes
+  if true {
+    let c = build_chain(3 * scale())
+    print("chain built")
+  }
+  // 2. enum with a Box payload, 10 million nodes
+  if true {
+    let l = build_list(4 * scale())
+    print("list built")
+  }
+  // 3. left-deep and right-deep trees (two recursive children per node)
+  if true {
+    var t = T.Leaf
+    for i in 0..2 * scale() { t = T.Node(Box.new(move t), i, Box.new(T.Leaf)) }
+    print("left tree built")
+  }
+  if true {
+    var t = T.Leaf
+    for i in 0..2 * scale() { t = T.Node(Box.new(T.Leaf), i, Box.new(move t)) }
+    print("right tree built")
+  }
+  // 4. owned payloads (Strings) are released along the way
+  if true {
+    var h = Option<Box<Named>>.None
+    for i in 0..scale() { h = Some(Box.new(Named { name: "node {i}", next: move h })) }
+    print("named built")
+  }
+  if true {
+    var p = Option<Box<Pair>>.None
+    for i in 0..scale() / 2 {
+      p = Some(Box.new(Pair { left: move p, tag: "t{i}", right: Some(Box.new(Pair { left: Option<Box<Pair>>.None, tag: String.from("leaf"), right: Option<Box<Pair>>.None })) }))
+    }
+    print("pair built")
+  }
+  // 5. a conditional move: the drop flag decides which long list is released where
+  var kept = build_list(scale())
+  var other = build_list(scale())
+  var flag = true
+  if flag { print(consume_list(move kept)) }
+  print(head_val(other))
+  flag = false
+  print("done")
+}

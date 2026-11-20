@@ -1,0 +1,9 @@
+error: cannot use 'l': it was already moved
+ --> tests/mod_err/moved_in_dep/lib.yx:8:7
+  |
+8 |   eat(move l)
+  |       ^^^^^^
+  = 'l' was moved on line 7
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

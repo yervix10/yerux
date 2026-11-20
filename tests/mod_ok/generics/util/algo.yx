@@ -1,0 +1,23 @@
+pub fn max<T: Ordered + Copy>(a: T, b: T) -> T {
+  if a > b { return a }
+  return b
+}
+
+// a private generic helper used by a public one
+fn pick<T: Copy>(first: Bool, a: T, b: T) -> T {
+  if first { return a }
+  return b
+}
+
+pub fn either<T: Copy>(flag: Bool, a: T, b: T) -> T { return pick(flag, a, b) }
+
+pub fn log_twice<T: Show>(x: view T) {
+  defer print("done")
+  let s = x.show()
+  print(s)
+  print(s)
+}
+
+// a free function whose name is also a method name below
+fn show(x: Int) -> Int { return x }
+pub fn shown(x: Int) -> Int { return show(x) }

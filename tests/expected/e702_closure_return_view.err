@@ -1,0 +1,9 @@
+error: cannot return 'f': it is only borrowed
+ --> tests/e702_closure_return_view.yx:2:10
+  |
+2 |   return f
+  |          ^
+  = help: borrows cannot leave the function; take the value by ownership (without `view`/`mut`)
+  = a `view fn` parameter may borrow local variables of the caller for the duration of the call, so it cannot be stored or returned; declare the parameter `fn(..)` (without `view`) to take ownership of the closure
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,33 @@
+// `unchecked(x)`: assign a range without a test. Only in `unsafe`; `--check-ranges` verifies it at run time.
+type Byte = Int<0..255>
+
+fn mask(n: Int) -> Int {
+  var b: Byte = 0
+  unsafe {
+    b = unchecked(n % 256)        // the programmer knows the remainder is in 0..255 when n >= 0
+  }
+  return b + 1
+}
+
+fn store(list: mut List<Byte>, n: Int) {
+  unsafe {
+    list.push(unchecked(n % 256))
+  }
+}
+
+fn pick(n: Int) -> Int<0..9> {
+  unsafe {
+    return unchecked(n)
+  }
+}
+
+fn main() {
+  var bytes: List<Byte> = List<Byte>.new()
+  store(bytes, 513)
+  store(bytes, 7)
+  print(bytes.len())
+  print(bytes.get(0) + bytes.get(1))
+  print(mask(300))
+  print(mask(255))
+  print(pick(7))
+}

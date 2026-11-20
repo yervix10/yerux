@@ -1,0 +1,30 @@
+// induction variables: i < n proves i + 1; counting up to n (i <= n) or a free counter still needs its check
+fn f(n: Int) -> Int {
+  var i = 0
+  var c = 0
+  while i < n {
+    c = c + 1
+    i = i + 1
+  }
+  return c
+}
+fn g(n: Int) -> Int {
+  var i = 0
+  while i <= n {
+    i = i + 1
+  }
+  return i
+}
+fn h(a: Int, d: Int) -> Int {
+  return a / d
+}
+fn k(a: Int, d: Int) -> Int {
+  if d > 0 { return a / d + a % d }
+  return 0
+}
+fn main() {
+  print(f(10))
+  print(g(9))
+  print(h(7, 2))
+  print(k(7, 2))
+}

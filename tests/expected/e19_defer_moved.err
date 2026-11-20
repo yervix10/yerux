@@ -1,0 +1,9 @@
+error: this deferred statement uses 'l', but 'l' has already been moved when it runs
+ --> examples/e19_defer_moved.yx:9:9
+  |
+9 |   defer print(l.len())
+  |         ^^^^^
+  = 'l' was moved on line 10
+  = help: `defer` runs when the scope ends, after everything written below it; keep the value until then, or defer a call that does not need it
+
+1 error(s). Nothing was generated.

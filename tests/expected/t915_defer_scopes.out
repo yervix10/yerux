@@ -1,0 +1,24 @@
+1
+10
+20
+falling through
+buf released
+work finished
+inner scope
+buf released
+work finished
+buf released
+work finished
+505
+body
+1
+iteration end
+2
+iteration end
+body
+3
+iteration end
+nested exit
+6
+deferred in main
+main exits last

@@ -1,0 +1,9 @@
+error: cannot use 'data': it was already moved
+ --> examples/e1_use_after_move.yx:6:9
+  |
+6 |   print(data.len())
+  |         ^^^^
+  = 'data' was moved on line 5
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

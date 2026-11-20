@@ -1,0 +1,8 @@
+error: the name 'util' is imported twice
+ --> tests/mod_err/dup_alias/main.yx:2:1
+  |
+2 | import b.util
+  | ^^^^^^^^^^^^^
+  = help: rename one of them: `import b.util as other_name`
+
+1 error(s). Nothing was generated.

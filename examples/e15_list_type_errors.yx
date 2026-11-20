@@ -1,0 +1,15 @@
+struct P { x: Int }
+
+fn main() {
+  var a = List<Int>.new()
+  a.push("text")
+  var b = List<Bool>.new()
+  b.push(1)
+  var c = List<P>.new()
+  c.push(3)
+  a.shuffle()
+  let q = String.from(5)
+  var s = String.new()
+  s.push_str(move q)
+  s.shout()
+}

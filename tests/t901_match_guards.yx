@@ -1,0 +1,65 @@
+enum Token { Num(Int), Op(Char), End }
+
+fn describe(t: Token) -> Text {
+  match t {
+    Token.Num(n) if n < 0 => { return "neg" }
+    Token.Num(0) => { return "zero" }
+    Token.Num(1..=9) => { return "digit" }
+    Token.Num(_) => { return "big" }
+    Token.Op('+') | Token.Op('-') => { return "add" }
+    Token.Op(c) if c == '*' => { return "mul" }
+    Token.Op(_) => { return "op" }
+    Token.End => { return "end" }
+  }
+}
+
+fn bucket(n: Int) -> Text {
+  match n {
+    ..=0 => { return "nonpos" }
+    1..=9 => { return "small" }
+    10..100 => { return "medium" }
+    x if x % 2 == 0 => { return "even-big" }
+    _ => { return "odd-big" }
+  }
+}
+
+fn main() {
+  print(describe(Token.Num(-3)))
+  print(describe(Token.Num(0)))
+  print(describe(Token.Num(7)))
+  print(describe(Token.Num(42)))
+  print(describe(Token.Op('+')))
+  print(describe(Token.Op('-')))
+  print(describe(Token.Op('*')))
+  print(describe(Token.Op('/')))
+  print(describe(Token.End))
+
+  print(bucket(-5))
+  print(bucket(0))
+  print(bucket(5))
+  print(bucket(10))
+  print(bucket(99))
+  print(bucket(100))
+  print(bucket(101))
+  print(bucket(1000))
+
+  match 57 {
+    n @ 50..=59 => { print(n / 10) }
+    _ => { print(0) }
+  }
+
+  for k in 0..5 step 2 {
+    match (k % 2 == 0, k) {
+      (true, 0) => { print("zero") }
+      (true, n) if n > 2 => { print("big even") }
+      (true, _) | (false, 1..=3) => { print("even or small odd") }
+      (false, _) => { print("odd") }
+    }
+  }
+
+  let pair = (1, Token.Op('*'))
+  match pair {
+    (1, Token.Op(c)) if c == '*' => { print("one star") }
+    _ => { print("other") }
+  }
+}

@@ -1,0 +1,5 @@
+fn main() {
+  var names = List<String>.new()
+  names.push(String.from("ann"))
+  let first = names.get(0)
+}

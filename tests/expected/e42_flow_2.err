@@ -1,0 +1,9 @@
+error: no enclosing loop is labeled 'nowhere'
+ --> tests/e42_flow_2.yx:3:11
+  |
+3 |     break nowhere
+  |           ^^^^^^^
+  = this `break`/`continue` is not inside any labeled loop
+  = help: label the loop you mean: `nowhere: while .. { }` (or `for`), then write `break nowhere`
+
+1 error(s). Nothing was generated.

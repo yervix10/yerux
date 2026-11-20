@@ -1,0 +1,47 @@
+fn main() {
+  var total = 0
+  outer: for i in 0..5 {
+    for j in 0..5 {
+      if j == 2 { continue outer }
+      if i == 3 { break outer }
+      total = total + i * 10 + j
+    }
+  }
+  print(total)
+
+  var n = 0
+  search: while n < 20 {
+    n = n + 1
+    if n % 7 == 0 { break search }
+  }
+  print(n)
+
+  var s = 0
+  for i in 0..=10 step 2 { s = s + i }
+  print(s)
+
+  var k = 10
+  while k > 0 { k = k - 3 }
+  print(k)
+
+  var count = 0
+  for i in 0..4 {
+    for j in 0..4 {
+      if (i + j) % 3 == 0 { continue }
+      count = count + 1
+    }
+  }
+  print(count)
+
+  var sum = 0
+  for i in 0..3 {
+    for j in 0..3 {
+      for m in 0..3 {
+        if m == 1 { continue }
+        if i == 2 { break }
+        sum = sum + i * 9 + j * 3 + m
+      }
+    }
+  }
+  print(sum)
+}

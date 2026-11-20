@@ -1,0 +1,7 @@
+fn div_self(x: Int) -> Int {
+  return x / x
+}
+
+fn main() {
+  print(div_self(0))
+}

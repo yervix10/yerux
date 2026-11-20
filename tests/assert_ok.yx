@@ -1,0 +1,13 @@
+// assert / assert_eq builtins: silent when true
+fn main() {
+  assert(true)
+  assert(1 + 1 == 2)
+  assert_eq(10 / 3, 3)
+  assert_eq(true, 2 > 1)
+  var i = 0
+  while i < 5 {
+    assert(i < 5)
+    i = i + 1
+  }
+  print("all assertions held")
+}

@@ -1,0 +1,9 @@
+error: cannot put a P inside `{...}` in a string: it does not implement Show
+ --> examples/e41_interp_not_show.yx:5:9
+  |
+5 |   print("p = {p}, n = {n}")
+  |         ^^^^^^^^^^^^^^^^^^
+  = `"x = {x}"` calls x.show() on every value, so its type needs `impl Show`
+  = help: add `impl Show for P { fn show(view self) -> String { .. } }`
+
+1 error(s). Nothing was generated.

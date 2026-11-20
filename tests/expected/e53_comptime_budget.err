@@ -1,0 +1,9 @@
+error: compile-time evaluation ran too long (more than 20000000 steps) [E-K2]
+ --> examples/e53_comptime_budget.yx:4:10
+  |
+4 |     i = (i + 1) % 1000
+  |          ^^^^^
+  = why: the compiler runs this code while compiling, so it must finish; it may never end for some inputs
+  = fix: add a limit to the loop or make the computation smaller
+
+1 error(s). Nothing was generated.

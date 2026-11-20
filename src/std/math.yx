@@ -1,0 +1,177 @@
+// std.math: Int helpers and constants the prelude does not have (docs/STDLIB.md). Float functions such as
+// `sqrt`, `sin`, `pow`, `floor` already live in the prelude and need no import.
+//
+//   import std.math        then      math.gcd(12, 18)   math.clamp(x, 0, 10)   math.pi()
+
+pub fn pi() -> Float {
+  return 3.141592653589793
+}
+
+pub fn e() -> Float {
+  return 2.718281828459045
+}
+
+pub fn tau() -> Float {
+  return 6.283185307179586
+}
+
+/// Absolute value; panics for Int.min (like every checked operation).
+pub fn abs(x: Int) -> Int {
+  if x < 0 {
+    return -x
+  }
+  return x
+}
+
+pub fn sign(x: Int) -> Int {
+  if x < 0 {
+    return -1
+  }
+  if x > 0 {
+    return 1
+  }
+  return 0
+}
+
+pub fn min(a: Int, b: Int) -> Int {
+  if b < a {
+    return b
+  }
+  return a
+}
+
+pub fn max(a: Int, b: Int) -> Int {
+  if b > a {
+    return b
+  }
+  return a
+}
+
+/// `x` limited to `lo..=hi` (panics when lo > hi).
+pub fn clamp(x: Int, lo: Int, hi: Int) -> Int {
+  if lo > hi {
+    panic("math.clamp: lo is greater than hi")
+  }
+  if x < lo {
+    return lo
+  }
+  if x > hi {
+    return hi
+  }
+  return x
+}
+
+pub fn clamp_float(x: Float, lo: Float, hi: Float) -> Float {
+  if x < lo {
+    return lo
+  }
+  if x > hi {
+    return hi
+  }
+  return x
+}
+
+/// Greatest common divisor (always >= 0; `gcd(0, 0)` is 0).
+pub fn gcd(a: Int, b: Int) -> Int {
+  var x = abs(a)
+  var y = abs(b)
+  while y != 0 {
+    let t = x % y
+    x = y
+    y = t
+  }
+  return x
+}
+
+/// Least common multiple (0 when either is 0); panics on overflow.
+pub fn lcm(a: Int, b: Int) -> Int {
+  if a == 0 || b == 0 {
+    return 0
+  }
+  return abs(a / gcd(a, b) * b)
+}
+
+/// `base` to the power `exp` (exp >= 0) by repeated squaring; panics on overflow.
+pub fn ipow(base: Int, exp: Int) -> Int {
+  if exp < 0 {
+    panic("math.ipow: negative exponent")
+  }
+  var result = 1
+  var b = base
+  var k = exp
+  while k > 0 {
+    if k % 2 == 1 {
+      result = result * b
+    }
+    k = k / 2
+    if k > 0 {
+      b = b * b
+    }
+  }
+  return result
+}
+
+/// Integer square root: the largest r with r * r <= x (x >= 0).
+pub fn isqrt(x: Int) -> Int {
+  if x < 0 {
+    panic("math.isqrt: negative argument")
+  }
+  if x < 2 {
+    return x
+  }
+  var r = x.to_float().sqrt().floor_int()
+  while r > 3037000499 || r * r > x {
+    r = r - 1
+  }
+  while r < 3037000499 && (r + 1) * (r + 1) <= x {
+    r = r + 1
+  }
+  return r
+}
+
+/// Floor division and modulo (the result of `mod` has the sign of the divisor, unlike `%`).
+pub fn div_floor(a: Int, b: Int) -> Int {
+  let q = a / b
+  if a % b != 0 && ((a < 0) != (b < 0)) {
+    return q - 1
+  }
+  return q
+}
+
+pub fn mod_floor(a: Int, b: Int) -> Int {
+  let r = a % b
+  if r != 0 && ((r < 0) != (b < 0)) {
+    return r + b
+  }
+  return r
+}
+
+pub fn is_prime(x: Int) -> Bool {
+  if x < 2 {
+    return false
+  }
+  if x % 2 == 0 {
+    return x == 2
+  }
+  var d = 3
+  while d <= x / d {
+    if x % d == 0 {
+      return false
+    }
+    d = d + 2
+  }
+  return true
+}
+
+/// Linear interpolation: `a` at t = 0, `b` at t = 1.
+pub fn lerp(a: Float, b: Float, t: Float) -> Float {
+  return a + (b - a) * t
+}
+
+pub fn to_radians(deg: Float) -> Float {
+  return deg * 3.141592653589793 / 180.0
+}
+
+pub fn to_degrees(rad: Float) -> Float {
+  return rad * 180.0 / 3.141592653589793
+}

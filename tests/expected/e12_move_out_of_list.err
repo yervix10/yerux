@@ -1,0 +1,15 @@
+error: cannot move 'names.at(..)' out of its List
+ --> examples/e12_move_out_of_list.yx:4:15
+  |
+4 |   let first = names.at(0)
+  |               ^^^^^^^^^^^
+  = help: borrow the element instead (`l.at(i).len()`, or pass `l.at(i)` to a `view`/`mut` parameter); `l.pop()` moves the last element out
+
+error: cannot assign to 'names.at(..)' directly
+ --> examples/e12_move_out_of_list.yx:5:3
+  |
+5 |   names.at(0) = String.from("bob")
+  |   ^^^^^
+  = help: use `l.set(i, value)` to replace an element
+
+2 error(s). Nothing was generated.

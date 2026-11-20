@@ -1,0 +1,9 @@
+fn main() {
+  var l = List<String>.new()
+  l.push(String.from("a"))
+  print(l.at(0))
+  l.set(0, String.from("b"))
+  print(l.at(0))
+  print(l.at(1))
+  print("unreachable")
+}

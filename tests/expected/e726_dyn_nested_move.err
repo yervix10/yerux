@@ -1,0 +1,16 @@
+error: cannot use 'handler': it was already moved
+  --> tests/e726_dyn_nested_move.yx:10:5
+   |
+10 |     handler.handle(consume(move handler))
+   |     ^^^^^^^
+   = 'handler' was moved on line 10
+   = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+error: 'handler' appears twice in the same call and one use modifies or moves it
+  --> tests/e726_dyn_nested_move.yx:10:20
+   |
+10 |     handler.handle(consume(move handler))
+   |                    ^^^^^^^^^^^^^^^^^^^^^
+   = help: split the call in two steps, or pass a copy
+
+2 error(s). Nothing was generated.

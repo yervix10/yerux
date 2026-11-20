@@ -1,0 +1,11 @@
+// A user method named like a pure integer method (`set`) with `mut self` changes the variable: no fact survives.
+trait Bump { fn set(mut self, k: Int) }
+impl Bump for Int { fn set(mut self, k: Int) { self = k } }
+fn main() {
+  var x = 5
+  if x < 10 {
+    x.set(1000000)
+    let y: Int<0..9> = x
+    print(y)
+  }
+}

@@ -1,0 +1,15 @@
+error: cannot return 'items': it is only borrowed
+ --> examples/e6_return_borrow.yx:2:10
+  |
+2 |   return items
+  |          ^^^^^
+  = help: borrows cannot leave the function; take the value by ownership (without `view`/`mut`)
+
+error: a List is created and immediately discarded (memory leak)
+ --> examples/e6_return_borrow.yx:6:3
+  |
+6 |   List.new()
+  |   ^^^^^^^^^^
+  = help: store it with `let` or `var`
+
+2 error(s). Nothing was generated.

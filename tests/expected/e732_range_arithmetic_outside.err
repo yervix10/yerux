@@ -1,0 +1,11 @@
+error: this value may be outside Int<0..500>
+ --> tests/e732_range_arithmetic_outside.yx:2:10
+  |
+2 |   return x + x
+  |          ^^^^^
+  = the compiler can only prove that it has type Int<0..510>
+  = Int<0..500> holds the values from 0 to 500 (both ends included)
+  = help: test it first: `if x >= 0 && x <= 500 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..500>.try_from(x)` gives a Result, `Int<0..500>.from(x)` panics when it does not fit
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,9 @@
+error: cannot use `?` in a function that returns nothing
+ --> tests/e90_try_return.yx:2:13
+  |
+2 |     let n = Option<Int>.Some(5)?
+  |             ^^^^^^^^^^^^^^^^^^^^
+  = `?` returns `None` early, so the function must return `Option<T>`
+  = help: handle the value with `match` here, or change the function's return type
+
+1 error(s). Nothing was generated.

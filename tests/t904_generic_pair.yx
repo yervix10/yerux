@@ -1,0 +1,59 @@
+struct Pair<A, B> { first: A, second: B }
+
+fn maxof<T: Ordered + Copy>(a: T, b: T) -> T {
+  if a > b { return a }
+  return b
+}
+
+fn pair_of<A, B>(a: A, b: B) -> Pair<A, B> {
+  return Pair { first: move a, second: move b }
+}
+
+fn swap<A: Copy, B: Copy>(p: Pair<A, B>) -> Pair<B, A> {
+  return Pair { first: p.second, second: p.first }
+}
+
+fn first_of<A: Copy, B>(p: view Pair<A, B>) -> A {
+  return p.first
+}
+
+fn sum_pairs(items: view List<Pair<Int, Int>>) -> Int {
+  var t = 0
+  var i = 0
+  while i < items.len() {
+    t = t + items.at(i).first + items.at(i).second
+    i = i + 1
+  }
+  return t
+}
+
+fn main() {
+  print(maxof(3, 9))
+  print(maxof("apple", "pear"))
+  print(maxof(2.5, 1.5))
+
+  let p = pair_of(3, "three")
+  print(p.first)
+  print(p.second)
+
+  let nested = pair_of(pair_of(1, true), "group")
+  print(nested.first.first)
+  print(nested.first.second)
+  print(nested.second)
+
+  let q = pair_of(String.from("owned"), 7)
+  print(q.first)
+  print(q.second)
+
+  let swapped = swap(pair_of(10, "ten"))
+  print(swapped.first)
+  print(swapped.second)
+  print(first_of(pair_of("keep", 99)))
+
+  var ps = List<Pair<Int, Int>>.new()
+  ps.push(pair_of(1, 2))
+  ps.push(pair_of(3, 4))
+  ps.push(pair_of(5, 6))
+  print(sum_pairs(ps))
+  print(ps.len())
+}

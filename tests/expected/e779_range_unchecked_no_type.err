@@ -1,0 +1,9 @@
+error: `unchecked(x)` needs to know the range it produces
+ --> tests/e779_range_unchecked_no_type.yx:5:13
+  |
+5 |     let b = unchecked(n)
+  |             ^^^^^^^^^^^^
+  = it takes the range type from where it is used: a typed `var`, an assignment, an argument or a return value
+  = help: write `var y: Int<0..255> = 0` first, then `unsafe { y = unchecked(x) }`
+
+1 error(s). Nothing was generated.

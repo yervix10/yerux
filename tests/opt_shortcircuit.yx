@@ -1,0 +1,12 @@
+fn boom() -> Bool { print("boom"); return true }
+fn main() {
+  var a = 3
+  var b = 0
+  if a > 1 && b == 0 { print("one") }
+  if a < 1 && boom() { print("no") }
+  if a > 1 || boom() { print("two") }
+  if a < 1 || b != 0 || a == 3 { print("three") }
+  let t = true && false || true
+  print(t)
+  print(!t || (a > 2 && !(b > 0)))
+}

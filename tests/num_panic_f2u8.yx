@@ -1,0 +1,4 @@
+fn main() {
+    print(255.9.to_uint8())
+    print(256.0.to_uint8())
+}

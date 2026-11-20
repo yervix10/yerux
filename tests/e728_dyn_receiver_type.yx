@@ -1,0 +1,11 @@
+trait Wrong {
+    fn get(self: view Int) -> Int
+}
+struct Thing { n: Int }
+impl Wrong for Thing {
+    fn get(self: view Int) -> Int { return self }
+}
+fn main() {
+    let item = Box<dyn Wrong>.new(Thing { n: 7 })
+    print(item.get().get())
+}

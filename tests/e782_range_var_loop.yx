@@ -1,0 +1,13 @@
+// A fact about a `var` does not survive a loop that changes it.
+fn main() {
+  var x = 3
+  var i = 0
+  if x >= 0 && x <= 9 {
+    while i < 3 {
+      let a: Int<0..9> = x
+      x = x + 4
+      i = i + 1
+      print(a)
+    }
+  }
+}

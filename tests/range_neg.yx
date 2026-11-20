@@ -1,0 +1,11 @@
+fn n(x: Int) -> Int {
+  if x > -100 { return -x }
+  return -x
+}
+fn main() {
+  print(n(5))
+  print(n(-99))
+  print(n(-100))
+  print(n(-9223372036854775807))
+  print(n(-9223372036854775807 - 1))
+}

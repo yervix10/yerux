@@ -1,0 +1,6 @@
+fn main() {
+  var m = Map<Int, Int>.new()
+  m.insert(1, 2)
+  print(m.take(1))
+  print(m.take(1))
+}

@@ -1,0 +1,7 @@
+error: unknown trait 'Handler'
+ --> tests/e727_dyn_unknown_trait.yx:1:25
+  |
+1 | fn invoke(handler: view dyn Handler) {}
+  |                         ^^^
+
+1 error(s). Nothing was generated.

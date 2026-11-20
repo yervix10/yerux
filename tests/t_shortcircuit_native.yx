@@ -1,0 +1,23 @@
+fn side() -> Bool {
+  print(99)
+  return true
+}
+
+fn panics() -> Bool {
+  return 1 / 0 == 0
+}
+
+fn main() {
+  var x = 0
+  print(x == 0 || side())
+  print(x != 0 && side())
+  print(x == 0 || (x != 0 && side()))
+  if x == 0 || panics() {
+    print(true)
+  }
+  var i = 0
+  while i < 1 && (x == 0 || panics()) {
+    print(true)
+    i = i + 1
+  }
+}

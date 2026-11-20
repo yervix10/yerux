@@ -1,0 +1,10 @@
+fn consume(items: List) { }
+
+fn main() {
+  let d = List.new()
+  var i = 0
+  while i < 3 {
+    consume(move d)
+    i = i + 1
+  }
+}

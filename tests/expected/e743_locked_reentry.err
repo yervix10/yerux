@@ -1,0 +1,7 @@
+error: cannot wait or acquire a lock inside a with closure
+ --> tests/e743_locked_reentry.yx:4:13
+  |
+4 |   lock.with(|value| {
+  |             ^
+
+1 error(s). Nothing was generated.

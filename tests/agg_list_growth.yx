@@ -1,0 +1,34 @@
+// Big lists force many growths, including blocks above the small-class limit (mmap path)
+fn build(n: Int) -> List {
+  var l = List.new()
+  var i = 0
+  while i < n {
+    l.push(i * 3)
+    i = i + 1
+  }
+  return l
+}
+
+fn sum(l: view List) -> Int {
+  var i = 0
+  var s = 0
+  while i < l.len() {
+    s = s + l.get(i)
+    i = i + 1
+  }
+  return s
+}
+
+fn main() {
+  let a = build(5)
+  let b = build(1000)
+  let c = build(300000)
+  print(a.len())
+  print(sum(a))
+  print(b.len())
+  print(sum(b))
+  print(c.len())
+  print(sum(c))
+  print(c.get(299999))
+  print(c.get(0))
+}

@@ -1,0 +1,6 @@
+fn mk(x: UInt8) -> UInt8 { return x }
+fn main() {
+    print(mk(250) + 5)
+    print(mk(250) + 6)
+    print("unreachable")
+}

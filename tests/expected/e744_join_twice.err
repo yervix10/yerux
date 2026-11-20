@@ -1,0 +1,9 @@
+error: cannot use 'worker': it was already moved
+ --> tests/e744_join_twice.yx:5:11
+  |
+5 |     print(worker.join().is_ok())
+  |           ^^^^^^
+  = 'worker' was moved on line 4
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,5 @@
+fn main() {
+  var s = String.from("abc")
+  print(s.byte(0))
+  print(s.byte(-1))
+}

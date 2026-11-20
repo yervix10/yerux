@@ -1,0 +1,7 @@
+fn main() {
+  var l = List.new()
+  l.push(1)
+  for x in l {
+    l.push(x)
+  }
+}

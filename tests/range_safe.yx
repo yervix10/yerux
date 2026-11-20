@@ -1,0 +1,28 @@
+// everything here is provable: nested bounded loops, countdowns, constants, modulo-bounded values
+fn main() {
+  var acc = 0
+  var i = 0
+  while i < 1000 {
+    var j = 0
+    while j < i {
+      acc = (acc + i * j - j) % 1000003
+      j = j + 1
+    }
+    i = i + 1
+  }
+  print(acc)
+  var k = 100
+  var t = 0
+  while k > 0 {
+    t = t + (k % 7) * (k / 3)
+    k = k - 2
+  }
+  print(t)
+  var m = 1
+  var c = 0
+  while c < 40 {
+    m = (m * 7 + 3) % 65537
+    c = c + 1
+  }
+  print(m)
+}

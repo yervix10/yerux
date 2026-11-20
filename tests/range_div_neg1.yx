@@ -1,0 +1,16 @@
+// d may be -1 and the dividend may be MIN: must still panic (overflow), while MIN % -1 is 0
+fn m(a: Int, d: Int) -> Int {
+  if d != 0 { return a % d }
+  return 0
+}
+fn q(a: Int, d: Int) -> Int {
+  if d < 0 { return a / d }
+  return a / 1
+}
+fn main() {
+  let min = -9223372036854775807 - 1
+  print(m(min, -1))
+  print(q(min, -2))
+  print(q(min + 1, -1))
+  print(q(min, -1))
+}

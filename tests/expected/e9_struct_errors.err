@@ -1,0 +1,20 @@
+error: missing field(s) in P: y
+ --> examples/e9_struct_errors.yx:4:11
+  |
+4 |   let p = P { x: 1 }
+  |           ^^^^^^^^^^
+
+error: cannot reassign 'p.x': it was declared with `let` (immutable)
+ --> examples/e9_struct_errors.yx:5:3
+  |
+5 |   p.x = 5
+  |   ^
+  = help: declare it with `var`
+
+error: struct P has no field 'z'
+ --> examples/e9_struct_errors.yx:6:9
+  |
+6 |   print(p.z)
+  |         ^^^
+
+3 error(s). Nothing was generated.

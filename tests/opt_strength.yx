@@ -1,0 +1,84 @@
+// Strength reduction of `iv * invariant` in loops: results must match the plain evaluation, including the
+// iteration at which an overflow or a bounds panic fires.
+fn stride_sum(n: Int, stride: Int, step: Int) -> Int {
+  var s = 0
+  var i = 0
+  while i < n {
+    s = s + i * stride
+    i = i + step
+  }
+  return s
+}
+
+fn matrix(n: Int) -> Int {
+  var a = List<Int>.new()
+  var k = 0
+  while k < n * n {
+    a.push(k % 13)
+    k = k + 1
+  }
+  var total = 0
+  var i = 0
+  while i < n {
+    var j = 0
+    while j < n {
+      total = total + a.get(i * n + j) * (j + 1)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  return total
+}
+
+fn conditional(n: Int) -> Int {
+  var s = 0
+  var i = 0
+  while i < n {
+    if i % 3 == 0 {
+      s = s + i * 7
+    }
+    i = i + 1
+  }
+  return s
+}
+
+fn down(n: Int) -> Int {
+  var s = 0
+  var i = n
+  while i > 0 {
+    s = s + i * 5
+    i = i - 1
+  }
+  return s
+}
+
+fn two_factors(n: Int) -> Int {
+  var s = 0
+  var i = 0
+  while i < n {
+    s = s + i * 3 + i * 5 - i * 3
+    i = i + 2
+  }
+  return s
+}
+
+fn main() {
+  print(stride_sum(100, 7, 1))
+  print(stride_sum(100, -3, 4))
+  print(stride_sum(0, 9, 1))
+  print(matrix(37))
+  print(conditional(200))
+  print(down(150))
+  print(two_factors(99))
+  // overflow must still panic at the same iteration
+  var x = 0
+  var i = 0
+  while i < 100000 {
+    x = i * 100000000000000
+    if i % 20000 == 0 {
+      print(x)
+    }
+    i = i + 1
+  }
+  print("never")
+}

@@ -1,0 +1,9 @@
+import deep.er.core
+import deep.mid
+import deep.other
+
+fn main() {
+  print(core.base())
+  print(mid.via_core())
+  print(other.via_core())
+}

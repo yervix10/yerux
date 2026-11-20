@@ -1,0 +1,17 @@
+fn main() {
+  var total = 0
+  var i = 0
+  while i < 6000000 {
+    var l = List<Int>.new()
+    var k = 0
+    while k < 8 {
+      l.push(i + k)
+      k = k + 1
+    }
+    var s = String.from("item-")
+    s.push_int(i)
+    total = (total + l.get(7) + l.len() + s.len() + s.byte(5)) % 1000000007
+    i = i + 1
+  }
+  print(total)
+}

@@ -1,0 +1,8 @@
+target/
+ejemplos/
+ESPECIFICACION.md
+__pycache__/
+bench/build/
+/yerux./
+
+.claude/

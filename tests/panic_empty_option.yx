@@ -1,0 +1,4 @@
+fn main() {
+    let value = Option<Int>.None
+    print(value.unwrap())
+}

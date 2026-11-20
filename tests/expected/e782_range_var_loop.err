@@ -1,0 +1,12 @@
+error: this value may be outside Int<0..9>
+ --> tests/e782_range_var_loop.yx:7:26
+  |
+7 |       let a: Int<0..9> = x
+  |                          ^
+  = it has type Int, so the compiler cannot prove that it fits Int<0..9>
+  = Int<0..9> holds the values from 0 to 9 (both ends included)
+  = x was narrower earlier, but the loop on line 6 may change it
+  = help: test it first: `if x >= 0 && x <= 9 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..9>.try_from(x)` gives a Result, `Int<0..9>.from(x)` panics when it does not fit
+
+1 error(s). Nothing was generated.

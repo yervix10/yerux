@@ -1,0 +1,39 @@
+// `defer` inside generic functions and methods: expanded per instantiation, on every exit.
+struct Stack<T> { items: List<T> }
+struct Log { n: Int }
+
+fn guarded<T: Show>(x: view T, early: Bool) -> Int {
+  defer print("leave guarded")
+  let s = x.show()
+  print(s)
+  if early { return 1 }
+  defer print("second defer")
+  return 2
+}
+
+fn pop_or<T>(s: mut Stack<T>, d: T) -> T {
+  defer print("pop_or done")
+  if s.items.len() == 0 { return d }
+  return s.items.pop()
+}
+
+impl Log {
+  fn bump(mut self) {
+    defer print("bumped")
+    self.n = self.n + 1
+  }
+}
+
+fn main() {
+  print(guarded(5, true))
+  print(guarded("hi", false))
+  var st = Stack<String> { items: List<String>.new() }
+  st.items.push(String.from("a"))
+  let x = pop_or(st, String.from("dflt"))
+  print(x)
+  let y = pop_or(st, String.from("dflt"))
+  print(y)
+  var l = Log { n: 0 }
+  l.bump()
+  print(l.n)
+}

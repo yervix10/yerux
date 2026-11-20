@@ -1,0 +1,11 @@
+error: this value may be outside Int<0..255>
+ --> tests/e770_range_loop_var_too_wide.yx:3:26
+  |
+3 |     let b: Int<0..255> = i
+  |                          ^
+  = the compiler can only prove that it has type Int<0..299>
+  = Int<0..255> holds the values from 0 to 255 (both ends included)
+  = help: test it first: `if i >= 0 && i <= 255 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..255>.try_from(i)` gives a Result, `Int<0..255>.from(i)` panics when it does not fit
+
+1 error(s). Nothing was generated.

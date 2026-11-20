@@ -1,0 +1,63 @@
+fn divmod(a: Int, b: Int) -> (Int, Int) {
+  return (a / b, a % b)
+}
+
+fn minmax(xs: view List<Int>) -> (Int, Int) {
+  var lo = xs.at(0)
+  var hi = xs.at(0)
+  var i = 1
+  while i < xs.len() {
+    let v = xs.at(i)
+    if v < lo { lo = v }
+    if v > hi { hi = v }
+    i = i + 1
+  }
+  return (lo, hi)
+}
+
+fn shift(p: (Int, Int)) -> (Int, Int) {
+  return (p.1, p.0 + p.1)
+}
+
+fn main() {
+  let (q, r) = divmod(17, 5)
+  print(q)
+  print(r)
+
+  let t = divmod(9, 4)
+  print(t.0 * 10 + t.1)
+
+  let nested = ((1, 2), "ignored")
+  let ((a, b), _) = nested
+  print(a + b)
+
+  var (x, y) = (1, 2)
+  (x, y) = (y, x + y)
+  print(x)
+  print(y)
+
+  var xs = List<Int>.new()
+  xs.push(8)
+  xs.push(-3)
+  xs.push(14)
+  xs.push(5)
+  let (lo, hi) = minmax(xs)
+  print(lo)
+  print(hi)
+
+  var p = (3, 4)
+  p = shift(p)
+  p = shift(p)
+  print(p.0)
+  print(p.1)
+
+  var pairs = List<(Int, Int)>.new()
+  pairs.push((1, 2))
+  pairs.push((3, 4))
+  var sum = 0
+  for pair in pairs {
+    sum = sum + pair.0 * pair.1
+  }
+  print(sum)
+  print(pairs.len())
+}

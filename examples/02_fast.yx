@@ -1,0 +1,10 @@
+// Speed test: 100 million iterations with overflow checking
+fn main() {
+  var i = 0
+  var acc = 0
+  while i < 100000000 {
+    acc = (acc + i * 3) % 1000003
+    i = i + 1
+  }
+  print(acc)
+}

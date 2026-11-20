@@ -1,0 +1,4 @@
+fn main() {
+  let b = Int<0..9>.from(2.5)
+  print(b)
+}

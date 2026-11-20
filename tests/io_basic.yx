@@ -1,0 +1,107 @@
+// std.io: files (own temp file), errors as values, time, process id, environment
+import std.io
+
+fn kind_name(k: io.IoErrorKind) -> Text {
+  if k == io.IoErrorKind.NotFound { return "NotFound" }
+  if k == io.IoErrorKind.IsDirectory { return "IsDirectory" }
+  if k == io.IoErrorKind.InvalidData { return "InvalidData" }
+  return "other"
+}
+
+fn roundtrip(path: view String) -> Result<Int, io.IoError> {
+  let n = io.write_file(path, "hello\nworld\n")?
+  print(n)
+  let m = io.append_file(path, "again")?
+  print(m)
+  let text = io.read_file(path)?
+  print(text)
+  print(text.len())
+  return Ok(text.len())
+}
+
+fn main() {
+  let path = "/tmp/yerux_io_basic_{io.process_id()}.txt"
+  print(io.file_exists(path))
+  match roundtrip(path) {
+    Ok(n) => { print("ok {n}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  print(io.file_exists(path))
+
+  // overwrite truncates
+  match io.write_file(path, "x") {
+    Ok(n) => { print(n) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match io.read_file(path) {
+    Ok(t) => { print(t) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match io.remove_file(path) {
+    Ok(n) => { print("removed {n}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  print(io.file_exists(path))
+
+  // errors are values
+  match io.read_file(path) {
+    Ok(t) => { print("unexpected success") }
+    Err(e) => {
+      print(kind_name(e.kind))
+      print(e.code)
+    }
+  }
+  match io.remove_file("/tmp/yerux_io_definitely_missing_file") {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+  match io.read_file("/tmp") {
+    Ok(t) => { print("unexpected success") }
+    Err(e) => { print(kind_name(e.kind)) }
+  }
+  match io.write_file("/tmp/yerux_io_no_such_dir/x.txt", "data") {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+
+  // invalid UTF-8 is an error, not a corrupt String
+  let bad = "/tmp/yerux_io_bad_{io.process_id()}.bin"
+  var raw = String.new()
+  raw.push_byte(104)
+  raw.push_byte(255)
+  match io.write_file(bad, raw) {
+    Ok(n) => { print(n) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match io.read_file(bad) {
+    Ok(t) => { print("unexpected success") }
+    Err(e) => { print(kind_name(e.kind)) }
+  }
+  match io.remove_file(bad) {
+    Ok(n) => { print(n) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // time
+  let t0 = io.monotonic_ns()
+  io.sleep_ms(20)
+  let t1 = io.monotonic_ns()
+  print(t1 - t0 >= 20000000)
+  print(t1 - t0 < 5000000000)
+  print(io.unix_secs() > 1700000000)
+  print(io.unix_nanos() / 1000000000 >= io.unix_secs() - 1)
+  io.sleep_ms(0)
+  io.sleep_ns(-5)
+
+  // process
+  print(io.process_id() > 0)
+  match io.env_var("YX_IO_TEST") {
+    Some(v) => { print("YX_IO_TEST={v}") }
+    None => { print("YX_IO_TEST unset") }
+  }
+  match io.env_var("YX_IO_NOT_SET_ANYWHERE") {
+    Some(v) => { print("unexpected {v}") }
+    None => { print("missing is None") }
+  }
+  io.eprintln("to stderr")
+}

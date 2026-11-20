@@ -1,0 +1,15 @@
+error: cannot modify 'items': it is only borrowed for reading (`view`)
+ --> examples/e4_immutable.yx:2:3
+  |
+2 |   items.push(1)
+  |   ^^^^^^^^^^^^^
+  = help: declare the parameter as `mut` to be able to modify it
+
+error: cannot modify 'd': it was declared with `let` (immutable)
+ --> examples/e4_immutable.yx:7:3
+  |
+7 |   d.push(1)
+  |   ^^^^^^^^^
+  = help: declare it with `var` instead of `let`
+
+2 error(s). Nothing was generated.

@@ -1,0 +1,73 @@
+// Result and the `?` operator: early return, defer, owning conversions
+struct ParseError { message: String, position: Int }
+
+fn parse_error_from_string(e: String) -> ParseError {
+  return ParseError { message: move e, position: -1 }
+}
+
+fn parse_digit(s: view String, i: Int) -> Result<Int, String> {
+  if i >= s.len() { return Err("end of input at {i}") }
+  let b = s.byte(i)
+  if b < 48 || b > 57 { return Err("not a digit at {i}") }
+  return Ok(b - 48)
+}
+
+fn two_digits(s: view String) -> Result<Int, String> {
+  defer print("two_digits done")
+  let a = parse_digit(s, 0)?
+  let b = parse_digit(s, 1)?
+  return Ok(a * 10 + b)
+}
+
+fn sum_of(a: view String, b: view String) -> Result<Int, String> {
+  let x = two_digits(a)?
+  let y = two_digits(b)?
+  return Ok(x + y)
+}
+
+fn checked(a: view String, b: view String) -> Result<Int, ParseError> {
+  let r = sum_of(a, b)
+  let n = (move r)?
+  if n > 100 { return Err(ParseError { message: String.from("too large"), position: n }) }
+  return Ok(n)
+}
+
+fn report(r: Result<Int, String>) {
+  match move r {
+    Ok(n) => { print("ok {n}") }
+    Err(e) => { print("error: {e}") }
+  }
+}
+
+fn main() {
+  report(two_digits("42"))
+  report(two_digits("4x"))
+  report(two_digits("7"))
+  report(sum_of("12", "30"))
+  report(sum_of("12", "x0"))
+
+  let r5051 = checked("50", "51")
+  match r5051 {
+    Ok(n) => { print(n) }
+    Err(e) => { print("{e.message} {e.position}") }
+  }
+  let r2022 = checked("20", "22")
+  match r2022 {
+    Ok(n) => { print(n) }
+    Err(e) => { print("{e.message} {e.position}") }
+  }
+  let r20zz = checked("20", "zz")
+  match r20zz {
+    Ok(n) => { print(n) }
+    Err(e) => { print("{e.message} {e.position}") }
+  }
+
+  let good = two_digits("99")
+  print(good.is_ok())
+  print(good.unwrap_or(0))
+  let bad = two_digits("a1")
+  print(bad.is_err())
+  print(bad.unwrap_or(-1))
+  let e = two_digits("zz").err()
+  print(e.is_some())
+}

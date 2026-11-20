@@ -1,0 +1,8 @@
+error: 'm' is a variable of type Int, not a function, so it cannot be called
+ --> tests/e708_closure_call_non_fn.yx:4:9
+  |
+4 |   print(m(2))
+  |         ^^^^
+  = only function values (closures and function names) can be called with `name(args)`
+
+1 error(s). Nothing was generated.

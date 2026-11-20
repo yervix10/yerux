@@ -1,0 +1,25 @@
+// set(i, x): index then value; element borrows (String lists, C backend only).
+fn t(tag: Int, v: Int) -> Int {
+  print(tag)
+  return v
+}
+
+fn grow(l: mut List<String>, tag: Int) -> Text {
+  print(tag)
+  l.push(String.from("grown"))
+  return "!"
+}
+
+fn main() {
+  var l = List.new()
+  l.push(1)
+  l.push(2)
+  l.set(t(1, 0), t(2, 99))
+  l.set(t(3, 1), t(4, 98) + t(5, 1))
+  print(l.get(t(6, 0)) - t(7, 9))
+  var s = List<String>.new()
+  s.push(String.from("a"))
+  s.at(t(8, 0)).push_str(grow(s, 9))
+  print(s.len())
+  print(s.at(t(10, 0)).len() + t(11, 1))
+}

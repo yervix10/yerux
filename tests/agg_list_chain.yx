@@ -1,0 +1,30 @@
+// Ownership handed through several functions, with mut/view borrows in between
+fn fill(l: mut List, n: Int) {
+  var i = 0
+  while i < n { l.push(i) i = i + 1 }
+}
+
+fn pass1(l: List) -> List {
+  var m = move l
+  m.push(777)
+  return m
+}
+
+fn pass2(l: List) -> List {
+  return pass1(move l)
+}
+
+fn last(l: view List) -> Int { return l.get(l.len() - 1) }
+
+fn main() {
+  var a = List.new()
+  fill(a, 20)
+  var b = pass2(move a)
+  print(b.len())
+  print(last(b))
+  fill(b, 5)
+  print(last(b))
+  var c = List.new()
+  c = move b
+  print(c.len())
+}

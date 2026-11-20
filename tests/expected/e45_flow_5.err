@@ -1,0 +1,8 @@
+error: 's' is moved inside the loop and would be used again on the next iteration
+ --> tests/e45_flow_5.yx:5:9
+  |
+5 |     eat(move s)
+  |         ^^^^^^
+  = help: move it outside the loop, or reassign it (with `var`) before the iteration ends; or `break` right after moving it
+
+1 error(s). Nothing was generated.

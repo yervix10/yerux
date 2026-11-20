@@ -1,0 +1,10 @@
+// negation, subtraction and short-circuit guards at the edges
+fn guard(x: Int, y: Int) -> Bool { return x != 0 && y / x > 1 }
+fn main() {
+  let m = -9223372036854775807 - 1
+  print(guard(0, m))
+  print(guard(2, 9223372036854775807))
+  print(0 - 9223372036854775807)
+  print(m + 9223372036854775807)
+  print(-m)
+}

@@ -1,0 +1,5 @@
+fn mk(x: UInt64) -> UInt64 { return x }
+fn main() {
+    print(mk(5) / mk(2))
+    print(mk(5) / mk(0))
+}

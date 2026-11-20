@@ -1,0 +1,5 @@
+// A UInt64 above Int's maximum fails the conversion before the bounds are tested: no value is printed.
+fn main() {
+  let big: UInt64 = 18446744073709551615
+  print(Int<0..10>.from(big))
+}

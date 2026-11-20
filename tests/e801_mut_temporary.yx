@@ -1,0 +1,5 @@
+fn mk() -> String { return String.from("t") }
+fn add(s: mut String) { s.push_str("x") }
+fn main() {
+  add(mk())
+}

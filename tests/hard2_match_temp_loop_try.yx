@@ -1,0 +1,63 @@
+enum Tok { Word(String), Num(Int), Pair(String, List<Int>), End }
+
+fn mk(i: Int) -> Result<Tok, String> {
+  if i % 4 == 0 { return Ok(Tok.Word(String.from("w"))) }
+  if i % 4 == 1 { return Ok(Tok.Num(i)) }
+  if i % 4 == 2 {
+    var l = List<Int>.new()
+    l.push(i)
+    return Ok(Tok.Pair(String.from("p"), move l))
+  }
+  if i > 10 { return Err(String.from("too big")) }
+  return Ok(Tok.End)
+}
+
+fn scan(n: Int) -> Result<Int, String> {
+  var total = 0
+  var acc = String.new()
+  defer print("scan done")
+  outer: for i in 0..n {
+    let tmp = String.from("t")
+    match mk(i)? {
+      Word(s) => { acc.push_str(s); continue outer }
+      Num(k) => { total = total + k }
+      Pair(s, l) => {
+        if l.len() > 0 && i > 5 { break outer }
+        total = total + s.len() * 100
+      }
+      End => { total = total + 1000 }
+    }
+    total = total + tmp.len()
+  }
+  print(acc)
+  return Ok(total)
+}
+
+fn label(i: Int) -> String {
+  var s = String.from("L")
+  s.push_int(i)
+  return s
+}
+
+fn main() {
+  for n in 0..16 {
+    match scan(n) {
+      Ok(v) => { print(v) }
+      Err(e) => { print(e) }
+    }
+  }
+  match label(3).len() { 2 => { print("two") }
+  _ => { print("other") } }
+  let txt = "lit"
+  let l1 = label(1)
+  print(String.concat(l1, txt))
+  var i = 0
+  while i < 3 {
+    i = i + 1
+    match mk(i) {
+      Ok(t) => { match t { Word(s) => { print(s) }
+      _ => { print(i) } } }
+      Err(e) => { print(e) }
+    }
+  }
+}

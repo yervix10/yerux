@@ -1,0 +1,35 @@
+trait Shape {
+    fn area(view self) -> Int
+}
+struct Rectangle { width: Int, height: Int }
+struct Square { side: Int }
+
+impl Shape for Rectangle {
+    fn area(view self) -> Int { return self.width * self.height }
+}
+impl Shape for Square {
+    fn area(view self) -> Int { return self.side * self.side }
+}
+impl Shape for Int {
+    fn area(view self) -> Int { return self }
+}
+
+fn area_after<T: Copy>(shape: view dyn Shape, extra: T) -> Int {
+    return shape.area() + 1
+}
+
+fn main() {
+    let single = Box<dyn Shape>.new(Square { side: 2 })
+    print(single.area())
+    print(area_after(single.get(), true))
+
+    var shapes = List<Box<dyn Shape>>.new()
+    shapes.push(Box<dyn Shape>.new(Rectangle { width: 3, height: 4 }))
+    shapes.push(Box.new(Square { side: 5 }))
+    shapes.push(Box.new(17))
+    for shape in shapes {
+        print(shape.area())
+    }
+    let last = shapes.pop()
+    print(area_after(last.get(), 0))
+}

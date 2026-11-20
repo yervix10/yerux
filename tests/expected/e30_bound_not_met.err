@@ -1,0 +1,9 @@
+error: Point does not implement Ordered, which 'max' needs for T
+  --> examples/e30_bound_not_met.yx:12:13
+   |
+12 |     let m = max(p, q)
+   |             ^^^^^^^^^
+   = 'max' is declared `fn max<T: Ordered + Copy>`
+   = help: add `impl Ordered for Point { fn cmp(view self, other: view Point) -> Int { .. } }`
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,8 @@
+error: assertion failed [E-K6]
+ --> examples/e51_comptime_assert.yx:6:12
+  |
+6 |   comptime assert(square(7) == 50)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^
+  = why: this code was being evaluated by the compiler (comptime), where a panic is a compile error
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,11 @@
+error: this value may be outside Int<0..100>
+ --> tests/e730_range_narrowing.yx:2:10
+  |
+2 |   return x
+  |          ^
+  = the compiler can only prove that it has type Int<0..255>
+  = Int<0..100> holds the values from 0 to 100 (both ends included)
+  = help: test it first: `if x >= 0 && x <= 100 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..100>.try_from(x)` gives a Result, `Int<0..100>.from(x)` panics when it does not fit
+
+1 error(s). Nothing was generated.

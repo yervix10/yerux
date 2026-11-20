@@ -1,0 +1,7 @@
+fn main() {
+  print("start")
+  let z = 5 - 5
+  let q = 10 / z
+  print("never")
+  print(q)
+}

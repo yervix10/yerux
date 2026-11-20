@@ -1,0 +1,28 @@
+// A generic function that calls itself with a type that mentions its own type parameter (List<T>, Box<T>).
+fn count_down<T>(l: view List<T>, n: Int) -> Int {
+  if n == 0 { return l.len() }
+  return count_down(l, n - 1)
+}
+
+fn fill<T: Copy>(l: mut List<T>, x: T, n: Int) {
+  if n == 0 { return }
+  l.push(x)
+  fill(l, x, n - 1)
+}
+
+fn apply_n<T>(l: mut List<T>, n: Int, f: view fn(mut List<T>)) {
+  if n == 0 { return }
+  f(l)
+  apply_n(l, n - 1, f)
+}
+
+fn main() {
+  var l = List<Int>.new()
+  fill(l, 7, 4)
+  print(count_down(l, 5))
+  var s = List<String>.new()
+  s.push(String.from("a"))
+  print(count_down(s, 3))
+  apply_n(l, 3, |q: mut List<Int>| { q.push(1) })
+  print(l.len())
+}

@@ -1,0 +1,8 @@
+error: Int<0..9>.from() converts an integer, but this is Float
+ --> tests/e773_range_from_float.yx:2:26
+  |
+2 |   let b = Int<0..9>.from(2.5)
+  |                          ^^^
+  = help: convert a Float to an integer first: `x.to_int()`, `x.floor_int()`, ...
+
+1 error(s). Nothing was generated.

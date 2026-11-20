@@ -1,0 +1,7 @@
+extern "C" {
+  fn abs(x: Int32) -> Int32
+}
+
+fn main() {
+  unsafe { print(abs(1, 2)) }
+}

@@ -1,0 +1,17 @@
+fn rd(l: view List<Int>, n: Int) -> Int {
+  var s = 0
+  var i = 0
+  while i < n {
+    s = s + l.get(i)
+    i = i + 1
+  }
+  return s
+}
+fn main() {
+  var l = List<Int>.new()
+  l.push(1)
+  l.push(2)
+  l.push(3)
+  print(rd(l, 3))
+  print(rd(l, 4))
+}

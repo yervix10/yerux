@@ -1,0 +1,59 @@
+// owned strings and lists dropped on every early-return path, conditional moves in loops
+struct Box { s: String, l: List<String> }
+
+fn f(n: Int) -> String {
+  var a = String.from("a")
+  var l = List<String>.new()
+  var i = 0
+  while i < 5 {
+    var t = String.from("t")
+    t.push_int(i)
+    if i == n {
+      return t
+    }
+    if i % 2 == 0 {
+      l.push(move t)
+    }
+    i = i + 1
+  }
+  a.push_str("-end")
+  return a
+}
+
+fn g(b: Box) -> Int {
+  if b.l.len() > 1 {
+    return b.l.len()
+  }
+  return b.s.len()
+}
+
+fn h(flag: Bool) -> Box {
+  var b = Box { s: String.from("hello"), l: List<String>.new() }
+  var extra = String.from("extra")
+  if flag {
+    b.l.push(move extra)
+    b.l.push(String.from("more"))
+  }
+  return b
+}
+
+fn main() {
+  let r0 = f(0)
+  let r3 = f(3)
+  let r9 = f(9)
+  print(r0)
+  print(r3)
+  print(r9)
+  print(g(h(true)))
+  print(g(h(false)))
+  var k = 0
+  while k < 100 {
+    let b = h(k % 2 == 0)
+    k = k + 1
+  }
+  var bx = h(true)
+  bx.s = String.from("replaced")
+  bx.l.set(0, String.from("zero"))
+  print(bx.l.at(0))
+  print(bx.s)
+}

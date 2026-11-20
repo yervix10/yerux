@@ -1,0 +1,25 @@
+fn main() {
+  let n = 1000000
+  var a = List<Float>.new()
+  var b = List<Float>.new()
+  var i = 0
+  while i < n {
+    a.push((i % 100).to_float() * 0.5)
+    b.push(((i * 7) % 13).to_float() * 0.25)
+    i = i + 1
+  }
+  var grand = 0.0
+  var r = 0
+  while r < 200 {
+    a.set(0, r.to_float())
+    var acc = 0.0
+    i = 0
+    while i < n {
+      acc = acc + a.get(i) * b.get(i)
+      i = i + 1
+    }
+    grand = grand + acc * 0.001
+    r = r + 1
+  }
+  print(grand.to_int())
+}

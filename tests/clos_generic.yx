@@ -1,0 +1,77 @@
+// higher-order generic functions over function types
+fn map<T, U>(l: view List<T>, f: view fn(view T) -> U) -> List<U> {
+  var out = List<U>.new()
+  for i in 0..l.len() {
+    out.push(f(l.at(i)))
+  }
+  return out
+}
+
+fn fold<T, A>(l: view List<T>, init: A, f: view fn(A, view T) -> A) -> A {
+  var acc = move init
+  for i in 0..l.len() {
+    acc = f(move acc, l.at(i))
+  }
+  return acc
+}
+
+fn filter<T: Copy>(l: view List<T>, keep: view fn(view T) -> Bool) -> List<T> {
+  var out = List<T>.new()
+  for i in 0..l.len() {
+    if keep(l.at(i)) {
+      out.push(l.get(i))
+    }
+  }
+  return out
+}
+
+fn compose<A, B, C>(f: fn(A) -> B, g: fn(B) -> C) -> fn(A) -> C {
+  return move |x| g(f(move x))
+}
+
+fn twice<T>(f: view fn(T) -> T, x: T) -> T {
+  return f(f(move x))
+}
+
+fn inc(x: Int) -> Int {
+  return x + 1
+}
+
+fn show(x: view Int) -> String {
+  return "<{x}>"
+}
+
+fn main() {
+  var xs = List.new()
+  for i in 1..=6 { xs.push(i) }
+  let sq = map(xs, |x| x * x)
+  print(sq.get(5))
+  // Int -> String, an owned result
+  let strs = map(xs, |x| "n{x}")
+  print(strs.at(2))
+  print(strs.len())
+  // a function item where a closure is expected
+  let strs2 = map(xs, show)
+  print(strs2.at(0))
+  // fold with Int and with String accumulators
+  print(fold(xs, 0, |a, x| a + x))
+  let joined = fold(xs, String.new(), |a, x| {
+    var s = move a
+    s.push_int(x)
+    s.push_str(",")
+    return s
+  })
+  print(joined)
+  // filter captures a threshold
+  let limit = 3
+  let big = filter(xs, |x| x > limit)
+  print(big.len())
+  print(big.get(0))
+  // composition of closures, generic in all three types
+  let f = compose(inc, |x| x * 10)
+  print(f(4))
+  let g = compose(move f, |x| "r{x}")
+  print(g(1))
+  print(twice(inc, 5))
+  print(twice(|x| x * 3, 2))
+}

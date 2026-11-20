@@ -1,0 +1,25 @@
+// Method receivers, then arguments, left to right; method chains; list operations.
+fn t(tag: Int, v: Int) -> Int {
+  print(tag)
+  return v
+}
+
+fn bump(l: mut List, tag: Int) -> Int {
+  print(tag)
+  l.push(tag)
+  return l.len()
+}
+
+fn main() {
+  var l = List.new()
+  l.push(t(1, 10))
+  l.push(t(2, 20))
+  // two calls in one expression, each with effects on the list
+  print(bump(l, 3) * 100 + bump(l, 4))
+  print(l.get(t(5, 0)) + l.get(t(6, 1)))
+  print(l.len() + bump(l, 7))
+  print(bump(l, 8) + l.len())
+  // index expression and pushed value
+  l.push(l.get(t(9, 2)) + t(10, 1))
+  print(l.get(l.len() - 1))
+}

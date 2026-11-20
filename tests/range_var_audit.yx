@@ -1,0 +1,105 @@
+// Mutation patterns a name-based scan could miss. Every one of them changes `a`, and the narrowed reads
+// (checked by `--check-ranges` in tests/range_canary.sh) prove that no stale fact is used afterwards.
+trait Bump { fn set(mut self, k: Int)
+  fn push(mut self, k: Int) }
+impl Bump for Int {
+  fn set(mut self, k: Int) { self = self + k }
+  fn push(mut self, k: Int) { self = self + k }
+}
+trait Peek { fn get(self, other: mut Int) -> Int }
+impl Peek for Int { fn get(self, other: mut Int) -> Int {
+  other = other + self
+  return other
+} }
+fn grow(v: mut Int, k: Int) { v = v + k }
+fn apply(k: Int, f: view fn(Int)) { f(k) }
+
+fn by_method(n: Int) -> Int {
+  var a = n
+  var s = 0
+  if a >= 0 && a <= 9 {
+    s = s + a
+    a.set(100)
+    s = s + a
+  }
+  return s
+}
+
+fn by_arg_method(n: Int) -> Int {
+  var a = n
+  var s = 0
+  if a >= 0 && a <= 9 {
+    let k = 50
+    let r = k.get(a)
+    s = s + r + a
+  }
+  return s
+}
+
+fn by_closure(n: Int) -> Int {
+  var a = n
+  var s = 0
+  if a >= 0 && a <= 9 {
+    apply(200, |d| a = a + d)
+    s = s + a
+  }
+  return s
+}
+
+fn by_defer(n: Int) -> Int {
+  var a = n
+  var s = 0
+  if a >= 0 && a <= 9 {
+    defer a = a + 1000
+    s = s + a
+  }
+  return s * 10 + a
+}
+
+fn by_swap(n: Int) -> Int {
+  var a = n
+  var b = 500
+  if a >= 0 && a <= 9 {
+    (a, b) = (b, a)
+    return a + b
+  }
+  return 0
+}
+
+fn by_shadow(n: Int) -> Int {
+  var a = n
+  var s = 0
+  if a >= 0 && a <= 9 {
+    if n > -5 {
+      let a = 4000
+      s = s + a
+    }
+    let p: Int<0..9> = a          // the outer `a` is untouched: its fact still holds
+    s = s + p
+  }
+  return s
+}
+
+fn by_loop(n: Int) -> Int {
+  var a = n
+  var c = 0
+  var s = 0
+  while c < 3 && a >= 0 && a <= 100 {
+    s = s + a
+    a.push(60)
+    c = c + 1
+  }
+  return s * 1000 + a
+}
+
+fn main() {
+  for n in 0..12 {
+    print(by_method(n))
+    print(by_arg_method(n))
+    print(by_closure(n))
+    print(by_defer(n))
+    print(by_swap(n))
+    print(by_shadow(n))
+    print(by_loop(n))
+  }
+}

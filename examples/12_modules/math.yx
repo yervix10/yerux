@@ -1,0 +1,19 @@
+// A module: `pub` items can be used from other files as `math.name`.
+pub struct Point { x: Int, y: Int }
+
+pub fn add(a: Int, b: Int) -> Int {
+  return a + b
+}
+
+pub fn square(n: Int) -> Int {
+  return times(n, n)
+}
+
+pub fn dist2(p: Point) -> Int {
+  return square(p.x) + square(p.y)
+}
+
+// private: only this file can call it
+fn times(a: Int, b: Int) -> Int {
+  return a * b
+}

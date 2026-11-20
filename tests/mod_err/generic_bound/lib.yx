@@ -1,0 +1,10 @@
+pub struct Point { x: Int }
+pub struct Pair<A, B> { a: A, b: B }
+pub fn biggest<T: Ordered + Copy>(a: T, b: T) -> T {
+  if a > b { return a }
+  return b
+}
+pub fn bad<T>(a: T) -> T {
+  let b = a
+  return a
+}

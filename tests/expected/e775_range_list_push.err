@@ -1,0 +1,11 @@
+error: this value may be outside Int<0..9>
+ --> tests/e775_range_list_push.yx:4:10
+  |
+4 |   l.push(n)
+  |          ^
+  = it has type Int, so the compiler cannot prove that it fits Int<0..9>
+  = Int<0..9> holds the values from 0 to 9 (both ends included)
+  = help: test it first: `if n >= 0 && n <= 9 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..9>.try_from(n)` gives a Result, `Int<0..9>.from(n)` panics when it does not fit
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,8 @@
+pub enum Kind { Fruit, Veg }
+
+pub fn weight(k: Kind) -> Int {
+  match k {
+    Fruit => { return 2 }
+    Veg => { return 5 }
+  }
+}

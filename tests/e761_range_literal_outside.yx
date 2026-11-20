@@ -1,0 +1,4 @@
+fn main() {
+  let x: Int<0..255> = 300
+  print(x)
+}

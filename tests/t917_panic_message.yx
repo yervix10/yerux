@@ -1,0 +1,15 @@
+// explicit panic with an interpolated message, after some output
+fn check(n: Int) -> Int {
+  if n < 0 { panic("negative input: {n}") }
+  return n * 2
+}
+
+fn main() {
+  defer print("never printed")
+  print(check(4))
+  print(check(0))
+  let v = Result<Int, String>.Ok(3)
+  print(v.expect("has a value"))
+  print(check(-3))
+  print("unreachable")
+}

@@ -1,0 +1,23 @@
+error: unknown trait 'Sortable' in the bound of T
+ --> examples/e35_generic_types.yx:6:9
+  |
+6 | fn f<T: Sortable>(x: T) { }
+  |         ^^^^^^^^
+  = known traits: Copy, Equal, Ordered, Show, Hash
+  = help: declare it with `trait Name { fn method(view self) -> Int }`
+
+error: type P has no method 'size'
+  --> examples/e35_generic_types.yx:12:11
+   |
+12 |     print(p.size())
+   |           ^^^^^^^^
+   = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+
+error: type Int has no method 'show2'
+  --> examples/e35_generic_types.yx:14:11
+   |
+14 |     print(n.show2())
+   |           ^^^^^^^^^
+   = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+
+3 error(s). Nothing was generated.

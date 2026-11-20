@@ -1,0 +1,10 @@
+error: the run-time variable `n` cannot run at compile time [E-K1]
+ --> examples/e50_comptime_runtime_var.yx:4:20
+  |
+4 |   let k = comptime n * 2
+  |                    ^
+  = why: compile-time code is run by the compiler; for now it may only use Int, Char and Bool values, `let`/`var`, `if`, `while`, and calls to functions with such parameters
+  = fix: compute the value at run time, or rewrite the code with scalar values only
+  = its value is not known while compiling; only variables defined inside the comptime code are
+
+1 error(s). Nothing was generated.

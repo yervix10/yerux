@@ -1,0 +1,6 @@
+fn main() {
+  var n = 0
+  let bump = || n = n + 1
+  bump()
+  print(n)
+}

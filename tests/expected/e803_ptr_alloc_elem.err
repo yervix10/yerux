@@ -1,0 +1,15 @@
+error: Ptr<Bool>.alloc(n) needs a numeric or pointer element type, not Bool
+ --> tests/e803_ptr_alloc_elem.yx:3:13
+  |
+3 |     let p = Ptr<Bool>.alloc(8)
+  |             ^^^^^^^^^^^^^^^^^^
+  = help: use Ptr<UInt8> for a byte buffer and pass its size in bytes
+
+error: Ptr has no method 'read'
+ --> tests/e803_ptr_alloc_elem.yx:6:5
+  |
+6 |     q.read(0)
+  |     ^^^^^^^^^
+  = methods: is_null(), free()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n))
+
+2 error(s). Nothing was generated.

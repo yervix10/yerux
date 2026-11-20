@@ -1,0 +1,634 @@
+// std.io: the first standard-library I/O layer (docs/STDLIB_IO.md).
+//
+//   import std.io          then      io.read_line()   io.read_file("a.txt")   io.args()   io.exit(2)
+//
+// Written in Yerux on top of a handful of raw intrinsics (`__syscall`, `__global`, `__alloc`, `__free`,
+// `__load8/64`, `__store8/64`, `String.raw_addr`, `String.push_raw`). No libc, no FFI: on the native x86-64
+// Linux backend a call is a `syscall` instruction. Every failure is a value (`IoError`), nothing aborts.
+
+// ───────────────────────── errors ─────────────────────────
+
+pub enum IoErrorKind {
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    IsDirectory,
+    NotDirectory,
+    InvalidInput,
+    InvalidData,
+    BrokenPipe,
+    OutOfSpace,
+    Other,
+}
+
+pub struct IoError {
+    kind: IoErrorKind,
+    code: Int,
+    message: String,
+}
+
+fn kind_code(k: IoErrorKind) -> Int {
+    match k {
+        NotFound => {
+            return 1
+        }
+        PermissionDenied => {
+            return 2
+        }
+        AlreadyExists => {
+            return 3
+        }
+        IsDirectory => {
+            return 4
+        }
+        NotDirectory => {
+            return 5
+        }
+        InvalidInput => {
+            return 6
+        }
+        InvalidData => {
+            return 7
+        }
+        BrokenPipe => {
+            return 8
+        }
+        OutOfSpace => {
+            return 9
+        }
+        Other => {
+            return 10
+        }
+    }
+}
+
+impl Equal for IoErrorKind {
+    fn eq(view self, other: view IoErrorKind) -> Bool {
+        return kind_code(self) == kind_code(other)
+    }
+}
+
+impl Show for IoError {
+    fn show(view self) -> String {
+        return String.from(self.message)
+    }
+}
+
+fn errno_kind(e: Int) -> IoErrorKind {
+    if e == 2 {
+        return IoErrorKind.NotFound
+    }
+    if e == 13 || e == 1 || e == 30 {
+        return IoErrorKind.PermissionDenied
+    }
+    if e == 17 {
+        return IoErrorKind.AlreadyExists
+    }
+    if e == 21 {
+        return IoErrorKind.IsDirectory
+    }
+    if e == 20 {
+        return IoErrorKind.NotDirectory
+    }
+    if e == 22 || e == 36 {
+        return IoErrorKind.InvalidInput
+    }
+    if e == 32 {
+        return IoErrorKind.BrokenPipe
+    }
+    if e == 28 || e == 122 {
+        return IoErrorKind.OutOfSpace
+    }
+    return IoErrorKind.Other
+}
+
+fn errno_text(e: Int) -> Text {
+    if e == 1 {
+        return "Operation not permitted"
+    }
+    if e == 2 {
+        return "No such file or directory"
+    }
+    if e == 5 {
+        return "Input/output error"
+    }
+    if e == 9 {
+        return "Bad file descriptor"
+    }
+    if e == 13 {
+        return "Permission denied"
+    }
+    if e == 17 {
+        return "File exists"
+    }
+    if e == 20 {
+        return "Not a directory"
+    }
+    if e == 21 {
+        return "Is a directory"
+    }
+    if e == 22 {
+        return "Invalid argument"
+    }
+    if e == 24 {
+        return "Too many open files"
+    }
+    if e == 28 {
+        return "No space left on device"
+    }
+    if e == 30 {
+        return "Read-only file system"
+    }
+    if e == 32 {
+        return "Broken pipe"
+    }
+    if e == 36 {
+        return "File name too long"
+    }
+    if e == 122 {
+        return "Disk quota exceeded"
+    }
+    return "Unknown error"
+}
+
+// An IoError for the failed operation `op` on `what` (a path, or "" when there is none); `e` is a positive errno.
+fn os_error(op: Text, what: view String, e: Int) -> IoError {
+    var m = String.from(op)
+    if what.len() > 0 {
+        m.push_str(" '")
+        m.push_str(what)
+        m.push_str("'")
+    }
+    m.push_str(": ")
+    m.push_str(errno_text(e))
+    m.push_str(" (os error ")
+    m.push_int(e)
+    m.push_str(")")
+    return IoError { kind: errno_kind(e), code: e, message: move m }
+}
+
+fn custom_error(kind: IoErrorKind, message: Text) -> IoError {
+    return IoError { kind: kind, code: 0, message: String.from(message) }
+}
+
+// ───────────────────────── helpers ─────────────────────────
+
+// Is the string well-formed UTF-8 (no overlong forms, no surrogates, nothing above U+10FFFF)?
+fn valid_utf8(s: view String) -> Bool {
+    let n = s.len()
+    var i = 0
+    while i < n {
+        let b = s.byte(i)
+        if b < 128 {
+            i = i + 1
+        } else if b >= 194 && b <= 223 {
+            if i + 1 >= n || s.byte(i + 1) < 128 || s.byte(i + 1) > 191 {
+                return false
+            }
+            i = i + 2
+        } else if b >= 224 && b <= 239 {
+            if i + 2 >= n {
+                return false
+            }
+            let c1 = s.byte(i + 1)
+            let c2 = s.byte(i + 2)
+            var lo = 128
+            var hi = 191
+            if b == 224 {
+                lo = 160
+            }
+            if b == 237 {
+                hi = 159
+            }
+            if c1 < lo || c1 > hi || c2 < 128 || c2 > 191 {
+                return false
+            }
+            i = i + 3
+        } else if b >= 240 && b <= 244 {
+            if i + 3 >= n {
+                return false
+            }
+            let c1 = s.byte(i + 1)
+            var lo = 128
+            var hi = 191
+            if b == 240 {
+                lo = 144
+            }
+            if b == 244 {
+                hi = 143
+            }
+            if c1 < lo || c1 > hi || s.byte(i + 2) < 128 || s.byte(i + 2) > 191 || s.byte(i + 3) < 128 || s.byte(i + 3) > 191 {
+                return false
+            }
+            i = i + 4
+        } else {
+            return false
+        }
+    }
+    return true
+}
+
+// A String from the NUL-terminated bytes at `p`. Input that is not valid UTF-8 (possible in argv and the
+// environment) is converted lossily: every non-ASCII byte becomes '?'.
+fn cstr(p: Int) -> String {
+    var n = 0
+    while __load8(p + n) != 0 {
+        n = n + 1
+    }
+    var s = String.new()
+    s.push_raw(p, n)
+    if valid_utf8(s) {
+        return s
+    }
+    var t = String.new()
+    var i = 0
+    while i < n {
+        let b = __load8(p + i)
+        if b < 128 {
+            t.push_byte(b)
+        } else {
+            t.push_byte(63)
+        }
+        i = i + 1
+    }
+    return t
+}
+
+// path + a terminating NUL, ready for the kernel; a path with an embedded NUL byte is an error
+fn cpath(path: view String) -> Result<String, IoError> {
+    var i = 0
+    while i < path.len() {
+        if path.byte(i) == 0 {
+            return Err(custom_error(IoErrorKind.InvalidInput, "path contains a NUL byte"))
+        }
+        i = i + 1
+    }
+    var p = String.from(path)
+    p.push_byte(0)
+    return Ok(move p)
+}
+
+// ───────────────────────── standard input ─────────────────────────
+// A 64 KiB buffer, allocated when a read finds it empty and freed again as soon as every byte in it has been consumed. Global cells: 1 = buffer, 2 = read
+// position, 3 = end of the valid bytes.
+
+// Refill the buffer. false at end of input.
+fn fill() -> Result<Bool, IoError> {
+    if __load64(__global(1)) == 0 {
+        __store64(__global(1), __alloc(65536))
+    }
+    let buf = __load64(__global(1))
+    while true {
+        let n = __syscall(0, 0, buf, 65536, 0, 0, 0)
+        if n == -4 {
+            continue
+        }
+        if n < 0 {
+            return Err(os_error("read stdin", "", 0 - n))
+        }
+        if n == 0 {
+            __free(buf)
+            __store64(__global(1), 0)
+            __store64(__global(2), 0)
+            __store64(__global(3), 0)
+            return Ok(false)
+        }
+        __store64(__global(2), 0)
+        __store64(__global(3), n)
+        return Ok(true)
+    }
+    return Ok(false)
+}
+
+// Release the buffer once every byte in it has been consumed (so a program that stops reading at a line
+// boundary leaks nothing); the next read allocates a fresh one.
+fn release_if_drained() {
+    if __load64(__global(1)) != 0 && __load64(__global(2)) == __load64(__global(3)) {
+        __free(__load64(__global(1)))
+        __store64(__global(1), 0)
+        __store64(__global(2), 0)
+        __store64(__global(3), 0)
+    }
+}
+
+fn checked_text(s: String) -> Result<String, IoError> {
+    if valid_utf8(s) {
+        return Ok(move s)
+    }
+    return Err(custom_error(IoErrorKind.InvalidData, "stream did not contain valid UTF-8"))
+}
+
+// The next line of standard input without its line ending ("\n" or "\r\n"); Ok(None) at end of input. A last
+// line without a newline is returned as a line.
+pub fn read_line() -> Result<Option<String>, IoError> {
+    var line = String.new()
+    var got = false
+    while true {
+        let pos = __load64(__global(2))
+        let end = __load64(__global(3))
+        if pos == end {
+            let more = fill()?
+            if !more {
+                break
+            }
+            continue
+        }
+        let buf = __load64(__global(1))
+        var i = pos
+        while i < end && __load8(buf + i) != 10 {
+            i = i + 1
+        }
+        got = true
+        line.push_raw(buf + pos, i - pos)
+        if i < end {
+            __store64(__global(2), i + 1)
+            release_if_drained()
+            break
+        }
+        __store64(__global(2), end)
+    }
+    if !got {
+        return Ok(None)
+    }
+    if line.len() > 0 && line.byte(line.len() - 1) == 13 {
+        let t = line.slice(0, line.len() - 1)
+        let c = checked_text(move t)?
+        return Ok(Some(move c))
+    }
+    let c = checked_text(move line)?
+    return Ok(Some(move c))
+}
+
+// Everything left on standard input ("" at end of input).
+pub fn read_all() -> Result<String, IoError> {
+    var out = String.new()
+    while true {
+        let pos = __load64(__global(2))
+        let end = __load64(__global(3))
+        if pos == end {
+            let more = fill()?
+            if !more {
+                break
+            }
+            continue
+        }
+        out.push_raw(__load64(__global(1)) + pos, end - pos)
+        __store64(__global(2), end)
+        release_if_drained()
+    }
+    return checked_text(move out)
+}
+
+// ───────────────────────── writing to the standard streams ─────────────────────────
+
+fn write_fd(fd: Int, s: view String, what: Text) -> Result<Int, IoError> {
+    let total = s.len()
+    let base = s.raw_addr()
+    var off = 0
+    while off < total {
+        let n = __syscall(1, fd, base + off, total - off, 0, 0, 0)
+        if n == -4 {
+            continue
+        }
+        if n < 0 {
+            return Err(os_error(what, "", 0 - n))
+        }
+        off = off + n
+    }
+    return Ok(total)
+}
+
+// Write the bytes of `s` to standard output (no newline added; `print` adds one). Returns the byte count.
+pub fn write_stdout(s: view String) -> Result<Int, IoError> {
+    return write_fd(1, s, "write stdout")
+}
+
+pub fn write_stderr(s: view String) -> Result<Int, IoError> {
+    return write_fd(2, s, "write stderr")
+}
+
+// Diagnostics: standard error, errors ignored.
+pub fn eprint(s: view String) {
+    let r = write_fd(2, s, "write stderr")
+}
+
+pub fn eprintln(s: view String) {
+    let r = write_fd(2, s, "write stderr")
+    let nl = write_fd(2, "\n", "write stderr")
+}
+
+// ───────────────────────── process: arguments, environment, exit ─────────────────────────
+// Global cell 0 holds the address of the initial process stack: argc, argv[0..argc], 0, envp[..], 0.
+
+// The command line, program name first.
+pub fn args() -> List<String> {
+    let sp = __load64(__global(0))
+    let argc = __load64(sp)
+    var out = List<String>.new()
+    var i = 0
+    while i < argc {
+        out.push(cstr(__load64(sp + 8 + 8 * i)))
+        i = i + 1
+    }
+    return out
+}
+
+fn env_base() -> Int {
+    let sp = __load64(__global(0))
+    return sp + 8 + 8 * (__load64(sp) + 1)
+}
+
+// "KEY=VALUE" entries of the environment.
+pub fn env_vars() -> List<String> {
+    let base = env_base()
+    var out = List<String>.new()
+    var i = 0
+    while __load64(base + 8 * i) != 0 {
+        out.push(cstr(__load64(base + 8 * i)))
+        i = i + 1
+    }
+    return out
+}
+
+// The value of environment variable `name`; None when it is not set.
+pub fn env_var(name: view String) -> Option<String> {
+    let base = env_base()
+    var i = 0
+    while __load64(base + 8 * i) != 0 {
+        let p = __load64(base + 8 * i)
+        var k = 0
+        var same = true
+        while k < name.len() {
+            if __load8(p + k) != name.byte(k) {
+                same = false
+                break
+            }
+            k = k + 1
+        }
+        if same && __load8(p + k) == 61 {
+            let e = cstr(p + k + 1)
+            return Some(move e)
+        }
+        i = i + 1
+    }
+    return None
+}
+
+// Ends the process at once with `code` (0..255): deferred statements and drops do not run.
+pub fn exit(code: Int) {
+    let r = __syscall(231, code, 0, 0, 0, 0, 0)
+}
+
+pub fn process_id() -> Int {
+    return __syscall(39, 0, 0, 0, 0, 0, 0)
+}
+
+// ───────────────────────── files ─────────────────────────
+
+// The whole file as a String; InvalidData when it is not valid UTF-8.
+pub fn read_file(path: view String) -> Result<String, IoError> {
+    let cp = cpath(path)?
+    let fd = __syscall(2, cp.raw_addr(), 524288, 0, 0, 0, 0)
+    if fd < 0 {
+        return Err(os_error("open", path, 0 - fd))
+    }
+    var out = String.new()
+    let buf = __alloc(65536)
+    var err = 0
+    while true {
+        let n = __syscall(0, fd, buf, 65536, 0, 0, 0)
+        if n == -4 {
+            continue
+        }
+        if n < 0 {
+            err = 0 - n
+            break
+        }
+        if n == 0 {
+            break
+        }
+        out.push_raw(buf, n)
+    }
+    __free(buf)
+    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    if err != 0 {
+        return Err(os_error("read", path, err))
+    }
+    return checked_text(move out)
+}
+
+fn write_to(path: view String, data: view String, flags: Int) -> Result<Int, IoError> {
+    let cp = cpath(path)?
+    let fd = __syscall(2, cp.raw_addr(), flags, 420, 0, 0, 0)
+    if fd < 0 {
+        return Err(os_error("open", path, 0 - fd))
+    }
+    let total = data.len()
+    let base = data.raw_addr()
+    var off = 0
+    var err = 0
+    while off < total {
+        let n = __syscall(1, fd, base + off, total - off, 0, 0, 0)
+        if n == -4 {
+            continue
+        }
+        if n < 0 {
+            err = 0 - n
+            break
+        }
+        off = off + n
+    }
+    var c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    if err == 0 && c < 0 {
+        err = 0 - c
+    }
+    if err != 0 {
+        return Err(os_error("write", path, err))
+    }
+    return Ok(total)
+}
+
+// Create or truncate `path` (mode 0644) and write `data`. Returns the number of bytes written.
+pub fn write_file(path: view String, data: view String) -> Result<Int, IoError> {
+    return write_to(path, data, 524865)
+}
+
+// Append `data` to `path`, creating it when missing. Returns the number of bytes written.
+pub fn append_file(path: view String, data: view String) -> Result<Int, IoError> {
+    return write_to(path, data, 525377)
+}
+
+// Does `path` exist and is it reachable (access(2) with F_OK)?
+pub fn file_exists(path: view String) -> Bool {
+    match cpath(path) {
+        Ok(cp) => {
+            return __syscall(21, cp.raw_addr(), 0, 0, 0, 0, 0) == 0
+        }
+        Err(e) => {
+            return false
+        }
+    }
+}
+
+// Delete a file. Ok(0) on success.
+pub fn remove_file(path: view String) -> Result<Int, IoError> {
+    let cp = cpath(path)?
+    let r = __syscall(87, cp.raw_addr(), 0, 0, 0, 0, 0)
+    if r < 0 {
+        return Err(os_error("remove", path, 0 - r))
+    }
+    return Ok(0)
+}
+
+// ───────────────────────── time ─────────────────────────
+
+fn clock_ns(id: Int) -> Int {
+    let ts = __alloc(16)
+    let r = __syscall(228, id, ts, 0, 0, 0, 0)
+    var ns = 0
+    if r == 0 {
+        ns = __load64(ts) * 1000000000 + __load64(ts + 8)
+    }
+    __free(ts)
+    return ns
+}
+
+// Nanoseconds on a clock that never goes backwards (CLOCK_MONOTONIC); only differences mean something.
+pub fn monotonic_ns() -> Int {
+    return clock_ns(1)
+}
+
+// Wall-clock time: nanoseconds and whole seconds since 1970-01-01 UTC (CLOCK_REALTIME).
+pub fn unix_nanos() -> Int {
+    return clock_ns(0)
+}
+
+pub fn unix_secs() -> Int {
+    return clock_ns(0) / 1000000000
+}
+
+// Sleep at least `ns` nanoseconds (restarts when interrupted by a signal); returns at once for ns <= 0.
+pub fn sleep_ns(ns: Int) {
+    if ns <= 0 {
+        return
+    }
+    let ts = __alloc(32)
+    __store64(ts, ns / 1000000000)
+    __store64(ts + 8, ns % 1000000000)
+    while true {
+        let r = __syscall(35, ts, ts + 16, 0, 0, 0, 0)
+        if r != -4 {
+            break
+        }
+        __store64(ts, __load64(ts + 16))
+        __store64(ts + 8, __load64(ts + 24))
+    }
+    __free(ts)
+}
+
+pub fn sleep_ms(ms: Int) {
+    if ms <= 0 {
+        return
+    }
+    sleep_ns(ms * 1000000)
+}

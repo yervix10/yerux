@@ -1,0 +1,8 @@
+error: `match` is not exhaustive: missing Blue
+ --> examples/e7_match_missing.yx:5:3
+  |
+5 |   match c {
+  |   ^^^^^
+  = help: add the missing arms, or a catch-all arm `_ => { }`
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,18 @@
+// the bounds check must still fire (and report the same panic) after the header loads were hoisted
+fn main() {
+  var l = List<Int>.new()
+  var i = 0
+  while i < 10 {
+    l.push(i)
+    i = i + 1
+  }
+  var s = 0
+  i = 0
+  while i < 10 {
+    s = s + l.get(i)
+    if i == 6 { l.pop() }
+    i = i + 1
+  }
+  print(s)
+  l.set(100, 1)
+}

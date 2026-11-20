@@ -1,0 +1,17 @@
+// Result.unwrap on Err reports the error text
+struct Parsed { value: Int }
+
+fn parse(s: view String) -> Result<Parsed, String> {
+  var n = 0
+  if s.parse_int(n) { return Ok(Parsed { value: n }) }
+  return Err("cannot parse '{s}'")
+}
+
+fn main() {
+  let a = parse("123")
+  print(a.unwrap().value)
+  let b = parse("12x")
+  print(b.is_err())
+  let c = parse("oops")
+  print(c.unwrap().value)
+}

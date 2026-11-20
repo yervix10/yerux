@@ -1,0 +1,61 @@
+// Lists of numbers and numbers in structs / generics.
+struct P { x: Float, y: Float }
+
+fn norm(p: P) -> Float { return sqrt(p.x * p.x + p.y * p.y) }
+
+fn sum_f(xs: view List<Float>) -> Float {
+    var t = 0.0
+    var i = 0
+    while i < xs.len() {
+        t = t + xs.get(i)
+        i = i + 1
+    }
+    return t
+}
+
+fn sum_b(xs: view List<UInt8>) -> Int {
+    var t = 0
+    var i = 0
+    while i < xs.len() {
+        t = t + xs.get(i).to_int()
+        i = i + 1
+    }
+    return t
+}
+
+fn show_all<T: Show + Copy>(items: view List<T>) {
+    var i = 0
+    while i < items.len() {
+        let v = items.get(i)
+        let s = v.show()
+        print(s)
+        i = i + 1
+    }
+}
+
+fn main() {
+    var fs = List<Float>.new()
+    var i = 0
+    while i < 5 {
+        fs.push(i.to_float() * 0.5)
+        i = i + 1
+    }
+    print(sum_f(fs))
+    show_all(fs)
+    var bs = List<UInt8>.new()
+    bs.push(1)
+    bs.push(2)
+    bs.push(250)
+    print(sum_b(bs))
+    show_all(bs)
+    var gs = List<Float32>.new()
+    gs.push(1.5f32)
+    gs.push(0.1f32)
+    show_all(gs)
+    print(norm(P { x: 3.0, y: 4.0 }))
+    let p = P { x: 1.5, y: -2.0 }
+    print(p.x * p.y)
+    print(fs.get(3))
+    fs.set(3, 99.25)
+    print(fs.get(3))
+}

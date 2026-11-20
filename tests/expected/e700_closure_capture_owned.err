@@ -1,0 +1,10 @@
+error: this closure uses 's', which owns memory (a String), so it has to be moved into the closure
+ --> tests/e700_closure_capture_owned.yx:3:11
+  |
+3 |   let f = || s.len()
+  |           ^^^^^^^^^^
+  = a closure that is stored or returned owns what it captured, and an owned value has a single owner
+  = help: write `move |..| ..`: 's' then belongs to the closure and cannot be used afterwards
+  = help: or pass the closure directly to a function that takes a `view fn(..)` parameter: then it only borrows the variable for the call
+
+1 error(s). Nothing was generated.

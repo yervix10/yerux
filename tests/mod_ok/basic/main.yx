@@ -1,0 +1,7 @@
+import calc
+
+fn main() {
+  print(calc.sum_to(10))
+  print(calc.fact(5))
+  print(calc.is_even(7))
+}

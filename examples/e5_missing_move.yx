@@ -1,0 +1,5 @@
+fn main() {
+  let a = List.new()
+  let b = a
+  print(b.len())
+}

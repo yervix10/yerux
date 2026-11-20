@@ -1,0 +1,8 @@
+error: 'lib' is a module, not a value
+ --> tests/mod_err/module_as_value/main.yx:4:11
+  |
+4 |   let x = lib
+  |           ^^^
+  = help: use one of its items: `lib.name`
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,6 @@
+// a failed assertion panics (exit 101) like any other runtime check
+fn main() {
+  print("start")
+  assert_eq(2 + 2, 5)
+  print("unreachable")
+}

@@ -1,0 +1,10 @@
+// A `var` range value that is incremented in a loop: after one pass the compiler no longer knows its value.
+fn main() {
+  var level: Int<1..5> = 3
+  var i = 0
+  while i < 10 {
+    level = level + 1
+    i = i + 1
+  }
+  print(level)
+}

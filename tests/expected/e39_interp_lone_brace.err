@@ -1,0 +1,8 @@
+error: a lone `}` in a string
+ --> tests/e39_interp_lone_brace.yx:3:14
+  |
+3 |   print("x = }")
+  |              ^
+  = write `}}` for a literal brace, or `{name}` to insert a value
+
+1 error(s). Nothing was generated.

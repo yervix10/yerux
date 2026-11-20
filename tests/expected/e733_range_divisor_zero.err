@@ -1,0 +1,9 @@
+error: the divisor may be 0
+ --> tests/e733_range_divisor_zero.yx:2:14
+  |
+2 |   return x / divisor
+  |              ^^^^^^^
+  = Int<-2..2> includes zero
+  = help: use a nonzero range such as `Int<1..10>`, or keep the divisor as plain `Int` for a runtime check
+
+1 error(s). Nothing was generated.

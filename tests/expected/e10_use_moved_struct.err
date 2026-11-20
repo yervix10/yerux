@@ -1,0 +1,9 @@
+error: cannot use 'a': it was already moved
+ --> examples/e10_use_moved_struct.yx:8:9
+  |
+8 |   print(a.scores.len())
+  |         ^
+  = 'a' was moved on line 7
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

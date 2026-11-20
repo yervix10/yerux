@@ -1,0 +1,17 @@
+error: expected Int but this is UInt8
+ --> examples/e39_index_sized.yx:6:16
+  |
+6 |   print(xs.get(i))
+  |                ^
+  = UInt8 and Int are different types: numbers are never converted implicitly
+  = help: convert it explicitly: write `i.to_int()`
+
+error: expected Float but this is Int
+ --> examples/e39_index_sized.yx:8:11
+  |
+8 |   if f == 1 {
+  |           ^
+  = Int and Float are different types: numbers are never converted implicitly
+  = help: write a Float literal: `1.0`, or convert a variable with `x.to_float()`
+
+2 error(s). Nothing was generated.

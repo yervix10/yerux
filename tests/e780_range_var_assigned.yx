@@ -1,0 +1,10 @@
+// A fact about a `var` ends when the variable is assigned.
+fn f(n: Int) -> Int {
+  var x = n
+  if x < 0 || x > 9 { return -1 }
+  let a: Int<0..9> = x
+  x = x + 1
+  let b: Int<0..9> = x
+  return a + b
+}
+fn main() { print(f(3)) }

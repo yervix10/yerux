@@ -1,0 +1,14 @@
+fn pair() -> (Int, String) {
+  return (1, String.from("a"))
+}
+fn main() {
+  let (a, b, c) = (1, 2)
+  let (x, y) = 5
+  let t = (1, 2)
+  print(t.5)
+  let p = pair()
+  let q = p
+  let (m, n) = p
+  var u = 1
+  (u, u) = pair()
+}

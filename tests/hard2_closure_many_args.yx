@@ -1,0 +1,51 @@
+struct V3 { x: Int, y: Int, z: Int }
+struct Big { a: V3, b: V3, tag: String, w: Float }
+fn mk(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int) -> fn(Int, Int, Int, Int, Int, Int, Int) -> Int {
+  let k1 = a * 2
+  let k2 = b + 3
+  let k3 = c - 1
+  let k4 = d * d
+  let k5 = e + f
+  let k6 = g - h
+  return move |p, q, r, s, t, u, v| {
+    return a + b * p + c * q + d * r + e * s + f * t + g * u + h * v + k1 + k2 + k3 + k4 + k5 + k6
+  }
+}
+fn mkf(scale: Float, off: Float) -> fn(Float, Int) -> Float {
+  return move |x: Float, n: Int| x * scale + off + 1.5
+}
+fn mkv(a: V3) -> fn(V3, Int) -> V3 {
+  return move |v: V3, k: Int| V3 { x: v.x + a.x * k, y: v.y + a.y * k, z: v.z + a.z * k }
+}
+fn mkbig(tag: String) -> fn(view Big, mut List<Int>) -> Big {
+  return move |b: view Big, l: mut List<Int>| {
+    l.push(b.a.x + b.b.y)
+    var t = String.from(tag)
+    t.push_str(b.tag)
+    return Big { a: b.b, b: b.a, tag: move t, w: b.w * 2.0 }
+  }
+}
+fn many(f: view fn(Int, Int, Int, Int, Int, Int, Int) -> Int, n: Int) -> Int {
+  var t = 0
+  for i in 0..n { t = t + f(i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6) }
+  return t
+}
+fn main() {
+  let f = mk(1, 2, 3, 4, 5, 6, 7, 8)
+  print(f(1, 2, 3, 4, 5, 6, 7))
+  print(many(f, 10))
+  let g = mkf(2.5, 0.25)
+  print(g(3.0, 1))
+  let h = mkv(V3 { x: 1, y: 2, z: 3 })
+  let r = h(V3 { x: 10, y: 20, z: 30 }, 4)
+  print(r.x + r.y + r.z)
+  let bg = mkbig(String.from("T"))
+  var l = List<Int>.new()
+  let b0 = Big { a: V3 { x: 1, y: 2, z: 3 }, b: V3 { x: 4, y: 5, z: 6 }, tag: String.from("b"), w: 1.5 }
+  let b1 = bg(b0, l)
+  let b2 = bg(b1, l)
+  print(b2.tag)
+  print(b2.a.x + b2.b.z)
+  print(b2.w)
+  print(l.len() + l.get(1))
+}

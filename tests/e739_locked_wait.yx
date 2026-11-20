@@ -1,0 +1,9 @@
+fn main() {
+  let lock = Locked.new(0)
+  scope {
+    lock.with(|value| {
+      let worker = spawn move || 1
+      value = worker.join().unwrap()
+    })
+  }
+}

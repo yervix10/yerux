@@ -1,0 +1,216 @@
+// List API written in Yerux on top of push / pop / get / at / set / swap. Works for every element type,
+// owned ones included: elements are moved with `swap`, never copied.
+
+impl<T> List<T> {
+    fn is_empty(view self) -> Bool {
+        return self.len() == 0
+    }
+
+    // Inserts `x` before position `i` (0 <= i <= len). O(n).
+    fn insert(mut self, i: Int, x: T) {
+        if i < 0 || i > self.len() { panic("List.insert index out of range") }
+        self.push(move x)
+        var j = self.len() - 1
+        while j > i {
+            self.swap(j, j - 1)
+            j = j - 1
+        }
+    }
+
+    // Removes the element at `i` and moves it out. O(n).
+    fn remove(mut self, i: Int) -> T {
+        if i < 0 || i >= self.len() { panic("List.remove index out of range") }
+        var j = i
+        while j < self.len() - 1 {
+            self.swap(j, j + 1)
+            j = j + 1
+        }
+        return self.pop()
+    }
+
+    // Removes the element at `i` by moving the last one into its place. O(1), changes the order.
+    fn swap_remove(mut self, i: Int) -> T {
+        if i < 0 || i >= self.len() { panic("List.swap_remove index out of range") }
+        self.swap(i, self.len() - 1)
+        return self.pop()
+    }
+
+    fn reverse(mut self) {
+        var i = 0
+        var j = self.len() - 1
+        while i < j {
+            self.swap(i, j)
+            i = i + 1
+            j = j - 1
+        }
+    }
+
+    // Keeps the first `n` elements and drops the rest.
+    fn truncate(mut self, n: Int) {
+        while self.len() > n {
+            let x = self.pop()
+        }
+    }
+
+    // Moves every element of `other` to the end of this list.
+    fn extend(mut self, other: List<T>) {
+        let start = self.len()
+        while other.len() > 0 {
+            self.push(other.pop())
+        }
+        var i = start
+        var j = self.len() - 1
+        while i < j {
+            self.swap(i, j)
+            i = i + 1
+            j = j - 1
+        }
+    }
+}
+
+impl<T: Copy> List<T> {
+    // Copy of the elements [from, to).
+    fn slice(view self, from: Int, to: Int) -> List<T> {
+        if from < 0 || from > to || to > self.len() { panic("List.slice range out of bounds") }
+        var r = List<T>.new()
+        var i = from
+        while i < to {
+            r.push(self.get(i))
+            i = i + 1
+        }
+        return r
+    }
+
+    fn copy(view self) -> List<T> {
+        return self.slice(0, self.len())
+    }
+}
+
+impl<T: Equal> List<T> {
+    fn index_of(view self, x: view T) -> Int {
+        var i = 0
+        while i < self.len() {
+            if self.at(i).eq(x) {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    fn contains(view self, x: view T) -> Bool {
+        return self.index_of(x) >= 0
+    }
+}
+
+impl<T: Ordered> List<T> {
+    fn is_sorted(view self) -> Bool {
+        var i = 1
+        while i < self.len() {
+            if self.at(i - 1).cmp(self.at(i)) > 0 {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+
+    fn insertion_range(mut self, lo: Int, hi: Int) {
+        var i = lo + 1
+        while i <= hi {
+            var j = i
+            while j > lo && self.at(j - 1).cmp(self.at(j)) > 0 {
+                self.swap(j - 1, j)
+                j = j - 1
+            }
+            i = i + 1
+        }
+    }
+
+    fn sift_down(mut self, lo: Int, start: Int, n: Int) {
+        var root = start
+        var child = 2 * root + 1
+        while child < n {
+            if child + 1 < n && self.at(lo + child).cmp(self.at(lo + child + 1)) < 0 {
+                child = child + 1
+            }
+            if self.at(lo + root).cmp(self.at(lo + child)) < 0 {
+                self.swap(lo + root, lo + child)
+                root = child
+                child = 2 * root + 1
+            } else {
+                child = n
+            }
+        }
+    }
+
+    fn heap_range(mut self, lo: Int, hi: Int) {
+        let n = hi - lo + 1
+        var s = n / 2 - 1
+        while s >= 0 {
+            self.sift_down(lo, s, n)
+            s = s - 1
+        }
+        var end = n - 1
+        while end > 0 {
+            self.swap(lo, lo + end)
+            self.sift_down(lo, 0, end)
+            end = end - 1
+        }
+    }
+
+    // Sorts [lo, hi] (inclusive): quicksort with median of three, insertion sort for small ranges and
+    // heapsort when the recursion gets too deep (so the worst case is O(n log n)).
+    fn qsort(mut self, lo: Int, hi: Int, depth: Int) {
+        var l = lo
+        var h = hi
+        var d = depth
+        while h - l > 16 {
+            if d == 0 {
+                self.heap_range(l, h)
+                return
+            }
+            d = d - 1
+            let m = l + (h - l) / 2
+            if self.at(m).cmp(self.at(l)) < 0 {
+                self.swap(m, l)
+            }
+            if self.at(h).cmp(self.at(l)) < 0 {
+                self.swap(h, l)
+            }
+            if self.at(m).cmp(self.at(h)) < 0 {
+                self.swap(m, h)
+            }
+            // the median of three is now at h: partition around it
+            var store = l
+            var i = l
+            while i < h {
+                if self.at(i).cmp(self.at(h)) < 0 {
+                    self.swap(i, store)
+                    store = store + 1
+                }
+                i = i + 1
+            }
+            self.swap(store, h)
+            if store - l < h - store {
+                self.qsort(l, store - 1, d)
+                l = store + 1
+            } else {
+                self.qsort(store + 1, h, d)
+                h = store - 1
+            }
+        }
+        self.insertion_range(l, h)
+    }
+
+    // In-place, not stable (equal elements may change their relative order).
+    fn sort(mut self) {
+        var depth = 2
+        var n = self.len()
+        while n > 1 {
+            depth = depth + 2
+            n = n / 2
+        }
+        self.qsort(0, self.len() - 1, depth)
+    }
+}

@@ -1,0 +1,8 @@
+fn label() -> String {
+  return String.from("x")
+}
+
+fn main() {
+  let n = comptime label().len()
+  print(n)
+}

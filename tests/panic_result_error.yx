@@ -1,0 +1,4 @@
+fn main() {
+    let value = Result<Int, String>.Err(String.from("file missing"))
+    print(value.unwrap())
+}

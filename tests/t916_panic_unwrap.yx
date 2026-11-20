@@ -1,0 +1,18 @@
+// unwrap on None panics: exit code 101, deferred statements do not run
+fn lookup(l: view List<Int>, x: Int) -> Option<Int> {
+  for i in 0..l.len() {
+    if l.at(i) == x { return Some(i * 10) }
+  }
+  return None
+}
+
+fn main() {
+  defer print("never printed")
+  var l = List<Int>.new()
+  l.push(4)
+  l.push(5)
+  print(lookup(l, 5).unwrap())
+  print(lookup(l, 4).unwrap())
+  print(lookup(l, 6).unwrap())
+  print("unreachable")
+}

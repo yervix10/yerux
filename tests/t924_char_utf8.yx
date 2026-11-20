@@ -1,0 +1,84 @@
+// Char, UTF-8 strings, byte vs character indexing
+fn classify(c: Char) -> Text {
+  match c {
+    'a'..='z' => { return "lower" }
+    'A'..='Z' => { return "upper" }
+    '0'..='9' => { return "digit" }
+    ' ' | '\n' | '\t' => { return "space" }
+    _ => { return "other" }
+  }
+}
+
+fn count_vowels(s: view String) -> Int {
+  var n = 0
+  for c in s.chars() {
+    match c {
+      'a' | 'e' | 'i' | 'o' | 'u' => { n = n + 1 }
+      _ => { }
+    }
+  }
+  return n
+}
+
+fn rot13(s: view String) -> String {
+  var out = String.new()
+  for c in s.chars() {
+    let v = c.to_int()
+    if v >= 97 && v <= 122 {
+      out.push_char(Char.from_int((v - 97 + 13) % 26 + 97))
+    } else if v >= 65 && v <= 90 {
+      out.push_char(Char.from_int((v - 65 + 13) % 26 + 65))
+    } else {
+      out.push_char(c)
+    }
+  }
+  return out
+}
+
+fn main() {
+  let c = 'é'
+  print(c)
+  print(c.to_int())
+  print(c.utf8_len())
+  print('A'.to_int())
+  print(Char.from_int(97))
+  print(Char.is_valid(65))
+  print(Char.is_valid(55296))
+  print('a' < 'b')
+  print('\u{1F600}'.utf8_len())
+
+  var s = String.new()
+  s.push_char('h')
+  s.push_char('é')
+  s.push_char('y')
+  s.push_char('\u{4E2D}')
+  print(s)
+  print(s.len())
+  print(s.char_count())
+  for ch in s.chars() { print(ch.utf8_len()) }
+  print(s.char_at(1))
+  print(s.char_size(1))
+  print(s.char_at(4))
+  print(s.is_boundary(2))
+  print(s.is_boundary(1))
+  let tail = s.slice(1, 3)
+  print(tail)
+  print(s.byte(1))
+
+  let text = String.from("Hello, World 42\n")
+  var kinds = Map<Text, Int>.new()
+  for ch in text.chars() {
+    let k = classify(ch)
+    kinds.insert(k, kinds.get_or(k, 0) + 1)
+  }
+  print("{kinds}")
+  print(count_vowels(text))
+  let enc = rot13(text)
+  print(enc)
+  let dec = rot13(enc)
+  print(dec.eq(text))
+
+  let mixed = String.from("héllo wörld")
+  let up = mixed.to_upper()
+  print(up)
+}

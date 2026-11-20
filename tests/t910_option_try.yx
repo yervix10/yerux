@@ -1,0 +1,68 @@
+// `?` on Option, closures returning Option, Option holding owned values
+struct Config { name: String, port: Int }
+
+fn lookup(keys: view List<String>, vals: view List<Int>, key: view String) -> Option<Int> {
+  for i in 0..keys.len() {
+    if keys.at(i).eq(key) { return Some(vals.get(i)) }
+  }
+  return None
+}
+
+fn port_for(keys: view List<String>, vals: view List<Int>, key: view String) -> Option<Int> {
+  let base = lookup(keys, vals, "base")?
+  let off = lookup(keys, vals, key)?
+  return Some(base + off)
+}
+
+fn make_config(name: view String, port: Option<Int>) -> Option<Config> {
+  let p = port?
+  return Some(Config { name: String.from(name), port: p })
+}
+
+fn name_len(c: Option<Config>) -> Option<Int> {
+  let cfg = (move c)?
+  return Some(cfg.name.len() + cfg.port)
+}
+
+fn main() {
+  var keys = List<String>.new()
+  var vals = List<Int>.new()
+  keys.push(String.from("base"))
+  vals.push(8000)
+  keys.push(String.from("http"))
+  vals.push(80)
+  keys.push(String.from("tls"))
+  vals.push(443)
+
+  let a = port_for(keys, vals, "http")
+  let b = port_for(keys, vals, "tls")
+  let c = port_for(keys, vals, "ftp")
+  print("{a} {b} {c}")
+
+  let m1 = make_config("web", a)
+  match m1 {
+    Some(cfg) => { print("{cfg.name}:{cfg.port}") }
+    None => { print("no config") }
+  }
+  let m2 = make_config("ftp", c)
+  match m2 {
+    Some(cfg) => { print("{cfg.name}:{cfg.port}") }
+    None => { print("no config") }
+  }
+
+  let n1 = name_len(make_config("abc", Some(7)))
+  let n2 = name_len(make_config("abc", None))
+  print("{n1} {n2}")
+
+  let half = |x: Int| -> Option<Int> {
+    if x % 2 != 0 { return None }
+    return Some(x / 2)
+  }
+  let quarter = move |x: Int| -> Option<Int> {
+    let h = half(x)?
+    return half(h)
+  }
+  print("{quarter(12)}")
+  print("{quarter(6)}")
+  print("{quarter(7)}")
+}

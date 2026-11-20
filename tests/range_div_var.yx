@@ -1,0 +1,20 @@
+// division by variables: provably safe ones (d > 0, d < 0) and a divisor that may be 0 or -1
+fn q(a: Int, d: Int) -> Int {
+  if d > 0 { return a / d + a % d }
+  if d < -1 { return a / d + a % d }
+  return a / d
+}
+fn main() {
+  let min = -9223372036854775807 - 1
+  print(q(100, 7))
+  print(q(-100, 7))
+  print(q(100, -7))
+  print(q(min, 2))
+  print(q(min, -2))
+  print(q(5, -1))
+  var d = 3
+  while d >= 0 {
+    print(q(1000, d))
+    d = d - 1
+  }
+}

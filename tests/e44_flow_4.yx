@@ -1,0 +1,8 @@
+fn main() {
+  var l = List.new()
+  l.push(1)
+  for mut x in l {
+    print(l.len())
+    x = 2
+  }
+}

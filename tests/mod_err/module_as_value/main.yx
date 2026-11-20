@@ -1,0 +1,6 @@
+import lib
+
+fn main() {
+  let x = lib
+  print(1)
+}

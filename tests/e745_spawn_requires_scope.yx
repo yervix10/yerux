@@ -1,0 +1,4 @@
+fn main() {
+  let worker = spawn move || 1
+  print(worker.join().is_ok())
+}

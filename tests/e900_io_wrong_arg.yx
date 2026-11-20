@@ -1,0 +1,9 @@
+// std.io: the type checker explains misuse (an Int where a path is expected, a missing import)
+import std.io
+
+fn main() {
+  match io.read_file(42) {
+    Ok(t) => { print(t) }
+    Err(e) => { print(e.message) }
+  }
+}

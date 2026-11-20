@@ -1,0 +1,116 @@
+// `x as Int<lo..hi> else { .. }`: the value when it fits, otherwise the block, which has to leave.
+type Percent = Int<0..100>
+
+fn byte_plus_one(n: Int) -> Int {
+  let b = n as Int<0..255> else { return -1 }
+  return b + 1                        // b is Int<0..255>: no overflow test
+}
+
+fn percent_double(n: Int) -> Int {
+  let p: Percent = n as Percent else { return 0 }
+  return p * 2
+}
+
+// the source variable is narrowed as well
+fn narrow_source(n: Int) -> Int {
+  let b = n as Int<0..9> else { return -1 }
+  let again: Int<0..9> = n
+  return b + again
+}
+
+fn narrow_var(n: Int) -> Int {
+  var v = n * 3
+  let c = v as Int<-5..5> else { return 99 }
+  let w: Int<-5..5> = v
+  return c * w
+}
+
+// free when the compiler can prove it: the else block is checked but never runs
+fn free(n: Int<0..9>) -> Int {
+  let d = n as Int<0..255> else { return -1 }
+  return d
+}
+
+// a loop: `continue` and `break` are fine blocks too
+fn sum_valid(limit: Int) -> Int {
+  var s = 0
+  var i = 0
+  while i < limit {
+    let k = (i * 7 - 20) as Int<0..30> else {
+      i = i + 1
+      continue
+    }
+    if k == 21 { break }
+    s = s + k
+    i = i + 1
+  }
+  return s
+}
+
+fn first_digit(n: Int) -> Int {
+  var i = 0
+  while i < 100 {
+    let d = (n - i * 10) as Int<0..9> else {
+      i = i + 1
+      continue
+    }
+    return d
+  }
+  return -1
+}
+
+fn panics_in_else(n: Int) -> Int {
+  let b = n as Int<0..255> else { panic("not a byte") }
+  return b
+}
+
+fn sized(u: UInt8, i: Int16) -> Int {
+  let a = u as Int<0..200> else { return -1 }
+  let b = i as Int<-100..100> else { return -2 }
+  return a + b
+}
+
+fn nested(n: Int) -> Int {
+  let a = n as Int<0..1000> else { return -1 }
+  let b = (a * 2) as Int<0..255> else { return -2 }
+  return b
+}
+
+fn half_open(n: Int) -> Int {
+  let a = n as Int<10..> else { return 0 }
+  let b = a as Int<..20> else { return 1 }
+  return b
+}
+
+fn plain_as(n: Int) -> Int {
+  let b = n as Int<0..9>              // without else: a checked conversion, like `.from`
+  return b + 1
+}
+
+fn main() {
+  print(byte_plus_one(5))
+  print(byte_plus_one(255))
+  print(byte_plus_one(256))
+  print(byte_plus_one(-1))
+  print(percent_double(50))
+  print(percent_double(101))
+  print(narrow_source(4))
+  print(narrow_source(10))
+  print(narrow_var(1))
+  print(narrow_var(2))
+  print(free(7))
+  print(sum_valid(12))
+  print(first_digit(37))
+  print(first_digit(-3))
+  print(panics_in_else(200))
+  print(sized(100, -7))
+  print(sized(201, 0))
+  print(sized(1, 101))
+  print(nested(100))
+  print(nested(200))
+  print(nested(2000))
+  print(half_open(5))
+  print(half_open(15))
+  print(half_open(25))
+  print(plain_as(8))
+}

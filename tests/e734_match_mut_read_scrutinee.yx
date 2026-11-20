@@ -1,0 +1,19 @@
+// inside `match mut` the bound names are the only way in: even reading the scrutinee is an error
+enum Msg { Text(String), Nums(List<Int>), Quit }
+fn mgrow(m: mut Msg, k: Int) {
+  match mut m {
+    Text(s) => { s.push_str("!") }
+    Nums(l) => { l.push(k) }
+    Quit => { }
+  }
+}
+fn takes(m: Msg) { }
+fn main() {
+  var m = Msg.Nums(List<Int>.new())
+  match mut m {
+    Nums(l) => {
+      for x in l { mgrow(m, x) }
+    }
+    _ => { }
+  }
+}

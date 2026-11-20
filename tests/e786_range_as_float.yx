@@ -1,0 +1,6 @@
+// `as` converts integers.
+fn main() {
+  let f = 2.5
+  let b = f as Int<0..9> else { return }
+  print(b)
+}

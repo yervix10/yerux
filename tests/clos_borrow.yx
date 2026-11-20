@@ -1,0 +1,70 @@
+// closures given directly to `view fn` / `mut fn` parameters borrow the caller's variables for the call
+fn each(l: view List<Int>, f: view fn(Int)) {
+  for x in l { f(x) }
+}
+
+fn each_str(l: view List<String>, f: view fn(view String)) {
+  for i in 0..l.len() { f(l.at(i)) }
+}
+
+fn repeat(n: Int, f: view fn()) {
+  for i in 0..n { f() }
+}
+
+fn tweak(v: mut Int, f: view fn(mut Int)) {
+  f(v)
+}
+
+fn main() {
+  var xs = List.new()
+  xs.push(3)
+  xs.push(4)
+  xs.push(5)
+  // assign to an outer variable
+  var total = 0
+  each(xs, |x| total = total + x)
+  print(total)
+  // push into an outer list while iterating another
+  var doubled = List.new()
+  each(xs, |x| doubled.push(x * 2))
+  print(doubled.len())
+  print(doubled.get(2))
+  // read-only captures of several kinds
+  let bonus = 1000
+  var seen = 0
+  each(xs, |x| {
+    if x > 3 {
+      seen = seen + bonus
+    }
+  })
+  print(seen)
+  // a counter updated by a callback
+  var n = 0
+  repeat(5, || n = n + 2)
+  print(n)
+  // owned values captured by borrow
+  var names = List<String>.new()
+  names.push(String.from("ann"))
+  names.push(String.from("bob"))
+  var joined = String.new()
+  each_str(names, |s| {
+    joined.push_str(s)
+    joined.push_str(";")
+  })
+  print(joined)
+  // a mut parameter of the callback
+  var v = 10
+  tweak(v, |p| p = p + 5)
+  print(v)
+  // the same variable used by two nested borrowing closures
+  var acc = 0
+  each(xs, |x| {
+    repeat(2, || acc = acc + x)
+  })
+  print(acc)
+  // function variable called through a view parameter, and a closure that captures it by borrow
+  let sq = |x: Int| x * x
+  var out = 0
+  each(xs, |x| out = out + sq(x))
+  print(out)
+}

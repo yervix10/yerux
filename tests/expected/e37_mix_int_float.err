@@ -1,0 +1,9 @@
+error: expected Float but this is Int
+ --> examples/e37_mix_int_float.yx:5:15
+  |
+5 |   let total = count * price
+  |               ^^^^^
+  = Int and Float are different types: numbers are never converted implicitly
+  = help: convert it explicitly: write `count.to_float()`
+
+1 error(s). Nothing was generated.

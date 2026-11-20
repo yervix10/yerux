@@ -1,0 +1,5 @@
+fn main() {
+  var values = List<Int>.new()
+  values.push(0)
+  parallel for i in 0..1 { values.set(i, 1) }
+}

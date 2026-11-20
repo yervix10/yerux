@@ -1,0 +1,26 @@
+trait Obj { fn id(view self) -> Int }
+struct Leafy { s: String, l: List<String> }
+struct Mid { inner: Box<dyn Obj>, names: List<Box<dyn Obj>>, t: String }
+impl Obj for Leafy { fn id(view self) -> Int { return self.s.len() + self.l.len() } }
+impl Obj for Mid { fn id(view self) -> Int { return self.inner.id() + self.names.len() + self.t.len() } }
+fn build(depth: Int) -> Box<dyn Obj> {
+  if depth == 0 {
+    var l = List<String>.new()
+    l.push(String.from("a"))
+    l.push(String.from("bb"))
+    return Box<dyn Obj>.new(Leafy { s: String.from("leaf"), l: move l })
+  }
+  var names = List<Box<dyn Obj>>.new()
+  for i in 0..depth { names.push(build(i)) }
+  return Box<dyn Obj>.new(Mid { inner: build(depth - 1), names: move names, t: String.from("mid") })
+}
+fn main() {
+  let a = build(4)
+  print(a.id())
+  var v = List<Box<dyn Obj>>.new()
+  for i in 0..5 { v.push(build(i)) }
+  let x = v.pop()
+  v.set(0, build(2))
+  print(x.id())
+  print(v.len())
+}

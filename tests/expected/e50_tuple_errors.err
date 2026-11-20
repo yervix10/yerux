@@ -1,0 +1,44 @@
+error: this pattern has 3 names but (Int, Int) has 2 elements
+ --> tests/e50_tuple_errors.yx:5:7
+  |
+5 |   let (a, b, c) = (1, 2)
+  |       ^^^^^^^^^
+  = help: write one name per element, or `_` for the ones you do not need
+
+error: cannot destructure a value of type Int: only tuples can be taken apart this way
+ --> tests/e50_tuple_errors.yx:6:7
+  |
+6 |   let (x, y) = 5
+  |       ^^^^^^
+  = help: for a struct, read its fields: `let a = p.x`
+
+error: the tuple (Int, Int) has no element .5
+ --> tests/e50_tuple_errors.yx:8:9
+  |
+8 |   print(t.5)
+  |         ^^^
+  = it has 2 element(s): .0 to .1
+
+error: 'p' is a (Int, String) and is not copied
+  --> tests/e50_tuple_errors.yx:10:11
+   |
+10 |   let q = p
+   |           ^
+   = help: use `move p` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: 'p' is a (Int, String) and is not copied
+  --> tests/e50_tuple_errors.yx:11:16
+   |
+11 |   let (m, n) = p
+   |                ^
+   = help: use `move p` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: a tuple assignment can only copy values
+  --> tests/e50_tuple_errors.yx:13:3
+   |
+13 |   (u, u) = pair()
+   |   ^^^^^^
+   = the tuple holds a String, a List or a struct that owns memory, so its elements must be moved
+   = help: declare new variables instead: `let (a, b) = move pair`, or assign the elements one by one
+
+6 error(s). Nothing was generated.

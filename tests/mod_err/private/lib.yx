@@ -1,0 +1,7 @@
+pub fn open() -> Int {
+  return secret() + 1
+}
+
+fn secret() -> Int {
+  return 41
+}

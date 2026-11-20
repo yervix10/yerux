@@ -1,0 +1,73 @@
+// List API: sort, reverse, insert/remove, slices, owned elements, for variants
+fn main() {
+  var l = List<Int>.new()
+  for v in 0..10 { l.push((v * 7 + 3) % 10) }
+  print("{l}")
+  l.sort()
+  print("{l}")
+  print(l.is_sorted())
+  l.reverse()
+  print("{l}")
+  print(l.index_of(7))
+  print(l.index_of(42))
+  print(l.contains(3))
+  l.insert(0, 100)
+  l.insert(l.len(), -1)
+  print("{l}")
+  print(l.remove(0))
+  print(l.swap_remove(0))
+  print("{l}")
+  l.swap(0, 1)
+  l.truncate(4)
+  print("{l}")
+  let part = l.slice(1, 3)
+  print("{part}")
+  let dup = l.copy()
+  l.extend(move dup)
+  print(l.len())
+
+  for mut x in l { x = x * 2 }
+  print("{l}")
+  var total = 0
+  for x in l { total = total + x }
+  print(total)
+
+  var names = List<String>.new()
+  names.push(String.from("pear"))
+  names.push(String.from("apple"))
+  names.push(String.from("fig"))
+  names.sort()
+  print(names.join(" "))
+  names.at(0).push_str("!")
+  names.set(1, String.from("kiwi"))
+  print("{names}")
+  let last = names.pop()
+  print(last)
+  for mut s in names { s.push_str("?") }
+  print("{names}")
+  for s in move names { print(s.len()) }
+
+  var grid = List<List<Int>>.new()
+  for i in 0..3 {
+    var row = List<Int>.new()
+    for j in 0..3 { row.push(i * 3 + j) }
+    grid.push(move row)
+  }
+  var diag = 0
+  for i in 0..3 { diag = diag + grid.at(i).get(i) }
+  print(diag)
+  grid.at(1).set(1, 100)
+  print("{grid}")
+  print(grid.at(2).len())
+  var fl = List<Float>.new()
+  fl.push(2.5)
+  fl.push(-1.5)
+  fl.push(0.25)
+  fl.sort()
+  print("{fl}")
+  var cs = List<Char>.new()
+  cs.push('z')
+  cs.push('b')
+  cs.sort()
+  print("{cs}")
+}

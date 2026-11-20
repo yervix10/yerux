@@ -1,0 +1,6 @@
+import lib
+
+fn main() {
+  print(lib.open())
+  print(lib.secret())
+}

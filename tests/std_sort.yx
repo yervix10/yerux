@@ -1,0 +1,147 @@
+// std.sort: stable/unstable sorts with comparators, owned elements, dedup, binary search
+import std.sort
+
+struct Rec {
+  key: Int,
+  idx: Int,
+  tag: String,
+}
+
+fn lcg(s: Int) -> Int {
+  return (s * 1103515245 + 12345) % 2147483648
+}
+
+fn show_ints(l: view List<Int>) {
+  var out = String.new()
+  var i = 0
+  while i < l.len() {
+    if i > 0 { out.push_str(" ") }
+    out.push_int(l.get(i))
+    i = i + 1
+  }
+  print("[{out}]")
+}
+
+fn main() {
+  var l = List<Int>.new()
+  var seed = 7
+  var i = 0
+  while i < 40 {
+    seed = lcg(seed)
+    l.push(seed % 20)
+    i = i + 1
+  }
+  var a = l.copy()
+  sort.stable(a)
+  show_ints(a)
+  print(a.is_sorted())
+  var b = l.copy()
+  sort.unstable(b)
+  print(a.len() == b.len())
+  var same = true
+  i = 0
+  while i < a.len() {
+    if a.get(i) != b.get(i) { same = false }
+    i = i + 1
+  }
+  print(same)
+
+  var d = l.copy()
+  sort.stable_by(d, |x: view Int, y: view Int| -> Int { return y - x })
+  show_ints(d)
+  var u = l.copy()
+  sort.unstable_by(u, |x: view Int, y: view Int| -> Int { return y - x })
+  show_ints(u)
+
+  // stability: sort records by key, equal keys keep input order
+  var rs = List<Rec>.new()
+  i = 0
+  while i < 30 {
+    seed = lcg(seed)
+    rs.push(Rec { key: seed % 4, idx: i, tag: "r{i}" })
+    i = i + 1
+  }
+  sort.stable_by(rs, |x: view Rec, y: view Rec| -> Int { return x.key - y.key })
+  var line = String.new()
+  i = 0
+  var ok = true
+  while i < rs.len() {
+    let item = "{rs.at(i).key}:{rs.at(i).tag} "
+    line.push_str(item)
+    if i > 0 && rs.at(i - 1).key == rs.at(i).key {
+      if rs.at(i - 1).idx > rs.at(i).idx {
+        ok = false
+      }
+    }
+    i = i + 1
+  }
+  print(line)
+  print(ok)
+
+  // strings
+  var ws = List<String>.new()
+  ws.push(String.from("pear"))
+  ws.push(String.from("apple"))
+  ws.push(String.from("fig"))
+  ws.push(String.from("banana"))
+  ws.push(String.from("apple"))
+  sort.stable(ws)
+  sort.dedup(ws)
+  print(ws.join(","))
+  sort.stable_by(ws, |x: view String, y: view String| -> Int { return x.len() - y.len() })
+  print(ws.join(","))
+  sort.reverse(ws)
+  print(ws.join(","))
+
+  // edge sizes
+  var e = List<Int>.new()
+  sort.stable(e)
+  sort.unstable_by(e, |x: view Int, y: view Int| -> Int { return x - y })
+  e.push(5)
+  sort.stable(e)
+  show_ints(e)
+  var big = List<Int>.new()
+  i = 0
+  while i < 500 {
+    seed = lcg(seed)
+    big.push(seed % 1000)
+    i = i + 1
+  }
+  var big2 = big.copy()
+  sort.stable(big)
+  sort.unstable_by(big2, |x: view Int, y: view Int| -> Int { return x - y })
+  print(big.is_sorted())
+  print(big2.is_sorted())
+  print(sort.is_sorted_by(big, |x: view Int, y: view Int| -> Int { return x - y }))
+
+  // dedup
+  var dd = List<Int>.new()
+  dd.push(1)
+  dd.push(1)
+  dd.push(2)
+  dd.push(2)
+  dd.push(2)
+  dd.push(3)
+  dd.push(1)
+  sort.dedup(dd)
+  show_ints(dd)
+  sort.dedup_by(dd, |x: view Int, y: view Int| -> Bool { return x % 2 == y % 2 })
+  show_ints(dd)
+
+  // binary search
+  var s = List<Int>.new()
+  s.push(1)
+  s.push(3)
+  s.push(3)
+  s.push(5)
+  s.push(9)
+  print("{sort.binary_search(s, 5)}")
+  print("{sort.binary_search(s, 4)}")
+  print("{sort.binary_search(s, 0)}")
+  print("{sort.binary_search(s, 10)}")
+  print(sort.lower_bound(s, 3))
+  print(sort.upper_bound(s, 3))
+  print(sort.lower_bound(s, 100))
+  let r = sort.binary_search_by(s, |x: view Int| -> Int { return x - 9 })
+  print("{r}")
+}

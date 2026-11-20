@@ -1,0 +1,7 @@
+error: a variadic extern function needs at least one fixed parameter before `...`
+ --> tests/e52_ffi_variadic_pos.yx:2:13
+  |
+2 |   fn printf(..., fmt: Text) -> Int32
+  |             ^^
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,15 @@
+error: cannot append 's' here: it may be the string being modified
+ --> examples/e13_append_to_itself.yx:3:14
+  |
+3 |   s.push_str(s)
+  |              ^
+  = help: copy it first: `let c = String.from(x)` and append `c`
+
+error: cannot append 'names.at(..)' here: it may be the string being modified
+ --> examples/e13_append_to_itself.yx:8:24
+  |
+8 |   names.at(0).push_str(names.at(1))
+  |                        ^^^^^^^^^^^
+  = help: copy it first: `let c = String.from(x)` and append `c`
+
+2 error(s). Nothing was generated.

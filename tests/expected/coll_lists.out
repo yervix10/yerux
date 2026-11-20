@@ -1,0 +1,13 @@
+true
+-250 249 -7
+true
+1 1000
+[ax1, bx2, cx3]
+ax1 [zx9, bx2, cx3]
+[cx3, bx2, zx9] 3
+cx3 [zx9, bx2]
+[zx9]
+[1, 2, 3, 4] true false 3
+false true true
+[2, 3]
+[] true

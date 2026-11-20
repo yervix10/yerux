@@ -1,0 +1,9 @@
+pub struct Item { id: Int, tag: Int }
+
+pub fn helper() -> Int {
+  return 300
+}
+
+pub fn twice(i: Item) -> Int {
+  return helper() + i.id + i.tag
+}

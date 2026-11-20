@@ -1,0 +1,8 @@
+error: cannot lend '*text' as `mut`: it is only borrowed for reading (`view`)
+ --> tests/e738_shared_mut_borrow.yx:7:10
+  |
+7 |   update(text.get())
+  |          ^^^^^^^^^^
+  = help: declare it with `var` (or receive it as `mut`)
+
+1 error(s). Nothing was generated.

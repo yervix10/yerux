@@ -1,0 +1,6 @@
+fn total(l: view List<Int>) -> Int { return l.len() }
+fn main() {
+  var l = List<Int<0..9>>.new()
+  l.push(3)
+  print(total(l))
+}

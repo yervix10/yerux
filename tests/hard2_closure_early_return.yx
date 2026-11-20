@@ -1,0 +1,64 @@
+struct Noisy { name: String }
+
+fn mk(n: Int) -> Result<Int, String> {
+  if n > 2 { return Err(String.from("big")) }
+  return Ok(n)
+}
+
+fn clos_early(n: Int) -> Result<fn(Int) -> Int, String> {
+  let s = String.from("captured")
+  let l = List<Int>.new()
+  let v = mk(n)?
+  let f = move |x: Int| x + s.len() + l.len() + v
+  return Ok(move f)
+}
+
+fn clos_cond(flag: Bool) -> Int {
+  let s = String.from("cond")
+  var f = || 1
+  if flag { f = move || s.len() }
+  return f()
+}
+
+fn clos_loop(n: Int) -> Int {
+  var total = 0
+  for i in 0..n {
+    let s = String.from("it")
+    let f = move |x: Int| x + s.len()
+    total = total + f(i)
+    if i == 2 { break }
+  }
+  return total
+}
+
+fn clos_in_list(n: Int) -> Int {
+  var fs = List<fn(Int) -> Int>.new()
+  for i in 0..n {
+    let s = String.from("abc")
+    fs.push(move |x: Int| x + s.len() + i)
+  }
+  let last = fs.pop()
+  fs.clear()
+  return last(1)
+}
+
+fn chain(n: Int) -> Result<Int, String> {
+  let f = clos_early(n)?
+  let g = clos_early(n + 1)?
+  return Ok(f(1) + g(2))
+}
+
+fn main() {
+  match clos_early(1) { Ok(f) => { print(f(10)) }
+  Err(e) => { print(e) } }
+  match clos_early(5) { Ok(f) => { print(f(10)) }
+  Err(e) => { print(e) } }
+  print(clos_cond(true))
+  print(clos_cond(false))
+  print(clos_loop(10))
+  print(clos_in_list(4))
+  match chain(1) { Ok(v) => { print(v) }
+  Err(e) => { print(e) } }
+  match chain(2) { Ok(v) => { print(v) }
+  Err(e) => { print(e) } }
+}

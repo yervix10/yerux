@@ -1,0 +1,6 @@
+fn main() {
+  let l = List.new()
+  for mut x in l { x = 1 }
+  a: while true { a: while true { break a }
+  break a }
+}

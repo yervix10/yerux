@@ -1,0 +1,17 @@
+fn main() {
+  var s = String.new()
+  var i = 0
+  while i < 8000000 {
+    s.push_str("ab")
+    s.push_int(i)
+    i = i + 1
+  }
+  var sum = 0
+  var j = 0
+  while j < s.len() {
+    sum = sum + s.byte(j)
+    j = j + 1
+  }
+  print(s.len())
+  print(sum)
+}

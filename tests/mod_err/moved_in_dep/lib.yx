@@ -1,0 +1,9 @@
+fn eat(l: List) {
+  print(l.len())
+}
+
+pub fn run() {
+  var l = List.new()
+  eat(move l)
+  eat(move l)
+}

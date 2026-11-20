@@ -1,0 +1,115 @@
+// Flow narrowing of immutable integers, annotated lets, aliases and checked conversions.
+type Percent = Int<0..100>
+type Byte = Int<0..255>
+
+fn clamp_percent(n: Int) -> Percent {
+  if n < 0 { return 0 }
+  if n > 100 { return 100 }
+  return n
+}
+
+fn grade(p: Percent) -> Int {
+  if p >= 90 { return 4 }
+  if p >= 80 { return 3 }
+  if p >= 70 { return 2 }
+  return 1
+}
+
+fn band(n: Int) -> Int {
+  if n >= 0 && n <= 9 {
+    let d: Int<0..9> = n
+    return d + 100
+  }
+  if n < 10 || n > 99 { return -1 }
+  let two: Int<10..99> = n
+  return two
+}
+
+fn negated(n: Int) -> Int {
+  if !(n < 5) {
+    let big: Int<5..> = n
+    return big
+  }
+  let small: Int<..4> = n
+  return small
+}
+
+fn narrow_while(n: Int) -> Int {
+  var total = 0
+  var k = 0
+  while k < n {
+    k = k + 1
+    total = total + k
+  }
+  return total
+}
+
+fn from_loop() -> Int {
+  var s = 0
+  for i in 0..10 {
+    let d: Int<0..9> = i
+    s = s + d
+  }
+  for j in 1..=5 {
+    let e: Int<1..5> = j
+    s = s + e
+  }
+  return s
+}
+
+fn try_it(n: Int) -> Int {
+  match Byte.try_from(n) {
+    Ok(b) => { return b + 1 }
+    Err(v) => { return -v }
+  }
+}
+
+fn try_hi(n: Int) -> Bool {
+  let r = Int<0..>.try_from(n)
+  match r {
+    Ok(_) => { return true }
+    Err(_) => { return false }
+  }
+}
+
+fn blend(a: Byte, b: Byte, t: Byte) -> Int<0..130050> {
+  return a * (255 - t) + b * t
+}
+
+fn main() {
+  print(clamp_percent(-5))
+  print(clamp_percent(50))
+  print(clamp_percent(500))
+  print(grade(95))
+  print(grade(85))
+  print(grade(10))
+  print(band(5))
+  print(band(42))
+  print(band(-3))
+  print(band(120))
+  print(negated(9))
+  print(negated(2))
+  print(narrow_while(4))
+  print(from_loop())
+  print(try_it(200))
+  print(try_it(256))
+  print(try_it(-1))
+  print(try_hi(5))
+  print(try_hi(-5))
+  print(blend(255, 0, 0))
+  print(blend(10, 20, 128))
+  let q: Int<-5..5> = -5
+  print(q * q)
+  print(Byte.from(77))
+  var lst = List<Byte>.new()
+  lst.push(1)
+  lst.push(200)
+  let total = lst.get(0) + lst.get(1)
+  print(total)
+  let w: Int = 7
+  print(Int<0..9>.from(w))
+  let r: Int<0..10> = 4
+  print(r % 3)
+  print(r / 2)
+  print(-r)
+}

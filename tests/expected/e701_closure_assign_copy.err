@@ -1,0 +1,10 @@
+error: this closure assigns 'n', but a stored closure works on its own copy
+ --> tests/e701_closure_assign_copy.yx:3:14
+  |
+3 |   let bump = || n = n + 1
+  |              ^^^^^^^^^^^^
+  = 'n' is copied into the closure when it is created; changing it inside would not change the variable outside
+  = help: write `move |..| ..` to say that the closure keeps its own state (a counter, an accumulator)
+  = help: or pass the closure directly to a `view fn(..)` parameter: then it works on the variable itself during the call
+
+1 error(s). Nothing was generated.

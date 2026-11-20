@@ -1,0 +1,47 @@
+// Branches whose join copies became no-ops after register allocation (jump threading in the x64 emitter).
+fn fib(n: Int) -> Int {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn pick(a: Int, b: Int) -> Int {
+  var r = 0
+  if a < b {
+    r = a
+  } else {
+    if a == b {
+      r = 0
+    } else {
+      r = b
+    }
+  }
+  return r
+}
+
+fn collatz(n: Int) -> Int {
+  var x = n
+  var steps = 0
+  while x != 1 {
+    if x % 2 == 0 {
+      x = x / 2
+    } else {
+      x = 3 * x + 1
+    }
+    steps = steps + 1
+  }
+  return steps
+}
+
+fn main() {
+  print(fib(20))
+  print(pick(1, 2))
+  print(pick(2, 2))
+  print(pick(5, 3))
+  var i = 1
+  var t = 0
+  while i < 30 {
+    t = t + collatz(i)
+    i = i + 1
+  }
+  print(t)
+}

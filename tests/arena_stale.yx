@@ -1,0 +1,11 @@
+// a ticket used after reset panics (exit 101) instead of reading freed memory
+fn main() {
+  var a = Arena<Int>.new()
+  let r = a.alloc(5)
+  print(a.get(r))
+  a.reset()
+  let other = a.alloc(9)
+  print(a.get(other))
+  print(a.get(r))
+  print("unreachable")
+}

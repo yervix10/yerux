@@ -1,0 +1,9 @@
+// Recursion well inside the 8 MiB stack still works.
+fn depth(n: Int) -> Int {
+  if n == 0 { return 0 }
+  return depth(n - 1) + 1
+}
+
+fn main() {
+  print(depth(50000))
+}

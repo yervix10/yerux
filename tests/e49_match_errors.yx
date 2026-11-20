@@ -1,0 +1,28 @@
+enum Shape { Circle(Int), Rect(Int, Int), Dot }
+fn main() {
+  let s = Shape.Dot
+  match s {
+    Circle(r) if r > 1 => { print(1) }
+    Rect(1, h) => { print(h) }
+  }
+  match 5 {
+    1 => { print(1) }
+  }
+  match 'a' {
+    1 => { print(1) }
+    _ => { }
+  }
+  match (1, true) {
+    (_, true) => { }
+    (0, false) => { }
+  }
+  match 3 {
+    x => { print(x) }
+    4 => { print(4) }
+  }
+  match s {
+    Square(x) => { }
+    _ => { }
+  }
+  let c = 'a' + 1
+}

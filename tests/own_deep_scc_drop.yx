@@ -1,0 +1,126 @@
+// Dropping very deep structures whose recursion is not a single self-recursive Box: two box types that
+// contain each other, recursion through List, and a Box inside a List. Each is released with a heap
+// worklist, so the native stack stays constant; owned payloads (Strings) are released exactly once.
+struct MA { val: Int, next: Option<Box<MB>> }
+struct MB { name: String, next: Option<Box<MA>> }
+
+struct Dir { id: Int, kids: List<Dir> }
+enum Tree { Leaf(Int), Node(String, List<Tree>) }
+struct Cell { n: Int, more: List<Box<Cell>> }
+struct Left { v: Int, rest: List<Right> }
+struct Right { w: Int, back: Option<Box<Left>> }
+
+// node counts are multiples of scale() (tests/a64_emu.py shrinks it: the emulator is slow)
+fn scale() -> Int { return 1000000 }
+
+fn build_mutual(n: Int) -> Option<Box<MA>> {
+  var a = Option<Box<MA>>.None
+  for i in 0..n {
+    let b = Some(Box.new(MB { name: "b{i}", next: move a }))
+    a = Some(Box.new(MA { val: i, next: move b }))
+  }
+  return a
+}
+
+fn build_dirs(n: Int) -> Dir {
+  var d = Dir { id: 0, kids: List<Dir>.new() }
+  for i in 0..n {
+    var k = List<Dir>.new()
+    k.push(move d)
+    d = Dir { id: i, kids: move k }
+  }
+  return d
+}
+
+fn build_comb(n: Int) -> Dir {
+  // every node has a leaf next to the deep child
+  var d = Dir { id: 0, kids: List<Dir>.new() }
+  for i in 0..n {
+    var k = List<Dir>.new()
+    k.push(Dir { id: -1, kids: List<Dir>.new() })
+    k.push(move d)
+    k.push(Dir { id: -2, kids: List<Dir>.new() })
+    d = Dir { id: i, kids: move k }
+  }
+  return d
+}
+
+fn build_tree(n: Int) -> Tree {
+  var t = Tree.Leaf(0)
+  for i in 0..n {
+    var k = List<Tree>.new()
+    k.push(move t)
+    t = Tree.Node("n{i}", move k)
+  }
+  return t
+}
+
+fn build_cells(n: Int) -> Cell {
+  var c = Cell { n: 0, more: List<Box<Cell>>.new() }
+  for i in 0..n {
+    var m = List<Box<Cell>>.new()
+    m.push(Box.new(move c))
+    c = Cell { n: i, more: move m }
+  }
+  return c
+}
+
+fn build_lr(n: Int) -> Left {
+  var l = Left { v: 0, rest: List<Right>.new() }
+  for i in 0..n {
+    var r = Right { w: i, back: Some(Box.new(move l)) }
+    var rs = List<Right>.new()
+    rs.push(move r)
+    l = Left { v: i, rest: move rs }
+  }
+  return l
+}
+
+fn depth_probe(d: view Dir) -> Int { return d.kids.len() }
+
+fn main() {
+  // 1. two box types that contain each other: 3 million nodes
+  if true {
+    let m = build_mutual(3 * scale() / 2)
+    print("mutual built")
+  }
+  // 2. recursion through List: a chain, a comb with leaves on both sides
+  if true {
+    let d = build_dirs(scale())
+    print(depth_probe(d))
+  }
+  if true {
+    let d = build_comb(scale() / 2)
+    print(depth_probe(d))
+  }
+  // 3. an enum whose payload is a List of itself, with a String per node
+  if true {
+    let t = build_tree(scale())
+    print("tree built")
+  }
+  // 4. Box inside a List
+  if true {
+    let c = build_cells(scale())
+    print(c.more.len())
+  }
+  // 5. two different structs through a List and a Box
+  if true {
+    let l = build_lr(scale() / 2)
+    print(l.rest.len())
+  }
+  // 6. `clear` on a recursive list releases everything below it
+  if true {
+    var d = build_dirs(scale())
+    d.kids.clear()
+    print(d.kids.len())
+  }
+  // 7. a conditional move of a deep structure
+  var kept = build_dirs(scale() / 2)
+  var flag = true
+  if flag {
+    let moved = move kept
+    print(depth_probe(moved))
+  }
+  flag = false
+  print("done")
+}

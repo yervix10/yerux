@@ -1,0 +1,8 @@
+error: `as` converts an integer into a range type
+ --> tests/e784_range_as_not_range.yx:4:14
+  |
+4 |   print(n as Int)
+  |              ^^^
+  = help: write `x as Int<0..255>` (checked, panics when x does not fit) or `x as Int<0..255> else { return }`
+
+1 error(s). Nothing was generated.

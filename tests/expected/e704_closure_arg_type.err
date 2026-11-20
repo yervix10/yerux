@@ -1,0 +1,7 @@
+error: expected Int but this is Text
+ --> tests/e704_closure_arg_type.yx:3:11
+  |
+3 |   print(f("one"))
+  |           ^^^^^
+
+1 error(s). Nothing was generated.

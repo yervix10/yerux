@@ -1,0 +1,6 @@
+// The else block of `as` has to leave: there is no value to continue with.
+fn f(n: Int) -> Int {
+  let b = n as Int<0..255> else { print(0) }
+  return b
+}
+fn main() { print(f(3)) }

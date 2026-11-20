@@ -1,0 +1,22 @@
+error: the step of a `for` loop must be positive
+ --> tests/e46_flow_6.yx:2:23
+  |
+2 |   for i in 0..10 step 0 { print(i) }
+  |                       ^
+  = ranges always count upwards from the start towards the end
+  = help: to count down, loop upwards and compute the value: `for k in 0..n { let i = n - 1 - k }`
+
+error: cannot loop over a value of type Int
+ --> tests/e46_flow_6.yx:3:12
+  |
+3 |   for x in 5 { print(x) }
+  |            ^
+  = you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`)
+
+error: expected Int but this is Text
+ --> tests/e46_flow_6.yx:5:15
+  |
+5 |   for i in 0..t { print(i) }
+  |               ^
+
+3 error(s). Nothing was generated.

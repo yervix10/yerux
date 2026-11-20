@@ -1,0 +1,21 @@
+// loops that count up to exactly i64::MAX are fine; the next step must still panic
+fn main() {
+  let max = 9223372036854775807
+  var x = max - 3
+  while x < max {
+    x = x + 1
+  }
+  print(x)
+  var y = -max + 2
+  while y > -max {
+    y = y - 1
+  }
+  print(y)
+  var z = max - 2
+  var steps = 0
+  while z <= max {
+    z = z + 1
+    steps = steps + 1
+  }
+  print(steps)
+}

@@ -1,0 +1,8 @@
+error: 'd' is moved inside the loop and would be used again on the next iteration
+ --> examples/e3_loop.yx:7:13
+  |
+7 |     consume(move d)
+  |             ^^^^^^
+  = help: move it outside the loop, or reassign it (with `var`) before the iteration ends; or `break` right after moving it
+
+1 error(s). Nothing was generated.

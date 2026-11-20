@@ -1,0 +1,15 @@
+error: cannot loop over 'l' with `mut`: it was declared with `let` (immutable)
+ --> tests/e48_flow_8.yx:3:11
+  |
+3 |   for mut x in l { x = 1 }
+  |           ^
+  = help: declare the variable with `var` (or receive it as `mut`) to change its elements in place
+
+error: the label 'a' is already used by an enclosing loop
+ --> tests/e48_flow_8.yx:4:19
+  |
+4 |   a: while true { a: while true { break a }
+  |                   ^
+  = help: give each nested loop its own label, e.g. `outer:` and `inner:`
+
+2 error(s). Nothing was generated.

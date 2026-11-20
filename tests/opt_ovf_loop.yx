@@ -1,0 +1,10 @@
+fn main() {
+  var x = 1
+  var i = 0
+  while i < 100 {
+    print(i)
+    x = x * 2
+    i = i + 1
+  }
+  print("never")
+}

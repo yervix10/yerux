@@ -1,0 +1,22 @@
+fn main() {
+  let total = Shared.new(Atomic.new(0))
+  parallel for i in 1..=1000 {
+    total.add_wrapping(i)
+  }
+  print(total.load())
+
+  var values = List<String>.new()
+  values.push(String.from("ab"))
+  values.push(String.from("xyz"))
+  parallel for item in values {
+    total.add(item.len())
+  }
+  print(total.load())
+
+  parallel for i in 9223372036854775806..=9223372036854775807 {
+    assert(i > 0)
+    total.add(1)
+  }
+  parallel for _ in 4..4 { assert(false) }
+  print(total.load())
+}

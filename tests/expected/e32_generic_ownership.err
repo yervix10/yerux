@@ -1,0 +1,17 @@
+error: cannot use 'x': it was already moved
+ --> examples/e32_generic_ownership.yx:5:33
+  |
+5 |     return Pair { a: move x, b: move x }
+  |                                 ^^^^^^
+  = 'x' was moved on line 5
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+error: 'x' is a T and is not copied
+ --> examples/e32_generic_ownership.yx:9:13
+  |
+9 |     let y = x
+  |             ^
+  = T could be any type, including an owned one (String, List), so it is moved, not copied
+  = help: use `move x` to hand it over, or pass it to a function that takes it as `view`/`mut`; or declare the parameter `T: Copy` to allow copies
+
+2 error(s). Nothing was generated.

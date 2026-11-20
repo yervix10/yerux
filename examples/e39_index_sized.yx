@@ -1,0 +1,11 @@
+// Lists are indexed with Int only.
+fn main() {
+  var xs = List<Int>.new()
+  xs.push(1)
+  let i = 0u8
+  print(xs.get(i))
+  let f = 1.5
+  if f == 1 {
+    print("one")
+  }
+}

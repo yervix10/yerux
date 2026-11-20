@@ -1,0 +1,125 @@
+// recursive expression tree with Box: evaluation, printing, simplification
+enum Expr {
+  Num(Int),
+  Neg(Box<Expr>),
+  Add(Box<Expr>, Box<Expr>),
+  Mul(Box<Expr>, Box<Expr>),
+  Div(Box<Expr>, Box<Expr>),
+}
+
+fn num(n: Int) -> Expr { return Expr.Num(n) }
+fn add(a: Expr, b: Expr) -> Expr { return Expr.Add(Box.new(move a), Box.new(move b)) }
+fn mul(a: Expr, b: Expr) -> Expr { return Expr.Mul(Box.new(move a), Box.new(move b)) }
+fn div(a: Expr, b: Expr) -> Expr { return Expr.Div(Box.new(move a), Box.new(move b)) }
+fn neg(a: Expr) -> Expr { return Expr.Neg(Box.new(move a)) }
+
+fn eval(e: view Expr) -> Result<Int, String> {
+  match e {
+    Num(n) => { return Ok(n) }
+    Neg(x) => {
+      let v = eval(x.get())?
+      return Ok(0 - v)
+    }
+    Add(a, b) => {
+      let x = eval(a.get())?
+      let y = eval(b.get())?
+      return Ok(x + y)
+    }
+    Mul(a, b) => {
+      let x = eval(a.get())?
+      let y = eval(b.get())?
+      return Ok(x * y)
+    }
+    Div(a, b) => {
+      let x = eval(a.get())?
+      let y = eval(b.get())?
+      if y == 0 { return Err(String.from("division by zero")) }
+      return Ok(x / y)
+    }
+  }
+}
+
+fn show(e: view Expr, out: mut String) {
+  match e {
+    Num(n) => { out.push_int(n) }
+    Neg(x) => {
+      out.push_str("-")
+      show(x.get(), out)
+    }
+    Add(a, b) => {
+      out.push_str("(")
+      show(a.get(), out)
+      out.push_str(" + ")
+      show(b.get(), out)
+      out.push_str(")")
+    }
+    Mul(a, b) => {
+      show(a.get(), out)
+      out.push_str(" * ")
+      show(b.get(), out)
+    }
+    Div(a, b) => {
+      show(a.get(), out)
+      out.push_str(" / ")
+      show(b.get(), out)
+    }
+  }
+}
+
+fn nodes(e: view Expr) -> Int {
+  match e {
+    Num(_) => { return 1 }
+    Neg(x) => { return 1 + nodes(*x) }
+    Add(a, b) => { return 1 + nodes(*a) + nodes(*b) }
+    Mul(a, b) => { return 1 + nodes(*a) + nodes(*b) }
+    Div(a, b) => { return 1 + nodes(*a) + nodes(*b) }
+  }
+}
+
+fn simplify(e: Expr) -> Expr {
+  match move e {
+    Mul(a, b) => {
+      let x = simplify(a.take())
+      let y = simplify(b.take())
+      match x {
+        Num(0) => { return num(0) }
+        Num(1) => { return y }
+        _ => { }
+      }
+      return mul(move x, move y)
+    }
+    Add(a, b) => {
+      let x = simplify(a.take())
+      let y = simplify(b.take())
+      match x {
+        Num(0) => { return y }
+        _ => { }
+      }
+      return add(move x, move y)
+    }
+    other => { return other }
+  }
+}
+
+fn report(e: view Expr) {
+  var s = String.new()
+  show(e, s)
+  let r = eval(e)
+  match r {
+    Ok(v) => { print("{s} = {v}  [{nodes(e)} nodes]") }
+    Err(m) => { print("{s} fails: {m}") }
+  }
+}
+
+fn main() {
+  let a = add(num(1), mul(num(2), num(3)))
+  report(a)
+  let b = mul(add(num(1), num(2)), neg(num(4)))
+  report(b)
+  let c = div(num(10), add(num(2), neg(num(2))))
+  report(c)
+  let d = add(num(0), mul(num(1), add(num(7), mul(num(0), num(99)))))
+  report(d)
+  let s = simplify(move d)
+  report(s)
+}

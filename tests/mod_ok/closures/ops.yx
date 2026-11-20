@@ -1,0 +1,24 @@
+pub struct Counter {
+  step: Int,
+  on_tick: fn(Int) -> Int,
+}
+
+pub fn twice(x: Int) -> Int {
+  return x * 2
+}
+
+pub fn apply(f: view fn(Int) -> Int, x: Int) -> Int {
+  return f(x)
+}
+
+pub fn adder(n: Int) -> fn(Int) -> Int {
+  return move |x| x + n
+}
+
+pub fn map<T, U>(l: view List<T>, f: view fn(view T) -> U) -> List<U> {
+  var out = List<U>.new()
+  for i in 0..l.len() {
+    out.push(f(l.at(i)))
+  }
+  return out
+}

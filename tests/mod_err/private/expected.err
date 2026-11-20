@@ -1,0 +1,8 @@
+error: 'secret' is private in module 'lib'
+ --> tests/mod_err/private/main.yx:5:9
+  |
+5 |   print(lib.secret())
+  |         ^^^^^^^^^^
+  = help: add `pub` before the function in lib.yx to share it: `pub fn secret`
+
+1 error(s). Nothing was generated.

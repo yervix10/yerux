@@ -1,0 +1,9 @@
+error: this expression cannot run at compile time [E-K1]
+ --> examples/e54_comptime_unsupported.yx:6:20
+  |
+6 |   let n = comptime label().len()
+  |                    ^^^^^^^^^^^^^
+  = why: compile-time code is run by the compiler; for now it may only use Int, Char and Bool values, `let`/`var`, `if`, `while`, and calls to functions with such parameters
+  = fix: compute the value at run time, or rewrite the code with scalar values only
+
+1 error(s). Nothing was generated.

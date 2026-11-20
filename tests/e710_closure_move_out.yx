@@ -1,0 +1,8 @@
+fn main() {
+  let s = String.from("hello")
+  let f = move || {
+    let t = move s
+    return t.len()
+  }
+  print(f())
+}

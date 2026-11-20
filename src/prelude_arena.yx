@@ -1,0 +1,68 @@
+// Arena<T>: region allocation written in Yerux (see SPEC.md, "Arenas"). Values are bump-allocated into
+// one block of storage and released together when the arena is dropped or reset. A value is reached through
+// an `ArenaRef`, a plain Copy ticket made of a slot number and the arena's epoch. Resetting the arena starts
+// a new epoch, so every ticket from before the reset is stale and using it panics: there are no dangling
+// references, with no lifetime syntax and no check in the hot path of `alloc`.
+
+struct ArenaRef {
+    slot: Int,
+    epoch: Int,
+}
+
+struct Arena<T> {
+    items: List<T>,
+    epoch: Int,
+}
+
+impl<T> Arena<T> {
+    fn new() -> Arena<T> {
+        return Arena { items: List<T>.new(), epoch: 1 }
+    }
+
+    // Moves `v` into the arena and returns the ticket that reaches it.
+    fn alloc(mut self, v: T) -> ArenaRef {
+        self.items.push(move v)
+        return ArenaRef { slot: self.items.len() - 1, epoch: self.epoch }
+    }
+
+    fn len(view self) -> Int {
+        return self.items.len()
+    }
+
+    fn is_empty(view self) -> Bool {
+        return self.items.len() == 0
+    }
+
+    fn is_live(view self, r: ArenaRef) -> Bool {
+        return r.epoch == self.epoch && r.slot >= 0 && r.slot < self.items.len()
+    }
+
+    // Position of the value of `r` in `items`; panics when `r` is stale (the arena was reset after
+    // the ticket was issued). Use it to borrow an owned value: `a.items.at(a.slot(r))`.
+    fn slot(view self, r: ArenaRef) -> Int {
+        if r.epoch != self.epoch {
+            panic("stale arena reference (the arena was reset)")
+        }
+        if r.slot < 0 || r.slot >= self.items.len() {
+            panic("arena reference does not belong to this arena")
+        }
+        return r.slot
+    }
+
+    // Releases every value at once and invalidates every ticket issued so far.
+    fn reset(mut self) {
+        self.items.clear()
+        self.epoch = self.epoch + 1
+    }
+}
+
+impl<T: Copy> Arena<T> {
+    fn get(view self, r: ArenaRef) -> T {
+        return self.items.get(self.slot(r))
+    }
+
+    fn set(mut self, r: ArenaRef, v: T) {
+        let s = self.slot(r)
+        self.items.set(s, v)
+    }
+}

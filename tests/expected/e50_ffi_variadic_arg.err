@@ -1,0 +1,8 @@
+error: cannot pass a value of type P as a variadic argument to 'printf'
+ --> tests/e50_ffi_variadic_arg.yx:9:27
+  |
+9 |   unsafe { printf("%d\n", p) }
+  |                           ^
+  = variadic C arguments must be integers, Bool, Char, Float, Float32 (promoted to Float), Text, or Ptr<T>
+
+1 error(s). Nothing was generated.

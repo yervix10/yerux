@@ -1,0 +1,9 @@
+error: cannot change 'l' while a loop is reading it
+ --> tests/e43_flow_3.yx:5:5
+  |
+5 |     l.push(x)
+  |     ^^^^^^^^^
+  = the `for` loop on line 4 borrows 'l' until the loop ends
+  = help: collect what you want to change and apply it after the loop, or loop over indexes: `for i in 0..n { .. l.at(i) .. }`
+
+1 error(s). Nothing was generated.

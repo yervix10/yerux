@@ -1,0 +1,20 @@
+// Method calls follow the ownership rules of the function they stand for.
+struct Counter { n: Int }
+struct Name { s: String }
+impl Counter {
+    fn bump(mut self) { self.n = self.n + 1 }
+    fn add(view self, k: Int) -> Int { return self.n + k }
+}
+impl Name {
+    fn into_len(self) -> Int { return self.s.len() }
+}
+
+fn main() {
+    let c = Counter { n: 1 }
+    c.bump()
+    print(c.add())
+    print(c.add(1, 2))
+    let nm = Name { s: String.from("abc") }
+    print(nm.into_len())
+    print(nm.into_len())
+}

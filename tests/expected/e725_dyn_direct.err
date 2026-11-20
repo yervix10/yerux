@@ -1,0 +1,7 @@
+error: dyn Trait requires Box or a view or mut parameter
+ --> tests/e725_dyn_direct.yx:4:20
+  |
+4 | fn invoke(handler: dyn Handler) {}
+  |                    ^^^
+
+1 error(s). Nothing was generated.

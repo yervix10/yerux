@@ -1,0 +1,8 @@
+error: cannot move 'b.items' out of its struct
+ --> examples/e8_move_field.yx:5:16
+  |
+5 |   let stolen = b.items
+  |                ^^^^^^^
+  = help: borrow it instead: call a method on it, or pass it to a `view`/`mut` parameter
+
+1 error(s). Nothing was generated.

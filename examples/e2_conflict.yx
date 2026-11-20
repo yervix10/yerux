@@ -1,0 +1,6 @@
+fn merge(a: mut List, b: view List) { }
+
+fn main() {
+  var x = List.new()
+  merge(x, x)
+}

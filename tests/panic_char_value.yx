@@ -1,0 +1,3 @@
+fn main() {
+    print(Char.from_int(55296))
+}

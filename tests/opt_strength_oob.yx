@@ -1,0 +1,17 @@
+// A strided index that runs off the end of the list must panic at the same iteration as before.
+fn main() {
+  var a = List<Int>.new()
+  var k = 0
+  while k < 50 {
+    a.push(k)
+    k = k + 1
+  }
+  var i = 0
+  var s = 0
+  while i < 10 {
+    print(a.get(i * 7))
+    s = s + a.get(i * 7)
+    i = i + 1
+  }
+  print(s)
+}

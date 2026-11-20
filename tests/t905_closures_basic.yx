@@ -1,0 +1,81 @@
+// function items as values, closures, borrowed and copied captures
+fn double(x: Int) -> Int { return x * 2 }
+fn square(x: Int) -> Int { return x * x }
+
+fn apply(f: view fn(Int) -> Int, x: Int) -> Int {
+  return f(x)
+}
+
+fn apply_n(f: view fn(Int) -> Int, x: Int, n: Int) -> Int {
+  var v = x
+  for _i in 0..n { v = f(v) }
+  return v
+}
+
+fn make_adder(n: Int) -> fn(Int) -> Int {
+  return move |x| x + n
+}
+
+fn make_counter() -> fn() -> Int {
+  var n = 0
+  return move || {
+    n = n + 1
+    return n
+  }
+}
+
+fn compose(f: fn(Int) -> Int, g: fn(Int) -> Int) -> fn(Int) -> Int {
+  return move |x| g(f(x))
+}
+
+fn pick(flag: Bool) -> fn(Int, Int) -> Int {
+  if flag { return |a, b| a + b }
+  return |a: Int, b: Int| { return a * b }
+}
+
+fn main() {
+  print(apply(double, 21))
+  print(apply(square, 7))
+  print(apply(|x| x - 1, 10))
+  let offset = 100
+  print(apply(|x| x + offset, 5))
+  print(apply_n(double, 1, 10))
+  print(apply_n(|x| x * 3 + 1, 0, 4))
+
+  let add5 = make_adder(5)
+  print(add5(1))
+  print(apply(add5, 10))
+
+  let c1 = make_counter()
+  let c2 = make_counter()
+  print(c1())
+  print(c1())
+  print(c2())
+  print(c1())
+
+  let h = compose(make_adder(1), double)
+  print(h(10))
+  let h2 = compose(square, make_adder(-3))
+  print(h2(4))
+
+  print(pick(true)(3, 4))
+  print(pick(false)(3, 4))
+
+  var fs = List<fn(Int) -> Int>.new()
+  fs.push(double)
+  fs.push(square)
+  fs.push(make_adder(10))
+  fs.push(|x| 0 - x)
+  var total = 0
+  for i in 0..fs.len() {
+    total = total + fs.at(i)(i + 1)
+  }
+  print(total)
+
+  var f = make_adder(1)
+  print(f(1))
+  f = make_adder(2)
+  print(f(1))
+  f = double
+  print(f(1))
+}

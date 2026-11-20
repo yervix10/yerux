@@ -1,0 +1,57 @@
+// iterating lists: borrowed, in place, by move; early exits free the rest
+struct Item { name: String, qty: Int }
+
+fn total(items: view List<Item>) -> Int {
+  var t = 0
+  for it in items { t = t + it.qty }
+  return t
+}
+
+fn first_big(items: view List<Item>, limit: Int) -> Int {
+  for it in items {
+    if it.qty > limit { return it.qty }
+  }
+  return -1
+}
+
+fn main() {
+  var items = List<Item>.new()
+  items.push(Item { name: String.from("a"), qty: 2 })
+  items.push(Item { name: String.from("bb"), qty: 7 })
+  items.push(Item { name: String.from("ccc"), qty: 4 })
+  print(total(items))
+  print(first_big(items, 5))
+  print(first_big(items, 50))
+  for mut it in items {
+    it.qty = it.qty * 10
+    it.name.push_str("!")
+  }
+  for it in items { print(it.name) }
+  print(total(items))
+  var nums = List<Int>.new()
+  for i in 0..5 { nums.push(i * i) }
+  for mut x in nums { x = x + 1 }
+  var sum = 0
+  for x in nums { sum = sum + x }
+  print(sum)
+  var names = List<String>.new()
+  names.push(String.from("x"))
+  names.push(String.from("yy"))
+  names.push(String.from("zzz"))
+  for nm in move names {
+    print(nm)
+    if nm.len() == 2 { break }
+  }
+  var lists = List<List<Int>>.new()
+  var l1 = List<Int>.new()
+  l1.push(1)
+  l1.push(2)
+  lists.push(move l1)
+  for row in lists {
+    for v in row { print(v) }
+  }
+  for it in move items {
+    let moved = move it
+    print(moved.qty)
+  }
+}

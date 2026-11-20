@@ -1,0 +1,37 @@
+enum Expr { Num(Int), Add(Int, Int), Mul(Int, Int), Neg(Int), Nop }
+
+fn eval(e: Expr) -> Int {
+  match e {
+    Num(n) => { return n }
+    Add(a, b) => { return a + b }
+    Mul(a, b) => { return a * b }
+    Neg(a) => { return 0 - a }
+    Nop => { return 0 }
+  }
+}
+
+fn name(e: view Expr) {
+  match e {
+    Num(n) => { print("num") }
+    Nop => { print("nop") }
+    _ => { print("binary or unary") }
+  }
+}
+
+fn make(k: Int) -> Expr {
+  if k == 0 { return Expr.Num(7) }
+  if k == 1 { return Expr.Add(3, 4) }
+  if k == 2 { return Expr.Mul(6, 7) }
+  if k == 3 { return Expr.Neg(5) }
+  return Expr.Nop
+}
+
+fn main() {
+  var k = 0
+  while k < 5 {
+    let e = make(k)
+    name(e)
+    print(eval(e))
+    k = k + 1
+  }
+}

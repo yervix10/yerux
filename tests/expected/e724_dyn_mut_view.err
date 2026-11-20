@@ -1,0 +1,8 @@
+error: cannot lend 'handler' as `mut`: it is only borrowed for reading (`view`)
+ --> tests/e724_dyn_mut_view.yx:5:5
+  |
+5 |     handler.handle()
+  |     ^^^^^^^
+  = help: declare it with `var` (or receive it as `mut`)
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,59 @@
+enum Op { Run(fn(Int) -> Int), Name(String, fn(Int) -> Int), Nop }
+struct Pipeline { ops: List<Op>, label: String }
+fn adder(n: Int) -> fn(Int) -> Int { return move |x: Int| x + n }
+fn curry(a: Int) -> fn(Int) -> fn(Int) -> Int {
+  return move |b: Int| { return move |c: Int| a * 100 + b * 10 + c }
+}
+fn mk_ops(tag: String) -> Pipeline {
+  var p = Pipeline { ops: List<Op>.new(), label: String.from("pipe") }
+  p.ops.push(Op.Run(adder(3)))
+  let t2 = String.from(tag)
+  p.ops.push(Op.Name(move t2, move |x: Int| x * 2))
+  p.ops.push(Op.Nop)
+  let t3 = String.from(tag)
+  p.ops.push(Op.Run(move |x: Int| x - t3.len()))
+  return p
+}
+fn run(p: view Pipeline, x: Int) -> Int {
+  var v = x
+  for i in 0..p.ops.len() {
+    match p.ops.at(i) {
+      Run(f) => { v = f(v) }
+      Name(s, f) => { v = f(v) + s.len() }
+      Nop => { }
+    }
+  }
+  return v
+}
+fn take_first(p: Pipeline) -> Int {
+  var ps = move p
+  let o = ps.ops.pop()
+  match move o {
+    Run(f) => { return f(1) }
+    Name(s, f) => { return f(2) + s.len() }
+    Nop => { return 0 }
+  }
+}
+fn apply_gen<T: Copy>(f: view fn(T) -> T, x: T) -> T { return f(x) }
+fn fixup(n: Int, f: view fn(Int) -> Int) -> Int {
+  if n == 0 { return 1 }
+  return f(n) + fixup(n - 1, f)
+}
+fn main() {
+  let p = mk_ops(String.from("abc"))
+  print(run(p, 10))
+  print(take_first(mk_ops(String.from("zz"))))
+  print(curry(1)(2)(3))
+  let c = curry(4)
+  let d = c(5)
+  print(d(6))
+  print(apply_gen(|x: Int| x * x, 7))
+  print(apply_gen(|b: Bool| !b, true))
+  print(fixup(5, |x: Int| x * 2))
+  let s = String.from("cap")
+  let g = move |x: Int| {
+    return x + s.len()
+  }
+  print(g(1))
+  print(g(2))
+}

@@ -1,0 +1,907 @@
+// ───────── numeric types: built-in trait impls (generated) ─────────
+impl Equal for Int8 { fn eq(view self, other: view Int8) -> Bool { return self == other } }
+impl Ordered for Int8 {
+    fn cmp(view self, other: view Int8) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Show for Int8 {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_int(self.to_int())
+        return s
+    }
+}
+impl Equal for Int16 { fn eq(view self, other: view Int16) -> Bool { return self == other } }
+impl Ordered for Int16 {
+    fn cmp(view self, other: view Int16) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Show for Int16 {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_int(self.to_int())
+        return s
+    }
+}
+impl Equal for Int32 { fn eq(view self, other: view Int32) -> Bool { return self == other } }
+impl Ordered for Int32 {
+    fn cmp(view self, other: view Int32) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Show for Int32 {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_int(self.to_int())
+        return s
+    }
+}
+impl Equal for UInt8 { fn eq(view self, other: view UInt8) -> Bool { return self == other } }
+impl Ordered for UInt8 {
+    fn cmp(view self, other: view UInt8) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Show for UInt8 {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_int(self.to_int())
+        return s
+    }
+}
+impl Equal for UInt16 { fn eq(view self, other: view UInt16) -> Bool { return self == other } }
+impl Ordered for UInt16 {
+    fn cmp(view self, other: view UInt16) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Show for UInt16 {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_int(self.to_int())
+        return s
+    }
+}
+impl Equal for UInt32 { fn eq(view self, other: view UInt32) -> Bool { return self == other } }
+impl Ordered for UInt32 {
+    fn cmp(view self, other: view UInt32) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Show for UInt32 {
+    fn show(view self) -> String {
+        var s = String.new()
+        s.push_int(self.to_int())
+        return s
+    }
+}
+impl Equal for UInt64 { fn eq(view self, other: view UInt64) -> Bool { return self == other } }
+impl Ordered for UInt64 {
+    fn cmp(view self, other: view UInt64) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+}
+impl Show for UInt64 {
+    fn show(view self) -> String {
+        return m__fmt_u64(self)
+    }
+}
+impl Equal for Float32 { fn eq(view self, other: view Float32) -> Bool { return self == other } }
+impl Ordered for Float32 {
+    fn cmp(view self, other: view Float32) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        if self == other { return 0 }
+        // unordered: a NaN sorts after every number, two NaNs are equal
+        if self != self {
+            if other != other { return 0 }
+            return 1
+        }
+        return -1
+    }
+}
+impl Show for Float32 {
+    fn show(view self) -> String {
+        return m__fmt_f32(self)
+    }
+}
+impl Equal for Float { fn eq(view self, other: view Float) -> Bool { return self == other } }
+impl Ordered for Float {
+    fn cmp(view self, other: view Float) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        if self == other { return 0 }
+        // unordered: a NaN sorts after every number, two NaNs are equal
+        if self != self {
+            if other != other { return 0 }
+            return 1
+        }
+        return -1
+    }
+}
+impl Show for Float {
+    fn show(view self) -> String {
+        return m__fmt_f64(self)
+    }
+}
+
+// ───────── number formatting (shortest round-trip digits, Steele-White / Burger-Dybvig with bignums) ─────────
+// A bignum is a List<Int> of base-10^9 limbs, least significant first; zero is the empty list.
+
+fn m__bn_from(x: Int) -> List {
+    var a = List.new()
+    var r = x
+    while r > 0 {
+        a.push(r % 1000000000)
+        r = r / 1000000000
+    }
+    return a
+}
+
+fn m__bn_trim(a: mut List) {
+    while a.len() > 0 {
+        if a.get(a.len() - 1) != 0 { return }
+        a.pop()
+    }
+}
+
+// a = a * k   (0 < k < 2^31)
+fn m__bn_mul(a: mut List, k: Int) {
+    var carry = 0
+    var i = 0
+    while i < a.len() {
+        let t = a.get(i) * k + carry
+        a.set(i, t % 1000000000)
+        carry = t / 1000000000
+        i = i + 1
+    }
+    while carry > 0 {
+        a.push(carry % 1000000000)
+        carry = carry / 1000000000
+    }
+}
+
+// a = a * 2^n
+fn m__bn_shl(a: mut List, n: Int) {
+    var left = n
+    while left > 0 {
+        if left >= 30 {
+            m__bn_mul(a, 1073741824)
+            left = left - 30
+        } else {
+            var k = 1
+            var i = 0
+            while i < left {
+                k = k * 2
+                i = i + 1
+            }
+            m__bn_mul(a, k)
+            left = 0
+        }
+    }
+}
+
+// a = a * 10^n
+fn m__bn_pow10(a: mut List, n: Int) {
+    var left = n
+    while left > 0 {
+        if left >= 9 {
+            m__bn_mul(a, 1000000000)
+            left = left - 9
+        } else {
+            var k = 1
+            var i = 0
+            while i < left {
+                k = k * 10
+                i = i + 1
+            }
+            m__bn_mul(a, k)
+            left = 0
+        }
+    }
+}
+
+fn m__bn_cmp(a: view List, b: view List) -> Int {
+    if a.len() != b.len() {
+        if a.len() < b.len() { return -1 }
+        return 1
+    }
+    var i = a.len() - 1
+    while i >= 0 {
+        let x = a.get(i)
+        let y = b.get(i)
+        if x != y {
+            if x < y { return -1 }
+            return 1
+        }
+        i = i - 1
+    }
+    return 0
+}
+
+fn m__bn_add(a: mut List, b: view List) {
+    var carry = 0
+    var i = 0
+    while i < b.len() || carry > 0 {
+        if i >= a.len() { a.push(0) }
+        var t = a.get(i) + carry
+        if i < b.len() { t = t + b.get(i) }
+        if t >= 1000000000 {
+            a.set(i, t - 1000000000)
+            carry = 1
+        } else {
+            a.set(i, t)
+            carry = 0
+        }
+        i = i + 1
+    }
+}
+
+// a = a - b   (a >= b)
+fn m__bn_sub(a: mut List, b: view List) {
+    var borrow = 0
+    var i = 0
+    while i < a.len() {
+        if i >= b.len() && borrow == 0 {
+            i = a.len()
+        } else {
+            var t = a.get(i) - borrow
+            if i < b.len() { t = t - b.get(i) }
+            if t < 0 {
+                t = t + 1000000000
+                borrow = 1
+            } else {
+                borrow = 0
+            }
+            a.set(i, t)
+            i = i + 1
+        }
+    }
+    m__bn_trim(a)
+}
+
+fn m__bn_copy(a: view List) -> List {
+    var c = List.new()
+    var i = 0
+    while i < a.len() {
+        c.push(a.get(i))
+        i = i + 1
+    }
+    return c
+}
+
+// number of bits of f (f > 0)
+fn m__nbits(f: Int) -> Int {
+    var n = 0
+    var x = f
+    while x > 0 {
+        x = x / 2
+        n = n + 1
+    }
+    return n
+}
+
+// Shortest decimal digits that read back as v = f * 2^e (f > 0 integer mantissa).
+//   lowb: v is a power of two whose lower neighbour is closer (the interval is asymmetric)
+//   even: f is even (the interval ends are inclusive: round-half-even reading)
+// Appends the digits (0..9) to `digs` and returns k: v = 0.d1d2..dn * 10^k.
+fn m__shortest(f: Int, e: Int, lowb: Bool, even: Bool, digs: mut List) -> Int {
+    var r = m__bn_from(f)
+    var s = m__bn_from(1)
+    var mp = m__bn_from(1)
+    var mm = m__bn_from(1)
+    if e >= 0 {
+        m__bn_shl(mm, e)
+        m__bn_shl(r, e)
+        if lowb {
+            m__bn_shl(mp, e + 1)
+            m__bn_shl(r, 2)
+            s = m__bn_from(4)
+        } else {
+            m__bn_shl(mp, e)
+            m__bn_shl(r, 1)
+            s = m__bn_from(2)
+        }
+    } else {
+        if lowb {
+            m__bn_shl(r, 2)
+            m__bn_shl(s, 2 - e)
+            mp = m__bn_from(2)
+        } else {
+            m__bn_shl(r, 1)
+            m__bn_shl(s, 1 - e)
+        }
+    }
+    // estimate k from the binary exponent (never above the true value), then fix it up
+    let lb = e + m__nbits(f)
+    let x = (lb - 1) * 1233
+    var k = x / 4096
+    if x < 0 && k * 4096 != x { k = k - 1 }
+    if k >= 0 {
+        m__bn_pow10(s, k)
+    } else {
+        m__bn_pow10(r, 0 - k)
+        m__bn_pow10(mp, 0 - k)
+        m__bn_pow10(mm, 0 - k)
+    }
+    var fixing = true
+    while fixing {
+        var t = m__bn_copy(r)
+        m__bn_add(t, mp)
+        let c = m__bn_cmp(t, s)
+        if c > 0 || (c == 0 && even) {
+            m__bn_mul(s, 10)
+            k = k + 1
+        } else {
+            fixing = false
+        }
+    }
+    var going = true
+    while going {
+        m__bn_mul(r, 10)
+        m__bn_mul(mp, 10)
+        m__bn_mul(mm, 10)
+        var d = 0
+        while m__bn_cmp(r, s) >= 0 {
+            m__bn_sub(r, s)
+            d = d + 1
+        }
+        let cl = m__bn_cmp(r, mm)
+        let low = cl < 0 || (cl == 0 && even)
+        var t = m__bn_copy(r)
+        m__bn_add(t, mp)
+        let ch = m__bn_cmp(t, s)
+        let high = ch > 0 || (ch == 0 && even)
+        if !low && !high {
+            digs.push(d)
+        } else {
+            going = false
+            if low && !high {
+                digs.push(d)
+            } else if high && !low {
+                digs.push(d + 1)
+            } else {
+                var twice = m__bn_copy(r)
+                m__bn_mul(twice, 2)
+                if m__bn_cmp(twice, s) < 0 {
+                    digs.push(d)
+                } else {
+                    digs.push(d + 1)
+                }
+            }
+        }
+    }
+    return k
+}
+
+// text of a positive finite number: digits (0..9) and k with v = 0.d1d2..dn * 10^k
+fn m__layout(neg: Bool, digs: view List, k: Int) -> String {
+    var out = String.new()
+    if neg { out.push_str("-") }
+    let n = digs.len()
+    let x10 = k - 1
+    if x10 >= 16 || x10 < -4 {
+        out.push_int(digs.get(0))
+        if n > 1 {
+            out.push_str(".")
+            var i = 1
+            while i < n {
+                out.push_int(digs.get(i))
+                i = i + 1
+            }
+        }
+        out.push_str("e")
+        out.push_int(x10)
+    } else if k <= 0 {
+        out.push_str("0.")
+        var z = 0
+        while z < 0 - k {
+            out.push_str("0")
+            z = z + 1
+        }
+        var i = 0
+        while i < n {
+            out.push_int(digs.get(i))
+            i = i + 1
+        }
+    } else if k >= n {
+        var i = 0
+        while i < n {
+            out.push_int(digs.get(i))
+            i = i + 1
+        }
+        var z = 0
+        while z < k - n {
+            out.push_str("0")
+            z = z + 1
+        }
+        out.push_str(".0")
+    } else {
+        var i = 0
+        while i < k {
+            out.push_int(digs.get(i))
+            i = i + 1
+        }
+        out.push_str(".")
+        while i < n {
+            out.push_int(digs.get(i))
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// finite non-zero value f * 2^e; `fast`: f * 2^e is known to be an integer below 2^53 (its value is iv)
+fn m__fmt_finite(neg: Bool, f: Int, e: Int, lowb: Bool, p: Int) -> String {
+    var digs = List.new()
+    var k = 0
+    // integers below 2^53: the digits of the integer (without trailing zeros) are the shortest ones
+    var iv = 0
+    var isint = false
+    if e >= 0 && e <= 52 && p == 53 {
+        var sc = 1
+        var i = 0
+        while i < e {
+            sc = sc * 2
+            i = i + 1
+        }
+        if f <= 9007199254740991 / sc {
+            iv = f * sc
+            isint = true
+        }
+    } else if e < 0 && e >= 0 - 52 && p == 53 {
+        var sc = 1
+        var i = 0
+        while i < 0 - e {
+            sc = sc * 2
+            i = i + 1
+        }
+        if f % sc == 0 {
+            iv = f / sc
+            isint = true
+        }
+    }
+    if isint {
+        var tmp = List.new()
+        var r = iv
+        while r > 0 {
+            tmp.push(r % 10)
+            r = r / 10
+        }
+        k = tmp.len()
+        var j = tmp.len() - 1
+        while j >= 0 {
+            digs.push(tmp.get(j))
+            j = j - 1
+        }
+        while digs.len() > 1 && digs.get(digs.len() - 1) == 0 { digs.pop() }
+    } else {
+        k = m__shortest(f, e, lowb, f % 2 == 0, digs)
+    }
+    return m__layout(neg, digs, k)
+}
+
+fn m__fmt_f64(x: Float) -> String {
+    let bits = x.to_bits()
+    let neg = bits >= 9223372036854775808u64
+    let rest = bits % 9223372036854775808u64
+    let expo = (rest / 4503599627370496u64).to_int()
+    let frac = (rest % 4503599627370496u64).to_int()
+    if expo == 2047 {
+        if frac == 0 {
+            if neg { return String.from("-inf") }
+            return String.from("inf")
+        }
+        return String.from("nan")
+    }
+    if expo == 0 && frac == 0 {
+        if neg { return String.from("-0.0") }
+        return String.from("0.0")
+    }
+    if expo == 0 { return m__fmt_finite(neg, frac, 0 - 1074, false, 53) }
+    return m__fmt_finite(neg, frac + 4503599627370496, expo - 1075, frac == 0 && expo > 1, 53)
+}
+
+fn m__fmt_f32(x: Float32) -> String {
+    let bits = x.to_bits().to_int()
+    let neg = bits >= 2147483648
+    let rest = bits % 2147483648
+    let expo = rest / 8388608
+    let frac = rest % 8388608
+    if expo == 255 {
+        if frac == 0 {
+            if neg { return String.from("-inf") }
+            return String.from("inf")
+        }
+        return String.from("nan")
+    }
+    if expo == 0 && frac == 0 {
+        if neg { return String.from("-0.0") }
+        return String.from("0.0")
+    }
+    if expo == 0 { return m__fmt_finite(neg, frac, 0 - 149, false, 24) }
+    return m__fmt_finite(neg, frac + 8388608, expo - 150, frac == 0 && expo > 1, 24)
+}
+
+fn m__fmt_u64(x: UInt64) -> String {
+    var s = String.new()
+    if x < 9223372036854775808u64 {
+        s.push_int(x.to_int())
+    } else {
+        s.push_int((x / 10u64).to_int())
+        s.push_int((x % 10u64).to_int())
+    }
+    return s
+}
+
+fn m__print_f64(x: Float) {
+    let s = m__fmt_f64(x)
+    print(s)
+}
+fn m__print_f32(x: Float32) {
+    let s = m__fmt_f32(x)
+    print(s)
+}
+fn m__print_u64(x: UInt64) {
+    let s = m__fmt_u64(x)
+    print(s)
+}
+
+// ───────── math library (no libm: plain Yerux over IEEE doubles; sqrt is a machine instruction) ─────────
+// Accuracy: within a few ulp for the usual ranges; always defined (NaN / infinity / zero as in C99 Annex F).
+
+fn m__inf() -> Float { return float_from_bits(9218868437227405312u64) }
+fn m__nan() -> Float { return float_from_bits(9221120237041090560u64) }
+fn m__neg_bit(x: Float) -> Bool { return x.to_bits() >= 9223372036854775808u64 }
+fn m__abs(x: Float) -> Float {
+    if m__neg_bit(x) { return -x }
+    return x
+}
+fn m__copysign(x: Float, y: Float) -> Float {
+    if m__neg_bit(x) == m__neg_bit(y) { return x }
+    return -x
+}
+fn m__is_nan(x: Float) -> Bool { return x != x }
+fn m__is_inf(x: Float) -> Bool { return m__abs(x) == m__inf() }
+fn m__is_finite(x: Float) -> Bool { return x - x == 0.0 }
+
+fn m__trunc(x: Float) -> Float {
+    if x != x { return x }
+    if m__abs(x) >= 4503599627370496.0 { return x }
+    let t = x.to_int().to_float()
+    if t == 0.0 { return m__copysign(0.0, x) }
+    return t
+}
+fn m__floor(x: Float) -> Float {
+    let t = m__trunc(x)
+    if t > x { return t - 1.0 }
+    return t
+}
+fn m__ceil(x: Float) -> Float {
+    let t = m__trunc(x)
+    if t < x { return t + 1.0 }
+    return t
+}
+fn m__round(x: Float) -> Float {
+    let t = m__trunc(x)
+    if m__abs(x - t) >= 0.5 {
+        if x < 0.0 { return t - 1.0 }
+        return t + 1.0
+    }
+    return t
+}
+fn m__floor_int(x: Float) -> Int { return m__floor(x).to_int() }
+fn m__ceil_int(x: Float) -> Int { return m__ceil(x).to_int() }
+fn m__round_int(x: Float) -> Int { return m__round(x).to_int() }
+
+fn m__min(a: Float, b: Float) -> Float {
+    if a != a { return a }
+    if b != b { return b }
+    if a < b { return a }
+    if b < a { return b }
+    if m__neg_bit(a) { return a }
+    return b
+}
+fn m__max(a: Float, b: Float) -> Float {
+    if a != a { return a }
+    if b != b { return b }
+    if a > b { return a }
+    if b > a { return b }
+    if m__neg_bit(a) { return b }
+    return a
+}
+fn m__abs_i64(x: Int) -> Int {
+    if x < 0 { return -x }
+    return x
+}
+fn m__min_i64(a: Int, b: Int) -> Int {
+    if b < a { return b }
+    return a
+}
+fn m__max_i64(a: Int, b: Int) -> Int {
+    if b > a { return b }
+    return a
+}
+fn m__min_u64(a: UInt64, b: UInt64) -> UInt64 {
+    if b < a { return b }
+    return a
+}
+fn m__max_u64(a: UInt64, b: UInt64) -> UInt64 {
+    if b > a { return b }
+    return a
+}
+
+// 2^n for -1022 <= n <= 1023
+fn m__pow2(n: Int) -> Float { return float_from_bits((n + 1023).to_uint64() * 4503599627370496u64) }
+fn m__scale(x: Float, n: Int) -> Float {
+    var v = x
+    var k = n
+    while k > 1023 {
+        v = v * m__pow2(1023)
+        k = k - 1023
+    }
+    while k < -1022 {
+        v = v * m__pow2(-1022)
+        k = k + 1022
+    }
+    return v * m__pow2(k)
+}
+
+fn m__exp(x: Float) -> Float {
+    if x != x { return x }
+    if x > 709.782712893384 { return m__inf() }
+    if x < -745.2 { return 0.0 }
+    let kf = m__floor(x * 1.4426950408889634 + 0.5)
+    let k = kf.to_int()
+    let r = (x - kf * 0.6931471803691238) - kf * 1.9082149292705877e-10
+    var p = 1.6059043836821613e-10
+    p = p * r + 2.08767569878681e-09
+    p = p * r + 2.505210838544172e-08
+    p = p * r + 2.755731922398589e-07
+    p = p * r + 2.7557319223985893e-06
+    p = p * r + 2.48015873015873e-05
+    p = p * r + 0.0001984126984126984
+    p = p * r + 0.001388888888888889
+    p = p * r + 0.008333333333333333
+    p = p * r + 0.041666666666666664
+    p = p * r + 0.16666666666666666
+    p = p * r + 0.5
+    p = p * r + 1.0
+    p = p * r + 1.0
+    return m__scale(p, k)
+}
+
+fn m__ln(x: Float) -> Float {
+    if x != x { return x }
+    if x < 0.0 { return m__nan() }
+    if x == 0.0 { return -m__inf() }
+    if x == m__inf() { return x }
+    var v = x
+    var e = 0
+    if v.to_bits() < 4503599627370496u64 {
+        v = v * 18014398509481984.0
+        e = -54
+    }
+    let bits = v.to_bits()
+    e = e + (bits / 4503599627370496u64).to_int() - 1023
+    var m = float_from_bits((bits % 4503599627370496u64) + 4607182418800017408u64)
+    if m > 1.4142135623730951 {
+        m = m * 0.5
+        e = e + 1
+    }
+    let s = (m - 1.0) / (m + 1.0)
+    let s2 = s * s
+    var p = 2.0 / 27.0
+    p = p * s2 + 2.0 / 25.0
+    p = p * s2 + 2.0 / 23.0
+    p = p * s2 + 2.0 / 21.0
+    p = p * s2 + 2.0 / 19.0
+    p = p * s2 + 2.0 / 17.0
+    p = p * s2 + 2.0 / 15.0
+    p = p * s2 + 2.0 / 13.0
+    p = p * s2 + 2.0 / 11.0
+    p = p * s2 + 2.0 / 9.0
+    p = p * s2 + 2.0 / 7.0
+    p = p * s2 + 2.0 / 5.0
+    p = p * s2 + 2.0 / 3.0
+    p = p * s2 + 2.0
+    let ef = e.to_float()
+    return (ef * 0.6931471803691238 + s * p) + ef * 1.9082149292705877e-10
+}
+
+// sin / cos kernels on |r| <= pi/4
+fn m__sin_k(r: Float) -> Float {
+    let r2 = r * r
+    var p = 1.9572941063391263e-20
+    p = p * r2 + -8.22063524662433e-18
+    p = p * r2 + 2.8114572543455206e-15
+    p = p * r2 + -7.647163731819816e-13
+    p = p * r2 + 1.6059043836821613e-10
+    p = p * r2 + -2.505210838544172e-08
+    p = p * r2 + 2.7557319223985893e-06
+    p = p * r2 + -0.0001984126984126984
+    p = p * r2 + 0.008333333333333333
+    p = p * r2 + -0.16666666666666666
+    return r + r * (r2 * p)
+}
+fn m__cos_k(r: Float) -> Float {
+    let r2 = r * r
+    var p = 4.110317623312165e-19
+    p = p * r2 + -1.5619206968586225e-16
+    p = p * r2 + 4.779477332387385e-14
+    p = p * r2 + -1.1470745597729725e-11
+    p = p * r2 + 2.08767569878681e-09
+    p = p * r2 + -2.755731922398589e-07
+    p = p * r2 + 2.48015873015873e-05
+    p = p * r2 + -0.001388888888888889
+    p = p * r2 + 0.041666666666666664
+    p = p * r2 + -0.5
+    return 1.0 + r2 * p
+}
+// sin(x) for phase 0, cos(x) = sin(x + pi/2) for phase 1; the argument is reduced with a 4-part pi/2
+fn m__trig(x: Float, phase: Int) -> Float {
+    if x != x { return x }
+    let a = m__abs(x)
+    if a > 4503599627370496.0 { return m__nan() }
+    let kf = m__floor(x * 0.6366197723675814 + 0.5)
+    let k = kf.to_int()
+    var r = x - kf * 1.570796251296997
+    r = r - kf * 7.549789415861596e-08
+    r = r - kf * 5.390302529957765e-15
+    r = r - kf * 3.2820035428735005e-22
+    var q = (k + phase) % 4
+    if q < 0 { q = q + 4 }
+    if q == 0 { return m__sin_k(r) }
+    if q == 1 { return m__cos_k(r) }
+    if q == 2 { return -m__sin_k(r) }
+    return -m__cos_k(r)
+}
+fn m__sin(x: Float) -> Float { return m__trig(x, 0) }
+fn m__cos(x: Float) -> Float { return m__trig(x, 1) }
+fn m__tan(x: Float) -> Float { return m__trig(x, 0) / m__trig(x, 1) }
+
+fn m__atan_k(a: Float) -> Float {
+    let a2 = a * a
+    var p = 1.0 / 29.0
+    p = p * a2 + -1.0 / 27.0
+    p = p * a2 + 1.0 / 25.0
+    p = p * a2 + -1.0 / 23.0
+    p = p * a2 + 1.0 / 21.0
+    p = p * a2 + -1.0 / 19.0
+    p = p * a2 + 1.0 / 17.0
+    p = p * a2 + -1.0 / 15.0
+    p = p * a2 + 1.0 / 13.0
+    p = p * a2 + -1.0 / 11.0
+    p = p * a2 + 1.0 / 9.0
+    p = p * a2 + -1.0 / 7.0
+    p = p * a2 + 1.0 / 5.0
+    p = p * a2 + -1.0 / 3.0
+    p = p * a2 + 1.0 / 1.0
+    return a * p
+}
+
+fn m__atan(x: Float) -> Float {
+    if x != x { return x }
+    var a = m__abs(x)
+    var inv = false
+    if a > 1.0 {
+        a = 1.0 / a
+        inv = true
+    }
+    var shift = 0.0
+    if a > 0.2679491924311227 {
+        a = (a * 1.7320508075688772 - 1.0) / (1.7320508075688772 + a)
+        shift = 0.5235987755982989
+    }
+    var res = shift + m__atan_k(a)
+    if inv { res = 1.5707963267948966 - res }
+    return m__copysign(res, x)
+}
+
+fn m__atan2(y: Float, x: Float) -> Float {
+    if x != x || y != y { return m__nan() }
+    if y == 0.0 {
+        if x > 0.0 || (x == 0.0 && !m__neg_bit(x)) { return y }
+        return m__copysign(3.141592653589793, y)
+    }
+    if x == 0.0 { return m__copysign(1.5707963267948966, y) }
+    if m__is_inf(x) {
+        if m__is_inf(y) {
+            if x > 0.0 { return m__copysign(0.7853981633974483, y) }
+            return m__copysign(2.356194490192345, y)
+        }
+        if x > 0.0 { return m__copysign(0.0, y) }
+        return m__copysign(3.141592653589793, y)
+    }
+    if m__is_inf(y) { return m__copysign(1.5707963267948966, y) }
+    let r = m__atan(y / x)
+    if x > 0.0 { return r }
+    if m__neg_bit(y) { return r - 3.141592653589793 }
+    return r + 3.141592653589793
+}
+
+fn m__asin(x: Float) -> Float {
+    if x != x || m__abs(x) > 1.0 { return m__nan() }
+    return m__atan2(x, sqrt((1.0 - x) * (1.0 + x)))
+}
+fn m__acos(x: Float) -> Float {
+    if x != x || m__abs(x) > 1.0 { return m__nan() }
+    return m__atan2(sqrt((1.0 - x) * (1.0 + x)), x)
+}
+
+// x ^ n for an integer n >= 0 by squaring
+fn m__powi(x: Float, n: Int) -> Float {
+    var result = 1.0
+    var base = x
+    var k = n
+    while k > 0 {
+        if k % 2 == 1 { result = result * base }
+        base = base * base
+        k = k / 2
+    }
+    return result
+}
+
+fn m__pow(x: Float, y: Float) -> Float {
+    if y == 0.0 { return 1.0 }
+    if x == 1.0 { return 1.0 }
+    if x != x || y != y { return m__nan() }
+    let ay = m__abs(y)
+    let yint = ay >= 9007199254740992.0 || m__trunc(y) == y
+    var yodd = false
+    if yint && ay < 9007199254740992.0 { yodd = y.to_int() % 2 != 0 }
+    if m__is_inf(y) {
+        let ax = m__abs(x)
+        if ax == 1.0 { return 1.0 }
+        if (ax > 1.0) == (y > 0.0) { return m__inf() }
+        return 0.0
+    }
+    if x == 0.0 {
+        if y > 0.0 {
+            if yodd { return x }
+            return 0.0
+        }
+        if yodd { return m__copysign(m__inf(), x) }
+        return m__inf()
+    }
+    if m__is_inf(x) {
+        if x > 0.0 {
+            if y > 0.0 { return x }
+            return 0.0
+        }
+        if y > 0.0 {
+            if yodd { return x }
+            return m__inf()
+        }
+        if yodd { return -0.0 }
+        return 0.0
+    }
+    if x < 0.0 {
+        if !yint { return m__nan() }
+        let r = m__pow(-x, y)
+        if yodd { return -r }
+        return r
+    }
+    if yint && ay <= 1024.0 {
+        let p = m__powi(x, ay.to_int())
+        if y < 0.0 { return 1.0 / p }
+        return p
+    }
+    return m__exp(y * m__ln(x))
+}

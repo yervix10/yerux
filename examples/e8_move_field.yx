@@ -1,0 +1,6 @@
+struct Box { items: List }
+
+fn main() {
+  var b = Box { items: List.new() }
+  let stolen = b.items
+}

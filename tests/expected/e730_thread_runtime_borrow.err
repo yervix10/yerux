@@ -1,0 +1,8 @@
+error: cannot move 'message': it is only borrowed
+ --> tests/e730_thread_runtime_borrow.yx:2:25
+  |
+2 |   return __thread_start(move || message.len())
+  |                         ^^^^^^^^^^^^^^^^^^^^^
+  = help: whoever lent it is still the owner; only move what you own
+
+1 error(s). Nothing was generated.

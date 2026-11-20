@@ -1,0 +1,8 @@
+error: Int<0..9> has no function 'wrap'
+ --> tests/e766_range_unknown_function.yx:2:11
+  |
+2 |   let x = Int<0..9>.wrap(12)
+  |           ^^^^^^^^^^^^^^^^^^
+  = functions: from(x) (checked, panics when x is out of range), try_from(x) (returns a Result)
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,8 @@
+fn update(text: mut String) {
+  text.push_str("changed")
+}
+
+fn main() {
+  var text = Shared.new(String.from("immutable"))
+  update(text.get())
+}

@@ -1,0 +1,8 @@
+fn keep(f: view fn(Int) -> Int) -> fn(Int) -> Int {
+  return f
+}
+
+fn main() {
+  let g = keep(|x| x + 1)
+  print(g(1))
+}

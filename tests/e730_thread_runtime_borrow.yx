@@ -1,0 +1,8 @@
+fn launch(message: view String) -> Int {
+  return __thread_start(move || message.len())
+}
+
+fn main() {
+  let message = String.from("hello")
+  print(__thread_wait(launch(message)))
+}

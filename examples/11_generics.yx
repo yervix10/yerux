@@ -1,0 +1,119 @@
+// Generics and traits: one definition, many types. Each use is compiled to a specialised copy
+// (monomorphisation), so there is no run-time cost.
+
+// ---- a trait: what a type can do -------------------------------------------------
+trait Area {
+  fn area(view self) -> Int
+}
+
+struct Square { side: Int }
+struct Rect { w: Int, h: Int }
+
+impl Area for Square {
+  fn area(view self) -> Int { return self.side * self.side }
+}
+impl Area for Rect {
+  fn area(view self) -> Int { return self.w * self.h }
+}
+
+// built-in traits: Equal (==), Ordered (<, >, ...), Show (text), Copy (may be duplicated)
+impl Show for Rect {
+  fn show(view self) -> String {
+    var s = String.from("Rect ")
+    s.push_int(self.w)
+    s.push_str("x")
+    s.push_int(self.h)
+    return s
+  }
+}
+impl Ordered for Rect {
+  fn cmp(view self, other: view Rect) -> Int {
+    let a = self.area()
+    let b = other.area()
+    if a < b { return -1 }
+    if a > b { return 1 }
+    return 0
+  }
+}
+
+// ---- generic functions, with bounds ---------------------------------------------
+fn bigger<T: Ordered + Copy>(a: T, b: T) -> T {
+  if a > b { return a }
+  return b
+}
+
+fn total_area<T: Area>(items: view List<T>) -> Int {
+  var sum = 0
+  var i = 0
+  while i < items.len() {
+    sum = sum + items.at(i).area()
+    i = i + 1
+  }
+  return sum
+}
+
+fn print_all<T: Show>(items: view List<T>) {
+  var i = 0
+  while i < items.len() {
+    let s = items.at(i).show()
+    print(s)
+    i = i + 1
+  }
+}
+
+// ---- generic types ----------------------------------------------------------------
+struct Pair<A, B> { first: A, second: B }
+
+enum Maybe<T> { Some(T), None }
+
+fn index_of<T: Equal>(l: view List<T>, x: view T) -> Maybe<Int> {
+  var i = 0
+  while i < l.len() {
+    if l.at(i) == x { return Maybe.Some(i) }
+    i = i + 1
+  }
+  return Maybe.None
+}
+
+// a generic container that owns whatever it holds (even Strings)
+struct Stack<T> { items: List<T> }
+
+fn push<T>(s: mut Stack<T>, x: T) { s.items.push(move x) }
+fn pop<T>(s: mut Stack<T>) -> T { return s.items.pop() }
+
+fn main() {
+  print(bigger(3, 9))              // T = Int
+  let a = "pear"
+  let b = "apple"
+  print(bigger(a, b))              // T = Text
+  let big = bigger(Rect { w: 2, h: 8 }, Rect { w: 3, h: 4 })
+  print(big.area())
+
+  var squares = List<Square>.new()
+  squares.push(Square { side: 2 })
+  squares.push(Square { side: 3 })
+  print(total_area(squares))       // 13
+
+  var rects = List<Rect>.new()
+  rects.push(Rect { w: 1, h: 2 })
+  rects.push(Rect { w: 5, h: 5 })
+  print_all(rects)
+
+  let p = Pair { first: 1, second: "one" }
+  print(p.second)
+
+  var xs = List<Int>.new()
+  xs.push(10)
+  xs.push(20)
+  let want = 20
+  match index_of(xs, want) {
+    Some(i) => { print(i) }
+    None => { print("not found") }
+  }
+
+  var stack = Stack<String> { items: List<String>.new() }
+  push(stack, String.from("first"))
+  push(stack, String.from("second"))
+  let top = pop(stack)
+  print(top)
+}

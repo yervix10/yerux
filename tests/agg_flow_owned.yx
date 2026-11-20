@@ -1,0 +1,80 @@
+struct Log { lines: List<String> }
+
+fn note(l: mut Log, s: Text) {
+  l.lines.push(String.from(s))
+}
+
+fn id_of(s: String) -> String {
+  return s
+}
+
+fn search(items: view List<String>, want: Text, log: mut Log) -> Int {
+  var found = -1
+  for i in 0..items.len() {
+    defer note(log, "iteration end")
+    let tmp = String.from("tmp")
+    let copy = String.from("copy")
+    if items.at(i).eq(want) {
+      found = i
+      defer note(log, "found")
+      break
+    }
+    if i == 0 { continue }
+    note(log, "checked")
+  }
+  return found
+}
+
+fn main() {
+  var items = List<String>.new()
+  items.push(String.from("a"))
+  items.push(String.from("b"))
+  items.push(String.from("c"))
+  var log = Log { lines: List<String>.new() }
+  print(search(items, "b", log))
+  print(search(items, "zz", log))
+  for line in log.lines { print(line) }
+
+  // break leaves owned locals in scope: dropped
+  var n = 0
+  while true {
+    let s = String.from("x")
+    let t = String.from("y")
+    n = n + 1
+    if n == 3 { break }
+    if n == 1 { continue }
+    print(n)
+  }
+  // moves before break, outer var
+  var keep = String.from("kept")
+  var out = List<String>.new()
+  var k = 0
+  while k < 10 {
+    k = k + 1
+    if k == 4 {
+      out.push(move keep)
+      break
+    }
+  }
+  print(k)
+  print(out.len())
+  // by-move iteration with early break: the rest is dropped
+  var src = List<String>.new()
+  src.push(String.from("one"))
+  src.push(String.from("two"))
+  src.push(String.from("three"))
+  for s in move src {
+    print(s)
+    if s.len() == 3 { break }
+  }
+  // nested labeled with owned values
+  outer: for a in 0..3 {
+    let oa = String.from("oa")
+    inner: for b in 0..3 {
+      let ib = String.from("ib")
+      if b == 1 { continue outer }
+      if a == 2 { break outer }
+      print(a * 10 + b)
+    }
+  }
+}

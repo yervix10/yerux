@@ -1,0 +1,20 @@
+// assigning the scrutinee of `match mut` while a payload name is alive would free the payload it points to
+enum Msg { Text(String), Nums(List<Int>), Quit }
+fn mgrow(m: mut Msg, k: Int) {
+  match mut m {
+    Text(s) => { s.push_str("!") }
+    Nums(l) => { l.push(k) }
+    Quit => { }
+  }
+}
+fn takes(m: Msg) { }
+fn main() {
+  var m = Msg.Text(String.from("abc"))
+  match mut m {
+    Text(s) => {
+      m = Msg.Quit
+      print(s.len())
+    }
+    _ => { }
+  }
+}

@@ -1,0 +1,8 @@
+fn read(items: view List) {
+  items.push(1)
+}
+
+fn main() {
+  let d = List.new()
+  d.push(1)
+}

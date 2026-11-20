@@ -1,0 +1,5 @@
+fn mk(x: Int8) -> Int8 { return x }
+fn main() {
+    print(-mk(127))
+    print(-mk(-128))
+}

@@ -1,0 +1,20 @@
+// The checked copy of a versioned loop must fail at the same iteration the plain program does.
+fn main() {
+  var a = List<Int>.new()
+  var k = 0
+  while k < 30 {
+    a.push(k)
+    k = k + 1
+  }
+  var i = 0
+  while i < 5 {
+    var j = 0
+    var s = 0
+    while j < 8 {
+      s = s + a.get(i * 8 + j)
+      j = j + 1
+    }
+    print(s)
+    i = i + 1
+  }
+}

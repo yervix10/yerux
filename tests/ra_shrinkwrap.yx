@@ -1,0 +1,12 @@
+fn test(unused: Int) {
+    print(false || true)
+    var i = 0
+    while i < 2 {
+        print(i)
+        i = i + 1
+    }
+}
+
+fn main() {
+    test(0)
+}

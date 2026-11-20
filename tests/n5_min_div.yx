@@ -1,0 +1,9 @@
+// MIN % -1 is 0 (no trap), MIN / -1 overflows
+fn main() {
+  let m = -9223372036854775807 - 1
+  let k = -1
+  print(m % k)
+  print(m / 1)
+  print((m + 1) / k)
+  print(m / k)
+}

@@ -1,0 +1,7 @@
+// `unchecked(x)` is only allowed in `unsafe` code.
+fn main() {
+  var b: Int<0..255> = 0
+  let n = 300
+  b = unchecked(n)
+  print(b)
+}

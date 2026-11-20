@@ -1,0 +1,41 @@
+fn main() {
+  let a = 'a'
+  let nl = '\n'
+  let e = 'é'
+  let smile = '\u{1F600}'
+  print(a)
+  print(e)
+  print(smile)
+  print(a.to_int())
+  print(e.to_int())
+  print(smile.to_int())
+  print(a.utf8_len())
+  print(e.utf8_len())
+  print('中'.utf8_len())
+  print(smile.utf8_len())
+  print(a < 'b')
+  print(a == 'a')
+  var s = String.new()
+  s.push_char('h')
+  s.push_char(e)
+  s.push_char('中')
+  s.push_char(smile)
+  s.push_char(nl)
+  print(s.len())
+  print(s)
+  var total = 0
+  for c in s.chars() {
+    total = total + c.to_int()
+    print(c)
+  }
+  print(total)
+  print(Char.from_int(97))
+  print(Char.is_valid(55296))
+  print(Char.is_valid(65))
+  var cs = List<Char>.new()
+  cs.push('x')
+  cs.push('ü')
+  print(cs.at(1))
+  print(s.char_at(1).to_int())
+  print(Char.from_int(55296))
+}

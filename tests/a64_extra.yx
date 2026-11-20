@@ -1,0 +1,22 @@
+fn add3(a: Int, b: Int, c: Int) -> Int { return a * 100 + b * 10 + c }
+fn neg(a: Int) -> Int { return -a }
+
+fn main() {
+  print(add3(1, 2, 3))
+  print(5000000000 * 3)
+  print(-9223372036854775807 - 1)
+  print(-9223372036854775807 / 1)
+  print(1234567890123456789)
+  print(-1234567890123456789)
+  print(4294967296 * 2147483647)
+  print(-3037000499 * 3037000499)
+  print(7 % -1)
+  print(-7 % -3)
+  print(5 >= 5)
+  print(5 <= 4)
+  print(5 != 5)
+  print(5 == 5)
+  print(neg(9223372036854775807))
+  print("tail")
+  print(neg(-9223372036854775807 - 1))
+}

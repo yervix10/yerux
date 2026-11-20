@@ -1,0 +1,7 @@
+error: 'abs' expects 1 argument(s) but got 2
+ --> tests/e53_ffi_variadic_plain.yx:6:18
+  |
+6 |   unsafe { print(abs(1, 2)) }
+  |                  ^^^^^^^^^
+
+1 error(s). Nothing was generated.

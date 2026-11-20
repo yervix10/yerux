@@ -1,0 +1,80 @@
+// closures that own captured Strings and Lists, stored in structs and lists
+struct Task {
+  name: String,
+  run: fn() -> Int,
+}
+
+fn make_len(s: String) -> fn() -> Int {
+  return move || s.len()
+}
+
+fn make_sum(items: List<Int>) -> fn() -> Int {
+  return move || {
+    var s = 0
+    for x in items { s = s + x }
+    return s
+  }
+}
+
+fn make_logger() -> fn(Text) -> Int {
+  var log = String.new()
+  return move |msg| {
+    log.push_str(msg)
+    log.push_str("|")
+    print(log)
+    return log.len()
+  }
+}
+
+fn call_twice(f: fn() -> Int) -> Int {
+  return f() + f()
+}
+
+fn main() {
+  let l = make_len(String.from("hello"))
+  print(l())
+  print(l())
+
+  var nums = List<Int>.new()
+  nums.push(4)
+  nums.push(5)
+  nums.push(6)
+  let sum = make_sum(move nums)
+  print(sum())
+
+  let log = make_logger()
+  print(log("a"))
+  print(log("bb"))
+
+  // a closure that is never called is still freed
+  let unused = make_sum(List<Int>.new())
+
+  // the callee owns the closure it receives
+  print(call_twice(move sum))
+
+  var tasks = List<Task>.new()
+  let s1 = String.from("one")
+  let s2 = String.from("three")
+  tasks.push(Task { name: String.from("t1"), run: move || s1.len() })
+  tasks.push(Task { name: String.from("t2"), run: move || s2.len() * 10 })
+  for i in 0..tasks.len() {
+    print(tasks.at(i).name)
+    print(tasks.at(i).run())
+  }
+
+  var fl = List<fn() -> Int>.new()
+  let a = String.from("xyz")
+  fl.push(move || a.len())
+  fl.push(|| 7)
+  let top = fl.pop()
+  print(top())
+  print(fl.len())
+
+  // conditional move into a closure
+  let c = String.from("cond")
+  var keep = || 0
+  if tasks.len() > 1 {
+    keep = move || c.len()
+  }
+  print(keep())
+}

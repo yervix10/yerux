@@ -1,0 +1,9 @@
+error: `break` can only be used inside a `while` or `for` loop
+ --> tests/e41_flow_1.yx:2:3
+  |
+2 |   break
+  |   ^^^^^
+  = `break` leaves the nearest enclosing loop
+  = help: to leave the whole function use `return` instead
+
+1 error(s). Nothing was generated.

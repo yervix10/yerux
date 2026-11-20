@@ -1,0 +1,7 @@
+error: spawn cannot capture 'text' because it is borrowed
+ --> tests/e732_spawn_view_capture.yx:3:18
+  |
+3 |     let worker = spawn move || text.len()
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

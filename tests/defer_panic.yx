@@ -1,0 +1,14 @@
+// a panic ends the program immediately: pending deferred statements do not run
+fn risky(l: view List) -> Int {
+  defer print("deferred in risky")
+  return l.get(5)
+}
+
+fn main() {
+  defer print("deferred in main")
+  var l = List.new()
+  l.push(1)
+  print("before")
+  print(risky(l))
+  print("not reached")
+}

@@ -1,0 +1,9 @@
+error: cannot use 'text': it was already moved
+ --> tests/e735_spawn_use_after_move.yx:5:11
+  |
+5 |     print(text)
+  |           ^^^^
+  = 'text' was moved on line 4
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

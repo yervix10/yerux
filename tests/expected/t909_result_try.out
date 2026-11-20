@@ -1,0 +1,29 @@
+two_digits done
+ok 42
+two_digits done
+error: not a digit at 1
+two_digits done
+error: end of input at 1
+two_digits done
+two_digits done
+ok 42
+two_digits done
+two_digits done
+error: not a digit at 0
+two_digits done
+two_digits done
+too large 101
+two_digits done
+two_digits done
+42
+two_digits done
+two_digits done
+not a digit at 0 -1
+two_digits done
+true
+99
+two_digits done
+true
+-1
+two_digits done
+true

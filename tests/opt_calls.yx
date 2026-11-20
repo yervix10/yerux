@@ -1,0 +1,24 @@
+fn sq(x: Int) -> Int { return x * x }
+fn noisy(x: Int) -> Int { print(x); return x + 1 }
+fn collatz(n: Int) -> Int {
+  var steps = 0
+  var m = n
+  while m != 1 {
+    if m % 2 == 0 { m = m / 2 } else { m = 3 * m + 1 }
+    steps = steps + 1
+  }
+  return steps
+}
+fn main() {
+  let unused = noisy(1)
+  print(sq(12))
+  print(collatz(27))
+  var i = 0
+  var t = 0
+  while i < 10 {
+    t = t + noisy(i) - i
+    i = i + 1
+  }
+  print(t)
+  print(sq(sq(sq(sq(sq(100))))))
+}

@@ -1,0 +1,8 @@
+fn main() {
+  var l = List<String>.new()
+  l.push(String.from("a"))
+  let a = l.remove(0)
+  print(a)
+  let b = l.remove(0)
+  print(b)
+}

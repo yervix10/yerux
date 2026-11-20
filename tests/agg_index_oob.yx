@@ -1,0 +1,8 @@
+fn main() {
+  var l = List.new()
+  l.push(10)
+  l.push(20)
+  print(l.get(1))
+  print(l.get(2))
+  print("unreachable")
+}

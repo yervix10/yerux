@@ -1,0 +1,15 @@
+error: Ptr<UInt8>.alloc(n) requires an unsafe block
+ --> tests/e802_ptr_alloc_safe.yx:2:11
+  |
+2 |   let p = Ptr<UInt8>.alloc(8)
+  |           ^^^^^^^^^^^^^^^^^^^
+  = help: wrap it in `unsafe { ... }`; the block owns the pointer and must release it with `p.free()`
+
+error: p.free() requires an unsafe block
+ --> tests/e802_ptr_alloc_safe.yx:3:3
+  |
+3 |   p.free()
+  |   ^^^^^^^^
+  = help: free only pointers made by `Ptr<T>.alloc(n)`, once; a pointer from C's malloc is released with C's free
+
+2 error(s). Nothing was generated.

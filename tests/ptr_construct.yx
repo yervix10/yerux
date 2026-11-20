@@ -1,0 +1,49 @@
+// Ptr<T> made by the language: null(), alloc(n), is_null(), free(); no `malloc` declaration needed.
+extern "C" {
+  fn snprintf(buf: Ptr<UInt8>, n: UInt64, fmt: Text, ...) -> Int32
+  fn memset(p: Ptr<UInt8>, c: Int32, n: UInt64) -> Ptr<UInt8>
+  fn strlen(p: Ptr<UInt8>) -> UInt64
+}
+
+fn ok(p: Ptr<UInt8>) -> Bool { return !p.is_null() }
+
+fn main() {
+  // null needs no unsafe block
+  let nothing = Ptr<UInt8>.null()
+  print(nothing.is_null())
+  let words: Ptr<Int> = Ptr<Int>.null()
+  print(words.is_null())
+  unsafe {
+    let buf = Ptr<UInt8>.alloc(64)
+    print(ok(buf))
+    print(buf.is_null())
+    let n = snprintf(buf, 64, "alloc %d %s\n", 42, "ok")
+    print(n)
+    print(strlen(buf))
+    memset(buf, 0, 64)
+    let m = snprintf(buf, 64, "again")
+    print(strlen(buf))
+    // a pointer is a plain value: copies are the same pointer
+    let same = buf
+    print(same.is_null())
+    same.free()
+    // freeing null is a no-op
+    nothing.free()
+    // zero elements and wider elements
+    let empty = Ptr<UInt8>.alloc(0)
+    empty.free()
+    let wide = Ptr<Int>.alloc(1000)
+    print(wide.is_null())
+    wide.free()
+  }
+  // repeated allocation in a loop
+  var i = 0
+  while i < 100 {
+    unsafe {
+      let t = Ptr<UInt32>.alloc(i + 1)
+      t.free()
+    }
+    i = i + 1
+  }
+  print("done")
+}

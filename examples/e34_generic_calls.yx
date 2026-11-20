@@ -1,0 +1,14 @@
+// Calls of generic functions: wrong argument count, mixed types for one T, T that cannot be inferred.
+enum Maybe<T> { Some(T), None }
+struct Pair<A, B> { a: A, b: B }
+
+fn same<T: Equal>(a: view T, b: view T) -> Bool { return a == b }
+
+fn main() {
+    print(same(1))
+    let x = 1
+    let t = true
+    print(same(x, t))
+    let n = Maybe.None
+    let q = Maybe<Int, Int>.None
+}

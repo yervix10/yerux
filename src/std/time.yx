@@ -1,0 +1,158 @@
+// std.time: durations as plain Int nanoseconds, and a stopwatch, over the std.io clocks (docs/STDLIB.md).
+//
+//   import std.time        then      var w = time.stopwatch()   ...   print(time.format(w.elapsed()))
+//
+// A duration is an `Int` count of nanoseconds (about +-292 years); the helpers below build, convert and
+// print them. There is no calendar: `io.unix_secs()` is the only wall-clock source.
+import std.io
+
+pub fn nanos(n: Int) -> Int {
+  return n
+}
+
+pub fn micros(n: Int) -> Int {
+  return n * 1000
+}
+
+pub fn millis(n: Int) -> Int {
+  return n * 1000000
+}
+
+pub fn seconds(n: Int) -> Int {
+  return n * 1000000000
+}
+
+pub fn minutes(n: Int) -> Int {
+  return n * 60000000000
+}
+
+pub fn hours(n: Int) -> Int {
+  return n * 3600000000000
+}
+
+/// Whole units (truncated towards zero).
+pub fn as_micros(d: Int) -> Int {
+  return d / 1000
+}
+
+pub fn as_millis(d: Int) -> Int {
+  return d / 1000000
+}
+
+pub fn as_secs(d: Int) -> Int {
+  return d / 1000000000
+}
+
+pub fn as_secs_float(d: Int) -> Float {
+  return d.to_float() / 1000000000.0
+}
+
+pub fn as_millis_float(d: Int) -> Float {
+  return d.to_float() / 1000000.0
+}
+
+fn fixed1(x: Float) -> String {
+  // one decimal, round half away from zero (x >= 0)
+  let t = (x * 10.0).round_int()
+  var r = String.new()
+  r.push_int(t / 10)
+  r.push_byte(46)
+  r.push_int(t % 10)
+  return r
+}
+
+/// A short human-readable duration: `850 ns`, `12.5 us`, `3.2 ms`, `1.5 s`, `2m 05s`, `1h 02m 03s`.
+pub fn format(d: Int) -> String {
+  var r = String.new()
+  var v = d
+  if v < 0 {
+    r.push_byte(45)
+    v = -v
+  }
+  if v < 1000 {
+    r.push_int(v)
+    r.push_str(" ns")
+  } else if v < 1000000 {
+    let f = fixed1(v.to_float() / 1000.0)
+    r.push_str(f)
+    r.push_str(" us")
+  } else if v < 1000000000 {
+    let f = fixed1(v.to_float() / 1000000.0)
+    r.push_str(f)
+    r.push_str(" ms")
+  } else if v < 60000000000 {
+    let f = fixed1(v.to_float() / 1000000000.0)
+    r.push_str(f)
+    r.push_str(" s")
+  } else {
+    let total = v / 1000000000
+    let h = total / 3600
+    let m = (total % 3600) / 60
+    let s = total % 60
+    if h > 0 {
+      r.push_int(h)
+      r.push_str("h ")
+      if m < 10 {
+        r.push_byte(48)
+      }
+    }
+    r.push_int(m)
+    r.push_str("m ")
+    if s < 10 {
+      r.push_byte(48)
+    }
+    r.push_int(s)
+    r.push_str("s")
+  }
+  return r
+}
+
+/// Pauses the thread for `d` nanoseconds (no-op for d <= 0).
+pub fn sleep(d: Int) {
+  if d > 0 {
+    io.sleep_ns(d)
+  }
+}
+
+/// Measures time on the monotonic clock. `elapsed()` is the time since `stopwatch()`/`restart`; `lap()` is the time
+/// since the previous `lap` (or the start) and begins a new lap.
+pub struct Stopwatch {
+  began: Int,
+  lap_start: Int,
+}
+
+/// A running stopwatch.
+pub fn stopwatch() -> Stopwatch {
+  let now = io.monotonic_ns()
+  return Stopwatch { began: now, lap_start: now }
+}
+
+impl Stopwatch {
+  fn elapsed(view self) -> Int {
+    return io.monotonic_ns() - self.began
+  }
+
+  fn elapsed_ms(view self) -> Int {
+    return (io.monotonic_ns() - self.began) / 1000000
+  }
+
+  fn lap(mut self) -> Int {
+    let now = io.monotonic_ns()
+    let d = now - self.lap_start
+    self.lap_start = now
+    return d
+  }
+
+  fn restart(mut self) {
+    let now = io.monotonic_ns()
+    self.began = now
+    self.lap_start = now
+  }
+}
+
+/// Runs `f` and returns how long it took.
+pub fn measure(f: view fn()) -> Int {
+  let t0 = io.monotonic_ns()
+  f()
+  return io.monotonic_ns() - t0
+}

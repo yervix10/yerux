@@ -1,0 +1,83 @@
+// Range integer declarations preserve their interval through signatures and widening.
+type Byte = Int<0..255>
+
+fn full(x: Int<-9223372036854775808..9223372036854775807>) -> Int {
+  return x
+}
+
+fn natural(x: Int<0..>) -> Int {
+  return x
+}
+
+fn at_most_nine(x: Int<..9>) -> Int {
+  return x
+}
+
+fn identity(x: Byte) -> Byte {
+  return x
+}
+
+fn widen(x: Int<0..255>) -> Int {
+  return x
+}
+
+fn doubled(x: Int<0..255>) -> Int<0..510> {
+  return x + x
+}
+
+fn mixed(x: Int<0..255>, y: Int<10..20>) -> Int<10..275> {
+  return x + y
+}
+
+fn subtract(x: Int<5..9>) -> Int<2..6> {
+  return x - 3
+}
+
+fn multiply(x: Int<2..4>, y: Int<3..5>) -> Int<6..20> {
+  return x * y
+}
+
+fn divide(x: Int<4..8>, y: Int<2..4>) -> Int<1..4> {
+  return x / y
+}
+
+fn remainder(x: Int<4..8>, y: Int<2..4>) -> Int<0..3> {
+  return x % y
+}
+
+fn negate(x: Int<2..4>) -> Int<-4..-2> {
+  return -x
+}
+
+fn compare_ranges(a: Int<0..10>, b: Int<5..20>) -> Bool {
+  return a < b && a != b
+}
+
+fn classify(x: Int<0..2>) -> Int {
+  match x {
+    0 => { return 10 }
+    1 => { return 11 }
+    2 => { return 12 }
+  }
+  return -1
+}
+
+fn main() {
+  print(full(1))
+  print(natural(3))
+  print(at_most_nine(9))
+  print(identity(23))
+  print(widen(255))
+  print(doubled(255))
+  print(mixed(255, 20))
+  print(subtract(9))
+  print(multiply(4, 5))
+  print(divide(8, 2))
+  print(remainder(8, 3))
+  print(negate(3))
+  print(compare_ranges(4, 5))
+  print(classify(2))
+  var values = List<Byte>.new()
+  values.push(128)
+  print(values.get(0))
+}

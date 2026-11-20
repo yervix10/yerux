@@ -1,0 +1,7 @@
+error: spawn can only be used inside a scope block
+ --> tests/e745_spawn_requires_scope.yx:2:16
+  |
+2 |   let worker = spawn move || 1
+  |                ^^^^^
+
+1 error(s). Nothing was generated.

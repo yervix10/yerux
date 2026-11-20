@@ -1,0 +1,33 @@
+seed: 621882211
+mismatch: (('native', 'stdout'), ('native-noopt', 'stdout'))
+
+=== c
+code=0
+--stdout--
+5
+true
+119
+0
+1010
+--stderr--
+
+=== native
+code=0
+--stdout--
+5
+true
+119
+0
+1010
+--stderr--
+
+=== native-noopt
+code=0
+--stdout--
+5
+true
+119
+0
+1010
+--stderr--
+

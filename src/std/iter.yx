@@ -1,0 +1,268 @@
+// std.iter: functional helpers over List<T> (docs/STDLIB.md).
+//
+//   import std.iter        then      iter.map(l, |x: view Int| -> Int { return x * 2 })   iter.sum(l)
+//
+// Every function borrows its list (`view`) and returns a new value, except `retain`, which edits in place.
+// Closures take their elements by `view`. Functions that copy elements out of the list need `T: Copy`.
+
+/// `[f(x) for x in l]`; works for owned element types as well.
+pub fn map<T, U>(l: view List<T>, f: view fn(view T) -> U) -> List<U> {
+  var out = List<U>.new()
+  var i = 0
+  while i < l.len() {
+    out.push(f(l.at(i)))
+    i = i + 1
+  }
+  return out
+}
+
+/// Calls `f` on each element, in order.
+pub fn for_each<T>(l: view List<T>, f: view fn(view T)) {
+  var i = 0
+  while i < l.len() {
+    f(l.at(i))
+    i = i + 1
+  }
+}
+
+/// The elements for which `pred` is true (copies).
+pub fn filter<T: Copy>(l: view List<T>, pred: view fn(view T) -> Bool) -> List<T> {
+  var out = List<T>.new()
+  var i = 0
+  while i < l.len() {
+    if pred(l.at(i)) {
+      out.push(l.get(i))
+    }
+    i = i + 1
+  }
+  return out
+}
+
+/// Keeps only the elements for which `pred` is true, in place (order kept; the others are dropped).
+pub fn retain<T>(l: mut List<T>, pred: view fn(view T) -> Bool) {
+  var w = 0
+  var r = 0
+  while r < l.len() {
+    if pred(l.at(r)) {
+      l.swap(w, r)
+      w = w + 1
+    }
+    r = r + 1
+  }
+  l.truncate(w)
+}
+
+/// Folds left: `acc = f(acc, x)` for every element, starting from `init`.
+pub fn fold<T, A>(l: view List<T>, init: A, f: view fn(A, view T) -> A) -> A {
+  var acc = move init
+  var i = 0
+  while i < l.len() {
+    acc = f(move acc, l.at(i))
+    i = i + 1
+  }
+  return acc
+}
+
+pub fn any<T>(l: view List<T>, pred: view fn(view T) -> Bool) -> Bool {
+  var i = 0
+  while i < l.len() {
+    if pred(l.at(i)) {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+pub fn all<T>(l: view List<T>, pred: view fn(view T) -> Bool) -> Bool {
+  var i = 0
+  while i < l.len() {
+    if !pred(l.at(i)) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+/// Number of elements for which `pred` is true.
+pub fn count<T>(l: view List<T>, pred: view fn(view T) -> Bool) -> Int {
+  var n = 0
+  var i = 0
+  while i < l.len() {
+    if pred(l.at(i)) {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  return n
+}
+
+/// Index of the first element for which `pred` is true, or -1.
+pub fn position<T>(l: view List<T>, pred: view fn(view T) -> Bool) -> Int {
+  var i = 0
+  while i < l.len() {
+    if pred(l.at(i)) {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+/// The first element for which `pred` is true (a copy).
+pub fn find<T: Copy>(l: view List<T>, pred: view fn(view T) -> Bool) -> Option<T> {
+  let i = position(l, pred)
+  if i < 0 {
+    return None
+  }
+  return Some(l.get(i))
+}
+
+/// `(index, element)` pairs.
+pub fn enumerate<T: Copy>(l: view List<T>) -> List<(Int, T)> {
+  var out = List<(Int, T)>.new()
+  var i = 0
+  while i < l.len() {
+    out.push((i, l.get(i)))
+    i = i + 1
+  }
+  return out
+}
+
+/// Pairs of equal positions; as long as the shorter list.
+pub fn zip<A: Copy, B: Copy>(a: view List<A>, b: view List<B>) -> List<(A, B)> {
+  var out = List<(A, B)>.new()
+  var n = a.len()
+  if b.len() < n {
+    n = b.len()
+  }
+  var i = 0
+  while i < n {
+    out.push((a.get(i), b.get(i)))
+    i = i + 1
+  }
+  return out
+}
+
+/// The first `n` elements (all of them when the list is shorter).
+pub fn take<T: Copy>(l: view List<T>, n: Int) -> List<T> {
+  var e = n
+  if e > l.len() {
+    e = l.len()
+  }
+  if e < 0 {
+    e = 0
+  }
+  return l.slice(0, e)
+}
+
+/// Everything after the first `n` elements.
+pub fn skip<T: Copy>(l: view List<T>, n: Int) -> List<T> {
+  var s = n
+  if s > l.len() {
+    s = l.len()
+  }
+  if s < 0 {
+    s = 0
+  }
+  return l.slice(s, l.len())
+}
+
+/// Elements at positions 0, step, 2*step, ... (step >= 1).
+pub fn step_by<T: Copy>(l: view List<T>, step: Int) -> List<T> {
+  if step < 1 {
+    panic("iter.step_by step must be at least 1")
+  }
+  var out = List<T>.new()
+  var i = 0
+  while i < l.len() {
+    out.push(l.get(i))
+    i = i + step
+  }
+  return out
+}
+
+/// `a` followed by `b` (copies).
+pub fn chain<T: Copy>(a: view List<T>, b: view List<T>) -> List<T> {
+  var out = a.copy()
+  var i = 0
+  while i < b.len() {
+    out.push(b.get(i))
+    i = i + 1
+  }
+  return out
+}
+
+pub fn sum(l: view List<Int>) -> Int {
+  var s = 0
+  var i = 0
+  while i < l.len() {
+    s = s + l.get(i)
+    i = i + 1
+  }
+  return s
+}
+
+pub fn product(l: view List<Int>) -> Int {
+  var s = 1
+  var i = 0
+  while i < l.len() {
+    s = s * l.get(i)
+    i = i + 1
+  }
+  return s
+}
+
+pub fn sum_float(l: view List<Float>) -> Float {
+  var s = 0.0
+  var i = 0
+  while i < l.len() {
+    s = s + l.get(i)
+    i = i + 1
+  }
+  return s
+}
+
+/// Smallest element, or None for an empty list.
+pub fn min<T: Copy + Ordered>(l: view List<T>) -> Option<T> {
+  if l.len() == 0 {
+    return None
+  }
+  var best = 0
+  var i = 1
+  while i < l.len() {
+    if l.at(i).cmp(l.at(best)) < 0 {
+      best = i
+    }
+    i = i + 1
+  }
+  return Some(l.get(best))
+}
+
+/// Largest element (the first one among equals), or None.
+pub fn max<T: Copy + Ordered>(l: view List<T>) -> Option<T> {
+  if l.len() == 0 {
+    return None
+  }
+  var best = 0
+  var i = 1
+  while i < l.len() {
+    if l.at(i).cmp(l.at(best)) > 0 {
+      best = i
+    }
+    i = i + 1
+  }
+  return Some(l.get(best))
+}
+
+/// `[start, start+1, ..., end-1]`.
+pub fn range(start: Int, end: Int) -> List<Int> {
+  var out = List<Int>.new()
+  var i = start
+  while i < end {
+    out.push(i)
+    i = i + 1
+  }
+  return out
+}

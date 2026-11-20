@@ -1,0 +1,11 @@
+fn spin() -> Int {
+  var i = 0
+  while true {
+    i = (i + 1) % 1000
+  }
+  return i
+}
+
+fn main() {
+  print(comptime spin())
+}

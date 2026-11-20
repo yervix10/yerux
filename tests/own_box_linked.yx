@@ -1,0 +1,23 @@
+enum Chain {
+    End,
+    Link(String, Box<Chain>),
+}
+
+fn count(chain: view Chain) -> Int {
+    match chain {
+        End => { return 0 }
+        Link(name, next) => { return name.len() + count(*next) }
+    }
+}
+
+fn main() {
+    var chain = Chain.End
+    for i in 0..4 {
+        chain = Chain.Link("item {i}", Box.new(move chain))
+    }
+    print(count(chain))
+    match move chain {
+        End => { print(-1) }
+        Link(_, next) => { print(count(next.get())) }
+    }
+}

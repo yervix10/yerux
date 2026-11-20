@@ -1,0 +1,7 @@
+error: Shared<Context> cannot contain Context because it is not thread-transferable
+ --> tests/e741_shared_thread_bound.yx:8:16
+  |
+8 |   let shared = Shared.new(handle)
+  |                ^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

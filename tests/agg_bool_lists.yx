@@ -1,0 +1,142 @@
+// List<Bool> is packed (one byte per element on the native backend): push/pop/get/set/at, `mut Bool` through at(),
+// growth across several reallocations, Bool lists inside structs and nested lists, clear, drop.
+struct Flags { id: Int, on: Bool, bits: List<Bool>, name: String }
+
+fn flip(b: mut Bool) {
+  b = !b
+}
+
+fn flip_ret(b: mut Bool, k: Int) -> Int {
+  b = k > 2
+  return k * 2
+}
+
+fn count(l: view List<Bool>) -> Int {
+  var i = 0
+  var c = 0
+  while i < l.len() {
+    if l.get(i) {
+      c = c + 1
+    }
+    i = i + 1
+  }
+  return c
+}
+
+fn fill(l: mut List<Bool>, n: Int) {
+  var i = 0
+  while i < n {
+    l.push(i % 3 == 0)
+    i = i + 1
+  }
+}
+
+fn mkflags(id: Int) -> Flags {
+  var f = Flags { id: id, on: true, bits: List<Bool>.new(), name: String.from("f") }
+  f.name.push_int(id)
+  fill(f.bits, id)
+  return f
+}
+
+fn main() {
+  var l = List<Bool>.new()
+  var i = 0
+  while i < 1000 {
+    l.push(i % 7 == 0)
+    i = i + 1
+  }
+  print(l.len())
+  print(count(l))
+  print(l.get(0))
+  print(l.get(1))
+  print(l.get(999))
+  l.set(1, true)
+  l.set(0, false)
+  print(l.get(0))
+  print(l.get(1))
+  print(count(l))
+  print(l.at(7))
+  flip(l.at(7))
+  flip(l.at(8))
+  print(l.at(7))
+  print(l.at(8))
+  l.set(9, true)
+  l.set(7, l.at(9) && l.at(8))
+  print(l.at(9))
+  print(l.at(7))
+  print(flip_ret(l.at(3), 5))
+  print(l.at(3))
+  print(flip_ret(l.at(3), 1))
+  print(l.at(3))
+  print(l.pop())
+  print(l.pop())
+  print(l.len())
+  print(count(l))
+  l.clear()
+  print(l.len())
+  l.push(true)
+  l.push(false)
+  print(count(l))
+
+  var f = mkflags(40)
+  print(f.name)
+  print(count(f.bits))
+  f.bits.set(3, false)
+  f.bits.push(true)
+  print(count(f.bits))
+  print(f.on)
+  f.on = f.bits.get(40)
+  print(f.on)
+
+  var fs = List<Flags>.new()
+  i = 0
+  while i < 12 {
+    fs.push(mkflags(i * 5))
+    i = i + 1
+  }
+  fs.at(4).bits.push(false)
+  fs.at(4).bits.set(0, false)
+  print(count(fs.at(4).bits))
+  print(fs.at(11).bits.len())
+  var tot = 0
+  i = 0
+  while i < fs.len() {
+    tot = tot + count(fs.at(i).bits) * 100 + fs.at(i).bits.len()
+    i = i + 1
+  }
+  print(tot)
+  let last = fs.pop()
+  print(last.name)
+
+  var ll = List<List<Bool>>.new()
+  i = 0
+  while i < 20 {
+    var row = List<Bool>.new()
+    fill(row, i)
+    ll.push(move row)
+    i = i + 1
+  }
+  ll.at(5).push(true)
+  ll.at(5).set(0, false)
+  flip(ll.at(6).at(2))
+  print(count(ll.at(5)))
+  print(count(ll.at(6)))
+  print(ll.at(19).len())
+  print(ll.at(19).at(18))
+  var rows = 0
+  var ones = 0
+  i = 0
+  while i < ll.len() {
+    rows = rows + ll.at(i).len()
+    ones = ones + count(ll.at(i))
+    i = i + 1
+  }
+  print(rows)
+  print(ones)
+  let r = ll.pop()
+  print(r.len())
+  ll.set(0, move r)
+  print(ll.at(0).len())
+  ll.clear()
+  print(ll.len())
+}

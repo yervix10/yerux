@@ -1,0 +1,8 @@
+error: range bounds must be integer constants
+ --> tests/e767_range_bound_not_literal.yx:1:16
+  |
+1 | fn f(x: Int<0..n>) -> Int { return x }
+  |                ^
+  = help: write the bounds as literals, e.g. `Int<0..255>`; the bounds are inclusive
+
+1 error(s). Nothing was generated.

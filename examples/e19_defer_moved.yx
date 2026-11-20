@@ -1,0 +1,11 @@
+// A deferred statement runs when the scope ends, so what it uses must still be there.
+fn consume(l: List) {
+  print(l.len())
+}
+
+fn main() {
+  var l = List.new()
+  l.push(1)
+  defer print(l.len())
+  consume(move l)
+}

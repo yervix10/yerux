@@ -1,0 +1,9 @@
+// A sized integer converted into a range prints its value too.
+fn main() {
+  let a: UInt8 = 200
+  let b: Int16 = 0 - 300
+  print(Int<0..255>.from(a))
+  print(Int<-300..-1>.from(b))
+  print(Int<0..99>.from(a))
+  print(1)
+}

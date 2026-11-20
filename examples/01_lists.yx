@@ -1,0 +1,41 @@
+// Sum of squares: view (read-only), mut (modify), move (hand over)
+fn fill(items: mut List, n: Int) {
+  var i = 0
+  while i < n {
+    items.push(i * i)
+    i = i + 1
+  }
+}
+
+fn sum(items: view List) -> Int {
+  var i = 0
+  var total = 0
+  while i < items.len() {
+    total = total + items.get(i)
+    i = i + 1
+  }
+  return total
+}
+
+fn consume(items: List) -> Int {
+  return items.len()   // items is freed automatically when this ends
+}
+
+fn create(n: Int) -> List {
+  var items = List.new()
+  fill(items, n)
+  return items         // moved to the caller
+}
+
+fn main() {
+  var data = create(10)
+  print("sum of squares:")
+  print(sum(data))
+  let count = consume(move data)
+  print(count)
+  if count == 10 {
+    print("all good")
+  } else {
+    print("something is off")
+  }
+}

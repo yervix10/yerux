@@ -1,0 +1,22 @@
+// by-value arguments run before the borrowed ones: the `move m` buried in the second argument would free what the
+// first (borrowed) argument is about to read
+enum Msg { Text(String), Quit }
+
+fn takes(m: Msg) -> Int {
+  match move m {
+    Text(s) => { return s.len() }
+    Quit => { return 0 }
+  }
+}
+
+fn show(a: view Msg, n: Int) {
+  match a {
+    Text(s) => { print(s) }
+    Quit => { }
+  }
+}
+
+fn main() {
+  var m = Msg.Text(String.from("hello world, long enough to live on the heap"))
+  show(m, takes(move m))
+}

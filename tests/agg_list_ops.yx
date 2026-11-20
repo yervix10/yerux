@@ -1,0 +1,105 @@
+// List<T> with multi-word elements: push/get/at/set/pop/clear, owned structs and nested lists
+struct Pair { a: Int, b: Int, c: Int }
+struct Tagged { id: Int, name: String, vals: List<Int> }
+enum Tok { Num(Int), Pair(Int, Int), End }
+
+fn mk(id: Int, n: Text) -> Tagged {
+  var t = Tagged { id: id, name: String.from(n), vals: List<Int>.new() }
+  t.vals.push(id)
+  t.vals.push(id * 2)
+  return t
+}
+
+fn main() {
+  var ps = List<Pair>.new()
+  var i = 0
+  while i < 40 {
+    ps.push(Pair { a: i, b: i * 2, c: i * 3 })
+    i = i + 1
+  }
+  print(ps.len())
+  let p = ps.get(39)
+  print(p.a + p.b + p.c)
+  ps.at(5).b = 1000
+  print(ps.at(5).b)
+  ps.set(0, ps.get(39))
+  print(ps.at(0).c)
+  let q = ps.pop()
+  print(q.c)
+  print(ps.len())
+  ps.clear()
+  print(ps.len())
+  ps.push(Pair { a: 1, b: 2, c: 3 })
+  print(ps.at(0).c)
+
+  var toks = List<Tok>.new()
+  toks.push(Tok.Num(5))
+  toks.push(Tok.Pair(3, 4))
+  toks.push(Tok.End)
+  var j = 0
+  while j < toks.len() {
+    match toks.get(j) {
+      Num(n) => { print(n) }
+      Pair(x, y) => { print(x * y) }
+      End => { print("end") }
+    }
+    j = j + 1
+  }
+
+  var ts = List<Tagged>.new()
+  ts.push(mk(1, "one"))
+  ts.push(mk(2, "two"))
+  ts.push(mk(3, "three"))
+  ts.at(1).name.push_str("!!")
+  ts.at(2).vals.push(77)
+  print(ts.at(1).name)
+  print(ts.at(2).vals.len())
+  print(ts.at(2).vals.get(2))
+  ts.set(0, mk(10, "ten"))
+  print(ts.at(0).name)
+  let last = ts.pop()
+  print(last.name)
+  print(last.vals.len())
+  ts.clear()
+  print(ts.len())
+  ts.push(mk(4, "four"))
+
+  var nested = List<List<List<String>>>.new()
+  var a = 0
+  while a < 3 {
+    var mid = List<List<String>>.new()
+    var b = 0
+    while b < 3 {
+      var inner = List<String>.new()
+      var c = 0
+      while c < 4 {
+        var s = String.from("s")
+        s.push_int(a * 100 + b * 10 + c)
+        inner.push(move s)
+        c = c + 1
+      }
+      mid.push(move inner)
+      b = b + 1
+    }
+    nested.push(move mid)
+    a = a + 1
+  }
+  print(nested.at(2).at(1).at(3))
+  nested.at(1).clear()
+  print(nested.at(1).len())
+  nested.set(0, List<List<String>>.new())
+  print(nested.at(0).len())
+  let popped = nested.pop()
+  print(popped.at(2).at(0))
+
+  var words = List<Text>.new()
+  words.push("a")
+  words.push("b")
+  words.set(0, "z")
+  print(words.get(0))
+  print(words.pop())
+  var flags = List<Bool>.new()
+  flags.push(true)
+  flags.set(0, false)
+  print(flags.get(0))
+}

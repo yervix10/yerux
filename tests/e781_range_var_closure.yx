@@ -1,0 +1,10 @@
+// A `var` that a closure uses is never narrowed: the closure may change it at any time.
+fn main() {
+  var x = 5
+  let show = || print(x)
+  if x >= 0 && x <= 9 {
+    let a: Int<0..9> = x
+    print(a)
+  }
+  show()
+}

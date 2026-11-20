@@ -1,0 +1,11 @@
+fn launch(value: mut Int) {
+  scope {
+    let worker = spawn move { value = value + 1 }
+    print(worker.join().is_ok())
+  }
+}
+
+fn main() {
+  var value = 0
+  launch(value)
+}

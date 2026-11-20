@@ -1,0 +1,31 @@
+enum Msg { Text(String), Pair(String, Int), Quit }
+
+fn describe(m: view Msg) -> Int {
+  match m {
+    Text(s) => { return s.len() }
+    Pair(s, n) => { return s.len() + n }
+    Quit => { return 0 }
+  }
+}
+fn take(m: Msg) -> Int {
+  match move m {
+    Text(s) => { return s.len() }
+    Pair(s, _) => { return s.len() }
+    Quit => { return -1 }
+  }
+}
+fn main() {
+  var m = Msg.Text(String.from("hello"))
+  print(describe(m))
+  match mut m {
+    Text(s) => { s.push_str("!!") }
+    Pair(s, n) => { }
+    Quit => { }
+  }
+  print(describe(m))
+  print(take(move m))
+  let p = Msg.Pair(String.from("ab"), 5)
+  print(describe(p))
+  let q = Msg.Quit
+  print(take(move q))
+}

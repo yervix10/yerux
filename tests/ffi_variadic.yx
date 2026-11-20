@@ -1,0 +1,59 @@
+// C variadic calls: snprintf into a malloc'ed buffer, printf with fflush, many arguments.
+extern "C" {
+  fn malloc(n: UInt64) -> Ptr<UInt8>
+  fn free(p: Ptr<UInt8>)
+  fn write(fd: Int32, buf: Ptr<UInt8>, n: UInt64) -> Int
+  fn snprintf(buf: Ptr<UInt8>, n: UInt64, fmt: Text, ...) -> Int32
+  fn printf(fmt: Text, ...) -> Int32
+  fn fflush(stream: Int) -> Int32
+}
+
+fn emit(buf: Ptr<UInt8>, n: Int32) {
+  unsafe {
+    write(1, buf, n.to_uint64())
+  }
+}
+
+fn main() {
+  unsafe {
+    let buf = malloc(256)
+    // integers of several widths and a double
+    let a: Int32 = 42
+    let n = snprintf(buf, 256, "int=%d long=%ld\n", a, 1234567890123)
+    emit(buf, n)
+    let n = snprintf(buf, 256, "float=%f exp=%.3e\n", 3.5, 12345.678)
+    emit(buf, n)
+    // Float32 is promoted to double
+    let h: Float32 = 0.25
+    let n = snprintf(buf, 256, "f32=%.2f\n", h)
+    emit(buf, n)
+    // text and char via %s / %c, unsigned and negative values
+    let u: UInt8 = 200
+    let n = snprintf(buf, 256, "s=%s u=%u neg=%d\n", "hello", u, -7)
+    emit(buf, n)
+    // mixed integers and doubles interleaved
+    let n = snprintf(buf, 256, "%d %f %d %f %d %f\n", 1, 1.5, 2, 2.5, 3, 3.5)
+    emit(buf, n)
+    // more than 6 integer arguments: the rest go on the stack
+    let n = snprintf(buf, 256, "%ld %ld %ld %ld %ld %ld %ld %ld\n", 1, 2, 3, 4, 5, 6, 7, 8)
+    emit(buf, n)
+    // more than 8 double arguments
+    let n = snprintf(buf, 256, "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f\n", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0)
+    emit(buf, n)
+    // mixed: ints and doubles both overflowing their registers
+    let n = snprintf(buf, 256, "%ld %.1f %ld %.1f %ld %.1f %ld %.1f %ld %.1f %ld %.1f %ld %.1f %ld %.1f %ld %.1f %ld %.1f\n", 1, 1.0, 2, 2.0, 3, 3.0, 4, 4.0, 5, 5.0, 6, 6.0, 7, 7.0, 8, 8.0, 9, 9.0, 10, 10.0)
+    emit(buf, n)
+    // no variadic arguments at all
+    let n = snprintf(buf, 256, "plain\n")
+    emit(buf, n)
+    // the return value is the length that would have been written
+    let n = snprintf(buf, 4, "truncated %d", 99)
+    print(n)
+    // printf directly, flushed so both backends interleave with print()
+    print("before")
+    printf("printf %d %s %.2f\n", 7, "ok", 2.5)
+    fflush(0)
+    print("after")
+    free(buf)
+  }
+}

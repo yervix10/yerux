@@ -1,0 +1,40 @@
+enum E { A(Int), B }
+fn show(s: view String) { print(s) }
+fn cleanup(n: Int) { print(n) }
+
+fn early(flag: Bool) -> Int {
+  defer print("early: bye")
+  var l = List.new()
+  l.push(1)
+  if flag {
+    defer print("inner")
+    return l.len() + 10
+  }
+  defer print("second")
+  return 5
+}
+
+fn name() -> String {
+  var s = String.from("hi")
+  defer print("name done")
+  return s
+}
+
+fn main() {
+  defer print("main end")
+  print(early(true))
+  print(early(false))
+  var i = 0
+  while i < 3 {
+    defer cleanup(i)
+    defer print("iter")
+    i = i + 1
+  }
+  let n = name()
+  show(n)
+  match E.A(3) {
+    A(x) => { defer print(x)
+      print("arm") }
+    B => {}
+  }
+}

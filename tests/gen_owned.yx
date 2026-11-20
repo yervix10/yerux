@@ -1,0 +1,72 @@
+// Owned values (String, List) flowing through generic code: moves, borrows, drops.
+struct Pair<A, B> { a: A, b: B }
+struct Stack<T> { items: List<T> }
+struct Named { name: String, tags: List<String> }
+
+fn pass<T>(x: T) -> T { return x }
+fn pass_move<T>(x: T) -> T {
+    let y = move x
+    return y
+}
+fn make_pair<A, B>(a: A, b: B) -> Pair<A, B> { return Pair { a: move a, b: move b } }
+fn take_first<A, B>(p: Pair<A, B>) -> Int {
+    return 1
+}
+fn push<T>(s: mut Stack<T>, x: T) { s.items.push(move x) }
+fn pop<T>(s: mut Stack<T>) -> T { return s.items.pop() }
+fn size<T>(s: view Stack<T>) -> Int { return s.items.len() }
+fn replace_first<T>(l: mut List<T>, x: T) { l.set(0, move x) }
+fn count<T>(l: view List<T>) -> Int { return l.len() }
+fn maybe_keep<T>(x: T, keep: Bool) -> Int {
+    if keep {
+        let held = move x
+        return 1
+    }
+    return 0
+}
+fn early<T>(x: T, n: Int) -> Int {
+    if n > 5 { return n }
+    let y = move x
+    return 0
+}
+
+fn main() {
+    let s = String.from("hello")
+    let s2 = pass(move s)
+    print(s2)
+    var l = List<String>.new()
+    l.push(String.from("a"))
+    l.push(String.from("b"))
+    let l2 = pass_move(move l)
+    print(count(l2))
+
+    let p = make_pair(String.from("x"), List<String>.new())
+    print(p.a)
+    print(take_first(move p))
+
+    var st = Stack<String> { items: List<String>.new() }
+    push(st, String.from("one"))
+    push(st, String.from("two"))
+    push(st, String.from("three"))
+    replace_first(st.items, String.from("uno"))
+    print(size(st))
+    let top = pop(st)
+    print(top)
+    let n = Named { name: String.from("n"), tags: List<String>.new() }
+    var stn = Stack<Named> { items: List<Named>.new() }
+    push(stn, move n)
+    print(size(stn))
+    let back = pop(stn)
+    print(back.name)
+
+    print(maybe_keep(String.from("k"), true))
+    print(maybe_keep(String.from("k"), false))
+    print(early(String.from("e"), 9))
+    print(early(String.from("e"), 1))
+    var i = 0
+    while i < 3 {
+        let tmp = pass(String.from("loop"))
+        print(tmp)
+        i = i + 1
+    }
+}

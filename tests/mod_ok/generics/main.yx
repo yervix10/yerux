@@ -1,0 +1,43 @@
+import shapes
+import util.algo as a
+
+struct Circle { r: Int }
+impl shapes.Area for Circle {
+  fn area(view self) -> Int { return self.r * 3 }
+}
+fn show(x: Int) -> Int { return x + 100 }
+impl Show for Circle {
+  fn show(view self) -> String { return String.from("Circle") }
+}
+
+fn main() {
+  print(a.max(3, 8))
+  print(a.either(false, 1, 2))
+  print(a.shown(5))
+  print(show(5))
+  let sq = shapes.make(4)
+  print(sq.area())
+  var l = List<shapes.Square>.new()
+  l.push(shapes.make(2))
+  l.push(shapes.make(3))
+  print(shapes.total_area(l))
+  var cs = List<Circle>.new()
+  cs.push(Circle { r: 5 })
+  print(shapes.total_area(cs))
+  a.log_twice(sq)
+  let c = Circle { r: 1 }
+  a.log_twice(c)
+  let p = shapes.Pair { first: 1, second: "one" }
+  print(p.second)
+  let m = shapes.Maybe.Some(9)
+  print(shapes.first_or(m, 0))
+  let n = shapes.Maybe<Int>.None
+  print(shapes.first_or(n, 7))
+  let big = a.max(shapes.make(1), shapes.make(6))
+  print(big.side)
+}
+
+test "generic functions from a module" {
+  assert_eq(a.max(2, 5), 5)
+  assert_eq(shapes.first_or(shapes.Maybe<Int>.None, 4), 4)
+}

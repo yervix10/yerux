@@ -1,0 +1,50 @@
+// index checks that are provably in range (while i < len, descending, checked-once) next to ones that are not
+struct P { a: Int, b: Int }
+fn sum(ps: view List<P>) -> Int {
+  var i = 0
+  var t = 0
+  while i < ps.len() {
+    t = t + ps.at(i).a + ps.at(i).b
+    i = i + 1
+  }
+  return t
+}
+fn rev(ps: view List<P>) -> Int {
+  var i = ps.len() - 1
+  var t = 0
+  while i >= 0 {
+    t = t * 3 % 1000003 + ps.at(i).a
+    i = i - 1
+  }
+  return t
+}
+fn bytes(s: view String) -> Int {
+  var i = 0
+  var h = 7
+  while i < s.len() {
+    h = (h * 31 + s.byte(i)) % 1000003
+    i = i + 1
+  }
+  return h
+}
+fn main() {
+  var ps = List<P>.new()
+  var i = 0
+  while i < 50 {
+    ps.push(P { a: i, b: i * i })
+    i = i + 1
+  }
+  print(sum(ps))
+  print(rev(ps))
+  let s = String.from("range analysis keeps this correct")
+  print(bytes(s))
+  print(ps.at(49).b)
+  // not provable: one past the end must still panic
+  var j = 0
+  while j <= ps.len() {
+    print(ps.at(j).a)
+    j = j + 10
+  }
+  print("end")
+  print(ps.at(50).a)
+}

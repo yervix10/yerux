@@ -1,0 +1,8 @@
+error: cannot take an erased value out of a Box
+ --> tests/e723_dyn_take.yx:9:17
+  |
+9 |     let value = shape.take()
+  |                 ^^^^^^^^^^^^
+  = help: borrow it with `box.get()`
+
+1 error(s). Nothing was generated.

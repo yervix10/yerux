@@ -1,0 +1,6 @@
+fn main() {
+  scope {
+    let worker = spawn || 1
+    print(worker.join().is_ok())
+  }
+}

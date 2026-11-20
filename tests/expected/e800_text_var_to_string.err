@@ -1,0 +1,7 @@
+error: expected String but this is Text
+ --> tests/e800_text_var_to_string.yx:3:19
+  |
+3 |   let b: String = t
+  |                   ^
+
+1 error(s). Nothing was generated.

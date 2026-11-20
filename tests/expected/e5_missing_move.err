@@ -1,0 +1,8 @@
+error: 'a' is a List and is not copied
+ --> examples/e5_missing_move.yx:3:11
+  |
+3 |   let b = a
+  |           ^
+  = help: use `move a` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+1 error(s). Nothing was generated.

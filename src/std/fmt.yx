@@ -1,0 +1,277 @@
+// std.fmt: number and text formatting helpers beyond string interpolation (docs/STDLIB.md).
+//
+//   import std.fmt         then      fmt.pad_left("7", 3, '0')   fmt.hex(255)   fmt.fixed(3.14159, 2)
+//
+// Padding counts characters (not bytes). Integers: `format_int(x, base)` for bases 2..36.
+
+fn digit_char(d: Int, upper: Bool) -> Int {
+  if d < 10 {
+    return 48 + d
+  }
+  if upper {
+    return 55 + d
+  }
+  return 87 + d
+}
+
+// digits of the magnitude of x, accumulating negatively so that Int.min works
+fn push_digits(out: mut String, x: Int, base: Int, upper: Bool) {
+  var neg = x
+  if neg > 0 {
+    neg = -neg
+  }
+  var buf = String.new()
+  if neg == 0 {
+    buf.push_byte(48)
+  }
+  while neg != 0 {
+    let d = -(neg % base)
+    buf.push_byte(digit_char(d, upper))
+    neg = neg / base
+  }
+  var i = buf.len() - 1
+  while i >= 0 {
+    out.push_byte(buf.byte(i))
+    i = i - 1
+  }
+}
+
+/// `x` written in `base` (2..36), lower-case letters, with a leading `-` for negative numbers.
+pub fn format_int(x: Int, base: Int) -> String {
+  if base < 2 || base > 36 {
+    panic("fmt.format_int base must be in 2..36")
+  }
+  var r = String.new()
+  if x < 0 {
+    r.push_byte(45)
+  }
+  push_digits(r, x, base, false)
+  return r
+}
+
+/// Like `format_int` with upper-case letters.
+pub fn format_int_upper(x: Int, base: Int) -> String {
+  if base < 2 || base > 36 {
+    panic("fmt.format_int_upper base must be in 2..36")
+  }
+  var r = String.new()
+  if x < 0 {
+    r.push_byte(45)
+  }
+  push_digits(r, x, base, true)
+  return r
+}
+
+/// `x` in base 16, no prefix: `hex(255)` is `ff`.
+pub fn hex(x: Int) -> String {
+  return format_int(x, 16)
+}
+
+pub fn bin(x: Int) -> String {
+  return format_int(x, 2)
+}
+
+pub fn oct(x: Int) -> String {
+  return format_int(x, 8)
+}
+
+/// The 64-bit two's complement pattern of `x` in `base` (2..36): `hex_bits(-1)` style, never a minus sign.
+pub fn format_bits(x: Int, base: Int) -> String {
+  if base < 2 || base > 36 {
+    panic("fmt.format_bits base must be in 2..36")
+  }
+  if x >= 0 {
+    return format_int(x, base)
+  }
+  // unsigned value = x + 2^64 = (x - 2^63) + 2^63 : split to stay in range
+  let hi = x.truncate_uint64()
+  var r = String.new()
+  var buf = String.new()
+  var v = hi
+  let b = base.truncate_uint64()
+  while v != (0).truncate_uint64() {
+    let d = (v % b).to_int()
+    buf.push_byte(digit_char(d, false))
+    v = v / b
+  }
+  var i = buf.len() - 1
+  while i >= 0 {
+    r.push_byte(buf.byte(i))
+    i = i - 1
+  }
+  return r
+}
+
+/// Pads `s` on the left with `fill` up to `width` characters (longer strings are returned unchanged).
+pub fn pad_left(s: view String, width: Int, fill: Char) -> String {
+  var r = String.new()
+  var n = s.char_count()
+  while n < width {
+    r.push_char(fill)
+    n = n + 1
+  }
+  r.push_str(s)
+  return r
+}
+
+pub fn pad_right(s: view String, width: Int, fill: Char) -> String {
+  var r = String.new()
+  r.push_str(s)
+  var n = s.char_count()
+  while n < width {
+    r.push_char(fill)
+    n = n + 1
+  }
+  return r
+}
+
+/// Centers `s` in `width` characters; the extra pad character (odd difference) goes on the right.
+pub fn center(s: view String, width: Int, fill: Char) -> String {
+  var r = String.new()
+  let n = s.char_count()
+  if n >= width {
+    r.push_str(s)
+    return r
+  }
+  let left = (width - n) / 2
+  var i = 0
+  while i < left {
+    r.push_char(fill)
+    i = i + 1
+  }
+  r.push_str(s)
+  i = left + n
+  while i < width {
+    r.push_char(fill)
+    i = i + 1
+  }
+  return r
+}
+
+/// `x` in decimal, at least `width` digits, zero-padded after the sign: `zero_pad(-5, 3)` is `-005`.
+pub fn zero_pad(x: Int, width: Int) -> String {
+  var digits = String.new()
+  push_digits(digits, x, 10, false)
+  var r = String.new()
+  if x < 0 {
+    r.push_byte(45)
+  }
+  var n = digits.len()
+  while n < width {
+    r.push_byte(48)
+    n = n + 1
+  }
+  r.push_str(digits)
+  return r
+}
+
+/// `hex(x)` padded with zeros to `width` digits (non-negative `x`): `hex_padded(255, 4)` is `00ff`.
+pub fn hex_padded(x: Int, width: Int) -> String {
+  let h = hex(x)
+  return pad_left(h, width, '0')
+}
+
+/// `x` with `sep` between groups of three digits: `group(1234567, ",")` is `1,234,567`.
+pub fn group(x: Int, sep: view String) -> String {
+  var digits = String.new()
+  push_digits(digits, x, 10, false)
+  var r = String.new()
+  if x < 0 {
+    r.push_byte(45)
+  }
+  var i = 0
+  while i < digits.len() {
+    if i > 0 && (digits.len() - i) % 3 == 0 {
+      r.push_str(sep)
+    }
+    r.push_byte(digits.byte(i))
+    i = i + 1
+  }
+  return r
+}
+
+/// `x` rounded to `decimals` (0..15) digits after the point, always written out in positional notation
+/// (`fixed(2.0, 3)` is `2.000`). Rounds the scaled value half away from zero; exact for |x| * 10^decimals
+/// below 2^53, larger values lose the digits a Float cannot hold. `nan`, `inf` and `-inf` print as such.
+pub fn fixed(x: Float, decimals: Int) -> String {
+  if decimals < 0 || decimals > 15 {
+    panic("fmt.fixed decimals must be in 0..15")
+  }
+  if x.is_nan() {
+    return String.from("nan")
+  }
+  if x.is_inf() {
+    if x < 0.0 {
+      return String.from("-inf")
+    }
+    return String.from("inf")
+  }
+  var scale = 1.0
+  var i = 0
+  while i < decimals {
+    scale = scale * 10.0
+    i = i + 1
+  }
+  var a = x.abs()
+  let scaled = (a * scale).round()
+  var r = String.new()
+  if x < 0.0 && scaled != 0.0 {
+    r.push_byte(45)
+  }
+  if scaled >= 4611686018427387904.0 {
+    // too large for an Int: print the Float's own digits
+    let sh = a.show()
+    r.push_str(sh)
+    return r
+  }
+  let n = scaled.round_int()
+  var digits = String.new()
+  push_digits(digits, n, 10, false)
+  while digits.len() <= decimals {
+    var z = String.from("0")
+    z.push_str(digits)
+    digits = move z
+  }
+  let ip = digits.len() - decimals
+  r.push_slice(digits, 0, ip)
+  if decimals > 0 {
+    r.push_byte(46)
+    r.push_slice(digits, ip, digits.len())
+  }
+  return r
+}
+
+/// `fixed(x * 100, decimals)` followed by `%`.
+pub fn percent(x: Float, decimals: Int) -> String {
+  var r = fixed(x * 100.0, decimals)
+  r.push_byte(37)
+  return r
+}
+
+/// `n` bytes as `12 B`, `1.5 KiB`, `3.2 MiB`, ... (powers of 1024, one decimal).
+pub fn bytes_human(n: Int) -> String {
+  if n < 1024 {
+    return "{n} B"
+  }
+  var v = n.to_float()
+  var unit = 0
+  while v >= 1024.0 && unit < 6 {
+    v = v / 1024.0
+    unit = unit + 1
+  }
+  var r = fixed(v, 1)
+  if unit == 1 {
+    r.push_str(" KiB")
+  } else if unit == 2 {
+    r.push_str(" MiB")
+  } else if unit == 3 {
+    r.push_str(" GiB")
+  } else if unit == 4 {
+    r.push_str(" TiB")
+  } else if unit == 5 {
+    r.push_str(" PiB")
+  } else {
+    r.push_str(" EiB")
+  }
+  return r
+}

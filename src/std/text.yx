@@ -1,0 +1,534 @@
+// std.text: text-processing helpers (docs/STDLIB.md).
+//
+//   import std.text        then      text.split_ws(s)   text.parse_int(s)   text.is_digit(c)
+//
+// Free functions over `view String` (methods cannot be added to String from a module). Everything is plain
+// Yerux over the String/List prelude. Offsets are byte offsets and always land on character boundaries.
+
+// ───────────────────────── character classification ─────────────────────────
+
+pub fn is_digit(c: Char) -> Bool {
+  let n = c.to_int()
+  return n >= 48 && n <= 57
+}
+
+pub fn is_upper(c: Char) -> Bool {
+  let n = c.to_int()
+  return n >= 65 && n <= 90
+}
+
+pub fn is_lower(c: Char) -> Bool {
+  let n = c.to_int()
+  return n >= 97 && n <= 122
+}
+
+pub fn is_alpha(c: Char) -> Bool {
+  return is_upper(c) || is_lower(c)
+}
+
+pub fn is_alnum(c: Char) -> Bool {
+  return is_alpha(c) || is_digit(c)
+}
+
+pub fn is_hex_digit(c: Char) -> Bool {
+  let n = c.to_int()
+  return (n >= 48 && n <= 57) || (n >= 65 && n <= 70) || (n >= 97 && n <= 102)
+}
+
+pub fn is_space(c: Char) -> Bool {
+  let n = c.to_int()
+  return n == 32 || (n >= 9 && n <= 13)
+}
+
+pub fn is_ascii(c: Char) -> Bool {
+  return c.to_int() < 128
+}
+
+pub fn is_punct(c: Char) -> Bool {
+  let n = c.to_int()
+  return (n >= 33 && n <= 47) || (n >= 58 && n <= 64) || (n >= 91 && n <= 96) || (n >= 123 && n <= 126)
+}
+
+/// Value of `c` as a digit in `base` (2..36), or -1.
+pub fn digit_value(c: Char, base: Int) -> Int {
+  let n = c.to_int()
+  var v = -1
+  if n >= 48 && n <= 57 {
+    v = n - 48
+  } else if n >= 97 && n <= 122 {
+    v = n - 97 + 10
+  } else if n >= 65 && n <= 90 {
+    v = n - 65 + 10
+  }
+  if v >= base {
+    return -1
+  }
+  return v
+}
+
+/// ASCII-only case mapping of one character (others unchanged).
+pub fn char_to_upper(c: Char) -> Char {
+  if is_lower(c) {
+    return Char.from_int(c.to_int() - 32)
+  }
+  return c
+}
+
+pub fn char_to_lower(c: Char) -> Char {
+  if is_upper(c) {
+    return Char.from_int(c.to_int() + 32)
+  }
+  return c
+}
+
+// ───────────────────────── UTF-8 iteration ─────────────────────────
+
+/// All characters of `s`, in order.
+pub fn chars(s: view String) -> List<Char> {
+  var out = List<Char>.new()
+  var i = 0
+  while i < s.len() {
+    out.push(s.char_at(i))
+    i = i + s.char_size(i)
+  }
+  return out
+}
+
+/// Byte offset of every character of `s` (same length as `chars(s)`).
+pub fn char_offsets(s: view String) -> List<Int> {
+  var out = List<Int>.new()
+  var i = 0
+  while i < s.len() {
+    out.push(i)
+    i = i + s.char_size(i)
+  }
+  return out
+}
+
+/// The string made of `cs`.
+pub fn from_chars(cs: view List<Char>) -> String {
+  var r = String.new()
+  var i = 0
+  while i < cs.len() {
+    r.push_char(cs.get(i))
+    i = i + 1
+  }
+  return r
+}
+
+/// Byte offset of the `n`-th character (0-based); `s.len()` when `n == s.char_count()`; -1 beyond that.
+pub fn nth_char_offset(s: view String, n: Int) -> Int {
+  if n < 0 {
+    return -1
+  }
+  var i = 0
+  var k = 0
+  while i < s.len() {
+    if k == n {
+      return i
+    }
+    i = i + s.char_size(i)
+    k = k + 1
+  }
+  if k == n {
+    return i
+  }
+  return -1
+}
+
+/// `s` with its characters in reverse order.
+pub fn reverse(s: view String) -> String {
+  var r = String.new()
+  var end = s.len()
+  while end > 0 {
+    var st = end - 1
+    while st > 0 && !s.is_boundary(st) {
+      st = st - 1
+    }
+    r.push_slice(s, st, end)
+    end = st
+  }
+  return r
+}
+
+// ───────────────────────── queries ─────────────────────────
+
+pub fn starts_with(s: view String, p: view String) -> Bool {
+  return s.starts_with(p)
+}
+
+pub fn ends_with(s: view String, p: view String) -> Bool {
+  return s.ends_with(p)
+}
+
+pub fn contains(s: view String, p: view String) -> Bool {
+  return s.contains(p)
+}
+
+/// First byte offset of `p` in `s`, or -1.
+pub fn find(s: view String, p: view String) -> Int {
+  return s.find(p)
+}
+
+/// Last byte offset of `p` in `s`, or -1 (an empty `p` matches at `s.len()`).
+pub fn rfind(s: view String, p: view String) -> Int {
+  var i = s.len() - p.len()
+  while i >= 0 {
+    if s.is_boundary(i) {
+      var j = 0
+      while j < p.len() && s.byte(i + j) == p.byte(j) {
+        j = j + 1
+      }
+      if j == p.len() {
+        return i
+      }
+    }
+    i = i - 1
+  }
+  return -1
+}
+
+/// Number of non-overlapping occurrences of `p` (0 for an empty `p`).
+pub fn count(s: view String, p: view String) -> Int {
+  if p.len() == 0 {
+    return 0
+  }
+  var n = 0
+  var i = s.find_from(p, 0)
+  while i >= 0 {
+    n = n + 1
+    i = s.find_from(p, i + p.len())
+  }
+  return n
+}
+
+/// True when `s` is empty or only whitespace.
+pub fn is_blank(s: view String) -> Bool {
+  var i = 0
+  while i < s.len() {
+    if !is_space(s.char_at(i)) {
+      return false
+    }
+    i = i + s.char_size(i)
+  }
+  return true
+}
+
+/// True when every character of `s` is ASCII (and `s` may be empty).
+pub fn all_ascii(s: view String) -> Bool {
+  var i = 0
+  while i < s.len() {
+    if s.byte(i) >= 128 {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+// ───────────────────────── transformations ─────────────────────────
+
+pub fn replace(s: view String, from: view String, to: view String) -> String {
+  return s.replace(from, to)
+}
+
+pub fn to_lower(s: view String) -> String {
+  return s.to_lower()
+}
+
+pub fn to_upper(s: view String) -> String {
+  return s.to_upper()
+}
+
+pub fn repeat(s: view String, n: Int) -> String {
+  return s.repeat(n)
+}
+
+pub fn trim(s: view String) -> String {
+  return s.trim()
+}
+
+pub fn trim_start(s: view String) -> String {
+  return s.trim_start()
+}
+
+pub fn trim_end(s: view String) -> String {
+  return s.trim_end()
+}
+
+/// `s` without the prefix `p`, or None when `s` does not start with it.
+pub fn strip_prefix(s: view String, p: view String) -> Option<String> {
+  if !s.starts_with(p) {
+    return None
+  }
+  return Some(s.slice(p.len(), s.len()))
+}
+
+pub fn strip_suffix(s: view String, p: view String) -> Option<String> {
+  if !s.ends_with(p) {
+    return None
+  }
+  return Some(s.slice(0, s.len() - p.len()))
+}
+
+/// Upper-case the first character (ASCII letters only), leave the rest.
+pub fn capitalize(s: view String) -> String {
+  var r = String.new()
+  if s.len() == 0 {
+    return r
+  }
+  let n = s.char_size(0)
+  r.push_char(char_to_upper(s.char_at(0)))
+  r.push_slice(s, n, s.len())
+  return r
+}
+
+// ───────────────────────── splitting and joining ─────────────────────────
+
+/// Pieces of `s` separated by `sep` (non-empty); empty pieces are kept: `split("a,,b", ",")` is `a`, ``, `b`.
+pub fn split(s: view String, sep: view String) -> List<String> {
+  return s.split(sep)
+}
+
+/// Pieces joined with `sep`.
+pub fn join(parts: view List<String>, sep: view String) -> String {
+  return parts.join(sep)
+}
+
+/// Split at the first `sep`: Some((before, after)) or None.
+pub fn split_once(s: view String, sep: view String) -> Option<(String, String)> {
+  if sep.len() == 0 {
+    return None
+  }
+  let i = s.find(sep)
+  if i < 0 {
+    return None
+  }
+  return Some((s.slice(0, i), s.slice(i + sep.len(), s.len())))
+}
+
+/// Split at the last `sep`: Some((before, after)) or None.
+pub fn rsplit_once(s: view String, sep: view String) -> Option<(String, String)> {
+  if sep.len() == 0 {
+    return None
+  }
+  let i = rfind(s, sep)
+  if i < 0 {
+    return None
+  }
+  return Some((s.slice(0, i), s.slice(i + sep.len(), s.len())))
+}
+
+/// Maximal runs of non-whitespace characters (no empty pieces).
+pub fn split_ws(s: view String) -> List<String> {
+  var out = List<String>.new()
+  var i = 0
+  var start = -1
+  while i < s.len() {
+    let sp = is_space(s.char_at(i))
+    if sp && start >= 0 {
+      out.push(s.slice(start, i))
+      start = -1
+    } else if !sp && start < 0 {
+      start = i
+    }
+    i = i + s.char_size(i)
+  }
+  if start >= 0 {
+    out.push(s.slice(start, s.len()))
+  }
+  return out
+}
+
+/// The lines of `s`: separated by "\n", a "\r" before it is removed, and a final empty line after a trailing
+/// newline is not reported (`lines("a\nb\n")` is `a`, `b`; `lines("")` is empty).
+pub fn lines(s: view String) -> List<String> {
+  var out = List<String>.new()
+  var start = 0
+  var i = 0
+  while i < s.len() {
+    if s.byte(i) == 10 {
+      var e = i
+      if e > start && s.byte(e - 1) == 13 {
+        e = e - 1
+      }
+      out.push(s.slice(start, e))
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if start < s.len() {
+    out.push(s.slice(start, s.len()))
+  }
+  return out
+}
+
+// ───────────────────────── parsing ─────────────────────────
+
+/// Parses `[+-]digits` in `base` (2..36; letters in either case). Err explains the failure.
+pub fn parse_int_radix(s: view String, base: Int) -> Result<Int, String> {
+  if base < 2 || base > 36 {
+    return Err(String.from("base must be in 2..36"))
+  }
+  let n = s.len()
+  if n == 0 {
+    return Err(String.from("empty string"))
+  }
+  var i = 0
+  var neg = false
+  if s.byte(0) == 45 || s.byte(0) == 43 {
+    neg = s.byte(0) == 45
+    i = 1
+  }
+  if i >= n {
+    return Err(String.from("no digits"))
+  }
+  // accumulate negatively so that Int.min parses too
+  var acc = 0
+  let lim = -9223372036854775807 - 1
+  while i < n {
+    let d = digit_value(Char.from_int(s.byte(i)), base)
+    if s.byte(i) >= 128 || d < 0 {
+      return Err("invalid digit at byte {i}")
+    }
+    if acc < (lim + d) / base {
+      return Err(String.from("number too large"))
+    }
+    acc = acc * base - d
+    i = i + 1
+  }
+  if neg {
+    return Ok(acc)
+  }
+  if acc == lim {
+    return Err(String.from("number too large"))
+  }
+  return Ok(-acc)
+}
+
+pub fn parse_int(s: view String) -> Result<Int, String> {
+  return parse_int_radix(s, 10)
+}
+
+pub fn parse_bool(s: view String) -> Result<Bool, String> {
+  if s.eq("true") {
+    return Ok(true)
+  }
+  if s.eq("false") {
+    return Ok(false)
+  }
+  return Err(String.from("expected true or false"))
+}
+
+fn pow10(e: Int) -> Float {
+  var r = 1.0
+  var i = 0
+  while i < e {
+    r = r * 10.0
+    i = i + 1
+  }
+  return r
+}
+
+/// Parses `[+-]digits[.digits][e[+-]digits]`, also `inf`, `-inf`, `nan`. Correctly rounded when the digits fit
+/// in 15 significant digits and the decimal exponent is within +-22 (the common case); otherwise the result
+/// can be off by an ulp or two.
+pub fn parse_float(s: view String) -> Result<Float, String> {
+  let n = s.len()
+  if n == 0 {
+    return Err(String.from("empty string"))
+  }
+  var i = 0
+  var neg = false
+  if s.byte(0) == 45 || s.byte(0) == 43 {
+    neg = s.byte(0) == 45
+    i = 1
+  }
+  let rest = s.slice(i, n)
+  if rest.eq("inf") || rest.eq("infinity") {
+    if neg {
+      return Ok(-1.0 / 0.0)
+    }
+    return Ok(1.0 / 0.0)
+  }
+  if rest.eq("nan") {
+    return Ok(0.0 / 0.0)
+  }
+  var mant = 0
+  var exp10 = 0
+  var digits = 0
+  var seen_dot = false
+  while i < n {
+    let b = s.byte(i)
+    if b >= 48 && b <= 57 {
+      digits = digits + 1
+      if mant < 100000000000000000 {
+        mant = mant * 10 + (b - 48)
+        if seen_dot {
+          exp10 = exp10 - 1
+        }
+      } else {
+        if !seen_dot {
+          exp10 = exp10 + 1
+        }
+      }
+    } else if b == 46 && !seen_dot {
+      seen_dot = true
+    } else {
+      break
+    }
+    i = i + 1
+  }
+  if digits == 0 {
+    return Err(String.from("no digits"))
+  }
+  if i < n && (s.byte(i) == 101 || s.byte(i) == 69) {
+    i = i + 1
+    var eneg = false
+    if i < n && (s.byte(i) == 45 || s.byte(i) == 43) {
+      eneg = s.byte(i) == 45
+      i = i + 1
+    }
+    var e = 0
+    var ed = 0
+    while i < n && s.byte(i) >= 48 && s.byte(i) <= 57 {
+      if e < 100000 {
+        e = e * 10 + (s.byte(i) - 48)
+      }
+      ed = ed + 1
+      i = i + 1
+    }
+    if ed == 0 {
+      return Err(String.from("missing exponent digits"))
+    }
+    if eneg {
+      exp10 = exp10 - e
+    } else {
+      exp10 = exp10 + e
+    }
+  }
+  if i < n {
+    return Err("unexpected character at byte {i}")
+  }
+  var v = mant.to_float()
+  if mant == 0 {
+    v = 0.0
+  } else if exp10 >= 0 && exp10 <= 22 {
+    v = v * pow10(exp10)
+  } else if exp10 < 0 && exp10 >= -22 {
+    v = v / pow10(-exp10)
+  } else if exp10 > 400 {
+    v = 1.0 / 0.0
+  } else if exp10 < -400 {
+    v = 0.0
+  } else if exp10 > 0 {
+    v = v * pow(10.0, exp10.to_float())
+  } else {
+    // split in two steps so that 10^-e does not underflow before the multiplication
+    v = v / pow(10.0, (-exp10).to_float())
+  }
+  if neg {
+    return Ok(-v)
+  }
+  return Ok(v)
+}

@@ -1,0 +1,39 @@
+trait Item { fn val(view self) -> Int
+             fn add(mut self, k: Int) }
+struct Wrap<T> { inner: T, extra: List<String> }
+struct Pair2<A, B> { a: A, b: B }
+impl Item for Int { fn val(view self) -> Int { return self }
+                    fn add(mut self, k: Int) { self = self + k } }
+struct Str { s: String }
+impl Item for Str { fn val(view self) -> Int { return self.s.len() }
+                       fn add(mut self, k: Int) { self.s.push_int(k) } }
+impl Item for Wrap<Str> {
+  fn val(view self) -> Int { return self.inner.val() + self.extra.len() }
+  fn add(mut self, k: Int) { self.inner.add(k)
+                             self.extra.push(String.from("e")) }
+}
+impl Item for Wrap<Int> {
+  fn val(view self) -> Int { return self.inner.val() * 2 + self.extra.len() }
+  fn add(mut self, k: Int) { self.inner.add(k)
+                             self.extra.push(String.from("f")) }
+}
+fn boxit<T: Item>(x: T) -> Box<dyn Item> { return Box<dyn Item>.new(move x) }
+fn total(l: view List<Box<dyn Item>>) -> Int {
+  var t = 0
+  for i in 0..l.len() { t = t + l.at(i).val() }
+  return t
+}
+fn main() {
+  var l = List<Box<dyn Item>>.new()
+  l.push(boxit(5))
+  l.push(boxit(Str { s: String.from("abc") }))
+  l.push(boxit(Wrap { inner: Str { s: String.from("w") }, extra: List<String>.new() }))
+  l.push(boxit(Wrap { inner: 3, extra: List<String>.new() }))
+  print(total(l))
+  for mut b in l { b.add(2) }
+  print(total(l))
+  l.at(2).add(7)
+  print(l.at(2).val())
+  let top = l.pop()
+  print(top.val())
+}

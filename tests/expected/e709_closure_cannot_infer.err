@@ -1,0 +1,9 @@
+error: cannot infer the type of the closure parameter 'x'
+ --> tests/e709_closure_cannot_infer.yx:2:12
+  |
+2 |   let f = |x| x + 1
+  |            ^
+  = a closure learns its parameter types from where it is used (an argument of a known function type)
+  = help: write the type: `|x: Int| ..`
+
+1 error(s). Nothing was generated.

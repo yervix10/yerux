@@ -1,0 +1,8 @@
+error: module 'lib' has no item called 'mul'
+ --> tests/mod_err/missing_item/main.yx:4:9
+  |
+4 |   print(lib.mul(2, 3))
+  |         ^^^^^^^
+  = public items of 'lib': add, sub
+
+1 error(s). Nothing was generated.

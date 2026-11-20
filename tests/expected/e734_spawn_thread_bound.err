@@ -1,0 +1,7 @@
+error: spawn cannot transfer 'job' of type Job
+  --> tests/e734_spawn_thread_bound.yx:13:18
+   |
+13 |     let worker = spawn move || job.window.id
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

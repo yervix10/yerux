@@ -1,0 +1,13 @@
+// std.io: invalid UTF-8 on stdin is an IoError value (tests/io_stdin_bad.stdin)
+import std.io
+
+fn main() {
+  match io.read_line() {
+    Ok(opt) => { print(opt.is_some()) }
+    Err(e) => { print("error: {e}") }
+  }
+  match io.read_line() {
+    Ok(opt) => { print(opt.is_some()) }
+    Err(e) => { print("error: {e}") }
+  }
+}

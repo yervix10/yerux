@@ -1,0 +1,75 @@
+struct Box<T> { v: T, n: Int }
+struct Counter { n: Int }
+impl Counter {
+    fn bump(mut self) { self.n = self.n + 1 }
+    fn get(view self) -> Int { return self.n }
+}
+struct Bag { items: List<String> }
+impl Bag {
+    fn add(mut self, s: view String) {
+        self.items.push(String.from(s))
+    }
+    fn count(view self) -> Int { return self.items.len() }
+}
+fn wrap<T>(x: T) -> Box<T> { return Box { v: move x, n: 1 } }
+fn unwrap<T: Copy>(b: Box<T>) -> T { return b.v }
+fn len_of<T>(l: view List<T>) -> Int { return l.len() }
+fn push_twice<T: Copy>(l: mut List<T>, x: T) {
+    l.push(x)
+    l.push(x)
+}
+fn last<T: Copy>(l: view List<T>) -> T { return l.get(l.len() - 1) }
+fn swap<A: Copy, B: Copy>(p: Pair<A, B>) -> Pair<B, A> { return Pair { a: p.b, b: p.a } }
+struct Pair<A, B> { a: A, b: B }
+enum Maybe<T> { Some(T), None }
+fn or_else<T: Copy>(m: Maybe<T>, d: T) -> T {
+    match m {
+        Some(v) => { return v }
+        None => { return d }
+    }
+}
+fn largest<T: Ordered + Copy>(l: view List<T>) -> T {
+    var best = l.get(0)
+    var i = 1
+    while i < l.len() {
+        let c = l.get(i)
+        if best < c { best = c }
+        i = i + 1
+    }
+    return best
+}
+fn main() {
+    let b = wrap(5)
+    print(unwrap(b))
+    let s = String.from("hello")
+    var c = Counter { n: 0 }
+    c.bump()
+    c.bump()
+    print(c.get())
+    var bag = Bag { items: List<String>.new() }
+    bag.add(s)
+    bag.add(s)
+    print(bag.count())
+    var l = List.new()
+    push_twice(l, 5)
+    print(len_of(l))
+    print(last(l))
+    var ls = List<String>.new()
+    ls.push(String.from("a"))
+    print(len_of(ls))
+    let p = swap(Pair { a: 1, b: "t" })
+    print(p.a)
+    print(p.b)
+    print(or_else(Maybe<Int>.None, 42))
+    print(or_else(Maybe.Some(7), 42))
+    var words = List<Text>.new()
+    words.push("pear")
+    words.push("zebra")
+    words.push("apple")
+    print(largest(words))
+    var nums = List.new()
+    nums.push(3)
+    nums.push(30)
+    nums.push(8)
+    print(largest(nums))
+}

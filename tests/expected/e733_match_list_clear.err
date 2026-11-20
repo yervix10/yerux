@@ -1,0 +1,9 @@
+error: cannot change 'xs' while a `match` arm is borrowing its payloads
+  --> tests/e733_match_list_clear.yx:16:7
+   |
+16 |       xs.clear()
+   |       ^^^^^^^^^^
+   = the `match` on line 14 lends the payloads of 'xs.at(..)' to the names its pattern binds; they would dangle if it changed or moved
+   = help: do the change after the `match`, or use `match move` to take the payloads out
+
+1 error(s). Nothing was generated.

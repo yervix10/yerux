@@ -1,0 +1,78 @@
+// Compound conditions (`&&`, `||`, `!`) are lowered to one branch per operand, so rangeopt sees each
+// comparison on its own edge. Evaluation order stays left to right with short-circuiting.
+fn square_and(x: Int) -> Int {
+  if x > 0 && x < 100 { return x * x }
+  return -1
+}
+
+fn square_or(x: Int) -> Int {
+  if x <= 0 || x >= 100 { return -1 }
+  return x * x
+}
+
+fn square_not(x: Int) -> Int {
+  if !(x <= 0 || x >= 100) { return x * x }
+  return -1
+}
+
+fn three(x: Int, y: Int) -> Int {
+  if x >= 0 && y >= 0 && x < 1000 && y < 1000 { return x * y + x + y }
+  return -1
+}
+
+fn loop_and(n: Int) -> Int {
+  var i = 0
+  var s = 0
+  while i < n && i < 50 {
+    s = s + i * i
+    i = i + 1
+  }
+  return s
+}
+
+fn mixed(x: Int) -> Int {
+  if (x > 10 && x < 20) || (x > 100 && x < 200) { return x * x }
+  return 0
+}
+
+fn t(v: Bool, tag: Int, log: mut List<Int>) -> Bool {
+  log.push(tag)
+  return v
+}
+
+fn show(log: view List<Int>) {
+  var n = 0
+  for i in 0..log.len() { n = n * 10 + log.at(i) }
+  print(n)
+}
+
+fn order() {
+  var log = List.new()
+  if t(true, 1, log) && t(false, 2, log) && t(true, 3, log) { print("no") } else { show(log) }
+  log = List.new()
+  if t(false, 1, log) || t(true, 2, log) || t(true, 3, log) { show(log) }
+  log = List.new()
+  if !(t(false, 1, log) || t(false, 2, log)) && t(true, 3, log) { show(log) }
+  log = List.new()
+  var k = 0
+  while t(k < 3, 4, log) && t(true, 5, log) { k = k + 1 }
+  show(log)
+}
+
+fn main() {
+  for x in -3..4 {
+    print(square_and(x * 40))
+    print(square_or(x * 40))
+    print(square_not(x * 40))
+  }
+  print(three(5, 7))
+  print(three(-1, 7))
+  print(three(999, 999))
+  print(three(1000, 1))
+  print(loop_and(10))
+  print(loop_and(200))
+  print(mixed(15))
+  print(mixed(150))
+  print(mixed(50))
+  order()
+}

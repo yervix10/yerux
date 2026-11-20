@@ -1,0 +1,94 @@
+// String building, searching, splitting, case, parsing, interpolation
+fn word_count(s: view String) -> Int {
+  let parts = s.split(" ")
+  var n = 0
+  for p in parts {
+    if !p.is_empty() { n = n + 1 }
+  }
+  return n
+}
+
+fn capitalize(s: view String) -> String {
+  if s.is_empty() { return String.new() }
+  let head = s.slice(0, 1)
+  var out = head.to_upper()
+  let rest = s.slice(1, s.len())
+  out.push_str(rest)
+  return out
+}
+
+fn is_palindrome(s: view String) -> Bool {
+  var i = 0
+  var j = s.len() - 1
+  while i < j {
+    if s.byte(i) != s.byte(j) { return false }
+    i = i + 1
+    j = j - 1
+  }
+  return true
+}
+
+fn sum_numbers(s: view String) -> Int {
+  var total = 0
+  for part in s.split(",") {
+    var n = 0
+    let t = part.trim()
+    if t.parse_int(n) { total = total + n }
+  }
+  return total
+}
+
+fn main() {
+  let line = String.from("  the quick  brown fox  ")
+  let t = line.trim()
+  print("[{t}] {t.len()} {word_count(line)}")
+  print(t.to_upper())
+  print(capitalize(t))
+  print(t.starts_with("the"))
+  print(t.ends_with("fox"))
+  print(t.contains("brown"))
+  print(t.find("quick"))
+  print(t.find("slow"))
+  print(t.replace("quick", "slow"))
+  print(t.slice(4, 9))
+  let ab = String.from("ab")
+  print(ab.repeat(3))
+
+  let parts = t.split(" ")
+  print(parts.len())
+  let joined = parts.join("-")
+  print(joined)
+
+  print(is_palindrome("racecar"))
+  print(is_palindrome("racecars"))
+  print(sum_numbers("1, 2, x, 30 , -4"))
+
+  var n = 0
+  let num1 = String.from("123")
+  let num2 = String.from("12a")
+  let ok = num1.parse_int(n)
+  print("{ok} {n}")
+  let ok2 = num2.parse_int(n)
+  print("{ok2} {n}")
+
+  var s = String.new()
+  for i in 0..5 {
+    s.push_int(i)
+    s.push_str(",")
+  }
+  s.push_byte(33)
+  print(s)
+  print(s.byte(0))
+  let a = String.from("abc")
+  let b = String.from("abd")
+  print(a < b)
+  print(a == "abc")
+  print(a.eq(b))
+  let both = a + b
+  print(both)
+  var x = 7
+  print("x = {x}, next = {x + 1}, braces: {{ok}}")
+  let mixed = String.from("MiXeD")
+  let lower = mixed.to_lower()
+  print(lower)
+}

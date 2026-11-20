@@ -1,0 +1,21 @@
+// clearing the list whose element is being matched
+enum Msg { Text(String), Nums(List<Int>), Quit }
+fn mgrow(m: mut Msg, k: Int) {
+  match mut m {
+    Text(s) => { s.push_str("!") }
+    Nums(l) => { l.push(k) }
+    Quit => { }
+  }
+}
+fn takes(m: Msg) { }
+fn main() {
+  var xs = List<Msg>.new()
+  xs.push(Msg.Text(String.from("abc")))
+  match xs.at(0) {
+    Text(s) => {
+      xs.clear()
+      print(s.len())
+    }
+    _ => { }
+  }
+}

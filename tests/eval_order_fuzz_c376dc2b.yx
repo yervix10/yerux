@@ -1,0 +1,7 @@
+fn f2(p0: Bool, p1: Int, p2: Int) -> Int {
+  print(7)
+  return p1
+}
+fn main() {
+  var t22 = (f2((7 <= 31), 5, 10) - (100 + 9223372036854775806))
+}

@@ -1,0 +1,8 @@
+fn launch() -> JoinHandle<Int> {
+  scope {
+    let worker = spawn move || 1
+    return worker
+  }
+}
+
+fn main() {}

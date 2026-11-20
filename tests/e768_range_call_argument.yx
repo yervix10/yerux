@@ -1,0 +1,5 @@
+fn show(p: Int<0..100>) -> Int { return p }
+fn main() {
+  let n = 150
+  print(show(n))
+}

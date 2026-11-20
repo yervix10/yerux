@@ -1,0 +1,61 @@
+// Generic recursion, generic calling generic, and instances shared between call sites.
+enum Maybe<T> { Some(T), None }
+struct Pair<A, B> { a: A, b: B }
+
+fn fib<T: Copy>(n: Int, tag: T) -> Int {
+    if n < 2 { return n }
+    return fib(n - 1, tag) + fib(n - 2, tag)
+}
+fn pair_of<T: Copy>(x: T) -> Pair<T, T> { return Pair { a: x, b: x } }
+fn swap<T: Copy>(p: Pair<T, T>) -> Pair<T, T> { return Pair { a: p.b, b: p.a } }
+fn swapped_pair<T: Copy>(x: T, y: T) -> Pair<T, T> { return swap(Pair { a: x, b: y }) }
+fn min<T: Ordered + Copy>(a: T, b: T) -> T {
+    if a < b { return a }
+    return b
+}
+fn clamp<T: Ordered + Copy>(x: T, lo: T, hi: T) -> T { return min(hi, max(lo, x)) }
+fn max<T: Ordered + Copy>(a: T, b: T) -> T {
+    if a > b { return a }
+    return b
+}
+fn find<T: Equal>(l: view List<T>, x: view T) -> Maybe<Int> {
+    var i = 0
+    while i < l.len() {
+        if l.at(i) == x { return Maybe.Some(i) }
+        i = i + 1
+    }
+    return Maybe.None
+}
+fn unwrap_or<T: Copy>(m: Maybe<T>, d: T) -> T {
+    match m {
+        Some(v) => { return v }
+        None => { return d }
+    }
+}
+fn main() {
+    print(fib(15, 0))
+    print(fib(10, true))
+    let p = swapped_pair(1, 2)
+    print(p.a)
+    print(p.b)
+    print(clamp(50, 0, 10))
+    print(clamp(-5, 0, 10))
+    print(clamp(5, 0, 10))
+    let a = "pear"
+    let b = "apple"
+    print(min(a, b))
+    print(max(a, b))
+    var l = List<Int>.new()
+    l.push(5)
+    l.push(6)
+    let six = 6
+    let nine = 9
+    print(unwrap_or(find(l, six), 99))
+    print(unwrap_or(find(l, nine), 99))
+    var words = List<Text>.new()
+    words.push("x")
+    words.push("y")
+    let y = "y"
+    print(unwrap_or(find(words, y), 99))
+    print(max(true, false))
+}

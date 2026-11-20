@@ -1,0 +1,74 @@
+// Generic List<T> with Copy elements: Int, Bool, Text, and your own structs/enums
+struct Point { x: Int, y: Int }
+enum Color { Red, Green, Blue }
+
+fn sum(l: view List<Int>) -> Int {
+  var i = 0
+  var t = 0
+  while i < l.len() {
+    t = t + l.get(i)
+    i = i + 1
+  }
+  return t
+}
+
+fn squares(n: Int) -> List<Int> {
+  var l = List<Int>.new()
+  var i = 0
+  while i < n {
+    l.push(i * i)
+    i = i + 1
+  }
+  return l
+}
+
+fn norm1(ps: view List<Point>) -> Int {
+  var i = 0
+  var t = 0
+  while i < ps.len() {
+    let p = ps.get(i)
+    t = t + p.x + p.y
+    i = i + 1
+  }
+  return t
+}
+
+fn main() {
+  let a = squares(5)
+  var b = List.new()            // bare List is List<Int>
+  b.push(10)
+  b.push(20)
+  print(sum(a))
+  print(sum(b))
+
+  var flags = List<Bool>.new()
+  flags.push(true)
+  flags.push(false)
+  print(flags.get(1))
+
+  var words = List<Text>.new()
+  words.push("alpha")
+  words.push("beta")
+  print(words.get(0))
+  print(words.len())
+
+  var ps = List<Point>.new()
+  ps.push(Point { x: 1, y: 2 })
+  ps.push(Point { x: 10, y: 20 })
+  print(norm1(ps))
+  ps.at(0).x = 100                // a list element is a place: modify it in place
+  print(ps.at(0).x)
+  ps.set(1, Point { x: 0, y: 0 })
+  print(norm1(ps))
+
+  var cs = List<Color>.new()
+  cs.push(Color.Green)
+  cs.push(Color.Blue)
+  match cs.get(1) {
+    Red => { print("red") }
+    Green => { print("green") }
+    Blue => { print("blue") }
+  }
+  let last = cs.pop()
+  print(cs.len())
+}

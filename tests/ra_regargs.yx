@@ -1,0 +1,52 @@
+// register arguments (first four) + stack arguments, rotated loops (nested, call in header, zero-trip)
+fn six(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) -> Int {
+  return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6
+}
+fn four(a: Int, b: Int, c: Int, d: Int) -> Int {
+  return a - b + c - d
+}
+fn spilly(a: Int, b: Int, c: Int, d: Int, e: Int) -> Int {
+  let x1 = a + 1
+  let x2 = b + 2
+  let x3 = c + 3
+  let x4 = d + 4
+  let x5 = e + 5
+  let y = six(x5, x4, x3, x2, x1, a) + four(b, c, d, e)
+  return y + x1 + x2 + x3 + x4 + x5 + a + b + c + d + e
+}
+fn limit(n: Int) -> Int {
+  return n * 2
+}
+fn swapargs(a: Int, b: Int) -> Int {
+  return four(b, a, b, a) * 10 + four(a, b, a, b)
+}
+fn main() {
+  print(six(1, 2, 3, 4, 5, 6))
+  print(four(10, 3, 2, 1))
+  print(spilly(1, 2, 3, 4, 5))
+  print(swapargs(7, 2))
+  var i = 0
+  var total = 0
+  while i < 20 {
+    var j = 0
+    while j < i {
+      if j % 3 != 0 {
+        total = total + four(i, j, i, j) + six(i, j, 1, 2, 3, 4)
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  print(total)
+  var k = 0
+  while k < limit(7) {
+    k = k + 3
+  }
+  print(k)
+  var z = 5
+  while z < 3 {
+    print(z)
+    z = z + 1
+  }
+  print(z)
+}

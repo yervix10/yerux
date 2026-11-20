@@ -1,0 +1,7 @@
+error: expected List but this is List<Int<0..9>>
+ --> tests/e776_range_list_invariant.yx:5:15
+  |
+5 |   print(total(l))
+  |               ^
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,15 @@
+// memopt hoisted `p = const` out of a loop because a parameter's entry definition was not counted
+fn f2(p1: Int, p2: Int) -> Int {
+  var i = 0
+  while i < 3 && (p1 < p2) {
+    p2 = 3 * (-27)
+    i = i + 1
+  }
+  print(p2 * 2)
+  return p2
+}
+fn main() {
+  var v = 5
+  print(f2(v * v, v))
+  print(f2(v, v * v))
+}

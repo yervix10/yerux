@@ -1,0 +1,40 @@
+error: impl Area for Sq is missing: scale
+  --> examples/e33_bad_impls.yx:10:1
+   |
+10 | impl Area for Sq {
+   | ^^^^
+   = help: add fn scale(mut self, k: Int) { .. }
+
+error: method 'area' does not match the signature in trait Area
+  --> examples/e33_bad_impls.yx:14:8
+   |
+14 |     fn area(self) -> Int { return self.w * self.h }
+   |        ^^^^
+   = trait Area requires: fn area(view self) -> Int
+   = this impl declares: fn area(self) -> Int
+   = help: parameter modes (`view`/`mut`), types and the return type must be identical
+
+error: 'extra' is not a method of trait Area
+  --> examples/e33_bad_impls.yx:20:8
+   |
+20 |     fn extra(view self) -> Int { return 1 }
+   |        ^^^^^
+   = Area has: area, scale
+   = help: move it to a plain `impl Type { .. }` block
+
+error: unknown trait 'Missing'
+  --> examples/e33_bad_impls.yx:22:6
+   |
+22 | impl Missing for Dot {
+   |      ^^^^^^^
+   = known traits: Copy, Equal, Ordered, Show, Hash, Area
+   = help: declare it first: `trait Missing { fn method(view self) -> Int }`
+
+error: Ordered is already implemented for Dot
+  --> examples/e33_bad_impls.yx:26:1
+   |
+26 | impl Ordered for Dot { fn cmp(view self, other: view Dot) -> Int { return 1 } }
+   | ^^^^
+   = each trait can be implemented once per type (built-in impls count)
+
+5 error(s). Nothing was generated.

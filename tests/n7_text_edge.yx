@@ -1,0 +1,7 @@
+fn main() {
+  print("")
+  print("50% off %d %s \\n")
+  print("café ñ 中文")
+  print("??/ ?? trigraph")
+  print("// not a comment")
+}

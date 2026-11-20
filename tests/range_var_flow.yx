@@ -1,0 +1,116 @@
+// Flow narrowing of `var` integers: facts from conditions, reset by assignments, forgotten around loops.
+type Level = Int<1..5>
+
+fn up(n: Int) -> Int {
+  var level: Level = 3
+  if n > 0 {
+    level = level + 1          // level is exactly 3 here: 4 fits
+  }
+  if level < 5 {
+    level = level + 1          // level is at most 4 here: 5 fits
+  }
+  return level
+}
+
+fn climb(steps: Int) -> Int {
+  var level: Level = 1
+  var i = 0
+  while i < steps {
+    if level < 5 {
+      level = level + 1
+    }
+    i = i + 1
+  }
+  return level
+}
+
+fn guarded(n: Int) -> Int {
+  var x = n
+  if x < 0 { return -1 }
+  if x > 100 { return -2 }
+  let p: Int<0..100> = x
+  x = x + 1000                 // the fact about x is replaced by the new value's interval
+  let q: Int<1000..1100> = x
+  return p + q
+}
+
+fn reassign_in_branch(n: Int) -> Int {
+  var x = 50
+  if n > 0 {
+    x = 10
+  } else {
+    x = 90
+  }
+  let r: Int<10..90> = x        // join of 10 and 90
+  return r
+}
+
+fn loop_kills(n: Int) -> Int {
+  var x = 5
+  var guard = 0
+  while guard < n {
+    x = x + 7                   // x grows: no fact about x may survive from before the loop
+    guard = guard + 1
+  }
+  if x >= 5 && x <= 100 {
+    let p: Int<5..100> = x
+    return p
+  }
+  return 0
+}
+
+fn countdown(start: Int) -> Int {
+  var k = start
+  var s = 0
+  while k > 0 {
+    let pos: Int<1..> = k       // the loop condition holds at the top of each pass
+    s = s + pos
+    k = k - 1
+  }
+  return s
+}
+
+fn param_changed(n: Int) -> Int {
+  if n < 0 { return -1 }
+  let a: Int<0..> = n
+  n = n - 100                   // a by-value parameter that is assigned behaves like a var
+  if n >= 0 {
+    let b: Int<0..> = n
+    return a + b
+  }
+  return a
+}
+
+fn no_overflow(n: Int) -> Int {
+  var x = n
+  if x < 9223372036854775807 {
+    x = x + 1                   // x < MAX: the addition cannot overflow
+  }
+  return x
+}
+
+fn wrap_known() -> Int {
+  var x = 8
+  return x.wrapping_add(255).wrapping_mul(3)   // a narrowed receiver is still an Int for wrapping operations
+}
+
+fn main() {
+  print(up(1))
+  print(up(0))
+  print(climb(10))
+  print(climb(2))
+  print(guarded(7))
+  print(guarded(-7))
+  print(guarded(700))
+  print(reassign_in_branch(1))
+  print(reassign_in_branch(-1))
+  print(loop_kills(0))
+  print(loop_kills(3))
+  print(loop_kills(100))
+  print(countdown(4))
+  print(param_changed(150))
+  print(param_changed(5))
+  print(no_overflow(41))
+  print(no_overflow(9223372036854775807))
+  print(wrap_known())
+}

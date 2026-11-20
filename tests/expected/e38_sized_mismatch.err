@@ -1,0 +1,18 @@
+error: expected UInt8 but this is Int
+ --> examples/e38_sized_mismatch.yx:5:26
+  |
+5 |   let small = takes_byte(n)
+  |                          ^
+  = Int and UInt8 are different types: numbers are never converted implicitly
+  = help: convert it explicitly: write `n.to_uint8()`
+  = the conversion panics when the value does not fit UInt8; `truncate_uint8()` keeps the low bits instead
+
+error: the literal 300 does not fit UInt8 (0 to 255)
+ --> examples/e38_sized_mismatch.yx:6:24
+  |
+6 |   let big = takes_byte(300)
+  |                        ^^^
+  = a UInt8 is expected here, so the literal is read as a UInt8
+  = help: pick a type that is big enough (e.g. Int or Int64), or convert a variable at run time with `x.to_uint8()` (panics if it does not fit) or `x.truncate_uint8()` (keeps the low bits)
+
+2 error(s). Nothing was generated.

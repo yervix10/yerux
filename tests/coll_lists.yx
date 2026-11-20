@@ -1,0 +1,73 @@
+// List API on Int, String and struct elements
+struct Item { name: String, qty: Int }
+impl Ordered for Item {
+  fn cmp(view self, other: view Item) -> Int {
+    if self.qty < other.qty { return -1 }
+    if self.qty > other.qty { return 1 }
+    return 0
+  }
+}
+impl Show for Item {
+  fn show(view self) -> String { return "{self.name}x{self.qty}" }
+}
+
+fn main() {
+  var l = List<Int>.new()
+  var i = 0
+  var x = 1
+  while i < 3000 {
+    x = (x * 48271) % 2147483647
+    l.push(x % 500 - 250)
+    i = i + 1
+  }
+  l.sort()
+  print(l.is_sorted())
+  print("{l.at(0)} {l.at(2999)} {l.at(1500)}")
+  var eq = List<Int>.new()
+  i = 0
+  while i < 1000 {
+    eq.push(7)
+    i = i + 1
+  }
+  eq.sort()
+  print(eq.is_sorted())
+  var desc = List<Int>.new()
+  i = 0
+  while i < 1000 {
+    desc.push(1000 - i)
+    i = i + 1
+  }
+  desc.sort()
+  print("{desc.at(0)} {desc.at(999)}")
+  var items = List<Item>.new()
+  items.push(Item { name: String.from("c"), qty: 3 })
+  items.push(Item { name: String.from("a"), qty: 1 })
+  items.push(Item { name: String.from("b"), qty: 2 })
+  items.sort()
+  print("{items}")
+  items.insert(1, Item { name: String.from("z"), qty: 9 })
+  let r = items.remove(0)
+  print("{r} {items}")
+  items.reverse()
+  print("{items} {items.len()}")
+  let sw = items.swap_remove(0)
+  print("{sw} {items}")
+  items.truncate(1)
+  print("{items}")
+  var a = List<Int>.new()
+  a.push(1)
+  a.push(2)
+  var b = List<Int>.new()
+  b.push(3)
+  b.push(4)
+  a.extend(move b)
+  print("{a} {a.contains(3)} {a.contains(9)} {a.index_of(4)}")
+  var c = a.copy()
+  c.push(5)
+  print("{a == c} {a < c} {a == a}")
+  print("{a.slice(1, 3)}")
+  var empty = List<Int>.new()
+  empty.sort()
+  empty.reverse()
+  print("{empty} {empty.is_empty()}")
+}

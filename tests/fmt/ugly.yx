@@ -1,0 +1,76 @@
+// header comment
+
+
+import   math
+import utils.strings   as   s
+// about Point
+struct Point{x:Int,y:Int}
+enum Shape { Circle(Int),
+  Rect(Int,Int), Dot }
+struct Team {
+    name: String,   // the name
+    scores: List<Int>,
+
+
+    tags: List<List<Text>>
+}
+pub   fn  area ( sh : Shape ) -> Int
+{
+  match sh {
+    Circle(r)=>{return 3*r*r}
+    Rect(w,h) => {
+       return w*h;
+    }
+    Dot=>{ }
+  }
+}
+
+
+fn main(){
+    let p=Point{x:1,y:-2}
+    let q = Point {
+        x: 3,
+        y: 4
+    }
+    var total=0;var i = 0;
+    while i<10&&!(total>50){
+        total = total+ i * 2 -
+            1
+        if total % 2 == 0 {   print("even") } else if total>3 { print("big") }
+        else {
+            print( "odd" )   // trailing
+        }
+        i=i+1
+
+
+    }
+    defer   print( total )
+    let l = List<List<Int>>.new()
+    let m = - total + -(i)
+    print(area(Shape.Rect(2,3)) )  ;
+    // last comment inside
+}
+test "adds" { assert_eq( 1+1 ,2 ) }
+// trailing comment at end of file
+
+fn apply(f:view fn(Int)->Int,x:Int)->Int{return f(x)}
+fn pick(flag:Bool)->fn(Int,Int)->Int{
+if flag{return |a,b|a+b}
+return move|a:Int,b:Int|->Int{return a*b}}
+fn closures(){
+let fs=List<fn(Int)->Int>.new()
+let k=1
+print(apply( |x| x+k,2))
+let g=||k
+print(g())
+}
+
+type   Byte  =  Int< 0..255 >
+fn   clampb(n:Int)->Byte{
+if n<0{return 0}
+let x: Int<0..9> =n
+return   n}
+fn   asb(n:Int)->Int{
+let b=n   as Int<0..255>   else{return -1}
+let c = n as Int<..9>
+return b+c}

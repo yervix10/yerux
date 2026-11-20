@@ -1,0 +1,10 @@
+fn each(l: view List, f: view fn(Int)) {
+  for x in l { f(x) }
+}
+
+fn main() {
+  let xs = List.new()
+  let total = 0
+  each(xs, |x| total = total + x)
+  print(total)
+}

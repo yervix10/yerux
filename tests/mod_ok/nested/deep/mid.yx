@@ -1,0 +1,5 @@
+import deep.er.core
+
+pub fn via_core() -> Int {
+  return core.base() + 1
+}

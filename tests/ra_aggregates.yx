@@ -1,0 +1,56 @@
+// aggregates + lists with many live scalars around them (Slot/Load/Store/Lea/Copy/ListPush/ListGet/ListFree)
+struct P { a: Int, b: Int, c: Int }
+struct Q { p: P, q: P, n: Int }
+
+fn mk(i: Int) -> Q {
+  return Q { p: P { a: i, b: i * 2, c: i * 3 }, q: P { a: i + 10, b: i + 20, c: i + 30 }, n: i }
+}
+fn total(q: Q) -> Int { return q.p.a + q.p.b + q.p.c + q.q.a + q.q.b + q.q.c + q.n }
+fn bump(q: mut Q, k: Int) {
+  q.p.a = q.p.a + k
+  q.q.c = q.q.c * 2 + k
+  q.n = q.n + 1
+}
+fn main() {
+  var xs = List.new()
+  var i = 0
+  var s0 = 1
+  var s1 = 2
+  var s2 = 3
+  var s3 = 4
+  var s4 = 5
+  var s5 = 6
+  var s6 = 7
+  var s7 = 8
+  var s8 = 9
+  var s9 = 10
+  var s10 = 11
+  var s11 = 12
+  while i < 100 {
+    var q = mk(i)
+    bump(q, s0 % 5)
+    xs.push(total(q) % 1000)
+    s0 = s0 + s1
+    s1 = s1 + s2 % 100
+    s2 = s2 + s3 % 100
+    s3 = s3 + s4 % 100
+    s4 = s4 + s5 % 100
+    s5 = s5 + s6 % 100
+    s6 = s6 + s7 % 100
+    s7 = s7 + s8 % 100
+    s8 = s8 + s9 % 100
+    s9 = s9 + s10 % 100
+    s10 = s10 + s11 % 100
+    s11 = s11 + xs.get(i) % 100
+    s0 = s0 % 1000
+    i = i + 1
+  }
+  var acc = 0
+  var j = 0
+  while j < 100 {
+    acc = (acc + xs.get(j) * (j + 1)) % 1000003
+    j = j + 1
+  }
+  print(acc)
+  print(s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11)
+}

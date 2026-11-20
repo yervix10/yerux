@@ -1,0 +1,29 @@
+struct Box { items: List, id: Int }
+
+fn eat(b: Box) -> Int { return b.items.len() + b.id }
+
+fn main() {
+  var i = 0
+  var acc = 0
+  while i < 10 {
+    var b = Box { items: List.new(), id: i }
+    var k = 0
+    while k < i {
+      b.items.push(k)
+      k = k + 1
+    }
+    if i % 3 == 0 {
+      acc = acc + eat(move b)
+    } else {
+      if i % 3 == 1 {
+        acc = acc + b.items.len()
+      }
+    }
+    if i % 4 == 0 {
+      b = Box { items: List.new(), id: 100 }
+      acc = acc + b.id
+    }
+    i = i + 1
+  }
+  print(acc)
+}

@@ -1,0 +1,5 @@
+trait Compare {
+    fn compare(view self, other: view Box<Self>) -> Bool
+}
+fn compare_object(value: view dyn Compare) {}
+fn main() {}

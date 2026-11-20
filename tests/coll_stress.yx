@@ -1,0 +1,70 @@
+// Map/Set stress: inserts, removals (backward-shift deletion), growth, owned values; invariants checked.
+fn main() {
+  var m = Map<Int, Int>.new()
+  var i = 0
+  while i < 5000 {
+    m.insert(i * 37 % 4999, i)
+    i = i + 1
+  }
+  print(m.len())
+  i = 0
+  var gone = 0
+  while i < 5000 {
+    if i % 3 != 0 {
+      if m.remove(i) {
+        gone = gone + 1
+      }
+    }
+    i = i + 1
+  }
+  print(gone)
+  print(m.len())
+  var ok = true
+  i = 0
+  while i < m.keys.len() {
+    let k = m.keys.at(i)
+    if k % 3 != 0 || m.find(k) != i {
+      ok = false
+    }
+    i = i + 1
+  }
+  print(ok)
+  var names = Map<String, String>.new()
+  i = 0
+  while i < 300 {
+    names.insert("k{i}", "v{i}")
+    i = i + 1
+  }
+  i = 0
+  while i < 300 {
+    if i % 2 == 0 {
+      let key = "k{i}"
+      let v = names.take(key)
+      if v.len() < 2 {
+        print("bad")
+      }
+    }
+    i = i + 1
+  }
+  print(names.len())
+  let probe = String.from("k7")
+  print(names.vals.at(names.find(probe)))
+  var s = Set<Int>.new()
+  i = 0
+  while i < 1000 {
+    s.insert(i % 100 - 50)
+    i = i + 1
+  }
+  print(s.len())
+  print(s.contains(-50))
+  print(s.contains(50))
+  names.clear()
+  print(names.len())
+  print(names.contains(probe))
+  var big = Map<Int, Int>.new()
+  big.insert(-9223372036854775807 - 1, 1)
+  big.insert(9223372036854775807, 2)
+  big.insert(2147483647, 3)
+  big.insert(-2147483647, 4)
+  print(big.get(-9223372036854775807 - 1) + big.get(9223372036854775807) + big.get(2147483647) + big.get(-2147483647))
+}

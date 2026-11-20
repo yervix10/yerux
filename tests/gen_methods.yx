@@ -1,0 +1,41 @@
+// Method call syntax: inherent impls (also on Int), mut/consuming self, receivers that are fields or list elements.
+struct Counter { n: Int }
+struct Holder { c: Counter, items: List<Counter> }
+impl Counter {
+    fn bump(mut self) { self.n = self.n + 1 }
+    fn get(view self) -> Int { return self.n }
+}
+impl Int {
+    fn double(view self) -> Int { return self * 2 }
+}
+struct Name { s: String }
+impl Name {
+    fn len(view self) -> Int { return self.s.len() }
+    fn into_len(self) -> Int { return self.s.len() }
+}
+trait Reset { fn reset(mut self) }
+impl Reset for Counter { fn reset(mut self) { self.n = 0 } }
+fn reset_twice<T: Reset>(x: mut T) {
+    x.reset()
+    x.reset()
+}
+fn main() {
+    var h = Holder { c: Counter { n: 5 }, items: List<Counter>.new() }
+    h.c.bump()
+    h.items.push(Counter { n: 10 })
+    h.items.at(0).bump()
+    h.items.at(0).bump()
+    print(h.c.get())
+    print(h.items.at(0).get())
+    let k = 21
+    print(k.double())
+    let nm = Name { s: String.from("hello") }
+    print(nm.len())
+    print(nm.into_len())
+    reset_twice(h.c)
+    print(h.c.get())
+    var c2 = Counter { n: 3 }
+    c2.reset()
+    c2.bump()
+    print(c2.get())
+}

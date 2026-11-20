@@ -1,0 +1,304 @@
+// std.sort: sorting and searching on List<T> (docs/STDLIB.md).
+//
+//   import std.sort        then      sort.stable(l)   sort.stable_by(l, |a: view Int, b: view Int| -> Int { return b - a })
+//
+// A comparator is `fn(view T, view T) -> Int`: negative when the first argument sorts first, 0 when they are
+// equal, positive otherwise. The sorts only use `at` and `swap`, so they work for owned element types too.
+
+fn run_depth(n: Int) -> Int {
+  var depth = 2
+  var k = n
+  while k > 1 {
+    depth = depth + 2
+    k = k / 2
+  }
+  return depth
+}
+
+fn insertion_range<T>(l: mut List<T>, lo: Int, hi: Int, cmp: view fn(view T, view T) -> Int) {
+  var i = lo + 1
+  while i <= hi {
+    var j = i
+    while j > lo && cmp(l.at(j - 1), l.at(j)) > 0 {
+      l.swap(j - 1, j)
+      j = j - 1
+    }
+    i = i + 1
+  }
+}
+
+fn sift_down<T>(l: mut List<T>, lo: Int, start: Int, n: Int, cmp: view fn(view T, view T) -> Int) {
+  var root = start
+  var child = 2 * root + 1
+  while child < n {
+    if child + 1 < n && cmp(l.at(lo + child), l.at(lo + child + 1)) < 0 {
+      child = child + 1
+    }
+    if cmp(l.at(lo + root), l.at(lo + child)) < 0 {
+      l.swap(lo + root, lo + child)
+      root = child
+      child = 2 * root + 1
+    } else {
+      child = n
+    }
+  }
+}
+
+fn heap_range<T>(l: mut List<T>, lo: Int, hi: Int, cmp: view fn(view T, view T) -> Int) {
+  let n = hi - lo + 1
+  var s = n / 2 - 1
+  while s >= 0 {
+    sift_down(l, lo, s, n, cmp)
+    s = s - 1
+  }
+  var end = n - 1
+  while end > 0 {
+    l.swap(lo, lo + end)
+    sift_down(l, lo, 0, end, cmp)
+    end = end - 1
+  }
+}
+
+// quicksort with median of three, insertion sort for short ranges, heapsort when too deep
+fn qsort<T>(l: mut List<T>, lo: Int, hi: Int, depth: Int, cmp: view fn(view T, view T) -> Int) {
+  var a = lo
+  var b = hi
+  var d = depth
+  while b - a > 16 {
+    if d == 0 {
+      heap_range(l, a, b, cmp)
+      return
+    }
+    d = d - 1
+    let m = a + (b - a) / 2
+    if cmp(l.at(m), l.at(a)) < 0 {
+      l.swap(m, a)
+    }
+    if cmp(l.at(b), l.at(a)) < 0 {
+      l.swap(b, a)
+    }
+    if cmp(l.at(m), l.at(b)) < 0 {
+      l.swap(m, b)
+    }
+    var store = a
+    var i = a
+    while i < b {
+      if cmp(l.at(i), l.at(b)) < 0 {
+        l.swap(i, store)
+        store = store + 1
+      }
+      i = i + 1
+    }
+    l.swap(store, b)
+    if store - a < b - store {
+      qsort(l, a, store - 1, d, cmp)
+      a = store + 1
+    } else {
+      qsort(l, store + 1, b, d, cmp)
+      b = store - 1
+    }
+  }
+  insertion_range(l, a, b, cmp)
+}
+
+/// Sorts in place with `cmp`. Not stable, O(n log n) worst case, no extra memory.
+pub fn unstable_by<T>(l: mut List<T>, cmp: view fn(view T, view T) -> Int) {
+  if l.len() < 2 {
+    return
+  }
+  qsort(l, 0, l.len() - 1, run_depth(l.len()), cmp)
+}
+
+/// Sorts a `List<T: Ordered>` in place; not stable (the same as `l.sort()`).
+pub fn unstable<T: Ordered>(l: mut List<T>) {
+  l.sort()
+}
+
+/// Stable merge sort with `cmp`: elements that compare equal keep their order. O(n log n) comparisons and
+/// moves, plus two temporary `List<Int>` of the same length (the elements themselves are only swapped).
+pub fn stable_by<T>(l: mut List<T>, cmp: view fn(view T, view T) -> Int) {
+  let n = l.len()
+  if n < 2 {
+    return
+  }
+  // sort a permutation of indices: perm[k] = index (in the original order) of the element that goes to k
+  var a = List<Int>.new()
+  var b = List<Int>.new()
+  var i = 0
+  while i < n {
+    a.push(i)
+    b.push(i)
+    i = i + 1
+  }
+  var width = 1
+  while width < n {
+    var lo = 0
+    while lo < n {
+      var mid = lo + width
+      if mid > n {
+        mid = n
+      }
+      var hi = lo + 2 * width
+      if hi > n {
+        hi = n
+      }
+      var x = lo
+      var y = mid
+      var k = lo
+      while x < mid && y < hi {
+        if cmp(l.at(a.get(y)), l.at(a.get(x))) < 0 {
+          b.set(k, a.get(y))
+          y = y + 1
+        } else {
+          b.set(k, a.get(x))
+          x = x + 1
+        }
+        k = k + 1
+      }
+      while x < mid {
+        b.set(k, a.get(x))
+        x = x + 1
+        k = k + 1
+      }
+      while y < hi {
+        b.set(k, a.get(y))
+        y = y + 1
+        k = k + 1
+      }
+      lo = lo + 2 * width
+    }
+    let t = move a
+    a = move b
+    b = move t
+    width = width * 2
+  }
+  // apply the permutation in place, one cycle at a time (every swap puts one element at its final place)
+  var done = List<Bool>.new()
+  i = 0
+  while i < n {
+    done.push(false)
+    i = i + 1
+  }
+  i = 0
+  while i < n {
+    if !done.get(i) {
+      var cur = i
+      while a.get(cur) != i {
+        let nxt = a.get(cur)
+        l.swap(cur, nxt)
+        done.set(cur, true)
+        cur = nxt
+      }
+      done.set(cur, true)
+    }
+    i = i + 1
+  }
+}
+
+/// Stable sort of a `List<T: Ordered>`.
+pub fn stable<T: Ordered>(l: mut List<T>) {
+  stable_by(l, |x: view T, y: view T| -> Int { return x.cmp(y) })
+}
+
+pub fn is_sorted_by<T>(l: view List<T>, cmp: view fn(view T, view T) -> Int) -> Bool {
+  var i = 1
+  while i < l.len() {
+    if cmp(l.at(i - 1), l.at(i)) > 0 {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+/// Reverses in place.
+pub fn reverse<T>(l: mut List<T>) {
+  l.reverse()
+}
+
+/// Removes consecutive elements equal (`==`) to the one before them; a sorted list becomes duplicate-free.
+pub fn dedup<T: Equal>(l: mut List<T>) {
+  dedup_by(l, |x: view T, y: view T| -> Bool { return x.eq(y) })
+}
+
+/// Like `dedup` with `same(kept, candidate)`: a candidate is dropped when `same` is true for the last kept one.
+pub fn dedup_by<T>(l: mut List<T>, same: view fn(view T, view T) -> Bool) {
+  if l.len() < 2 {
+    return
+  }
+  var w = 0
+  var r = 1
+  while r < l.len() {
+    if !same(l.at(w), l.at(r)) {
+      w = w + 1
+      l.swap(w, r)
+    }
+    r = r + 1
+  }
+  l.truncate(w + 1)
+}
+
+// ───────────────────────── searching a sorted list ─────────────────────────
+
+/// First index whose element is not less than the target, where `probe(x)` is `cmp(x, target)`.
+pub fn lower_bound_by<T>(l: view List<T>, probe: view fn(view T) -> Int) -> Int {
+  var lo = 0
+  var hi = l.len()
+  while lo < hi {
+    let mid = lo + (hi - lo) / 2
+    if probe(l.at(mid)) < 0 {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  return lo
+}
+
+/// First index whose element is greater than the target.
+pub fn upper_bound_by<T>(l: view List<T>, probe: view fn(view T) -> Int) -> Int {
+  var lo = 0
+  var hi = l.len()
+  while lo < hi {
+    let mid = lo + (hi - lo) / 2
+    if probe(l.at(mid)) <= 0 {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  return lo
+}
+
+/// Binary search with a probe (`probe(x)` = how `x` compares to the target): Ok(index of a match) or
+/// Err(index where the target would be inserted). With several matches any one may be returned.
+pub fn binary_search_by<T>(l: view List<T>, probe: view fn(view T) -> Int) -> Result<Int, Int> {
+  var lo = 0
+  var hi = l.len()
+  while lo < hi {
+    let mid = lo + (hi - lo) / 2
+    let c = probe(l.at(mid))
+    if c == 0 {
+      return Ok(mid)
+    }
+    if c < 0 {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  return Err(lo)
+}
+
+/// `binary_search` on a list sorted ascending: Ok(index) or Err(insertion index).
+pub fn binary_search<T: Ordered>(l: view List<T>, x: view T) -> Result<Int, Int> {
+  return binary_search_by(l, |e: view T| -> Int { return e.cmp(x) })
+}
+
+pub fn lower_bound<T: Ordered>(l: view List<T>, x: view T) -> Int {
+  return lower_bound_by(l, |e: view T| -> Int { return e.cmp(x) })
+}
+
+pub fn upper_bound<T: Ordered>(l: view List<T>, x: view T) -> Int {
+  return upper_bound_by(l, |e: view T| -> Int { return e.cmp(x) })
+}

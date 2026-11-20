@@ -1,0 +1,154 @@
+// std.text: classification, UTF-8 iteration, split/join/lines, strip, parse_int/parse_float
+import std.text
+
+fn show_list(l: List<String>) {
+  var out = String.new()
+  var i = 0
+  while i < l.len() {
+    out.push_str("[")
+    out.push_str(l.at(i))
+    out.push_str("]")
+    i = i + 1
+  }
+  print("{l.len()}: {out}")
+}
+
+fn pi(s: view String) {
+  let r = text.parse_int(s)
+  print("{s} -> {r}")
+}
+
+fn pf(s: view String) {
+  match text.parse_float(s) {
+    Ok(v) => { print("{s} -> {v}") }
+    Err(e) => { print("{s} -> error {e}") }
+  }
+}
+
+fn main() {
+  print(text.is_digit('7'))
+  print(text.is_alpha('7'))
+  print(text.is_alnum('z'))
+  print(text.is_space('\t'))
+  print(text.is_hex_digit('F'))
+  print(text.is_punct('!'))
+  print(text.digit_value('f', 16))
+  print(text.digit_value('g', 16))
+  print(text.char_to_upper('q'))
+  print(text.char_to_lower('Q'))
+
+  let u = String.from("aéz€😀")
+  let cs = text.chars(u)
+  print(cs.len())
+  print(cs.get(1))
+  let offs = text.char_offsets(u)
+  var i = 0
+  while i < offs.len() {
+    print(offs.get(i))
+    i = i + 1
+  }
+  print(text.from_chars(cs))
+  print(text.reverse(u))
+  print(text.nth_char_offset(u, 3))
+  print(text.nth_char_offset(u, 5))
+  print(text.nth_char_offset(u, 6))
+
+  let s = String.from("  hello, world, hello  ")
+  print(text.find(s, "hello"))
+  print(text.rfind(s, "hello"))
+  print(text.rfind(s, "zzz"))
+  print(text.count(s, "l"))
+  print(text.count(s, "hello"))
+  print(text.is_blank(" \t\n"))
+  print(text.is_blank(s))
+  print(text.all_ascii(u))
+  print(text.trim(s))
+  print(text.trim_start(s).len())
+  print(text.trim_end(s).len())
+  print(text.replace(s, "hello", "bye"))
+  let tr = text.trim(s)
+  print(text.to_upper(tr))
+  print(text.capitalize("élan vital"))
+  print(text.capitalize("word"))
+  print(text.repeat("ab", 3))
+
+  match text.strip_prefix("prefix-body", "prefix-") {
+    Some(b) => { print(b) }
+    None => { print("none") }
+  }
+  match text.strip_suffix("file.yx", ".txt") {
+    Some(b) => { print(b) }
+    None => { print("none") }
+  }
+
+  show_list(text.split("a,,b,", ","))
+  show_list(text.split_ws("  one  two\tthree\n four "))
+  show_list(text.split_ws("   "))
+  show_list(text.lines("a\nb\r\n\nc"))
+  show_list(text.lines("a\nb\n"))
+  show_list(text.lines(""))
+  let nums = text.split("1 2 3", " ")
+  print(text.join(nums, "+"))
+
+  match text.split_once("key=val=ue", "=") {
+    Some(p) => { print("{p.0} | {p.1}") }
+    None => { print("none") }
+  }
+  match text.rsplit_once("key=val=ue", "=") {
+    Some(p) => { print("{p.0} | {p.1}") }
+    None => { print("none") }
+  }
+  match text.split_once("nokey", "=") {
+    Some(p) => { print("{p.0} | {p.1}") }
+    None => { print("none") }
+  }
+
+  pi("42")
+  pi("-17")
+  pi("+5")
+  pi("")
+  pi("-")
+  pi("12x")
+  pi("9223372036854775807")
+  pi("-9223372036854775808")
+  pi("9223372036854775808")
+  pi("-9223372036854775809")
+  pi("99999999999999999999")
+  let r1 = text.parse_int_radix("ff", 16)
+  print("{r1}")
+  let r2 = text.parse_int_radix("-1010", 2)
+  print("{r2}")
+  let r3 = text.parse_int_radix("Zz", 36)
+  print("{r3}")
+  let r4 = text.parse_int_radix("2", 2)
+  print("{r4}")
+  let r5 = text.parse_int_radix("1", 1)
+  print("{r5}")
+  let b1 = text.parse_bool("true")
+  let b2 = text.parse_bool("no")
+  print("{b1} {b2}")
+
+  pf("3.14")
+  pf("-0.5")
+  pf("1e3")
+  pf("2.5E-3")
+  pf("100")
+  pf(".5")
+  pf("5.")
+  pf("0.1")
+  pf("123456789.125")
+  pf("1e22")
+  pf("1e30")
+  pf("123456789012345678901234567890")
+  pf("1e400")
+  pf("1e-400")
+  pf("inf")
+  pf("-inf")
+  pf("nan")
+  pf("")
+  pf(".")
+  pf("1e")
+  pf("1.2.3")
+  pf("abc")
+  pf("-0")
+}

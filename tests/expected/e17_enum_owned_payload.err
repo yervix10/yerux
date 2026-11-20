@@ -1,0 +1,16 @@
+error: 'm' is a Msg and is not copied
+  --> examples/e17_enum_owned_payload.yx:13:14
+   |
+13 |   let copy = m
+   |              ^
+   = help: use `move m` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: cannot use 'm': it was already moved
+  --> examples/e17_enum_owned_payload.yx:15:14
+   |
+15 |   print(size(move m))
+   |              ^^^^^^
+   = 'm' was moved on line 14
+   = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+2 error(s). Nothing was generated.

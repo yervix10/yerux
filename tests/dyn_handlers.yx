@@ -1,0 +1,45 @@
+trait Handler {
+    fn handle(mut self, input: view String) -> String
+    fn count(view self) -> Int
+}
+struct Prefix { label: String, seen: List<Int> }
+struct Counter { calls: Int }
+
+impl Handler for Prefix {
+    fn handle(mut self, input: view String) -> String {
+        self.seen.push(input.len())
+        var output = String.from(self.label)
+        output.push_str(input)
+        return output
+    }
+    fn count(view self) -> Int { return self.seen.len() }
+}
+impl Handler for Counter {
+    fn handle(mut self, input: view String) -> String {
+        self.calls = self.calls + 1
+        return String.from(input)
+    }
+    fn count(view self) -> Int { return self.calls }
+}
+
+fn invoke(handler: mut dyn Handler, input: view String) {
+    let response = handler.handle(input)
+    print(response)
+    print(handler.count())
+}
+
+fn main() {
+    let prefix = Prefix { label: String.from("log: "), seen: List.new() }
+    var handlers = List<Box<dyn Handler>>.new()
+    handlers.push(Box.new(move prefix))
+    handlers.push(Box.new(Counter { calls: 0 }))
+    let input = String.from("ready")
+    invoke(handlers.at(0).get(), input)
+    invoke(handlers.at(1).get(), input)
+    let response = handlers.at(0).handle(input)
+    print(response)
+    print(handlers.at(0).count())
+    handlers.set(0, Box.new(Counter { calls: 10 }))
+    print(handlers.at(0).count())
+    handlers.clear()
+}

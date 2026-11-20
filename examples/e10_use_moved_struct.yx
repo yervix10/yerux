@@ -1,0 +1,9 @@
+struct Team { scores: List }
+
+fn consume(t: Team) { }
+
+fn main() {
+  let a = Team { scores: List.new() }
+  consume(move a)
+  print(a.scores.len())
+}

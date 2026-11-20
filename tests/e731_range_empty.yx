@@ -1,0 +1,7 @@
+fn invalid(x: Int<5..2>) -> Int {
+  return x
+}
+
+fn main() {
+  print(invalid(4))
+}

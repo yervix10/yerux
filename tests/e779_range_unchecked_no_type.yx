@@ -1,0 +1,8 @@
+// `unchecked(x)` takes its range from the context.
+fn main() {
+  let n = 300
+  unsafe {
+    let b = unchecked(n)
+    print(b)
+  }
+}

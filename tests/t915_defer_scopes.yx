@@ -1,0 +1,66 @@
+// defer in functions, loops, branches, with break/continue/return and owned values
+struct Log { lines: List<String> }
+
+fn note(log: mut Log, msg: Text) {
+  log.lines.push(String.from(msg))
+}
+
+fn work(log: mut Log, mode: Int) -> Int {
+  defer note(log, "work finished")
+  var buf = List<Int>.new()
+  defer note(log, "buf released")
+  buf.push(mode)
+  if mode == 1 {
+    defer note(log, "inner scope")
+    return 10
+  }
+  if mode == 2 { return 20 }
+  note(log, "falling through")
+  return buf.len()
+}
+
+fn loop_defers() -> Int {
+  var total = 0
+  for i in 0..6 {
+    defer total = total + 100
+    if i == 1 { continue }
+    if i == 4 { break }
+    total = total + i
+  }
+  return total
+}
+
+fn nested(n: Int) {
+  defer print("nested exit")
+  var i = 0
+  while i < n {
+    defer print("iteration end")
+    defer print(i)
+    i = i + 1
+    if i == 2 { continue }
+    print("body")
+  }
+}
+
+fn dump(log: view Log) {
+  for i in 0..log.lines.len() { print(log.lines.at(i)) }
+}
+
+fn main() {
+  defer print("main exits last")
+  var log = Log { lines: List<String>.new() }
+  print(work(log, 0))
+  print(work(log, 1))
+  print(work(log, 2))
+  dump(log)
+  print(loop_defers())
+  nested(3)
+
+  var count = 0
+  if count == 0 {
+    defer count = count + 1
+    count = count + 5
+  }
+  print(count)
+  defer print("deferred in main")
+}

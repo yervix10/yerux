@@ -1,0 +1,5 @@
+fn quotient(x: Int<1..10>, divisor: Int<-2..2>) -> Int {
+  return x / divisor
+}
+
+fn main() {}

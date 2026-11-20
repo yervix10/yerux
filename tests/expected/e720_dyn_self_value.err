@@ -1,0 +1,7 @@
+error: trait 'Consume' is not object-safe: method 'consume' takes self by value
+ --> tests/e720_dyn_self_value.yx:5:28
+  |
+5 |     var objects = List<Box<dyn Consume>>.new()
+  |                            ^^^
+
+1 error(s). Nothing was generated.

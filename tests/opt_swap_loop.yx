@@ -1,0 +1,26 @@
+fn main() {
+  var a = 0
+  var b = 1
+  var n = 0
+  while n < 40 {
+    let t = a + b
+    a = b
+    b = t
+    n = n + 1
+  }
+  print(a)
+  var x = 1
+  var y = 2
+  var z = 3
+  var k = 0
+  while k < 7 {
+    let tmp = x
+    x = y
+    y = z
+    z = tmp
+    k = k + 1
+  }
+  print(x)
+  print(y)
+  print(z)
+}

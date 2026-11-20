@@ -1,0 +1,322 @@
+// String API, written in Yerux on top of len / byte / push_byte / push_slice.
+// Arguments declared `view String` also accept a Text (the compiler copies it into a hidden String).
+
+fn std__is_ws(b: Int) -> Bool {
+    return b == 32 || b == 9 || b == 10 || b == 13
+}
+
+// Upper/lower case of one code point: ASCII, Latin-1, Latin Extended-A pairs, Greek and Cyrillic letters.
+fn std__case_cp(cp: Int, up: Bool) -> Int {
+    if up {
+        if cp >= 97 && cp <= 122 {
+            return cp - 32
+        }
+        if cp >= 224 && cp <= 254 && cp != 247 {
+            return cp - 32
+        }
+        if cp == 255 {
+            return 376
+        }
+        if (cp >= 257 && cp <= 311 && cp % 2 == 1) || (cp >= 331 && cp <= 375 && cp % 2 == 1) {
+            return cp - 1
+        }
+        if cp >= 945 && cp <= 969 && cp != 962 {
+            return cp - 32
+        }
+        if cp == 962 {
+            return 931
+        }
+        if cp >= 1072 && cp <= 1103 {
+            return cp - 32
+        }
+        if cp >= 1104 && cp <= 1119 {
+            return cp - 80
+        }
+        return cp
+    }
+    if cp >= 65 && cp <= 90 {
+        return cp + 32
+    }
+    if cp >= 192 && cp <= 222 && cp != 215 {
+        return cp + 32
+    }
+    if (cp >= 256 && cp <= 310 && cp % 2 == 0) || (cp >= 330 && cp <= 374 && cp % 2 == 0) {
+        return cp + 1
+    }
+    if cp == 376 {
+        return 255
+    }
+    if cp >= 913 && cp <= 937 && cp != 930 {
+        return cp + 32
+    }
+    if cp >= 1040 && cp <= 1071 {
+        return cp + 32
+    }
+    if cp >= 1024 && cp <= 1039 {
+        return cp + 80
+    }
+    return cp
+}
+
+impl String {
+    fn is_empty(view self) -> Bool {
+        return self.len() == 0
+    }
+
+    // Number of Unicode characters (bytes that are not UTF-8 continuation bytes).
+    fn char_count(view self) -> Int {
+        var n = 0
+        var i = 0
+        while i < self.len() {
+            let b = self.byte(i)
+            if b < 128 || b >= 192 {
+                n = n + 1
+            }
+            i = i + 1
+        }
+        return n
+    }
+
+    fn starts_with(view self, p: view String) -> Bool {
+        let n = p.len()
+        if n > self.len() {
+            return false
+        }
+        var i = 0
+        while i < n {
+            if self.byte(i) != p.byte(i) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+
+    fn ends_with(view self, p: view String) -> Bool {
+        let n = p.len()
+        let off = self.len() - n
+        if off < 0 {
+            return false
+        }
+        var i = 0
+        while i < n {
+            if self.byte(off + i) != p.byte(i) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+
+    // Byte index of the first occurrence of `p` at or after `from`, or -1.
+    fn find_from(view self, p: view String, from: Int) -> Int {
+        let n = self.len()
+        let m = p.len()
+        var i = from
+        while i + m <= n {
+            var j = 0
+            while j < m && self.byte(i + j) == p.byte(j) {
+                j = j + 1
+            }
+            if j == m {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    fn find(view self, p: view String) -> Int {
+        return self.find_from(p, 0)
+    }
+
+    fn contains(view self, p: view String) -> Bool {
+        return self.find_from(p, 0) >= 0
+    }
+
+    // Is byte index `i` the start of a character (or the end)?
+    fn is_boundary(view self, i: Int) -> Bool {
+        if i == 0 || i == self.len() {
+            return true
+        }
+        if i < 0 || i > self.len() {
+            return false
+        }
+        let b = self.byte(i)
+        return b < 128 || b >= 192
+    }
+
+    // Copy of the bytes [from, to). Both ends must lie on character boundaries.
+    fn slice(view self, from: Int, to: Int) -> String {
+        if from >= 0 && from <= self.len() {
+            if !self.is_boundary(from) { panic("String.slice start is not a character boundary") }
+        }
+        if to >= 0 && to <= self.len() {
+            if !self.is_boundary(to) { panic("String.slice end is not a character boundary") }
+        }
+        var r = String.new()
+        r.push_slice(self, from, to)
+        return r
+    }
+
+    fn split(view self, sep: view String) -> List<String> {
+        if sep.len() == 0 { panic("String.split separator is empty") }
+        var out = List<String>.new()
+        var start = 0
+        var i = self.find_from(sep, 0)
+        while i >= 0 {
+            out.push(self.slice(start, i))
+            start = i + sep.len()
+            i = self.find_from(sep, start)
+        }
+        out.push(self.slice(start, self.len()))
+        return out
+    }
+
+    fn trim_start(view self) -> String {
+        var a = 0
+        while a < self.len() && std__is_ws(self.byte(a)) {
+            a = a + 1
+        }
+        return self.slice(a, self.len())
+    }
+
+    fn trim_end(view self) -> String {
+        var b = self.len()
+        while b > 0 && std__is_ws(self.byte(b - 1)) {
+            b = b - 1
+        }
+        return self.slice(0, b)
+    }
+
+    fn trim(view self) -> String {
+        var a = 0
+        var b = self.len()
+        while a < b && std__is_ws(self.byte(a)) {
+            a = a + 1
+        }
+        while b > a && std__is_ws(self.byte(b - 1)) {
+            b = b - 1
+        }
+        return self.slice(a, b)
+    }
+
+    fn repeat(view self, n: Int) -> String {
+        if n < 0 { panic("String.repeat count is negative") }
+        var r = String.new()
+        var i = 0
+        while i < n {
+            r.push_slice(self, 0, self.len())
+            i = i + 1
+        }
+        return r
+    }
+
+    fn replace(view self, from: view String, to: view String) -> String {
+        var r = String.new()
+        if from.len() == 0 {
+            r.push_slice(self, 0, self.len())
+            return r
+        }
+        var start = 0
+        var i = self.find_from(from, 0)
+        while i >= 0 {
+            r.push_slice(self, start, i)
+            r.push_str(to)
+            start = i + from.len()
+            i = self.find_from(from, start)
+        }
+        r.push_slice(self, start, self.len())
+        return r
+    }
+
+    fn change_case(view self, up: Bool) -> String {
+        var r = String.new()
+        let n = self.len()
+        var i = 0
+        while i < n {
+            let b = self.byte(i)
+            if b < 128 {
+                r.push_byte(std__case_cp(b, up))
+                i = i + 1
+            } else if b >= 194 && b < 224 && i + 1 < n {
+                let cp = (b - 192) * 64 + (self.byte(i + 1) - 128)
+                let c2 = std__case_cp(cp, up)
+                r.push_byte(192 + c2 / 64)
+                r.push_byte(128 + c2 % 64)
+                i = i + 2
+            } else {
+                r.push_byte(b)
+                i = i + 1
+            }
+        }
+        return r
+    }
+
+    fn to_upper(view self) -> String {
+        return self.change_case(true)
+    }
+
+    fn to_lower(view self) -> String {
+        return self.change_case(false)
+    }
+
+    // Parses an optional sign and decimal digits (nothing else, at least one digit). Returns false when the
+    // text is not a number or does not fit in an Int; `out` is only written on success.
+    fn parse_int(view self, out: mut Int) -> Bool {
+        let n = self.len()
+        var i = 0
+        var neg = false
+        if n > 0 && (self.byte(0) == 45 || self.byte(0) == 43) {
+            neg = self.byte(0) == 45
+            i = 1
+        }
+        if i >= n {
+            return false
+        }
+        let low = -9223372036854775807 - 1
+        var acc = 0
+        while i < n {
+            let d = self.byte(i) - 48
+            if d < 0 || d > 9 {
+                return false
+            }
+            if acc < (low + d) / 10 {
+                return false
+            }
+            acc = acc * 10 - d
+            i = i + 1
+        }
+        if neg {
+            out = acc
+            return true
+        }
+        if acc == low {
+            return false
+        }
+        out = 0 - acc
+        return true
+    }
+}
+
+impl List<String> {
+    fn join(view self, sep: view String) -> String {
+        var r = String.new()
+        var i = 0
+        while i < self.len() {
+            if i > 0 {
+                r.push_str(sep)
+            }
+            r.push_str(self.at(i))
+            i = i + 1
+        }
+        return r
+    }
+}
+
+fn std__concat(a: view String, b: view String) -> String {
+    var r = String.new()
+    r.push_str(a)
+    r.push_str(b)
+    return r
+}

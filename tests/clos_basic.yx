@@ -1,0 +1,79 @@
+// function items as values, closure literals, captures by value, closures returned and stored
+fn double(x: Int) -> Int {
+  return x * 2
+}
+
+fn apply(f: view fn(Int) -> Int, x: Int) -> Int {
+  return f(x)
+}
+
+fn apply_twice(f: view fn(Int) -> Int, x: Int) -> Int {
+  return f(f(x))
+}
+
+fn make_adder(n: Int) -> fn(Int) -> Int {
+  return move |x| x + n
+}
+
+fn make_counter() -> fn() -> Int {
+  var n = 0
+  return move || {
+    n = n + 1
+    return n
+  }
+}
+
+fn compose(f: fn(Int) -> Int, g: fn(Int) -> Int) -> fn(Int) -> Int {
+  return move |x| g(f(x))
+}
+
+fn pick(flag: Bool) -> fn(Int, Int) -> Int {
+  if flag {
+    return |a, b| a + b
+  }
+  return |a: Int, b: Int| { return a * b }
+}
+
+struct Button {
+  label: Text,
+  on_click: fn(Int) -> Int,
+}
+
+fn main() {
+  // a function item is a value
+  print(apply(double, 4))
+  print(apply_twice(double, 4))
+  // non-capturing and capturing closures
+  print(apply(|x| x + 1, 41))
+  let k = 100
+  print(apply(|x| x + k, 5))
+  // owned closures keep what they captured
+  let add3 = make_adder(3)
+  print(add3(4))
+  print(apply(add3, 10))
+  let c1 = make_counter()
+  let c2 = make_counter()
+  print(c1())
+  print(c1())
+  print(c2())
+  print(c1())
+  // a closure that captures closures
+  let h = compose(make_adder(1), double)
+  print(h(10))
+  print(pick(true)(3, 4))
+  // stored in a struct
+  let b = Button { label: "ok", on_click: move |x| x * k }
+  print(b.on_click(7))
+  var fs = List<fn(Int) -> Int>.new()
+  fs.push(double)
+  fs.push(make_adder(10))
+  fs.push(|x| x - 1)
+  for i in 0..fs.len() {
+    print(fs.at(i)(i + 10))
+  }
+  // reassigning a function variable drops the old closure
+  var f = make_adder(1)
+  print(f(1))
+  f = make_adder(2)
+  print(f(1))
+}

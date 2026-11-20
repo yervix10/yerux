@@ -1,0 +1,30 @@
+// std.io: read_line until end of input (tests/io_stdin_lines.stdin); CRLF, empty lines, last line without newline
+import std.io
+
+fn main() {
+  var total = 0
+  var count = 0
+  while true {
+    match io.read_line() {
+      Ok(opt) => {
+        match opt {
+          Some(line) => {
+            count = count + 1
+            print("[{line}] {line.len()}")
+            var n = 0
+            if line.parse_int(n) {
+              total = total + n
+            }
+          }
+          None => { break }
+        }
+      }
+      Err(e) => {
+        print("error: {e}")
+        break
+      }
+    }
+  }
+  print("lines: {count}")
+  print("sum: {total}")
+}

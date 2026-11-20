@@ -1,0 +1,128 @@
+// traits, impls, bounds, user Equal/Ordered/Show/Hash, generic containers owning values
+trait Shape {
+  fn area(view self) -> Int
+  fn scale(mut self, k: Int)
+  fn name(view self) -> Text
+}
+
+struct Square { side: Int }
+struct Rect { w: Int, h: Int }
+
+impl Shape for Square {
+  fn area(view self) -> Int { return self.side * self.side }
+  fn scale(mut self, k: Int) { self.side = self.side * k }
+  fn name(view self) -> Text { return "square" }
+}
+
+impl Shape for Rect {
+  fn area(view self) -> Int { return self.w * self.h }
+  fn scale(mut self, k: Int) {
+    self.w = self.w * k
+    self.h = self.h * k
+  }
+  fn name(view self) -> Text { return "rect" }
+}
+
+fn total_area<T: Shape>(items: view List<T>) -> Int {
+  var t = 0
+  for i in 0..items.len() { t = t + items.at(i).area() }
+  return t
+}
+
+fn grow_all<T: Shape>(items: mut List<T>, k: Int) {
+  for mut s in items { s.scale(k) }
+}
+
+fn describe<T: Shape>(s: view T) {
+  print("{s.name()} {s.area()}")
+}
+
+struct Version { major: Int, minor: Int }
+
+impl Equal for Version {
+  fn eq(view self, other: view Version) -> Bool {
+    return self.major == other.major && self.minor == other.minor
+  }
+}
+impl Ordered for Version {
+  fn cmp(view self, other: view Version) -> Int {
+    if self.major != other.major { return self.major - other.major }
+    return self.minor - other.minor
+  }
+}
+impl Show for Version {
+  fn show(view self) -> String { return "v{self.major}.{self.minor}" }
+}
+impl Hash for Version {
+  fn hash(view self) -> Int { return self.major * 100 + self.minor }
+}
+
+fn newest<T: Ordered + Copy>(xs: view List<T>) -> T {
+  var best = xs.get(0)
+  for i in 1..xs.len() {
+    let c = xs.get(i)
+    if c > best { best = c }
+  }
+  return best
+}
+
+struct Stack<T> { items: List<T> }
+
+fn push<T>(s: mut Stack<T>, x: T) { s.items.push(move x) }
+fn pop<T>(s: mut Stack<T>) -> Option<T> {
+  if s.items.is_empty() { return None }
+  return Some(s.items.pop())
+}
+fn depth<T>(s: view Stack<T>) -> Int { return s.items.len() }
+
+struct Pair<A, B> { first: A, second: B }
+
+fn make_pair<A, B>(a: A, b: B) -> Pair<A, B> {
+  return Pair { first: move a, second: move b }
+}
+
+fn main() {
+  var squares = List<Square>.new()
+  squares.push(Square { side: 2 })
+  squares.push(Square { side: 3 })
+  print(total_area(squares))
+  grow_all(squares, 2)
+  print(total_area(squares))
+  let r = Rect { w: 3, h: 4 }
+  describe(r)
+  describe(squares.at(1))
+
+  var vs = List<Version>.new()
+  vs.push(Version { major: 1, minor: 4 })
+  vs.push(Version { major: 2, minor: 0 })
+  vs.push(Version { major: 1, minor: 9 })
+  let best = newest(vs)
+  print("{best}")
+  vs.sort()
+  print("{vs}")
+  let a = Version { major: 1, minor: 4 }
+  let b = Version { major: 1, minor: 4 }
+  print(a == b)
+  print(a < Version { major: 1, minor: 5 })
+  print(a != b)
+  var seen = Set<Version>.new()
+  seen.insert(a)
+  print(seen.insert(b))
+  var names = Stack<String> { items: List<String>.new() }
+  push(names, String.from("first"))
+  push(names, String.from("second"))
+  print(depth(names))
+  match pop(names) {
+    Some(s) => { print(s) }
+    None => { print("empty") }
+  }
+  let _gone = pop(names)
+  match pop(names) {
+    Some(s) => { print(s) }
+    None => { print("empty") }
+  }
+  let p = make_pair(String.from("k"), make_pair(7, true))
+  print(p.first)
+  print(p.second.first)
+  print(p.second.second)
+}

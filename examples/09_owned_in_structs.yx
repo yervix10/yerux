@@ -1,0 +1,68 @@
+// Owned collections inside structs, conditional moves and early returns
+struct Inbox {
+  owner: String,
+  messages: List<String>,
+}
+
+fn new_inbox(owner: Text) -> Inbox {
+  return Inbox { owner: String.from(owner), messages: List<String>.new() }
+}
+
+fn receive(box: mut Inbox, text: Text) {
+  var m = String.from(box.owner)
+  m.push_str(": ")
+  m.push_str(text)
+  box.messages.push(move m)
+}
+
+fn longest(box: view Inbox) -> Int {
+  var i = 0
+  var best = 0
+  while i < box.messages.len() {
+    let n = box.messages.at(i).len()
+    if n > best {
+      best = n
+    }
+    i = i + 1
+  }
+  return best
+}
+
+fn pick(flag: Bool) -> String {
+  var a = String.from("first")
+  let b = String.from("second")
+  if flag {
+    return a
+  }
+  return String.concat(a, b)
+}
+
+fn main() {
+  var inbox = new_inbox("zoe")
+  receive(inbox, "hi")
+  receive(inbox, "how are you today")
+  print(longest(inbox))
+  print(inbox.messages.at(1))
+  inbox.owner = String.from("zed")
+  receive(inbox, "bye")
+  print(inbox.messages.at(2))
+
+  let p1 = pick(true)
+  let p2 = pick(false)
+  print(p1)
+  print(p2)
+
+  var keep = List<String>.new()
+  var i = 0
+  while i < 3 {
+    var s = String.new()
+    s.push_str("item ")
+    s.push_int(i)
+    if i == 1 {
+      keep.push(move s)        // moved only on some paths: s is freed on the others
+    }
+    i = i + 1
+  }
+  print(keep.len())
+  print(keep.at(0))
+}

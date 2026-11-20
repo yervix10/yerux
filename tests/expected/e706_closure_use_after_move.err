@@ -1,0 +1,9 @@
+error: cannot use 's': it was already moved
+ --> tests/e706_closure_use_after_move.yx:5:9
+  |
+5 |   print(s.len())
+  |         ^
+  = 's' was moved on line 3
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

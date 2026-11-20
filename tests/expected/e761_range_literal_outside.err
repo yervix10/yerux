@@ -1,0 +1,8 @@
+error: the value 300 does not fit Int<0..255>
+ --> tests/e761_range_literal_outside.yx:2:24
+  |
+2 |   let x: Int<0..255> = 300
+  |                        ^^^
+  = Int<0..255> holds the values from 0 to 255 (both ends included)
+
+1 error(s). Nothing was generated.

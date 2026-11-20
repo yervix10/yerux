@@ -1,0 +1,5 @@
+import utils.maths
+
+fn main() {
+  print(1)
+}

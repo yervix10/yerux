@@ -1,0 +1,22 @@
+pub fn sum_to(n: Int) -> Int {
+  var i = 1
+  var t = 0
+  while i <= n {
+    t = add(t, i)
+    i = i + 1
+  }
+  return t
+}
+
+pub fn fact(n: Int) -> Int {
+  if n <= 1 { return 1 }
+  return n * fact(n - 1)
+}
+
+pub fn is_even(n: Int) -> Bool {
+  return n % 2 == 0
+}
+
+fn add(a: Int, b: Int) -> Int {
+  return a + b
+}

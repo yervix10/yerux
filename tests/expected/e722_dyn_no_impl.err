@@ -1,0 +1,7 @@
+error: Int does not implement Shape
+ --> tests/e722_dyn_no_impl.yx:5:36
+  |
+5 |     let shape = Box<dyn Shape>.new(3)
+  |                                    ^
+
+1 error(s). Nothing was generated.

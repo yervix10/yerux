@@ -1,0 +1,44 @@
+fn main() {
+  let n = 300
+  var a = List<Int>.new()
+  var b = List<Int>.new()
+  var c = List<Int>.new()
+  var i = 0
+  while i < n {
+    var j = 0
+    while j < n {
+      a.push((i * j + 1) % 10)
+      b.push((i + j) % 10)
+      c.push(0)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  var grand = 0
+  var r = 0
+  while r < 5 {
+    a.set(0, r)
+    i = 0
+    while i < n {
+      var j = 0
+      while j < n {
+        var acc = 0
+        var k = 0
+        while k < n {
+          acc = acc + a.get(i * n + k) * b.get(k * n + j)
+          k = k + 1
+        }
+        c.set(i * n + j, acc)
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < n * n {
+      grand = grand + c.get(i) * (i % 7)
+      i = i + 1
+    }
+    r = r + 1
+  }
+  print(grand)
+}

@@ -1,0 +1,8 @@
+error: Int<0..9>.try_from() converts an integer, but this is Float
+ --> tests/e765_range_try_from_float.yx:2:30
+  |
+2 |   let r = Int<0..9>.try_from(2.5)
+  |                              ^^^
+  = help: convert a Float to an integer first: `x.to_int()`, `x.floor_int()`, ...
+
+1 error(s). Nothing was generated.

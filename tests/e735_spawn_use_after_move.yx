@@ -1,0 +1,8 @@
+fn main() {
+  let text = String.from("owned")
+  scope {
+    let worker = spawn move || text.len()
+    print(text)
+    print(worker.join().is_ok())
+  }
+}

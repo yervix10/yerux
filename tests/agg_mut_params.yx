@@ -1,0 +1,28 @@
+struct Counter { n: Int, step: Int }
+
+fn bump(c: mut Counter) { c.n = c.n + c.step }
+fn bump_twice(c: mut Counter) { bump(c)
+  bump(c) }
+fn add_into(x: mut Int, d: Int) { x = x + d }
+fn double(x: mut Int) { add_into(x, x) }
+
+fn main() {
+  var c = Counter { n: 0, step: 5 }
+  bump_twice(c)
+  bump(c)
+  print(c.n)
+  var total = 1
+  add_into(total, 41)
+  print(total)
+  double(total)
+  print(total)
+  var i = 0
+  while i < 3 {
+    add_into(c.n, 100)
+    i = i + 1
+  }
+  print(c.n)
+  let snapshot = c
+  c.step = 0
+  print(snapshot.step)
+}

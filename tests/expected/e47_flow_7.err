@@ -1,0 +1,16 @@
+error: 's' is a String and is not copied
+ --> tests/e47_flow_7.yx:5:13
+  |
+5 |     let t = s
+  |             ^
+  = 's' only borrows its value (a `view`/`mut` parameter or a `for` loop variable), so it cannot be copied or moved out
+  = help: make an independent copy with `String.from(s)`
+
+error: cannot move 's': it is only borrowed
+ --> tests/e47_flow_7.yx:6:13
+  |
+6 |     consume(move s)
+  |             ^^^^^^
+  = help: whoever lent it is still the owner; only move what you own
+
+2 error(s). Nothing was generated.

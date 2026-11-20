@@ -1,0 +1,8 @@
+error: unknown type 'Foo'
+ --> examples/e18_unknown_element_type.yx:2:16
+  |
+2 |   let z = List<Foo>.new()
+  |                ^^^
+  = built-in types: Int, Char, Bool, Text, String, List<T>, Float, Float32, Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64
+
+1 error(s). Nothing was generated.

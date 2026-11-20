@@ -1,0 +1,14 @@
+fn read_number() -> Result<Int, Text> {
+  return Ok(41)
+}
+
+fn main() {
+  let parse = |x: Int| -> Result<Int, Text> {
+    let n = read_number()?
+    return Ok(n + x)
+  }
+  match parse(1) {
+    Ok(n) => { print(n) }
+    Err(e) => { print(e) }
+  }
+}

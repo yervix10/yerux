@@ -1,0 +1,22 @@
+struct P { name: String, n: Int }
+fn take(s: String) -> Int { return s.len() }
+fn mk() -> String { return "made" }
+fn main() {
+  let a: String = "hi"
+  print(a)
+  print(take("abc"))
+  print(mk())
+  let p = P { name: "bob", n: 1 }
+  print(p.name)
+  var v: String = String.new()
+  v = "again"
+  print(v)
+  var l = List<String>.new()
+  l.push("x")
+  print(l.len())
+  let o: Option<String> = Option.Some("z")
+  match o {
+    Some(s) => { print(s) }
+    None => { print("none") }
+  }
+}

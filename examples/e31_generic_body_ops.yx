@@ -1,0 +1,17 @@
+// Inside a generic function you can only do what the bounds of T promise.
+fn sum<T>(a: T, b: T) -> T {
+    return a + b
+}
+
+fn bigger<T>(a: view T, b: view T) -> Bool {
+    return a > b
+}
+
+fn shout<T>(x: view T) {
+    let s = x.show()
+    print(s)
+}
+
+fn main() {
+    print(sum(1, 2))
+}

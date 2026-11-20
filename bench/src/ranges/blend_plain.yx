@@ -1,0 +1,26 @@
+// The same program with plain Int lists: every product and sum keeps its overflow check.
+fn blend(a: view List<Int>, b: view List<Int>, out: mut List<Int>, t: Int) {
+  let n = a.len()
+  if b.len() < n || out.len() < n { return }
+  for i in 0..n {
+    let v = min((a.get(i) * (255 - t) + b.get(i) * t) / 255, 255)
+    out.set(i, v)
+  }
+}
+
+fn main() {
+  var a = List<Int>.new()
+  var b = List<Int>.new()
+  var out = List<Int>.new()
+  for i in 0..1000000 {
+    a.push(i % 256)
+    b.push((i * 7) % 256)
+    out.push(0)
+  }
+  var sum = 0
+  for r in 0..200 {
+    blend(a, b, out, r % 256)
+    sum = (sum + out.get(r * 997 % 1000000)) % 1000003
+  }
+  print(sum)
+}

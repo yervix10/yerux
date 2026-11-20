@@ -1,0 +1,80 @@
+// a stack and a queue-like list built from Box
+enum Chain {
+  End,
+  Link(Int, Box<Chain>),
+}
+
+fn push(c: Chain, v: Int) -> Chain {
+  return Chain.Link(v, Box.new(move c))
+}
+
+fn length(c: view Chain) -> Int {
+  match c {
+    End => { return 0 }
+    Link(_, next) => { return 1 + length(*next) }
+  }
+}
+
+fn sum(c: view Chain) -> Int {
+  match c {
+    End => { return 0 }
+    Link(v, next) => { return v + sum(next.get()) }
+  }
+}
+
+fn reverse(c: Chain) -> Chain {
+  var out = Chain.End
+  var cur = move c
+  var going = true
+  while going {
+    match move cur {
+      End => { going = false  cur = Chain.End }
+      Link(v, next) => {
+        out = Chain.Link(v, Box.new(move out))
+        cur = next.take()
+      }
+    }
+  }
+  return out
+}
+
+fn to_text(c: view Chain) -> String {
+  var s = String.new()
+  s.push_str("[")
+  push_items(c, s)
+  s.push_str("]")
+  return s
+}
+
+fn push_items(c: view Chain, s: mut String) {
+  match c {
+    End => { }
+    Link(v, next) => {
+      s.push_int(v)
+      if length(*next) > 0 { s.push_str(", ") }
+      push_items(*next, s)
+    }
+  }
+}
+
+fn pop(c: Chain) -> Option<Int> {
+  match move c {
+    End => { return None }
+    Link(v, _) => { return Some(v) }
+  }
+}
+
+fn main() {
+  var c = Chain.End
+  for i in 1..=5 { c = push(move c, i * i) }
+  print(length(c))
+  print(sum(c))
+  let t = to_text(c)
+  print(t)
+  let r = reverse(move c)
+  let t2 = to_text(r)
+  print(t2)
+  let top = pop(move r)
+  print("{top}")
+  print("{pop(Chain.End)}")
+}

@@ -1,0 +1,17 @@
+struct P { x: Int, y: Int }
+
+fn scale(p: P, k: Int) -> P { return P { x: p.x * k, y: p.y * k } }
+fn first(p: P) -> Int { return p.x }
+fn quot(a: Int, b: Int) -> Int { return a / b }
+fn noisy(a: Int) -> Int {
+  print(a)
+  return a
+}
+
+fn main() {
+  var p = P { x: 4611686018427387904, y: 3 }
+  print(first(scale(p, 1)))
+  print(quot(10, noisy(2)))
+  print(first(scale(p, noisy(2))))
+  print(quot(noisy(1), noisy(0)))
+}

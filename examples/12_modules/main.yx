@@ -1,0 +1,41 @@
+// Modules: `import` loads other .yx files, relative to this folder.
+import math
+import utils.strings
+import utils.shapes as sh
+
+struct Counter { hits: Int }
+
+fn bump(c: mut Counter) {
+  c.hits = c.hits + 1
+}
+
+fn main() {
+  print(math.add(2, 3))
+  print(math.square(math.add(1, 3)))
+
+  let p = math.Point { x: 3, y: 4 }
+  print(math.dist2(p))
+
+  var s = strings.greeting("Yerux")
+  strings.shout(s)
+  print(s)
+
+  let shape = sh.Shape.Rect(4, 5)
+  print(sh.area(shape))
+  print(sh.area(sh.unit()))
+
+  var c = Counter { hits: 0 }
+  bump(c)
+  bump(c)
+  print(c.hits)
+}
+
+test "modules add numbers" {
+  assert_eq(math.add(20, 22), 42)
+}
+
+test "modules share types" {
+  let p = math.Point { x: 1, y: 2 }
+  assert_eq(math.dist2(p), 5)
+  assert(math.dist2(p) > 0)
+}

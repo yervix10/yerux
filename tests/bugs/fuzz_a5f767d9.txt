@@ -1,0 +1,24 @@
+seed: 609864096
+mismatch: (('native-noopt', 'stdout'),)
+
+=== c
+code=0
+--stdout--
+true
+1
+--stderr--
+
+=== native
+code=0
+--stdout--
+true
+1
+--stderr--
+
+=== native-noopt
+code=0
+--stdout--
+false
+1
+--stderr--
+

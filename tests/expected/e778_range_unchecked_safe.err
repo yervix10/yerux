@@ -1,0 +1,9 @@
+error: `unchecked(x)` is only allowed in an `unsafe` block
+ --> tests/e778_range_unchecked_safe.yx:5:7
+  |
+5 |   b = unchecked(n)
+  |       ^^^^^^^^^^^^
+  = it gives `x` a range type without testing it; if the value is outside the range the optimizer's assumptions break (run with `--check-ranges` to catch it)
+  = help: use `x as Int<lo..hi> else { .. }` or `Int<lo..hi>.try_from(x)` to test it, or wrap the statement in `unsafe { .. }`
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,29 @@
+error: 'same' expects 2 argument(s) but got 1
+ --> examples/e34_generic_calls.yx:8:11
+  |
+8 |     print(same(1))
+  |           ^^^^^^^
+
+error: argument 2 of 'same' is Bool, but T was already fixed to Int by an earlier argument
+  --> examples/e34_generic_calls.yx:11:19
+   |
+11 |     print(same(x, t))
+   |                   ^
+   = every parameter declared as `T` must receive the same type
+
+error: cannot infer the type argument(s) T of Maybe.None
+  --> examples/e34_generic_calls.yx:12:13
+   |
+12 |     let n = Maybe.None
+   |             ^^^^^^^^^^
+   = nothing here says what type it should hold
+   = help: write them out, e.g. `Maybe<Int>.None`
+
+error: Maybe takes 1 type argument(s) but 2 given
+  --> examples/e34_generic_calls.yx:13:13
+   |
+13 |     let q = Maybe<Int, Int>.None
+   |             ^^^^^^^^^^^^^^^^^^^^
+   = help: write Maybe<T>
+
+4 error(s). Nothing was generated.

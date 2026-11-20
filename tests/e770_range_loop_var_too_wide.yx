@@ -1,0 +1,6 @@
+fn main() {
+  for i in 0..300 {
+    let b: Int<0..255> = i
+    print(b)
+  }
+}

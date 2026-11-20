@@ -1,0 +1,9 @@
+error: this closure takes 2 parameter(s), but 1 are expected here
+ --> tests/e705_closure_param_count.yx:6:15
+  |
+6 |   print(apply(|a, b| a + b, 1))
+  |               ^^^^^^^^^^^^
+  = the expected type is fn(Int) -> Int
+  = help: list one name per parameter: `|a, b| ..`; use `_` for one you do not need
+
+1 error(s). Nothing was generated.

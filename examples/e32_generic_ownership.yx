@@ -1,0 +1,16 @@
+// Ownership still applies to T: an unbounded T may be owned, so it moves.
+struct Pair<A, B> { a: A, b: B }
+
+fn twice<T>(x: T) -> Pair<T, T> {
+    return Pair { a: move x, b: move x }
+}
+
+fn dup<T>(x: T) -> T {
+    let y = x
+    return x
+}
+
+fn main() {
+    let p = twice(3)
+    print(p.a)
+}

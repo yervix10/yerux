@@ -1,0 +1,30 @@
+error: 'a' is a String and is not copied
+ --> examples/e14_string_ownership.yx:7:11
+  |
+7 |   let b = a
+  |           ^
+  = help: use `move a` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: 's' is a String and is not copied
+  --> examples/e14_string_ownership.yx:10:14
+   |
+10 |   names.push(s)
+   |              ^
+   = help: use `move s` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: cannot use 's': it was already moved
+  --> examples/e14_string_ownership.yx:13:3
+   |
+13 |   s.push_str("!")
+   |   ^
+   = 's' was moved on line 12
+   = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+error: cannot modify 'a': it was declared with `let` (immutable)
+  --> examples/e14_string_ownership.yx:14:3
+   |
+14 |   a.push_str("?")
+   |   ^^^^^^^^^^^^^^^
+   = help: declare it with `var` instead of `let`
+
+4 error(s). Nothing was generated.

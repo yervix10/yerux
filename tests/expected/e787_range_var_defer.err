@@ -1,0 +1,11 @@
+error: this value may be outside Int<0..9>
+ --> tests/e787_range_var_defer.yx:6:24
+  |
+6 |     let a: Int<0..9> = x
+  |                        ^
+  = it has type Int, so the compiler cannot prove that it fits Int<0..9>
+  = Int<0..9> holds the values from 0 to 9 (both ends included)
+  = help: test it first: `if x >= 0 && x <= 9 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..9>.try_from(x)` gives a Result, `Int<0..9>.from(x)` panics when it does not fit
+
+1 error(s). Nothing was generated.

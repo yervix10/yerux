@@ -1,0 +1,74 @@
+enum Shape { Circle(Int), Rect(Int, Int), Dot }
+
+enum Opt { Some(Int), None }
+
+fn classify(n: Int) -> Text {
+  match n {
+    0 => { return "zero" }
+    1 | 2 | 3 => { return "small" }
+    4..=9 => { return "digit" }
+    x if x < 0 => { return "negative" }
+    _ => { return "big" }
+  }
+}
+
+fn vowel(c: Char) -> Bool {
+  match c {
+    'a' | 'e' | 'i' | 'o' | 'u' => { return true }
+    _ => { return false }
+  }
+}
+
+fn describe(o: Opt) -> Int {
+  match o {
+    Some(x) if x > 3 => { return 100 }
+    Some(0) => { return 50 }
+    Some(x) => { return x }
+    None => { return -1 }
+  }
+}
+
+fn fizz(a: Int, b: Int) -> Text {
+  match (a % 3 == 0, b % 5 == 0) {
+    (true, true) => { return "both" }
+    (true, _) => { return "a" }
+    (_, true) => { return "b" }
+    (false, false) => { return "none" }
+  }
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => { return 3 * r * r }
+    Shape.Rect(w, h) | Shape.Rect(h, w) => { return w * h }
+    Dot => { return 0 }
+  }
+}
+
+fn main() {
+  print(classify(0))
+  print(classify(2))
+  print(classify(7))
+  print(classify(-4))
+  print(classify(99))
+  print(vowel('e'))
+  print(vowel('z'))
+  print(describe(Opt.Some(9)))
+  print(describe(Opt.Some(0)))
+  print(describe(Opt.Some(2)))
+  print(describe(Opt.None))
+  print(fizz(3, 5))
+  print(fizz(3, 1))
+  print(fizz(1, 5))
+  print(fizz(1, 1))
+  print(area(Shape.Rect(3, 4)))
+  match 42 {
+    n @ 40..=49 => { print(n) }
+    _ => { print(0) }
+  }
+  let p = (1, Opt.Some(5))
+  match p {
+    (1, Some(v)) => { print(v) }
+    _ => { print(-9) }
+  }
+}

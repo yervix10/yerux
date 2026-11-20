@@ -1,0 +1,6 @@
+import a.util
+import b.util
+
+fn main() {
+  print(util.one())
+}

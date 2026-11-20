@@ -1,0 +1,87 @@
+// Map and Set: counting, owned values, take/remove, user key types
+struct Point { x: Int, y: Int }
+
+impl Equal for Point {
+  fn eq(view self, other: view Point) -> Bool { return self.x == other.x && self.y == other.y }
+}
+impl Hash for Point {
+  fn hash(view self) -> Int { return self.x * 1000 + self.y }
+}
+impl Show for Point {
+  fn show(view self) -> String { return "({self.x},{self.y})" }
+}
+
+fn main() {
+  let text = String.from("a b a c b a d")
+  let words = text.split(" ")
+  var counts = Map<String, Int>.new()
+  for w in words {
+    let e = counts.find(w)
+    if e < 0 {
+      counts.insert(String.from(w), 1)
+    } else {
+      counts.vals.set(e, counts.vals.at(e) + 1)
+    }
+  }
+  print(counts.len())
+  let a = String.from("a")
+  let z = String.from("z")
+  print(counts.get(a))
+  print(counts.get_or(z, -1))
+  print(counts.contains(a))
+  print("{counts}")
+
+  var groups = Map<Int, List<String>>.new()
+  for i in 0..7 {
+    let key = i % 3
+    let e = groups.find(key)
+    if e < 0 {
+      var l = List<String>.new()
+      l.push("n{i}")
+      groups.insert(key, move l)
+    } else {
+      groups.vals.at(e).push("n{i}")
+    }
+  }
+  print("{groups}")
+  let g1 = groups.take(1)
+  print("{g1}")
+  print(groups.len())
+  print(groups.remove(0))
+  print(groups.remove(0))
+  print("{groups}")
+  groups.clear()
+  print(groups.is_empty())
+
+  var seen = Set<Point>.new()
+  print(seen.insert(Point { x: 1, y: 2 }))
+  print(seen.insert(Point { x: 3, y: 4 }))
+  print(seen.insert(Point { x: 1, y: 2 }))
+  print(seen.len())
+  print(seen.contains(Point { x: 3, y: 4 }))
+  print(seen.remove(Point { x: 3, y: 4 }))
+  print("{seen}")
+
+  var primes = Set<Int>.new()
+  for n in 2..30 {
+    var is_prime = true
+    var d = 2
+    while d * d <= n {
+      if n % d == 0 { is_prime = false }
+      d = d + 1
+    }
+    if is_prime { primes.insert(n) }
+  }
+  print(primes.len())
+  var sum = 0
+  for i in 0..primes.len() { sum = sum + primes.items.keys.at(i) }
+  print(sum)
+
+  var m = Map<Int, Int>.new()
+  for i in 0..1000 { m.insert(i, i * i) }
+  var big = 0
+  for i in 0..1000 { big = big + m.get(i) % 7 }
+  print(big)
+  for i in 0..500 { m.remove(i * 2) }
+  print(m.len())
+}

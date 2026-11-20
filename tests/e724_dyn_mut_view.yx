@@ -1,0 +1,7 @@
+trait Handler {
+    fn handle(mut self)
+}
+fn invoke(handler: view dyn Handler) {
+    handler.handle()
+}
+fn main() {}

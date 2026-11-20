@@ -1,0 +1,8 @@
+error: unknown escape sequence \q in a string
+ --> tests/e40_bad_escape.yx:2:11
+  |
+2 |   print("a\qb")
+  |           ^^
+  = escapes: \n (newline), \t (tab), \r, \" (quote), \\ (backslash); write {{ and }} for literal braces
+
+1 error(s). Nothing was generated.

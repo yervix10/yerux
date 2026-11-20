@@ -1,0 +1,10 @@
+// A deferred statement runs later, when the variable may have another value.
+fn main() {
+  var x = 5
+  if x >= 0 && x <= 9 {
+    defer print(x + 1)
+    let a: Int<0..9> = x
+    x = 100
+    print(a)
+  }
+}

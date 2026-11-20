@@ -1,0 +1,10 @@
+// products that fit exactly at the i64 edge, then one that does not
+fn sq(x: Int) -> Int { return x * x }
+fn main() {
+  print(sq(3037000499))
+  var i = 3037000498
+  while i < 3037000500 {
+    i = i + 1
+    print(i * i)
+  }
+}

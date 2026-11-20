@@ -1,0 +1,14 @@
+// Errors around Map, Set and List: unmet bounds and owned values
+struct P { x: Int }
+
+fn main() {
+  var m = Map<String, String>.new()
+  let k = String.from("a")
+  let v = m.get(k)
+  var s = Set<P>.new()
+  var l = List<P>.new()
+  l.sort()
+  var n = Map<Int, Int>.new()
+  let w = n.get_or(1)
+  let big = Map<Int>.new()
+}

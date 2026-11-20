@@ -1,0 +1,11 @@
+fn launch(text: view String) {
+  scope {
+    let worker = spawn move || text.len()
+    print(worker.join().is_ok())
+  }
+}
+
+fn main() {
+  let text = String.from("view")
+  launch(text)
+}

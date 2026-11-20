@@ -1,0 +1,32 @@
+enum Expr {
+    Number(Int),
+    Div(Box<Expr>, Box<Expr>),
+}
+
+fn eval(e: view Expr) -> Result<Int, String> {
+    match e {
+        Number(n) => { return Ok(n) }
+        Div(a, b) => {
+            defer print("division visited")
+            let x = eval(*a)?
+            let y = eval(*b)?
+            if y == 0 { return Err(String.from("division by zero")) }
+            return Ok(x / y)
+        }
+    }
+}
+
+fn display(r: Result<Int, String>) {
+    match move r {
+        Ok(n) => { print(n) }
+        Err(e) => { print(e) }
+    }
+}
+
+fn main() {
+    let six = Expr.Div(Box.new(Expr.Number(18)), Box.new(Expr.Number(3)))
+    display(eval(six))
+    let bad = Expr.Div(Box.new(Expr.Number(1)), Box.new(Expr.Number(0)))
+    let outer = Expr.Div(Box.new(move bad), Box.new(Expr.Number(2)))
+    display(eval(outer))
+}

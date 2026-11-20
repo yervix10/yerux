@@ -1,0 +1,8 @@
+error: a tuple has at most 6 elements, this one has 7
+ --> tests/e53_tuple_big.yx:2:13
+  |
+2 |   let big = (1, 2, 3, 4, 5, 6, 7)
+  |             ^^^^^^^^^^^^^^^^^^^^^
+  = help: for more elements, define a struct with named fields
+
+1 error(s). Nothing was generated.

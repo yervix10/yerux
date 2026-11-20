@@ -1,0 +1,28 @@
+trait Handler {
+    fn handle(view self, input: Int, count: mut Int) -> String
+}
+impl Handler for Int {
+    fn handle(view self, input: Int, count: mut Int) -> String {
+        count = count + self + input
+        return String.from("handled")
+    }
+}
+fn index() -> Int {
+    print("index")
+    return 0
+}
+fn input() -> Int {
+    print("input")
+    return 3
+}
+fn erase<T: Handler>(handler: T) -> Box<dyn Handler> {
+    return Box.new(move handler)
+}
+fn main() {
+    var handlers = List<Box<dyn Handler>>.new()
+    handlers.push(erase(7))
+    var count = 0
+    let output = handlers.at(index()).handle(input(), count)
+    print(output)
+    print(count)
+}

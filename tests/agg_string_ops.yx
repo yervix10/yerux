@@ -1,0 +1,47 @@
+// String primitives: edge cases for push_int, eq, concat, clear, byte, empty strings
+fn show_eq(a: view String, b: Text) {
+  print(a.eq(b))
+}
+
+fn main() {
+  var s = String.new()
+  print(s.len())
+  print(s.eq(""))
+  print(s.eq("x"))
+  s.push_int(0)
+  s.push_str(" ")
+  s.push_int(-9223372036854775807 - 1)
+  s.push_str(" ")
+  s.push_int(9223372036854775807)
+  s.push_str(" ")
+  s.push_int(-7)
+  s.push_str(" ")
+  s.push_int(10)
+  print(s)
+  print(s.len())
+  show_eq(s, "0 -9223372036854775808 9223372036854775807 -7 10")
+  show_eq(s, "0 -9223372036854775808 9223372036854775807 -7 1")
+  show_eq(s, "0 -9223372036854775808 9223372036854775807 -7 11")
+  print(s.byte(0))
+  print(s.byte(s.len() - 1))
+  s.clear()
+  print(s.len())
+  print(s.eq(""))
+  s.push_str("")
+  print(s.len())
+  var e = String.from("")
+  let c = String.concat(e, s)
+  print(c.len())
+  let d = String.concat("ab", "cd")
+  print(d)
+  let f = String.concat(d, "")
+  print(f.eq(d))
+  var big = String.from("0123456789abcdef")
+  big.push_str("X")
+  print(big)
+  var k = 0
+  while k < 10 {
+    k = k + 1
+  }
+  print(big.len())
+}

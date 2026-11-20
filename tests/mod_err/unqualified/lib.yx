@@ -1,0 +1,5 @@
+pub struct Point { x: Int, y: Int }
+
+pub fn add(a: Int, b: Int) -> Int {
+  return a + b
+}

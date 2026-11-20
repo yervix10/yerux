@@ -1,0 +1,17 @@
+error: struct Node contains itself
+ --> examples/e16_recursive_list.yx:1:8
+  |
+1 | struct Node {
+  |        ^^^^
+  = a value cannot hold itself directly: it would have infinite size
+  = help: put it behind a heap indirection: a field of type `Box<Self>`, or a `List<Self>` for any number of children
+
+error: enum Tree contains itself
+ --> examples/e16_recursive_list.yx:6:6
+  |
+6 | enum Tree {
+  |      ^^^^
+  = a value cannot hold itself directly: it would have infinite size
+  = help: put the recursive part behind a heap indirection: `Box<Tree>`
+
+2 error(s). Nothing was generated.

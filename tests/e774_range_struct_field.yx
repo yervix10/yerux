@@ -1,0 +1,6 @@
+struct Px { r: Int<0..255>, g: Int<0..255> }
+fn main() {
+  let n = 300
+  let p = Px { r: 1, g: n }
+  print(p.r)
+}

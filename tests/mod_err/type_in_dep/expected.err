@@ -1,0 +1,7 @@
+error: expected Int but this is Text
+ --> tests/mod_err/type_in_dep/lib.yx:3:14
+  |
+3 |   return n * t
+  |              ^
+
+1 error(s). Nothing was generated.

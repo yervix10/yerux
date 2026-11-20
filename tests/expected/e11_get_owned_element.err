@@ -1,0 +1,8 @@
+error: cannot copy an element out of a List<String>: its elements are owned, not copied
+ --> examples/e11_get_owned_element.yx:4:15
+  |
+4 |   let first = names.get(0)
+  |               ^^^^^^^^^^^^
+  = help: borrow it with `at(i)` (e.g. `l.at(i).len()`, or pass `l.at(i)` to a `view` parameter), or take the last one with `pop()`
+
+1 error(s). Nothing was generated.

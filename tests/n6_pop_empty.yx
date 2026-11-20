@@ -1,0 +1,7 @@
+fn main() {
+  var l = List<String>.new()
+  l.push(String.from("only"))
+  let a = l.pop()
+  print(a)
+  let b = l.pop()
+}

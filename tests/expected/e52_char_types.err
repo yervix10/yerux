@@ -1,0 +1,34 @@
+error: cannot use `*` on a Char
+ --> tests/e52_char_types.yx:3:11
+  |
+3 |   let d = c * 2
+  |           ^
+  = a Char is a character, not a number, so it has no arithmetic
+  = help: `c.to_int()` gives its Unicode number and `Char.from_int(n)` turns a number back into a Char
+
+error: expected Char but this is Int
+ --> tests/e52_char_types.yx:4:16
+  |
+4 |   let e = c == 97
+  |                ^^
+
+error: expected Int but this is Char
+ --> tests/e52_char_types.yx:5:25
+  |
+5 |   let f = Char.from_int('a')
+  |                         ^^^
+
+error: Char has no method 'shout'
+ --> tests/e52_char_types.yx:6:11
+  |
+6 |   let g = c.shout()
+  |           ^^^^^^^^^
+  = methods: to_int(), utf8_len()   (functions: Char.from_int(n), Char.is_valid(n))
+
+error: expected Char but this is Int
+ --> tests/e52_char_types.yx:7:13
+  |
+7 |   print(c < 5)
+  |             ^
+
+5 error(s). Nothing was generated.

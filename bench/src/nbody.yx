@@ -1,0 +1,74 @@
+fn energy(x: view List<Float>, y: view List<Float>, z: view List<Float>, vx: view List<Float>, vy: view List<Float>, vz: view List<Float>, m: view List<Float>) -> Float {
+  var e = 0.0
+  var i = 0
+  while i < 5 {
+    e = e + 0.5 * m.get(i) * (vx.get(i) * vx.get(i) + vy.get(i) * vy.get(i) + vz.get(i) * vz.get(i))
+    var j = i + 1
+    while j < 5 {
+      let dx = x.get(i) - x.get(j)
+      let dy = y.get(i) - y.get(j)
+      let dz = z.get(i) - z.get(j)
+      e = e - m.get(i) * m.get(j) / sqrt(dx * dx + dy * dy + dz * dz)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  return e
+}
+
+fn main() {
+  var x = List<Float>.new()
+  var y = List<Float>.new()
+  var z = List<Float>.new()
+  var vx = List<Float>.new()
+  var vy = List<Float>.new()
+  var vz = List<Float>.new()
+  var m = List<Float>.new()
+  var k = 0
+  while k < 5 {
+    let f = k.to_float()
+    x.push(f * 1.5 - 3.0)
+    y.push(f * f * 0.25 - 1.0)
+    z.push(2.0 - f * 0.75)
+    vx.push(0.01 * (f - 2.0))
+    vy.push(0.02 * (1.0 - f))
+    vz.push(0.005 * f)
+    m.push(1.0 + f * 0.5)
+    k = k + 1
+  }
+  print((energy(x, y, z, vx, vy, vz, m) * 1000000000.0).to_int())
+  let dt = 0.001
+  var s = 0
+  while s < 2000000 {
+    var i = 0
+    while i < 5 {
+      var j = i + 1
+      while j < 5 {
+        let dx = x.get(i) - x.get(j)
+        let dy = y.get(i) - y.get(j)
+        let dz = z.get(i) - z.get(j)
+        let d2 = dx * dx + dy * dy + dz * dz
+        let mag = dt / (d2 * sqrt(d2))
+        let mi = m.get(i) * mag
+        let mj = m.get(j) * mag
+        vx.set(i, vx.get(i) - dx * mj)
+        vy.set(i, vy.get(i) - dy * mj)
+        vz.set(i, vz.get(i) - dz * mj)
+        vx.set(j, vx.get(j) + dx * mi)
+        vy.set(j, vy.get(j) + dy * mi)
+        vz.set(j, vz.get(j) + dz * mi)
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < 5 {
+      x.set(i, x.get(i) + dt * vx.get(i))
+      y.set(i, y.get(i) + dt * vy.get(i))
+      z.set(i, z.get(i) + dt * vz.get(i))
+      i = i + 1
+    }
+    s = s + 1
+  }
+  print((energy(x, y, z, vx, vy, vz, m) * 1000000000.0).to_int())
+}

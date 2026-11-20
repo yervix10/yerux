@@ -1,0 +1,22 @@
+struct ParseError { message: String }
+
+fn parse_error_from_string(e: String) -> ParseError {
+    return ParseError { message: move e }
+}
+
+fn read() -> Result<String, String> {
+    return Err(String.from("bad input"))
+}
+
+fn convert() -> Result<Int, ParseError> {
+    let value = read()
+    let text = (move value)?
+    return Ok(text.len())
+}
+
+fn main() {
+    match convert() {
+        Ok(n) => { print(n) }
+        Err(e) => { print(e.message) }
+    }
+}

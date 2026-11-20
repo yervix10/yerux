@@ -1,0 +1,103 @@
+fn fail_worker() {
+  let message = String.from("worker panic")
+  panic(message)
+}
+
+fn fail_with_child() {
+  scope {
+    let child = spawn move || String.from("child result")
+    panic("parent worker panic")
+  }
+}
+
+fn fail_argument() -> Int {
+  panic("argument panic")
+}
+
+fn consume(value: String, count: Int) {
+  assert(count == value.len())
+}
+
+fn fail_during_move() {
+  let message = String.from("still owned if the second argument panics")
+  consume(move message, fail_argument())
+}
+
+fn consume_with_borrow(value: String, other: view String, count: Int) {
+  assert(count == value.len() + other.len())
+}
+
+fn fail_with_mixed_arguments() {
+  let other = String.from("borrowed")
+  consume_with_borrow(String.from("owned temporary"), other, fail_argument())
+}
+
+fn fail_with_borrowed_index() {
+  let values = List<String>.new()
+  consume_with_borrow(String.from("owned before bounds check"), values.at(0), 0)
+}
+
+fn fail_during_set() {
+  var values = List<String>.new()
+  values.set(1, String.from("still owned if the index is invalid"))
+}
+
+fn next_argument(order: view Atomic<Int>, expected: Int) -> Int {
+  assert(order.add(1) == expected)
+  return 0
+}
+
+fn check_worker_argument_order() {
+  let order = Atomic.new(0)
+  var values = List<String>.new()
+  values.push(String.from(""))
+  assert_length(values.at(next_argument(order, 1)), next_argument(order, 0))
+}
+
+fn assert_length(value: view String, length: Int) {
+  assert(value.len() == length)
+}
+
+fn leave_scope_early(flag: view Shared<Atomic<Bool>>) {
+  scope {
+    let copy = flag.clone()
+    spawn move { copy.store(true) }
+    return
+  }
+}
+
+fn main() {
+  let flag = Shared.new(Atomic.new(false))
+  leave_scope_early(flag)
+  assert(flag.load())
+  scope {
+    let greeting = String.from("owned result")
+    let worker = spawn move { return move greeting }
+    let failed = spawn move { fail_worker() }
+    let ordered = spawn move { check_worker_argument_order() }
+    let failed_set = spawn move { fail_during_set() }
+    let failed_move = spawn move { fail_during_move() }
+    let failed_mixed = spawn move { fail_with_mixed_arguments() }
+    let failed_index = spawn move { fail_with_borrowed_index() }
+    let failed_parent = spawn move { fail_with_child() }
+    let checked = spawn move || -> Int {
+      assert(false)
+      return 1
+    }
+    let ignored = spawn move || String.from("implicitly joined and dropped")
+    print(failed.join().is_err())
+    print(checked.join().is_err())
+    print(failed_parent.join().is_err())
+    print(failed_move.join().is_err())
+    assert(failed_mixed.join().is_err())
+    assert(failed_index.join().is_err())
+    assert(failed_set.join().is_err())
+    assert(ordered.join().is_ok())
+    let result = worker.join().unwrap()
+    print(result)
+    scope {
+      let nested = spawn move { return 42 }
+      print(nested.join().unwrap())
+    }
+  }
+}

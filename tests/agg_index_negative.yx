@@ -1,0 +1,5 @@
+fn main() {
+  var l = List.new()
+  l.push(1)
+  print(l.get(0 - 1))
+}

@@ -1,0 +1,59 @@
+// A closure that captures another closure: dropping the outermost one releases the whole chain with
+// constant stack (each environment hands the environment of the closure it captured back to the
+// caller's loop). Owned captures next to the captured closure are released exactly once.
+fn scale() -> Int { return 1000000 }
+
+fn base() -> fn(Int) -> Int {
+  return |x| x + 1
+}
+
+// calls the inner closure only when asked to, so building the chain costs no stack
+fn wrap(f: fn(Int) -> Int, depth: Int) -> fn(Int) -> Int {
+  return move |x| {
+    if x > depth { return f(x - 1) }
+    return x
+  }
+}
+
+fn wrap_named(f: fn(Int) -> Int, name: String) -> fn(Int) -> Int {
+  return move |x| {
+    if x > name.len() * 1000000 { return f(x - 1) }
+    return x + name.len()
+  }
+}
+
+fn two_inner(f: fn(Int) -> Int, g: fn(Int) -> Int) -> fn(Int) -> Int {
+  return move |x| {
+    if x > 100 { return f(x) + g(x) }
+    return x
+  }
+}
+
+fn main() {
+  // 1. a long chain
+  if true {
+    var f = base()
+    for i in 0..2 * scale() { f = wrap(move f, 1000000000) }
+    print(f(5))
+  }
+  // 2. every link also owns a String
+  if true {
+    var f = base()
+    for i in 0..scale() { f = wrap_named(move f, "link{i}") }
+    print(f(7))
+  }
+  // 3. links with two captured closures: one level of recursion per link on the second one, the first
+  // one forms the long chain
+  if true {
+    var f = base()
+    for i in 0..scale() { f = two_inner(move f, base()) }
+    print(f(3))
+  }
+  // 4. a chain stored in a struct field and in a list
+  var fs = List<fn(Int) -> Int>.new()
+  var g = base()
+  for i in 0..scale() { g = wrap(move g, 1000000000) }
+  fs.push(move g)
+  print(fs.len())
+  print("done")
+}

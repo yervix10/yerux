@@ -1,0 +1,7 @@
+error: trait 'Compare' is not object-safe: method 'compare' uses Self outside the receiver
+ --> tests/e721_dyn_self_signature.yx:4:31
+  |
+4 | fn compare_object(value: view dyn Compare) {}
+  |                               ^^^
+
+1 error(s). Nothing was generated.

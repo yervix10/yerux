@@ -1,0 +1,7 @@
+fn f(n: Int) -> Int {
+  if n < 0 { return 0 }
+  n = n - 1
+  let p: Int<0..> = n
+  return p
+}
+fn main() { print(f(3)) }

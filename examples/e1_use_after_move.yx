@@ -1,0 +1,7 @@
+fn consume(items: List) { }
+
+fn main() {
+  let data = List.new()
+  consume(move data)
+  print(data.len())
+}

@@ -1,0 +1,7 @@
+fn take(items: view List) -> List {
+  return items
+}
+
+fn main() {
+  List.new()
+}

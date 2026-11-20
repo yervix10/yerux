@@ -1,0 +1,10 @@
+extern "C" {
+  fn printf(fmt: Text, ...) -> Int32
+}
+
+struct P { x: Int }
+
+fn main() {
+  let p = P { x: 1 }
+  unsafe { printf("%d\n", p) }
+}

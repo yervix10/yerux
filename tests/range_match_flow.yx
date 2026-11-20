@@ -1,0 +1,102 @@
+// `match` on an integer variable narrows it inside each arm.
+type Digit = Int<0..9>
+
+fn bucket(n: Int) -> Int {
+  match n {
+    0 => { return 100 }
+    1..=9 => {
+      let d: Int<1..9> = n          // the arm 1..=9 proves it
+      return d * 2
+    }
+    10 | 11 => {
+      let d: Int<10..11> = n        // an or-pattern: the hull of its alternatives
+      return d
+    }
+    _ => { return -1 }
+  }
+}
+
+fn tail(v: Int<0..20>) -> Int {
+  var k = v
+  match k {
+    0..=5 => {
+      let s: Int<0..5> = k
+      return s
+    }
+    _ => {
+      let t: Int<6..20> = k        // the earlier arm cuts 0..5 off the declared range
+      return t
+    }
+  }
+}
+
+fn open_ranges(n: Int) -> Int {
+  match n {
+    ..=-1 => {
+      let neg: Int<..-1> = n
+      return neg
+    }
+    0 => { return 0 }
+    _ => {
+      let pos: Int<1..> = n        // 0 and the negatives are excluded by the arms above
+      return pos
+    }
+  }
+}
+
+fn guarded_arm(n: Int) -> Int {
+  match n {
+    0..=50 if n % 2 == 0 => {
+      let e: Int<0..50> = n
+      return e
+    }
+    51..=99 => {
+      let h: Int<51..99> = n
+      return h
+    }
+    _ => { return -1 }
+  }
+}
+
+fn arm_assigns(n: Int) -> Int {
+  var x = n
+  match x {
+    1..=3 => {
+      x = x + 10                    // the new value's interval replaces the arm's fact
+      let y: Int<11..13> = x
+      return y
+    }
+    _ => { return 0 }
+  }
+}
+
+fn digit_name(d: Digit) -> Int {
+  match d {
+    0 => { return 10 }
+    1 | 2 | 3 => { return 20 }
+    4..=9 => {
+      let big: Int<4..9> = d
+      return big
+    }
+  }
+}
+
+fn main() {
+  print(bucket(0))
+  print(bucket(5))
+  print(bucket(11))
+  print(bucket(40))
+  print(tail(3))
+  print(tail(19))
+  print(open_ranges(-4))
+  print(open_ranges(0))
+  print(open_ranges(8))
+  print(guarded_arm(40))
+  print(guarded_arm(41))
+  print(guarded_arm(77))
+  print(arm_assigns(2))
+  print(arm_assigns(9))
+  print(digit_name(0))
+  print(digit_name(2))
+  print(digit_name(7))
+}

@@ -1,0 +1,20 @@
+bob is 27, 3 people: {ann: 31, bob: 27, cy: 45}
+true false
+-1
+{0: [n0, n3], 1: [n1, n4], 2: [n2, n5]}
+took [n1, n4], left 2
+true false 1 true
+{(1, 2)}
+[16, 33, 38, 71, 40, 21, 62, 87, 96, 17]
+[16, 17, 21, 33, 38, 40, 62, 71, 87, 96] sorted=true
+[1000, 96, 87] removed 16, has 1000: true at 0
+apple, fig, pear
+[The quick brown fox] len=19
+true 0
+4 words: [The, quick, brown, fox]
+THE QUICK BROWN FOX / The slow brown fox / quickquick
+slice: quick  chars: 19
+parsed -4095
+12ab parses: false
+foobar true true
+braces: {ok} and a tab:	|

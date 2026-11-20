@@ -1,0 +1,12 @@
+error: this value may be outside Int<1..5>
+ --> tests/e763_range_var_increment.yx:6:13
+  |
+6 |     level = level + 1
+  |             ^^^^^^^^^
+  = the compiler can only prove that it has type Int<2..6>
+  = Int<1..5> holds the values from 1 to 5 (both ends included)
+  = level was narrower earlier, but the loop on line 5 may change it
+  = help: test it first: `if level >= 1 && level <= 5 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<1..5>.try_from(level)` gives a Result, `Int<1..5>.from(level)` panics when it does not fit
+
+1 error(s). Nothing was generated.

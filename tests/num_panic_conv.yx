@@ -1,0 +1,5 @@
+fn main() {
+    let big = 300
+    print(big.to_uint16())
+    print(big.to_uint8())
+}

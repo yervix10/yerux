@@ -1,0 +1,39 @@
+pub struct Store { name: String, names: List<String>, prices: List<Int> }
+
+pub fn new_store(name: Text) -> Store {
+  return Store { name: String.from(name), names: List<String>.new(), prices: List.new() }
+}
+
+pub fn add_item(s: mut Store, name: Text, price: Int) {
+  s.names.push(String.from(name))
+  s.prices.push(price)
+}
+
+pub fn total(s: view Store) -> Int {
+  var i = 0
+  var t = 0
+  while i < s.prices.len() {
+    t = t + s.prices.get(i)
+    i = i + 1
+  }
+  return t
+}
+
+pub fn report(s: view Store) {
+  defer print("end of report")
+  print(s.name)
+  var i = 0
+  while i < s.names.len() {
+    print(s.names.at(i))
+    i = i + 1
+  }
+}
+
+pub fn take_names(s: Store) -> List<String> {
+  var s2 = move s
+  var out = List<String>.new()
+  while s2.names.len() > 0 {
+    out.push(s2.names.pop())
+  }
+  return out
+}

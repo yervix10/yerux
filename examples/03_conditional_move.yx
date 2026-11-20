@@ -1,0 +1,15 @@
+// Moving in only one branch: freeing is decided at runtime (drop flags)
+fn consume(items: List) { }
+
+fn main() {
+  var i = 0
+  while i < 4 {
+    var items = List.new()
+    items.push(i)
+    if i % 2 == 0 {
+      consume(move items)
+    }
+    i = i + 1
+  }
+  print("done")
+}
