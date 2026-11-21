@@ -176,3 +176,7 @@ destructors (`Drop`, owned `String`/`List` memory) of every live frame do not ru
 let `main` return normally: write the real program as `fn real_main() -> Int` (returning the status) and make `main`
 only `io.run_status(real_main)`, which calls it, lets everything it owns drop, and only then exits with a non-zero
 status. Tests: `tests/io_exit_drop.yx`, `tests/io_exit_skips_drop.yx`, `tests/io_exit.yx`.
+
+## `std.path` relative paths
+
+`path.relative(from, to)` lexically normalizes both inputs and returns the relative path from one directory to the other (`.` when equal). Absolute and relative paths cannot be mixed and produce `Err(String)`. No filesystem access or symlink resolution occurs. Covered by `tests/std_path_complete.yx`.

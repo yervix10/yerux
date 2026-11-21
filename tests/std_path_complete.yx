@@ -1,0 +1,18 @@
+import std.path
+
+fn main() {
+  let ar = path.relative("a/b", "a/c/d")
+  var a = String.new()
+  match ar { Ok(v) => { a = String.from(v) }, Err(_) => { assert(false) } }
+  assert(a.eq("../c/d"))
+  let br = path.relative("/srv/app", "/srv/data/file")
+  var b = String.new()
+  match br { Ok(v) => { b = String.from(v) }, Err(_) => { assert(false) } }
+  assert(b.eq("../data/file"))
+  let cr = path.relative("a/./b/..", "a")
+  var c = String.new()
+  match cr { Ok(v) => { c = String.from(v) }, Err(_) => { assert(false) } }
+  assert(c.eq("."))
+  let bad = path.relative("a", "/a")
+  match bad { Ok(_) => { assert(false) }, Err(_) => { assert(true) } }
+}
