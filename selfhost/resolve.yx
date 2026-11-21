@@ -271,7 +271,7 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
         issue(resolver, ctx.module_id, String.from("public-test"))
       }
     } else {
-      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Alias" && tag != "Impl" { break }
+      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && !(resolver.link && tag == "Alias") && tag != "Impl" { break }
       collect_symbol(symbols, tree, scanned, decl)
     }
     scanned = tree.at(scanned).end

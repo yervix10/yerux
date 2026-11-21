@@ -955,7 +955,7 @@ fn item(p: mut Parser) -> String {
 fn parse_file(p: mut Parser) -> String {
   var out = String.from("[")
   while !p.failed && !kind(p, "Eof") {
-    if eat_kw(p, "derive") {
+    if !p.build && eat_kw(p, "derive") {
       // `derive Clone, Equal for Name` generates impls in the real compiler; it adds no item to the AST
       let first = ident(p)
       while eat(p, ",") {
