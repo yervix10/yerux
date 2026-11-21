@@ -182,7 +182,7 @@ s.len() s.is_empty() s.char_count()    s.byte(i)  s.eq(x)  s.push_str(x)  s.push
 s.starts_with(p)  s.ends_with(p)  s.contains(p)  s.find(p) -> byte index or -1  s.find_from(p, i)
 s.slice(from, to) -> String      (byte range; both ends must be character boundaries, else panic; s.is_boundary(i))
 s.split(sep) -> List<String>     (sep not empty)      parts.join(sep) -> String        s.replace(from, to)   s.repeat(n)
-s.trim()  s.trim_start()  s.trim_end()   (ASCII whitespace)        s.to_upper()  s.to_lower()   (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic)
+s.trim()  s.trim_start()  s.trim_end()   (ASCII whitespace: space \t \n \v \f \r)      s.to_upper()  s.to_lower()   (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic)
 s.parse_int(out) -> Bool         (`var n = 0; if s.parse_int(n) { .. }`: optional sign, digits only, checked against overflow; `out` is written only on success)
 a < b   a == b   a.cmp(b)   a + b
 ```

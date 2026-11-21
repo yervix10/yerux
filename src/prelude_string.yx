@@ -2,7 +2,7 @@
 // Arguments declared `view String` also accept a Text (the compiler copies it into a hidden String).
 
 fn std__is_ws(b: Int) -> Bool {
-    return b == 32 || b == 9 || b == 10 || b == 13
+    return b == 32 || (b >= 9 && b <= 13) // space, \t \n \v \f \r
 }
 
 // Upper/lower case of one code point: ASCII, Latin-1, Latin Extended-A pairs, Greek and Cyrillic letters.
