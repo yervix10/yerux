@@ -114,11 +114,8 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
         } else if c == '\'' {
             // character literal: 'a', '\n', '\u{1F600}'
             i += 1;
-            if cs.get(i) == Some(&'\\') {
-                i += 1;
-            }
             while i < cs.len() && cs[i] != '\'' && cs[i] != '\n' {
-                i += 1;
+                i += if cs[i] == '\\' { 2 } else { 1 };
             }
             if i >= cs.len() || cs[i] != '\'' {
                 return Err(format!("line {}: unterminated character literal", line));

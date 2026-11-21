@@ -84,3 +84,5 @@ fn asb(n: Int) -> Int {
   let c = n as Int<..9>
   return b + c
 }
+
+fn quotes() { print('\''); print('^'); print('\\') }
