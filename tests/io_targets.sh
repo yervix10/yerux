@@ -13,6 +13,13 @@ for t in windows aarch64; do
     echo "FAIL: std.io built for $t"; fail=1; continue
   fi
   grep -q "native backend: raw system calls .* is not supported on the $t target yet" "$TMP/err" || { echo "FAIL: unclear message for $t"; cat "$TMP/err"; fail=1; }
+  # std.fs / std.env / std.time sit on the same syscalls: same clear refusal
+  for m in fs_basic env_basic time_clock; do
+    if "$Y" build tests/$m.yx --native --target $t -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
+      echo "FAIL: $m built for $t"; fail=1; continue
+    fi
+    grep -q "native backend: raw system calls .* is not supported on the $t target yet" "$TMP/err" || { echo "FAIL: unclear message for $m on $t"; cat "$TMP/err"; fail=1; }
+  done
   if "$Y" build tests/conc_runtime.yx --target "$t" -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
     echo "FAIL: thread runtime built for $t"; fail=1
   elif ! grep -q "native backend: thread runtime intrinsics .* is not supported on the $t target yet" "$TMP/err"; then
