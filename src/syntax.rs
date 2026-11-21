@@ -100,8 +100,8 @@ pub struct Token {
 const SYMS3: &[&str] = &["..="];
 const SYMS2: &[&str] = &["==", "!=", "<=", ">=", "&&", "||", "->", "=>", ".."];
 const SYMS1: &[&str] = &[
-    "(", ")", "{", "}", "[", "]", ",", ":", ";", "=", "<", ">", "+", "-", "*", "/", "%", "!", ".", "|", "@",
-    "?",
+    "(", ")", "{", "}", "[", "]", ",", ":", ";", "=", "<", ">", "+", "-", "*", "/", "%", "!", ".",
+    "|", "@", "?",
 ];
 pub const KW: &[&str] = &[
     "fn", "let", "var", "if", "else", "while", "return", "move", "view", "mut", "true", "false",
@@ -704,7 +704,11 @@ pub fn array_elem_bytes(types: &Types, t: Ty) -> usize {
                 1 + types.enums[i]
                     .variants
                     .iter()
-                    .map(|(_, ps)| ps.iter().map(|p| words(types, *p, depth + 1)).sum::<usize>())
+                    .map(|(_, ps)| {
+                        ps.iter()
+                            .map(|p| words(types, *p, depth + 1))
+                            .sum::<usize>()
+                    })
                     .max()
                     .unwrap_or(0)
             }
@@ -3416,8 +3420,11 @@ impl Parser {
                     continue;
                 }
                 if self.is_sym("..=") {
-                    return Err(diag("a slice is written `x[from..to]` (the end is excluded)", self.pos())
-                        .note("help: for an inclusive end write `x[from..to + 1]`"));
+                    return Err(diag(
+                        "a slice is written `x[from..to]` (the end is excluded)",
+                        self.pos(),
+                    )
+                    .note("help: for an inclusive end write `x[from..to + 1]`"));
                 }
                 let close = self.expect_sym("]")?;
                 let p = span(e.pos, close);
@@ -3513,8 +3520,11 @@ impl Parser {
             Tok::Sym("[") => {
                 // `[a, b, c]` or `[v; N]`
                 if self.is_sym("]") {
-                    return Err(diag("an array literal needs at least one element", span(pos, self.pos()))
-                        .note("help: use `List<T>.new()` for a collection that starts empty"));
+                    return Err(diag(
+                        "an array literal needs at least one element",
+                        span(pos, self.pos()),
+                    )
+                    .note("help: use `List<T>.new()` for a collection that starts empty"));
                 }
                 let first = self.expr()?;
                 if self.eat_sym(";") {
@@ -3531,7 +3541,10 @@ impl Parser {
                     };
                     let close = self.expect_sym("]")?;
                     if n < 1 {
-                        return Err(diag("an array needs at least one element", span(pos, close)));
+                        return Err(diag(
+                            "an array needs at least one element",
+                            span(pos, close),
+                        ));
                     }
                     let e = mk(EK::ArrayFill(Box::new(first), n as usize), span(pos, close));
                     return self.postfix(e);

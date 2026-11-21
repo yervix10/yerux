@@ -1733,10 +1733,7 @@ impl<'a> L<'a> {
             t if self.types.array_of(t).is_some() => usize::MAX,
             _ => return Err("native backend: method on a non-list".into()),
         };
-        let et = self
-            .types
-            .seq_elem(recv.ty)
-            .expect("list or array element");
+        let et = self.types.seq_elem(recv.ty).expect("list or array element");
         // by-value arguments first (left to right), then the list place
         let mut argv = vec![];
         for (k, a) in args.iter().enumerate() {
@@ -2058,7 +2055,9 @@ impl<'a> L<'a> {
                 a
             }
             EK::SliceOf(..) => {
-                return Err("native backend: internal error, a slice outside of a call argument".into())
+                return Err(
+                    "native backend: internal error, a slice outside of a call argument".into(),
+                )
             }
             EK::Variant { eid, vid, args, .. } => {
                 let n = self.words(Ty::Enum(*eid));

@@ -1,0 +1,51 @@
+// Slices of nested places (struct fields, list elements, rows of 2-D arrays), packed Bool sub-slices, closures.
+struct G { cells: [[Int; 3]; 2] }
+
+fn sum(xs: view [Int]) -> Int {
+  var t = 0
+  for x in xs { t = t + x }
+  return t
+}
+
+fn rows(xs: view [[Int; 3]]) -> Int {
+  var t = 0
+  for r in xs { t = t + sum(r) }
+  return t
+}
+
+fn trues(xs: view [Bool]) -> Int {
+  var n = 0
+  for b in xs { if b { n = n + 1 } }
+  return n
+}
+
+fn setall(xs: mut [Bool]) { for i in 0..xs.len() { xs[i] = true } }
+
+fn twice(x: Int) -> Int {
+  let a = [x, x]
+  return a[0] + a[1]
+}
+
+fn main() {
+  var g = G { cells: [[1, 2, 3], [4, 5, 6]] }
+  print(sum(g.cells[1]))
+  print(rows(g.cells))
+  print(rows(g.cells[1..]))
+  var l = List<[Int; 3]>.new()
+  l.push([7, 8, 9])
+  print(rows(l))
+  var bl = List<Bool>.new()
+  for i in 0..20 { bl.push(i % 3 == 0) }
+  print(trues(bl))
+  print(trues(bl[5..13]))
+  setall(bl[9..11])
+  print(trues(bl))
+  var ba = [false; 13]
+  setall(ba[3..12])
+  print(trues(ba))
+  print(trues(ba[11..]))
+  let k = twice(4)
+  print(k)
+  let f = |xs: view [Int]| xs.len()
+  print(f(g.cells[0]))
+}

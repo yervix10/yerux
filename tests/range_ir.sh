@@ -38,6 +38,9 @@ expect "neg: x > -100 uses unchecked negation" tests/range_neg.yx n " = SubU " 1
 # bounds checks
 for f in sum rev bytes; do expect "list loop $f: no bounds check" tests/range_list_loops.yx $f "^ *check " 0; done
 expect "list: unprovable indices keep their checks" tests/range_list_loops.yx main "^ *check " 3
+# fixed-size arrays: the length is a constant
+for f in sum_idx sum_for by_range by_len; do expect "array $f: no bounds check" tests/range_array_loops.yx $f "^ *check " 0; done
+expect "array: unknown index keeps its check" tests/range_array_loops.yx unknown "^ *check " 1
 expect "safe nested loops: only the unbounded sum is checked" tests/range_safe.yx main "$CHK" 1
 # Declared parameter ranges seed rangeopt across the function boundary.
 expect "range parameter: increment unchecked" tests/range_param_optimization.yx increment_bounded "$UNC" 1

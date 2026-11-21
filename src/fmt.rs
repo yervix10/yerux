@@ -72,9 +72,7 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
                 .trim_end()
                 .to_string();
         } else if c.is_ascii_digit() {
-            let after_dot = out
-                .last()
-                .is_some_and(|t: &T| t.k == K::Sym && t.s == ".");
+            let after_dot = out.last().is_some_and(|t: &T| t.k == K::Sym && t.s == ".");
             let scan = |i: &mut usize| {
                 while *i < cs.len() && (cs[*i].is_ascii_alphanumeric() || cs[*i] == '_') {
                     *i += 1;
@@ -517,9 +515,8 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
                     && !(p.s == ">" && prev.is_some_and(|j| gen[j]))
             }) {
                 b = B::Cont;
-            } else if pt.is_some_and(|p| {
-                p.k == K::Sym && matches!(p.s.as_str(), "->" | "=>" | ".")
-            }) {
+            } else if pt.is_some_and(|p| p.k == K::Sym && matches!(p.s.as_str(), "->" | "=>" | "."))
+            {
                 // join
             } else {
                 b = B::Hard(src_blank);

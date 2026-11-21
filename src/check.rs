@@ -163,7 +163,9 @@ fn walk_ids(e: &Expr, out: &mut Vec<usize>, only_moves: bool) {
         EK::ArrayFill(b, _) => walk_ids(b, out, only_moves),
         EK::SliceOf(b, lo, hi) => {
             walk_ids(b, out, only_moves);
-            lo.iter().chain(hi).for_each(|a| walk_ids(a, out, only_moves));
+            lo.iter()
+                .chain(hi)
+                .for_each(|a| walk_ids(a, out, only_moves));
         }
         EK::Closure { .. } => {}
     }
@@ -194,9 +196,7 @@ fn can_propagate(e: &Expr) -> bool {
         EK::StructLit { fields, .. } => fields.iter().any(|(_, value)| can_propagate(value)),
         EK::ArrayLit(items) => items.iter().any(can_propagate),
         EK::ArrayFill(b, _) => can_propagate(b),
-        EK::SliceOf(b, lo, hi) => {
-            can_propagate(b) || lo.iter().chain(hi).any(|a| can_propagate(a))
-        }
+        EK::SliceOf(b, lo, hi) => can_propagate(b) || lo.iter().chain(hi).any(|a| can_propagate(a)),
         _ => false,
     }
 }
@@ -2357,7 +2357,11 @@ impl<'a> Checker<'a> {
             }
             match elem {
                 None => {
-                    elem = Some(if matches!(t, Ty::Range(..)) { Ty::Int } else { t });
+                    elem = Some(if matches!(t, Ty::Range(..)) {
+                        Ty::Int
+                    } else {
+                        t
+                    });
                 }
                 Some(w) => self.expect(t, w, it.pos),
             }
@@ -2429,13 +2433,17 @@ impl<'a> Checker<'a> {
             if k < 0 || k >= n as i64 {
                 let an = self.tn(arr);
                 self.err(
-                    diag(format!("index {} is out of bounds for the array {}", k, an), idx.pos)
-                        .note(format!("valid indexes are 0 to {}", n - 1)),
+                    diag(
+                        format!("index {} is out of bounds for the array {}", k, an),
+                        idx.pos,
+                    )
+                    .note(format!("valid indexes are 0 to {}", n - 1)),
                 );
             }
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn array_method(
         &mut self,
         p: PlaceInfo,
@@ -2500,10 +2508,9 @@ impl<'a> Checker<'a> {
                 self.expect(t, Ty::Int, x.pos);
             }
             if !self.isp(b) {
-                self.err(
-                    diag("cannot take a slice of a temporary", b.pos)
-                        .note("help: store the array or List in a variable first, then slice the variable"),
-                );
+                self.err(diag("cannot take a slice of a temporary", b.pos).note(
+                    "help: store the array or List in a variable first, then slice the variable",
+                ));
                 return;
             }
             let Some(p) = self.place(b) else {
@@ -2624,9 +2631,7 @@ impl<'a> Checker<'a> {
         pos: Pos,
         elem: Ty,
     ) -> Ty {
-        if self.types.slice_elem(p.ty).is_some()
-            && !matches!(m, "len" | "get" | "set" | "swap")
-        {
+        if self.types.slice_elem(p.ty).is_some() && !matches!(m, "len" | "get" | "set" | "swap") {
             self.err(
                 diag(format!("{} has no method '{}'", self.tn(p.ty), m), pos)
                     .note("a slice borrows elements of an array or a List: it can read and replace them, but never add, remove or reorder through library methods")
@@ -3225,7 +3230,16 @@ impl<'a> Checker<'a> {
             let arg = &mut rest[0];
             let apos = arg.pos;
             if let (Some(selem), true) = (self.types.slice_elem(pty), mode != Mode::Own) {
-                self.slice_arg(arg, mode, pty, selem, pre[k], before, &sig.params, &mut loans);
+                self.slice_arg(
+                    arg,
+                    mode,
+                    pty,
+                    selem,
+                    pre[k],
+                    before,
+                    &sig.params,
+                    &mut loans,
+                );
                 continue;
             }
             // a function value (closure literal, function name, call result) for a `view fn` / `mut fn` parameter
@@ -5201,7 +5215,18 @@ impl<'a> Checker<'a> {
                 return;
             }
         }
+        // `for x in l[lo..hi]`: the borrowing loop over the indexes lo..hi of the place `l`
+        let (e, range) = match e.k {
+            EK::SliceOf(b, lo, hi) => (*b, Some((lo, hi))),
+            k => (Expr { k, ..e }, None),
+        };
         let borrow = !matches!(e.k, EK::Move(..)) && self.isp(&e);
+        if range.is_some() && !borrow {
+            self.err(diag("cannot loop over a slice of a temporary", ep).note(
+                "help: store the array or List in a variable first, then loop over `v[from..to]`",
+            ));
+            return;
+        }
         if borrow {
             if !simple_place(&e) {
                 self.err(
@@ -5227,11 +5252,42 @@ impl<'a> Checker<'a> {
             };
             let mut place = e.clone();
             self.resolve_ids(&mut place);
-            self.chk(
-                out,
-                s_let(&nn, false, s_meth(place.clone(), "len", vec![], ep), ep),
-            );
-            self.chk(out, s_let(&ni, true, s_int(0, ep), ep));
+            let len = s_meth(place.clone(), "len", vec![], ep);
+            match range {
+                None => {
+                    self.chk(out, s_let(&nn, false, len, ep));
+                    self.chk(out, s_let(&ni, true, s_int(0, ep), ep));
+                }
+                Some((lo, hi)) => {
+                    // bounds left to right, then `0 <= lo <= hi <= len` (else the slice panic)
+                    let lo = lo.map(|x| *x).unwrap_or_else(|| s_int(0, ep));
+                    self.chk(out, s_let(&ni, true, lo, ep));
+                    let hi = hi.map(|x| *x).unwrap_or_else(|| len.clone());
+                    self.chk(out, s_let(&nn, false, hi, ep));
+                    let bad = s_bin(
+                        "||",
+                        s_bin(
+                            "||",
+                            s_bin("<", s_var(&ni, ep), s_int(0, ep), ep),
+                            s_bin(">", s_var(&ni, ep), s_var(&nn, ep), ep),
+                            ep,
+                        ),
+                        s_bin(">", s_var(&nn, ep), len, ep),
+                        ep,
+                    );
+                    let panic = s_stmt(
+                        SK::ExprS(sx(
+                            EK::Call(
+                                "panic".into(),
+                                vec![sx(EK::Text("index out of range".into()), ep)],
+                            ),
+                            ep,
+                        )),
+                        ep,
+                    );
+                    self.chk(out, s_stmt(SK::If(bad, vec![panic], None), ep));
+                }
+            }
             let at = s_meth(place.clone(), "at", vec![s_var(&ni, ep)], ep);
             let first = if !h.mutable && !self.types.owned(et) {
                 s_let(&h.var, false, at, h.var_pos)

@@ -134,6 +134,13 @@ Pipeline: `AST -> Yerux IR -> machine code -> executable file`.
 - Tests: tests/num_*.yx (goldens from the C oracle, native must match), `tests/fuzz.py --num`, `tests/a64_fuzz.py --num`.
 - Gaps: no XMM register allocation or SIMD, `%` on floats, huge-argument trig, no libm-quality (correctly rounded) transcendental functions.
 
+## Done (fixed-size arrays and slices)
+- `[T; N]` is a struct whose native layout is a List element buffer (packed `Bool`); `a[i]` lowers to
+  `Check(i, N)` + `LeaX/LoadX/StoreX` (range analysis drops the check for `0..N` loops). Slices are List
+  headers: an argument `a[x..y]` or an array gets a 3-word frame header built after its bounds checks.
+  Only existing IR instructions are used, so x86-64, aarch64 and Windows need no changes. The C oracle
+  uses `struct { T e[N]; }` and passes slice headers by value. See [docs/ARRAYS.md](docs/ARRAYS.md).
+
 ## Done (x86-64 Linux concurrency)
 
 - Native workers use `clone`, guarded mmap stacks, per-worker TLS and the
