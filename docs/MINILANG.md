@@ -54,8 +54,7 @@ fn decorate(label) {
   associate left and evaluate operands left to right. Division truncates
   toward zero. `+` also concatenates two strings. Equality compares
   values of the same type, and values of different types compare unequal.
-- Strings hold UTF-8 and allow `\`, `"`, `
-`, `` and `	`.
+- Strings hold UTF-8 and allow `\\`, `\"`, `\n`, `\r` and `\t`.
   String literals occupy one line. `print expression;` prints a value with
   a final newline. An expression alone may also be a statement if followed by
   a semicolon.
