@@ -142,7 +142,20 @@ static inline void nx_str_push_raw(String *s, int64_t p, int64_t n) { Str x = { 
 static inline String nx_str_from(Str x) { String s = {0, 0, 0}; nx_str_push_str(&s, x); return s; }
 static inline String nx_str_concat(Str a, Str b) { String s = {0, 0, 0}; nx_str_push_str(&s, a); nx_str_push_str(&s, b); return s; }
 static inline void nx_str_push_int(String *s, int64_t v) {
-  char buf[32]; int n = snprintf(buf, sizeof buf, "%lld", (long long)v);
+  /* Format into a stack buffer, then reserve/copy once.  snprintf is
+     disproportionately expensive in tight append loops.  Form the
+     magnitude unsigned so INT64_MIN is representable. */
+  char buf[21];
+  int n = 0;
+  uint64_t magnitude = v < 0 ? UINT64_C(0) - (uint64_t)v : (uint64_t)v;
+  do {
+    buf[n++] = (char)('0' + magnitude % 10);
+    magnitude /= 10;
+  } while (magnitude);
+  if (v < 0) buf[n++] = '-';
+  for (int i = 0; i < n / 2; ++i) {
+    char c = buf[i]; buf[i] = buf[n - i - 1]; buf[n - i - 1] = c;
+  }
   Str x = { buf, n }; nx_str_push_str(s, x);
 }
 static inline int64_t nx_str_len(String *s) { return s->len; }
