@@ -1042,7 +1042,7 @@ fn main() {
 
 Yerux has no exceptions and no unwinding. A runtime failure is a **panic**: the program writes `panic: <message>` to stderr and exits with code **101** at once, without running pending `defer` statements.
 
-```yx
+```yx exit=101
 // expect-exit 101
 fn main() {
   let value = Result<Int, String>.Err(String.from("file missing"))
@@ -1059,7 +1059,7 @@ Things that panic:
 - `assert` / `assert_eq` failures (`assertion failed`)
 - an explicit `panic(message)`, where the message is a `Text` or `String`, including an interpolated string:
 
-```yx
+```yx exit=101
 // expect-exit 101
 fn check(n: Int) -> Int {
   if n < 0 { panic("negative input: {n}") }
@@ -1078,7 +1078,7 @@ Use `Option` / `Result` for failures that callers should handle, and `panic` for
 
 ## 20. Testing with `yerux test`
 
-```yx
+```yx test
 fn clamp(x: Int, lo: Int, hi: Int) -> Int {
   if x < lo { return lo }
   if x > hi { return hi }
