@@ -1,0 +1,16 @@
+fn main() {
+  var map = Map<Int, Int>.new()
+  var i = 0
+  while i < 200000 {
+    map.insert(i, i * 3 + 1)
+    i = i + 1
+  }
+  var sum = 0
+  i = 0
+  while i < 200000 {
+    let entry = map.find(i)
+    if entry >= 0 { sum = sum + map.vals.get(entry) }
+    i = i + 1
+  }
+  print(sum)
+}
