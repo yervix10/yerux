@@ -85,6 +85,22 @@ struct Loader {
     exports: HashMap<String, Vec<(String, Kind)>>,
     tests: Vec<String>,
     items_by_key: HashMap<String, HashMap<String, Item>>,
+    trace: Option<ResolutionTrace>,
+}
+
+#[derive(Default)]
+struct ResolutionTrace {
+    owners: Vec<String>,
+    rows: Vec<String>,
+}
+
+impl Kind {
+    fn trace_name(self) -> &'static str {
+        match self {
+            Kind::Func => "function",
+            Kind::Type => "type",
+        }
+    }
 }
 
 fn is_id(t: &Token, s: &str) -> bool {
@@ -110,6 +126,22 @@ fn mangle(key: &str, name: &str) -> String {
 
 /// Load `entry` and everything it imports.
 pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
+    load_with(entry, mode, false).0
+}
+
+/// Observe the module loader's symbol tables and name lookups before type checking.
+pub fn resolution_trace(entry: &str) -> (Vec<String>, bool) {
+    let (loaded, trace) = load_with(entry, Mode::Normal, true);
+    let mut rows = trace.unwrap().rows;
+    rows.sort_unstable();
+    (rows, loaded.is_ok())
+}
+
+fn load_with(
+    entry: &str,
+    mode: Mode,
+    trace: bool,
+) -> (Result<Loaded, Vec<String>>, Option<ResolutionTrace>) {
     let path = Path::new(entry);
     let root = path
         .parent()
@@ -133,11 +165,13 @@ pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
         exports: HashMap::new(),
         tests: vec![],
         items_by_key: HashMap::new(),
+        trace: trace.then(ResolutionTrace::default),
     };
     // the entry module is known under its file name too, so `import main` from a dependency is a cycle
-    l.load_module(&stem, entry, true);
-    if !l.errs.is_empty() {
-        return Err(l.errs);
+    let complete = l.load_module(&stem, entry, true);
+    let trace = l.trace.take();
+    if !complete || !l.errs.is_empty() {
+        return (Err(l.errs), trace);
     }
     let mut toks = vec![];
     let mut last = Pos {
@@ -157,17 +191,31 @@ pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
     });
     let mut names = l.names;
     names.sort_by_key(|(m, _)| std::cmp::Reverse(m.len()));
-    Ok(Loaded {
-        toks,
-        files: l.files,
-        names,
-        imports: l.imports,
-        exports: l.exports,
-        tests: l.tests,
-    })
+    (
+        Ok(Loaded {
+            toks,
+            files: l.files,
+            names,
+            imports: l.imports,
+            exports: l.exports,
+            tests: l.tests,
+        }),
+        trace,
+    )
 }
 
 impl Loader {
+    fn trace(&mut self, file: usize, tag: &str, fields: &[&str]) {
+        if let Some(trace) = &mut self.trace {
+            let mut row = format!("{tag}:{}", trace.owners[file]);
+            for field in fields {
+                row.push(':');
+                row.push_str(field);
+            }
+            trace.rows.push(row);
+        }
+    }
+
     fn report(&mut self, file: usize, d: Diag) {
         let s = render(&d, &self.files[file].path, &self.files[file].src);
         self.errs.push(s);
@@ -193,9 +241,14 @@ impl Loader {
             src: src.clone(),
         });
         self.imports.push(vec![]);
+        if let Some(trace) = &mut self.trace {
+            trace.owners.push(if entry { "@".into() } else { key.into() });
+        }
+        self.trace(file, "module", &[]);
         let toks = match lex(&src) {
             Ok(t) => t,
             Err(d) => {
+                self.trace(file, "error", &["lex"]);
                 self.report(file, d);
                 return false;
             }
@@ -260,6 +313,7 @@ impl Loader {
             let mpos = span(ipos, toks[i - 1].pos);
             let dep = segs.join(".");
             if aliases.contains_key(&alias) {
+                self.trace(file, "error", &["duplicate-alias", &alias, &dep]);
                 self.report(
                     file,
                     diag(format!("the name '{}' is imported twice", alias), mpos).note(format!(
@@ -270,6 +324,7 @@ impl Loader {
                 continue;
             }
             if self.stack.contains(&dep) {
+                self.trace(file, "error", &["cycle", &dep]);
                 let mut chain: Vec<String> = self.stack.clone();
                 chain.push(dep.clone());
                 let from = chain.iter().position(|k| *k == dep).unwrap_or(0);
@@ -290,6 +345,7 @@ impl Loader {
                     self.root.join(&rel)
                 };
                 if !crate::stdlib::source(&dep).is_some() && !p.is_file() {
+                    self.trace(file, "error", &["missing-module", &dep]);
                     self.report(
                         file,
                         diag(format!("cannot find module '{}'", dep), mpos)
@@ -310,6 +366,7 @@ impl Loader {
             } else if self.by_key[&dep].is_none() {
                 continue; // failed earlier; already reported
             }
+            self.trace(file, "import", &[&alias, &dep]);
             aliases.insert(alias.clone(), dep.clone());
             self.imports[file].push((alias, dep));
         }
@@ -335,14 +392,26 @@ impl Loader {
                 }
             }
             if sp.test.is_some() && sp.public {
+                self.trace(file, "error", &["public-test"]);
                 self.report(
                     file,
                     diag("`pub` cannot be used on a test", toks[sp.start].pos),
                 );
             }
         }
+        if self.trace.is_some() {
+            for (n, item) in &items {
+                let visibility = if item.public { "public" } else { "private" };
+                self.trace(
+                    file,
+                    "symbol",
+                    &[n, item.kind.trace_name(), visibility, &mangle(&ekey, n)],
+                );
+            }
+        }
         for t in &toks[i..] {
             if is_id(t, "import") {
+                self.trace(file, "error", &["late-import"]);
                 self.report(
                     file,
                     diag("`import` must come before every other declaration", t.pos)
@@ -464,6 +533,7 @@ impl Loader {
                     let dep = dep.clone();
                     match self.items_by_key.get(&dep).and_then(|m| m.get(&y)) {
                         None => {
+                            self.trace(file, "error", &["unknown-item", &x, &dep, &y]);
                             let pubs: Vec<String> = self
                                 .exports
                                 .get(&dep)
@@ -488,18 +558,29 @@ impl Loader {
                             } else {
                                 "type"
                             };
+                            let declaration = if it.kind == Kind::Func { "fn" } else { "struct" };
+                            self.trace(file, "error", &["private-item", &x, &dep, &y]);
                             self.report(
                                 file,
                                 diag(format!("'{}' is private in module '{}'", y, dep), p).note(format!(
                                     "help: add `pub` before the {} in {}.yx to share it: `pub {} {}`",
                                     what,
                                     dep.replace('.', "/"),
-                                    if it.kind == Kind::Func { "fn" } else { "struct" },
+                                    declaration,
                                     y
                                 )),
                             );
                         }
-                        Some(_) => {}
+                        Some(it) => {
+                            if self.trace.is_some() {
+                                let kind = it.kind.trace_name();
+                                self.trace(
+                                    file,
+                                    "qualified",
+                                    &[&x, &dep, &y, kind, &mangle(&dep, &y)],
+                                );
+                            }
+                        }
                     }
                     out.push(Token {
                         t: Tok::Id(mangle(&dep, &y)),
@@ -511,6 +592,7 @@ impl Loader {
                 if !shadowed.contains(&x)
                     && !matches!(next, Some(n) if is_sym(n, ":") || is_sym(n, "="))
                 {
+                    self.trace(file, "error", &["module-value", &x]);
                     self.report(
                         file,
                         diag(format!("'{}' is a module, not a value", x), t.pos)
@@ -533,6 +615,7 @@ impl Loader {
                     }
                 };
                 if flag {
+                    self.trace(file, "error", &["unqualified", &x, kind.trace_name()]);
                     self.report(
                         file,
                         diag(format!("'{}' is not defined in this file", x), t.pos).note(format!(
@@ -586,6 +669,9 @@ impl Loader {
                 }
                 let call = matches!(next, Some(n) if is_sym(n, "("))
                     || (prev_fn && matches!(next, Some(n) if is_sym(n, "<")));
+                if self.trace.is_some() && it.kind == Kind::Func && call && !prev_fn {
+                    self.trace(file, "call", &[&x, &mangle(ekey, &x)]);
+                }
                 if !ekey.is_empty() && (it.kind == Kind::Type || call) {
                     out.push(Token {
                         t: Tok::Id(mangle(ekey, &x)),
@@ -601,6 +687,7 @@ impl Loader {
                 let n = next.unwrap();
                 if let Tok::Id(v) = &n.t {
                     shadowed.insert(v.clone());
+                    self.trace(file, "error", &["alias-shadow", v]);
                 }
                 self.report(
                     file,
