@@ -1,0 +1,12 @@
+// std.fs: close consumes the File; using it afterwards is a use-after-move error
+import std.fs
+import std.io
+fn misuse() -> Result<Int, io.IoError> {
+  var f = fs.create("/tmp/yerux_e986.txt")?
+  let c = fs.close(move f)?
+  let n = f.write_str("late")?
+  return Ok(n)
+}
+fn main() {
+  let result = misuse()
+}

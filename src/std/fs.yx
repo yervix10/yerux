@@ -618,12 +618,22 @@ pub fn hard_link(target: view String, link: view String) -> Result<Int, io.IoErr
 
 // ───────────────────────── file handles ─────────────────────────
 
-/// An open file. It owns its descriptor, but the language has no user-defined `Drop`: nothing closes it
-/// automatically. Call `fs.close(move f)` (consumes the handle, reports the error of close(2)) when done;
-/// a File that is merely dropped leaks its descriptor. Move-only (it holds a String).
+/// An open file. It owns its descriptor and closes it when dropped (end of scope, early return, a list or
+/// struct holding it going away). Call `fs.close(move f)` to close early and get the error of close(2).
+/// Move-only (it holds a String).
 pub struct File {
     fd: Int,
     path: String,
+}
+
+impl Drop for File {
+    fn drop(mut self) {
+        // errors of close(2) cannot be reported from a destructor; use fs.close for that
+        if self.fd >= 0 {
+            let r = __syscall(3, self.fd, 0, 0, 0, 0, 0)
+            self.fd = -1
+        }
+    }
 }
 
 /// How `open_with` opens a file. Start from `fs.options()` (read only) and set the fields.
@@ -920,7 +930,8 @@ impl File {
 // ───────────────────────── buffered reading and writing ─────────────────────────
 
 /// A File with a read buffer of up to 64 KiB (kept in an owned String, so it needs no release): lines and
-/// single bytes without one system call each. Close it with `fs.close_reader(move r)`.
+/// single bytes without one system call each. Dropping it closes the file; `fs.close_reader(move r)` closes
+/// early and reports the error.
 pub struct Reader {
     file: File,
     data: String,
@@ -1060,11 +1071,28 @@ impl Reader {
     }
 }
 
-/// A File with a write buffer of up to 64 KiB (an owned String). There is no `Drop`: **data still in the
-/// buffer is lost unless you call `flush()` or, better, `fs.finish(move w)`** (flush + close, errors reported).
+/// A File with a write buffer of up to 64 KiB (an owned String). Dropping it writes the pending buffer and
+/// closes the file, ignoring errors; call `fs.finish(move w)` (flush + close) to get them.
 pub struct Writer {
     file: File,
     data: String,
+}
+
+impl Drop for Writer {
+    fn drop(mut self) {
+        let fd = self.file.fd
+        let r = flush_parts(fd, self.data)
+    }
+}
+
+// write out a pending buffer; returns the errno (0 = ok). Shared by Writer.flush and its destructor.
+fn flush_parts(fd: Int, data: mut String) -> Int {
+    if data.len() == 0 {
+        return 0
+    }
+    let err = write_raw(fd, data.raw_addr(), data.len())
+    data = String.new()
+    return err
 }
 
 /// Buffered writing to an open file (takes it over).
@@ -1110,12 +1138,9 @@ impl Writer {
 
     /// Write out everything buffered.
     fn flush(mut self) -> Result<Int, io.IoError> {
-        if self.data.len() == 0 {
-            return Ok(0)
-        }
         let n = self.data.len()
-        let err = write_raw(self.file.fd, self.data.raw_addr(), n)
-        self.data = String.new()
+        let fd = self.file.fd
+        let err = flush_parts(fd, self.data)
         if err != 0 {
             return Err(io.os_error("write", self.file.path, err))
         }

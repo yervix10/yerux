@@ -1,0 +1,9 @@
+// std.fs: Writer has a destructor, so its file cannot be moved out of it
+import std.fs
+import std.io
+fn steal(w: fs.Writer) -> fs.File {
+  return move w.file
+}
+fn main() {
+  let w = fs.create_writer("/tmp/yerux_e987.txt")
+}

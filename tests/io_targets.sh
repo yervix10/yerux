@@ -14,7 +14,7 @@ for t in windows aarch64; do
   fi
   grep -q "native backend: raw system calls .* is not supported on the $t target yet" "$TMP/err" || { echo "FAIL: unclear message for $t"; cat "$TMP/err"; fail=1; }
   # std.fs / std.env / std.time sit on the same syscalls: same clear refusal
-  for m in fs_basic env_basic time_clock fs_handles fs_buffered env_set; do
+  for m in fs_basic env_basic time_clock fs_handles fs_autoclose fs_buffered env_set; do
     if "$Y" build tests/$m.yx --native --target $t -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
       echo "FAIL: $m built for $t"; fail=1; continue
     fi
