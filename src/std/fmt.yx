@@ -171,6 +171,33 @@ pub fn hex_padded(x: Int, width: Int) -> String {
   return pad_left(h, width, '0')
 }
 
+/// Integer digits with a minimum precision; precision zero renders zero as an empty string.
+pub fn format_int_precision(x: Int, base: Int, precision: Int) -> String {
+  if precision < 0 { panic("fmt precision must be non-negative") }
+  var digits = String.new()
+  push_digits(digits, x, base, false)
+  var r = String.new()
+  if x < 0 { r.push_byte(45) }
+  var n = digits.len()
+  while n < precision { r.push_byte(48); n = n + 1 }
+  if x != 0 || precision != 0 { r.push_str(digits) }
+  return r
+}
+
+/// Integer formatting with a minimum character width, left or right aligned.
+pub fn format_int_width(x: Int, base: Int, width: Int, fill: Char, left: Bool) -> String {
+  let s = format_int(x, base)
+  if left { return pad_right(s, width, fill) }
+  return pad_left(s, width, fill)
+}
+
+/// Floating point fixed precision formatting with an optional minimum width.
+pub fn fixed_width(x: Float, decimals: Int, width: Int, fill: Char, left: Bool) -> String {
+  let s = fixed(x, decimals)
+  if left { return pad_right(s, width, fill) }
+  return pad_left(s, width, fill)
+}
+
 /// `x` with `sep` between groups of three digits: `group(1234567, ",")` is `1,234,567`.
 pub fn group(x: Int, sep: view String) -> String {
   var digits = String.new()

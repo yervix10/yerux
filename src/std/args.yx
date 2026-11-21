@@ -1,0 +1,79 @@
+// std.args: small schema-free command-line parser. `io.args()` supplies argv including argv[0].
+import std.io
+
+pub struct Parsed {
+  flags: List<String>,
+  options: List<(String, String)>,
+  positionals: List<String>,
+  subcommand: String,
+  help: Bool,
+}
+
+pub fn parse(argv: view List<String>) -> Parsed {
+  var out = Parsed { flags: List<String>.new(), options: List<(String, String)>.new(), positionals: List<String>.new(), subcommand: String.new(), help: false }
+  var i = 1
+  var positional_only = false
+  while i < argv.len() {
+    let a = String.from(argv.at(i))
+    if !positional_only && a == "--" {
+      positional_only = true
+    } else if !positional_only && a == "--help" {
+      out.help = true
+      out.flags.push(String.from("help"))
+    } else if !positional_only && a.starts_with("--") {
+      let eq = a.find("=")
+      if eq >= 0 {
+        let k = a.slice(2, eq)
+        let v = a.slice(eq + 1, a.len())
+        out.options.push((move k, move v))
+      } else {
+        let k = a.slice(2, a.len())
+        out.flags.push(move k)
+      }
+    } else if !positional_only && a.starts_with("-") && a.len() > 1 {
+      var j = 1
+      while j < a.len() {
+        let f = a.slice(j, j + 1)
+        out.flags.push(move f)
+        j = j + 1
+      }
+    } else {
+      let v = String.from(a)
+      if out.subcommand.is_empty() { out.subcommand = move v }
+      else { out.positionals.push(move v) }
+    }
+    i = i + 1
+  }
+  return out
+}
+
+pub fn parse_process() -> Parsed {
+  let argv = io.args()
+  return parse(argv)
+}
+
+pub fn has_flag(p: view Parsed, name: view String) -> Bool {
+  var i = 0
+  while i < p.flags.len() {
+    if p.flags.at(i) == name { return true }
+    i = i + 1
+  }
+  return false
+}
+
+pub fn option(p: view Parsed, name: view String) -> Option<String> {
+  var i = p.options.len() - 1
+  while i >= 0 {
+    if p.options.at(i).0.eq(name) { return Some(String.from(p.options.at(i).1)) }
+    i = i - 1
+  }
+  return None
+}
+
+/// Render the conventional one-line help hint.
+pub fn help_line(program: view String, usage: view String) -> String {
+  var s = String.from("Usage: ")
+  s.push_str(program)
+  if !usage.is_empty() { s.push_byte(32); s.push_str(usage) }
+  return s
+}
