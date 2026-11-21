@@ -1941,6 +1941,14 @@ fn emit_function(gen: mut Generator, tree: view List<ast.AstNode>, instance: Int
 
 fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
   let items = ast.child(tree, 0, 0)
+  // user traits only list signatures: impls of them are ordinary methods found by receiver type and name
+  var user_traits = List<String>.new()
+  var scan = items + 1
+  while scan < tree.at(items).end {
+    let declaration = ast.child(tree, scan, 2)
+    if tree.at(declaration).tag == "Trait" { user_traits.push(ast.name_at(tree, declaration, 0)) }
+    scan = tree.at(scan).end
+  }
   var at = items + 1
   while at < tree.at(items).end {
     let item = ast.child(tree, at, 2)
@@ -1987,7 +1995,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
         let name = declared_type(tree, trait_node)
         if name == "Drop" { destructor = true }
         else if name == "Equal" { equality = true }
-        else { unsupported("trait impl {name}") }
+        else if !user_traits.contains(name) && name != "Show" && name != "Ordered" && name != "Hash" { unsupported("trait impl {name}") }
       }
       let owner = declared_type(tree, ast.child(tree, item, 2))
       let methods = ast.child(tree, item, 3)
@@ -2005,7 +2013,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
         m = tree.at(m).end
       }
     }
-    else { unsupported("declaration {tag}") }
+    else if tag != "Trait" { unsupported("declaration {tag}") }
     at = tree.at(at).end
   }
   for target in gen.clone_types {

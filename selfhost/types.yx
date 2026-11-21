@@ -668,6 +668,15 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
       }
     }
   }
+  if receiver >= 0 && shape < 0 {
+    // a method promised by a trait bound on a type parameter
+    for i in 0..types.signatures.len() {
+      if types.signatures.at(i).owner == "$trait" && types.signatures.at(i).name == name &&
+          types.signatures.at(i).receiver != "" {
+        return call_args(types, tree, args, name, i, owner, receiver)
+      }
+    }
+  }
   if receiver >= 0 && (shape >= 0 || owner == "Bool" || owner == "Text") {
     issue(types, "type {owner} has no method '{name}'")
     return unknown()
@@ -1720,6 +1729,26 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
   return Function { node: node, signature: index }
 }
 
+// A trait method signature (owner "$trait"): a call on a value of a bounded type parameter has the declared
+// result type, whatever type the parameter is later instantiated with.
+fn declare_trait_method(types: mut Types, tree: view List<ast.AstNode>, node: Int) {
+  let method_params = ast.child(tree, node, 1)
+  types.generics = generic_names(tree, method_params)
+  let params_node = ast.child(tree, node, 2)
+  var receiver = String.new()
+  if tree.at(params_node).end > params_node + 1 && tree.at(params_node + 1).tag == "Self" {
+    receiver = String.from(tree.at(ast.child(tree, params_node + 1, 0)).tag)
+  }
+  let params = param_types(types, tree, params_node, -1, false)
+  let ret = return_type(types, tree, ast.child(tree, node, 3))
+  let name = ast.name_at(tree, node, 0)
+  let index = types.signatures.len()
+  let spelling = add_signature(types, name, move params, ret)
+  types.signatures.at(index).owner = String.from("$trait")
+  types.signatures.at(index).receiver = move receiver
+  types.signatures.at(index).generics = copy_names(types.generics)
+}
+
 pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify_ownership: Bool,
     trace: Bool) -> Checked {
   var types = Types {
@@ -1782,6 +1811,20 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
       }
     }
     derive = tree.at(derive).end
+  }
+
+  var traits = items + 1
+  while traits < tree.at(items).end {
+    let item = ast.child(tree, traits, 2)
+    if tree.at(item).tag == "Trait" {
+      let methods = ast.child(tree, item, 1)
+      var m = methods + 1
+      while m < tree.at(methods).end {
+        declare_trait_method(types, tree, m)
+        m = tree.at(m).end
+      }
+    }
+    traits = tree.at(traits).end
   }
 
   var functions = List<Function>.new()
