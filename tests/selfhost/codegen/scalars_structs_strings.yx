@@ -1,0 +1,28 @@
+struct Label { text: Text, count: Int }
+
+fn describe(label: Label) -> String {
+    var message = String.from(label.text)
+    message.push_str(": ")
+    message.push_int(label.count)
+    return message
+}
+
+fn consume(message: String) {
+    print(message)
+}
+
+fn main() {
+    var label = Label { text: "café", count: 0 }
+    while label.count < 5 {
+        label.count = label.count + 1
+        if label.count == 2 { continue }
+        if label.count == 4 { break }
+        let message = describe(label)
+        consume(move message)
+    }
+    let label = Label { text: "limit", count: -9223372036854775808 }
+    let last = describe(label)
+    print(last)
+    print(18446744073709551615u64)
+    print('ñ')
+}
