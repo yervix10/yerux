@@ -91,3 +91,8 @@ worktree. On this checkout that set has 242 files (six more than the 227 reporte
 initial task). Current milestone: 99/242 byte-identical (40%), and 211/242 pass a
 selfhost second-pass idempotence check. Remaining differences include closure bars,
 operator continuation breaks, and several multiline/comment layout cases.
+
+Formatter continuation milestone: restoring parenthesis depth across brace-delimited
+literals, handling multiline generic ranges, and distinguishing closure bars from pattern
+alternatives raised exact matches to 217/243 (89%) and idempotence to 234/243 on the
+frozen dirty set generated from a temporary corpus copy.
