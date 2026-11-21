@@ -199,6 +199,24 @@ fn mutex_with_view<T, R>(lock: view Mutex<T>, body: view fn(view T) -> R) -> R {
     return lock.inner.with_view(body)
 }
 
+// Reader/writer lock API. The current implementation uses the same
+// starvation-safe exclusive primitive for both access modes.
+struct RwLock<T> { inner: Locked<T> }
+
+impl<T> RwLock<T> {
+    fn new(value: T) -> RwLock<T> {
+        return RwLock<T> { inner: Locked.new(move value) }
+    }
+}
+
+fn rwlock_read<T, R>(lock: view RwLock<T>, body: view fn(view T) -> R) -> R {
+    return lock.inner.with_view(body)
+}
+
+fn rwlock_write<T, R>(lock: view RwLock<T>, body: view fn(mut T) -> R) -> R {
+    return lock.inner.with(body)
+}
+
 fn __parallel_lane(first: Int, end: Int, inclusive: Bool, body: Int) {
     var index = first
     while index < end || (inclusive && index == end) {
