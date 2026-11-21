@@ -1,0 +1,16 @@
+fn main() {
+  let (sender, receiver) = Sender<Int>.unbounded()
+  scope {
+    let worker = spawn move {
+      sender.send(20)
+      sender.send(22)
+      sender.close()
+      return 0
+    }
+    let first = receiver.recv().unwrap()
+    let second = receiver.recv().unwrap()
+    worker.join()
+    print(first + second)
+    print(receiver.recv().is_none())
+  }
+}

@@ -70,16 +70,16 @@ Readers increment a shared count, so multiple readers can proceed together;
 writers claim an exclusive flag and wait for active readers. Acquisition is
 spin-based and does not guarantee fairness. A panic inside a callback can
 leave the lock held; recoverable panic-safe release is future work. The
-prelude atomics remain `Atomic<Int>` and `Atomic<Bool>` with sequentially
-consistent operations; a persistent worker pool and channels are still
-unimplemented.
-
-The current library does **not** yet expose channels, a reader-writer lock, or
-a persistent thread pool. `Locked` is an exclusive mutex; `with_view` is also
-exclusive. `scope` and `spawn` provide structured worker lifetimes, and each
+The prelude atomics remain `Atomic<Int>` and `Atomic<Bool>` with sequentially
+consistent operations. `Sender<T>.bounded(capacity)` and
+`Sender<T>.unbounded()` create typed MPSC endpoints. `send`, `recv` and `close`
+are available. Bounded sends and empty receives spin while they wait; queues
+share one exclusive lock, and removing from the queue front is linear in queue
+length. Closing the final sender is explicit because generic `Drop` support is
+not available in the language yet. A persistent worker pool is still planned.
+`scope` and `spawn` provide structured worker lifetimes, and each
 `parallel for` creates and joins its own workers rather than reusing a pool.
-The actor/channel examples below specify intended APIs and are not compilable
-against this release.
+The actor/channel examples below describe APIs beyond this release.
 
 The sections below retain the broader design. The implementation status above
 and SPEC.md define the available syntax and behavior where those differ.

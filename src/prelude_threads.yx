@@ -103,6 +103,90 @@ impl Atomic<Bool> {
     }
 }
 
+// Typed MPSC queue. Capacity 0 means unbounded. send/recv are synchronous
+// and spin while a bounded queue is full or an open queue is empty.
+struct ChannelState<T> {
+    queue: List<T>,
+    capacity: Int,
+    closed: Bool,
+    receiver_open: Bool,
+}
+
+struct Sender<T> { state: Shared<Locked<ChannelState<T>>> }
+struct Receiver<T> { state: Shared<Locked<ChannelState<T>>> }
+
+fn __channel_try_send<T>(state: view Locked<ChannelState<T>>, value: T) -> (Int, Option<T>) {
+    let held = __lock_word(__box_address(state.mutex))
+    if state.locked_value().closed || !state.locked_value().receiver_open { return (-1, Some(move value)) }
+    if state.locked_value().capacity > 0 && state.locked_value().queue.len() >= state.locked_value().capacity {
+        return (0, Some(move value))
+    }
+    state.locked_value().queue.push(move value)
+    return (1, Option<T>.None)
+}
+
+fn __channel_try_recv<T>(state: view Locked<ChannelState<T>>) -> (Bool, Option<T>) {
+    let held = __lock_word(__box_address(state.mutex))
+    if state.locked_value().queue.len() > 0 {
+        let item = state.locked_value().queue.remove(0)
+        return (state.locked_value().closed, Some(move item))
+    }
+    return (state.locked_value().closed, Option<T>.None)
+}
+
+impl<T> Sender<T> {
+    fn bounded(capacity: Int) -> (Sender<T>, Receiver<T>) {
+        if capacity < 0 { panic("channel capacity cannot be negative") }
+        let state = Shared.new(Locked.new(ChannelState<T> {
+            queue: List<T>.new(), capacity: capacity, closed: false, receiver_open: true,
+        }))
+        return (Sender<T> { state: state.clone() }, Receiver<T> { state: move state })
+    }
+
+    fn unbounded() -> (Sender<T>, Receiver<T>) {
+        let state = Shared.new(Locked.new(ChannelState<T> {
+            queue: List<T>.new(), capacity: 0, closed: false, receiver_open: true,
+        }))
+        return (Sender<T> { state: state.clone() }, Receiver<T> { state: move state })
+    }
+
+    fn clone(view self) -> Sender<T> {
+        return Sender<T> { state: self.state.clone() }
+    }
+
+    fn send(view self, value: T) -> Bool {
+        var pending = move value
+        while true {
+            let (status, item) = __channel_try_send(self.state.get(), move pending)
+            if status > 0 { return true }
+            if status < 0 { return false }
+            pending = item.unwrap()
+        }
+        return false
+    }
+
+    fn close(view self) {
+        self.state.get().with(|state| state.closed = true)
+    }
+}
+
+impl<T> Receiver<T> {
+    fn recv(view self) -> Option<T> {
+        while true {
+            let (closed, item) = __channel_try_recv(self.state.get())
+            if item.is_some() || closed { return item }
+        }
+        return None
+    }
+
+    fn close(view self) {
+        self.state.get().with(|state| {
+            state.receiver_open = false
+            state.closed = true
+        })
+    }
+}
+
 struct SharedCell<T> {
     count: Int,
     value: T,

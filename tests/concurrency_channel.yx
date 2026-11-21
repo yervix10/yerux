@@ -1,0 +1,27 @@
+fn main() {
+  let (tx, rx) = Sender<Int>.bounded(1)
+  scope {
+    let worker_tx = tx.clone()
+    let sender = spawn move {
+      let first = worker_tx.send(42)
+      let second = worker_tx.send(43)
+      return first && second
+    }
+    print(rx.recv().unwrap())
+    print(rx.recv().unwrap())
+    print(sender.join().unwrap())
+  }
+  tx.close()
+  print(rx.recv().is_none())
+  let (tx2, rx2) = Sender<Int>.unbounded()
+  scope {
+    let sender = spawn move {
+      tx2.send(7)
+      tx2.close()
+      return 0
+    }
+    sender.join()
+  }
+  print(rx2.recv().unwrap())
+  print(rx2.recv().is_none())
+}
