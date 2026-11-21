@@ -1,0 +1,36 @@
+SET key [value] | GET key | HAS key | DEL key
+KEYS [prefix] | SIZE | CLEAR | HELP | QUIT
+ERROR expected key
+ERROR expected exactly one key
+OK
+VALUE 7:au lait
+OK
+VALUE 7: crème
+true
+OK
+VALUE 0:
+café
+cab
+END 2
+END 0
+2
+OK
+MISSING
+false
+MISSING
+OK
+ERROR expected exactly one key
+ERROR expected exactly one key
+ERROR expected exactly one key
+VALUE 3:one
+ERROR expected at most one prefix
+ERROR unexpected argument
+ERROR unexpected argument
+ERROR unexpected argument
+ERROR unknown command
+OK
+0
+OK
+nuevo
+END 1
+BYE

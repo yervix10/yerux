@@ -1,0 +1,135 @@
+// A line-oriented integer expression interpreter.
+import std.io
+
+struct ParseError {
+  offset: Int,
+  message: Text,
+}
+
+fn error(offset: Int, message: Text) -> Result<Int, ParseError> {
+  return Err(ParseError { offset: offset, message: message })
+}
+
+fn peek(source: view String, pos: Int) -> Int {
+  if pos >= source.len() { return -1 }
+  return source.byte(pos)
+}
+
+fn whitespace(source: view String, pos: mut Int) {
+  while peek(source, pos) == ' '.to_int() || peek(source, pos) == '\t'.to_int() {
+    pos = pos + 1
+  }
+}
+
+fn digit(b: Int) -> Bool {
+  return b >= '0'.to_int() && b <= '9'.to_int()
+}
+
+fn literal(source: view String, pos: mut Int) -> Result<Int, ParseError> {
+  let start = pos
+  var value = 0
+  while digit(peek(source, pos)) {
+    value = value * 10 + (source.byte(pos) - '0'.to_int())
+    if value > 1000000000 { return error(start, "literal out of range") }
+    pos = pos + 1
+  }
+  return Ok(value)
+}
+
+fn prefix(source: view String, pos: mut Int, depth: Int) -> Result<Int, ParseError> {
+  whitespace(source, pos)
+  if depth >= 128 { return error(pos, "expression nested too deeply") }
+  let b = peek(source, pos)
+  if digit(b) { return literal(source, pos) }
+  if b == '+'.to_int() || b == '-'.to_int() {
+    pos = pos + 1
+    let value = prefix(source, pos, depth + 1)?
+    if b == '-'.to_int() { return Ok(-value) }
+    return Ok(value)
+  }
+  if b == '('.to_int() {
+    pos = pos + 1
+    let value = expression(source, pos, 1, depth + 1)?
+    if peek(source, pos) != ')'.to_int() { return error(pos, "expected ')'") }
+    pos = pos + 1
+    return Ok(value)
+  }
+  return error(pos, "expected an integer, sign, or '('")
+}
+
+fn precedence(op: Int) -> Int {
+  if op == '*'.to_int() || op == '/'.to_int() || op == '%'.to_int() { return 2 }
+  if op == '+'.to_int() || op == '-'.to_int() { return 1 }
+  return 0
+}
+
+fn apply(op: Int, lhs: Int, rhs: Int, offset: Int) -> Result<Int, ParseError> {
+  // Both operands are bounded, so even their product fits in a machine Int.
+  var value = 0
+  match Char.from_int(op) {
+    '+' => { value = lhs + rhs }
+    '-' => { value = lhs - rhs }
+    '*' => { value = lhs * rhs }
+    '/' => {
+      if rhs == 0 { return error(offset, "division by zero") }
+      value = lhs / rhs
+    }
+    '%' => {
+      if rhs == 0 { return error(offset, "remainder by zero") }
+      value = lhs % rhs
+    }
+    _ => { return error(offset, "unknown operator") }
+  }
+  if value < -1000000000 || value > 1000000000 {
+    return error(offset, "result out of range")
+  }
+  return Ok(value)
+}
+
+fn expression(source: view String, pos: mut Int, min_power: Int, depth: Int) -> Result<Int, ParseError> {
+  var lhs = prefix(source, pos, depth)?
+  while true {
+    whitespace(source, pos)
+    let op = peek(source, pos)
+    let power = precedence(op)
+    if power < min_power { return Ok(lhs) }
+    let offset = pos
+    pos = pos + 1
+    // A higher minimum on the right makes operators of equal precedence left associative.
+    let rhs = expression(source, pos, power + 1, depth + 1)?
+    lhs = apply(op, lhs, rhs, offset)?
+  }
+}
+
+fn evaluate(source: view String) -> Result<Int, ParseError> {
+  var pos = 0
+  let value = expression(source, pos, 1, 0)?
+  if pos != source.len() { return error(pos, "unexpected trailing input") }
+  return Ok(value)
+}
+
+fn main() {
+  while true {
+    match io.read_line() {
+      Ok(line) => {
+        match line {
+          Some(source) => {
+            var pos = 0
+            whitespace(source, pos)
+            if pos != source.len() {
+              match evaluate(source) {
+                Ok(value) => { print(value) }
+                Err(e) => { print("error at byte {e.offset}: {e.message}") }
+              }
+            }
+          }
+          None => { return }
+        }
+      }
+      Err(e) => {
+        io.eprintln("stdin: {e}")
+        io.exit(1)
+      }
+    }
+  }
+}
