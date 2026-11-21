@@ -34,14 +34,14 @@ if "$driver" "$tmp/invalid.yx" 2>"$tmp/invalid.err"; then
   printf 'selfhost driver accepted invalid syntax\n' >&2
   exit 1
 fi
-rg -q 'parsing .*invalid.yx' "$tmp/invalid.err"
+grep -qE 'parsing .*invalid.yx' "$tmp/invalid.err"
 printf 'existing output\n' | cmp - "$tmp/invalid"
 printf 'import absent\nfn main() {}\n' >"$tmp/missing.yx"
 if "$driver" "$tmp/missing.yx" 2>"$tmp/missing.err"; then
   printf 'selfhost driver accepted a missing module\n' >&2
   exit 1
 fi
-rg -q 'resolving absent: source file not found' "$tmp/missing.err"
+grep -qE 'resolving absent: source file not found' "$tmp/missing.err"
 
 source_ast() {
   : >"$tmp/source.err"

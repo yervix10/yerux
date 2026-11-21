@@ -34,6 +34,8 @@ struct Generator {
   temp: Int,
   loop_depth: Int,
   result: String,
+  // deferred statements of the open scopes: a statement node, or -1 - loop_depth marking a scope's start
+  defers: List<Int>,
 }
 
 fn unsupported(message: view String) {
@@ -544,7 +546,24 @@ fn propagate_result(gen: mut Generator, tree: view List<ast.AstNode>, operand: v
   prepare_type(gen, tree, result)
   let dest = c_type(gen, tree, result)
   let base = type_terms.base(operand.ty)
-  if base == "Option" {
+  if has_defers(gen) {
+    // the failure path runs the deferred statements of every open scope before returning
+    if base != "Option" && base != "Result" { unsupported("try operator on {base}") }
+    line(gen, "if ({owned.code}.tag == 2) {{")
+    gen.indent = gen.indent + 1
+    if base == "Option" {
+      let failure = temp(gen, tree, result, "({dest}){{ .tag = 2 }}")
+      emit_defers(gen, tree, false)
+      line(gen, "return {transfer(gen, tree, failure)};")
+    } else {
+      let error = enum_payload(gen, owned, 2, 0)
+      let failure = temp(gen, tree, result, "({dest}){{ .tag = 2, .v2.p0 = {transfer(gen, tree, error)} }}")
+      emit_defers(gen, tree, false)
+      line(gen, "return {transfer(gen, tree, failure)};")
+    }
+    gen.indent = gen.indent - 1
+    line(gen, String.from("}}"))
+  } else if base == "Option" {
     line(gen, "if ({owned.code}.tag == 2) return ({dest}){{ .tag = 2 }};")
   } else if base == "Result" {
     let error = enum_payload(gen, owned, 2, 0)
@@ -1533,18 +1552,74 @@ fn emit_match(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   line(gen, "if (!{matched.code}) nx_panic(\"non-exhaustive match\");")
 }
 
+fn has_defers(gen: view Generator) -> Bool {
+  for entry in gen.defers { if entry >= 0 { return true } }
+  return false
+}
+
+// Emit the deferred statements of the open scopes, innermost first. `stop_at_loop` limits them to the scopes
+// opened inside the current loop (break/continue). The stack itself is left alone.
+fn emit_defers(gen: mut Generator, tree: view List<ast.AstNode>, stop_at_loop: Bool) {
+  let saved = gen.defers.clone()
+  var i = saved.len() - 1
+  while i >= 0 {
+    let entry = saved.at(i)
+    if entry >= 0 {
+      if stop_at_loop {
+        // the scope of this statement is the nearest marker below it
+        var m = i - 1
+        while m >= 0 && saved.at(m) >= 0 { m = m - 1 }
+        if m >= 0 && (-1 - saved.at(m)) < gen.loop_depth { break }
+      }
+      // a deferred statement only sees the defers registered before it
+      var below = List<Int>.new()
+      for k in 0..i { below.push(saved.at(k)) }
+      gen.defers = move below
+      statement(gen, tree, entry)
+    }
+    i = i - 1
+  }
+  gen.defers = move saved
+}
+
+fn close_scope(gen: mut Generator, tree: view List<ast.AstNode>) {
+  // run the scope's own defers (down to its marker), then forget them
+  var i = gen.defers.len() - 1
+  while i >= 0 && gen.defers.at(i) >= 0 { i = i - 1 }
+  var mine = List<Int>.new()
+  for k in (i + 1)..gen.defers.len() { mine.push(gen.defers.at(k)) }
+  var rest = List<Int>.new()
+  for k in 0..(i + 1) { rest.push(gen.defers.at(k)) }
+  var j = mine.len() - 1
+  while j >= 0 {
+    var below = List<Int>.new()
+    for k in 0..j { below.push(mine.at(k)) }
+    var visible = rest.clone()
+    for node in below { visible.push(node) }
+    gen.defers = move visible
+    statement(gen, tree, mine.at(j))
+    j = j - 1
+  }
+  gen.defers = move rest
+}
+
 fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   let tag = String.from(tree.at(node).tag)
   if tag == "Block" || tag == "[" || tag == "Scope" {
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
+    gen.defers.push(-1 - gen.loop_depth)
     var at = node + 1
     while at < tree.at(node).end {
       statement(gen, tree, at)
       at = tree.at(at).end
     }
+    close_scope(gen, tree)
+    gen.defers.pop()
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
+  } else if tag == "Defer" {
+    gen.defers.push(ast.child(tree, node, 0))
   } else if tag == "Let" {
     let place = local_place(gen, node)
     if place.ty.starts_with("Slice<") { unsupported("slice binding") }
@@ -1578,13 +1653,22 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     line(gen, String.from("}}"))
   } else if tag == "Return" {
     let arg = ast.child(tree, node, 0)
-    if tree.at(arg).tag == "_" { line(gen, String.from("return;")) }
-    else {
+    if tree.at(arg).tag == "_" {
+      if has_defers(gen) { emit_defers(gen, tree, false) }
+      line(gen, String.from("return;"))
+    } else {
       let expected = String.from(gen.result)
       if expected == "nothing" { unsupported("return value in a function without a result type") }
       let value = expression(gen, tree, arg)
       let result = coerce(gen, tree, move value, expected)
-      line(gen, "return {transfer(gen, tree, result)};")
+      if has_defers(gen) {
+        // the result is computed before the deferred statements run
+        let saved = temp(gen, tree, expected, transfer(gen, tree, result))
+        emit_defers(gen, tree, false)
+        line(gen, "return {transfer(gen, tree, saved)};")
+      } else {
+        line(gen, "return {transfer(gen, tree, result)};")
+      }
     }
   } else if tag == "If" {
     let condition = expression(gen, tree, ast.child(tree, node, 0))
@@ -1623,6 +1707,7 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     if gen.loop_depth == 0 || tree.at(ast.child(tree, node, 0)).tag != "_" {
       unsupported("loop exit with invalid or unsupported target")
     }
+    if has_defers(gen) { emit_defers(gen, tree, true) }
     if tag == "Break" { line(gen, String.from("break;")) }
     else { line(gen, String.from("continue;")) }
   } else if tag != "_" { unsupported("statement {tag}") }
@@ -1919,7 +2004,7 @@ fn main() {
         struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(),
         instances: List<Instance>.new(), sub: type_terms.empty(), prototypes: String.new(),
         references: List<Bool>.new(), out: String.new(),
-        indent: 0, temp: 0, loop_depth: 0, result: String.new(),
+        indent: 0, temp: 0, loop_depth: 0, result: String.new(), defers: List<Int>.new(),
       }
       for i in 0..gen.locals.bindings.len() { gen.references.push(false) }
       generate(gen, file.nodes)
