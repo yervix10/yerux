@@ -1,0 +1,14 @@
+// A moved bit per lexical binding. A join keeps moves from either reachable path.
+pub fn snapshot(moved: view List<Bool>) -> List<Bool> {
+  var copy = List<Bool>.new()
+  for state in moved { copy.push(state) }
+  return move copy
+}
+
+pub fn join(into: mut List<Bool>, other: view List<Bool>) {
+  for i in 0..other.len() {
+    if other.at(i) { into.set(i, true) }
+  }
+}
+
+pub struct Loan { binding: Int, exclusive: Bool }

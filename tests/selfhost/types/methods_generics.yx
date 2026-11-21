@@ -1,0 +1,34 @@
+struct Counter { value: Int }
+
+impl Counter {
+    fn add(mut self, amount: Int) { self.value = self.value + amount }
+    fn read(view self) -> Int {
+        let answer = self.value
+        return answer
+    }
+}
+
+struct Boxed<T> { value: T }
+
+impl Boxed<Bool> {
+    fn read(view self) -> Bool { return self.value }
+}
+
+fn retain<T: Copy>(x: T) -> T {
+    let copy = x
+    return copy
+}
+
+fn inside<T: Copy>(entry: view Boxed<T>) -> T { return entry.value }
+
+fn main() {
+    var counter = Counter { value: 3 }
+    counter.add(2)
+    let count = retain(counter.read())
+    let wrap = Boxed { value: count }
+    let number = inside(wrap)
+    let explicit = Boxed<Bool> { value: true }
+    let flag = retain(explicit.read())
+    print(number)
+    print(flag)
+}

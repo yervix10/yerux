@@ -1,0 +1,6 @@
+fn borrow_and_take(borrowed: view String, taken: String) { print(borrowed); print(taken) }
+
+fn main() {
+    let text = String.from("shared")
+    borrow_and_take(text, move text)
+}

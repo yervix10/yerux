@@ -1,0 +1,8 @@
+enum State { On(Int), Off }
+fn main() {
+    let state = State.Off
+    match state {
+        On => {}
+        Off => {}
+    }
+}

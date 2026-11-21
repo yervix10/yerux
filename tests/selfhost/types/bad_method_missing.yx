@@ -1,0 +1,5 @@
+struct Counter { value: Int }
+fn main() {
+    let counter = Counter { value: 1 }
+    counter.absent()
+}

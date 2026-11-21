@@ -1,0 +1,6 @@
+fn maybe_take(condition: Bool) {
+    let text = String.from("original")
+    if condition { let transferred = move text; print(transferred) }
+    print(text.len())
+}
+fn main() {}

@@ -1,0 +1,97 @@
+// Canonical type spellings and substitutions for nominal generic types.
+pub struct Substitution { names: List<String>, values: List<String> }
+
+pub fn empty() -> Substitution {
+  return Substitution { names: List<String>.new(), values: List<String>.new() }
+}
+
+pub fn base(ty: view String) -> String {
+  if ty.starts_with("fn(") { return String.from(ty) }
+  for i in 0..ty.len() {
+    if ty.byte(i) == 60 { return ty.slice(0, i) }
+  }
+  return String.from(ty)
+}
+
+pub fn arguments(ty: view String) -> List<String> {
+  var args = List<String>.new()
+  let name = base(ty)
+  if name.len() == ty.len() || name.starts_with("fn(") { return move args }
+  var start = name.len() + 1
+  var depth = 0
+  for i in start..ty.len() - 1 {
+    let b = ty.byte(i)
+    if b == 60 || b == 40 { depth = depth + 1 }
+    if b == 62 || b == 41 { depth = depth - 1 }
+    if b == 44 && depth == 0 {
+      args.push(ty.slice(start, i))
+      start = i + 2
+    }
+  }
+  args.push(ty.slice(start, ty.len() - 1))
+  return move args
+}
+
+pub fn apply(name: view String, args: view List<String>) -> String {
+  if args.len() == 0 { return String.from(name) }
+  if name == "List" && args.len() == 1 && args.at(0) == "Int" { return String.from(name) }
+  let values = args.join(", ")
+  return "{name}<{values}>"
+}
+
+pub fn bind(sub: mut Substitution, pattern: view String, actual: view String) {
+  if actual == "?" { return }
+  if sub.names.contains(pattern) {
+    let index = sub.names.index_of(pattern)
+    if sub.values.at(index) == "?" { sub.values.set(index, String.from(actual)) }
+    return
+  }
+  let name = base(pattern)
+  if name != base(actual) { return }
+  let formal = arguments(pattern)
+  var concrete = arguments(actual)
+  if actual == "List" && formal.len() == 1 { concrete.push(String.from("Int")) }
+  if formal.len() == concrete.len() {
+    for i in 0..formal.len() { bind(sub, formal.at(i), concrete.at(i)) }
+  }
+}
+
+pub fn substitute(ty: view String, sub: view Substitution) -> String {
+  let index = sub.names.index_of(ty)
+  if index >= 0 { return String.from(sub.values.at(index)) }
+  let args = arguments(ty)
+  if args.len() == 0 { return String.from(ty) }
+  var values = List<String>.new()
+  for arg in args { values.push(substitute(arg, sub)) }
+  return apply(base(ty), values)
+}
+
+pub fn with_names(names: view List<String>) -> Substitution {
+  var sub = empty()
+  for name in names {
+    sub.names.push(String.from(name))
+    sub.values.push(String.from("?"))
+  }
+  return move sub
+}
+
+pub fn mentions(ty: view String, names: view List<String>) -> Bool {
+  if names.contains(ty) { return true }
+  let args = arguments(ty)
+  for arg in args { if mentions(arg, names) { return true } }
+  return false
+}
+
+pub fn compatible(expected: view String, actual: view String) -> Bool {
+  if expected == actual || expected == "?" || actual == "?" { return true }
+  let name = base(expected)
+  if name != base(actual) { return false }
+  if name == "Int" { return true }
+  let a = arguments(expected)
+  let b = arguments(actual)
+  if a.len() != b.len() || a.len() == 0 { return false }
+  for i in 0..a.len() {
+    if !compatible(a.at(i), b.at(i)) { return false }
+  }
+  return true
+}

@@ -1,0 +1,6 @@
+fn change_and_read(changed: mut String, read: view String) { changed.clear(); print(read) }
+
+fn main() {
+    var text = String.from("shared")
+    change_and_read(text, text)
+}

@@ -1,0 +1,13 @@
+enum Item { Full(String), Empty }
+
+fn main() {
+    let item = Item.Full(String.from("hello"))
+    match item {
+        Full(text) => { let size = text.len(); print(size) }
+        Empty => {}
+    }
+    match move item {
+        Full(text) => { let owned = move text; print(owned) }
+        Empty => {}
+    }
+}

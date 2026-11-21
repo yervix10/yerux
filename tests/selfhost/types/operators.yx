@@ -1,0 +1,21 @@
+fn compute(left: UInt8, right: UInt8, divisor: Int<1..9>) -> UInt8 {
+    let sum = left + right
+    let difference = sum - 1
+    let product = difference * 2
+    let quotient = product / right
+    let remainder = quotient % right
+    let wrapped = remainder.wrapping_add(255)
+    let ordered = wrapped <= 7
+    let comparison = ordered && (left != right)
+    let integer_remainder = 12 % divisor
+    print(comparison)
+    print(integer_remainder)
+    return remainder
+}
+
+fn main() {
+    let result = compute(3u8, 4u8, 2)
+    let negated = -1.0f32
+    print(result)
+    print(negated)
+}

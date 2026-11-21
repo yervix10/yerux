@@ -1,0 +1,2 @@
+fn take(text: view String) { let transferred = move text; print(transferred) }
+fn main() {}

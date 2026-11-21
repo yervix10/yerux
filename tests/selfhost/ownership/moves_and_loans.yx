@@ -1,0 +1,24 @@
+struct Buffer { text: String }
+
+impl Buffer {
+    fn finish(self) -> String { return move_self(move self) }
+}
+
+fn move_self(buffer: Buffer) -> String { return String.from(buffer.text) }
+fn clear(buffer: mut String) { buffer.clear() }
+fn share(a: view String, b: view String) { print(a.len() + b.len()) }
+
+fn main() {
+    var original = String.from("first")
+    let kept = move original
+    original = String.from("second")
+    share(kept, kept)
+    clear(original)
+    let number = 2
+    let copied = move number
+    let total = copied + number
+    let buffer = Buffer { text: move original }
+    let finished = buffer.finish()
+    print(total)
+    print(finished)
+}

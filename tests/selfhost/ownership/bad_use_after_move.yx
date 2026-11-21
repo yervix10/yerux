@@ -1,0 +1,6 @@
+fn main() {
+    let text = String.from("original")
+    let transferred = move text
+    print(transferred)
+    print(text.len())
+}

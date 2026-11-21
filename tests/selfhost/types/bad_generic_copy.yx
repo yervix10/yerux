@@ -1,0 +1,6 @@
+fn retain<T: Copy>(value: T) -> T { return value }
+
+fn main() {
+    let text = retain(String.from("sample"))
+    print(text)
+}

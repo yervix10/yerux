@@ -1,0 +1,8 @@
+enum Item { Full(String), Empty }
+fn main() {
+    let item = Item.Full(String.from("payload"))
+    match item {
+        Full(text) => { let transferred = move text; print(transferred) }
+        Empty => {}
+    }
+}

@@ -1,0 +1,7 @@
+fn show(text: view String) { print(text) }
+
+fn main() {
+    let text = String.from("hello")
+    show(move text)
+    print(text)
+}

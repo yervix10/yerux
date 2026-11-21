@@ -75,7 +75,7 @@ cannot reach resolution. Some module fixtures require a specific entry
 directory when compiling, so invoking each dependency directly can produce
 a module rejection. `tests/run_all.sh` runs the comparison.
 
-## Lexical resolution and basic type checking
+## Lexical resolution, type checking, and ownership
 
 `selfhost/locals.yx` assigns a source-order identity to each lexical binding.
 It tracks function and closure parameters, blocks, `let`/`var`, tuple
@@ -88,7 +88,7 @@ module and global symbol lookup.
 
 `yerux locals-file file.yx` walks the Rust parser's native source AST and
 exports binding, use, and capture rows. `tests/selfhost_types.sh` compares
-these rows for every tracked source. It covers **657 files**, with 642
+these rows for every tracked source. It covers **699 files**, with 684
 matching lexical snapshots and 15 rejections at the lexer or parser stage.
 The Rust checker now also computes free uses in lexical scope order, so a
 local declaration inside a closure no longer hides a capture used in that
@@ -96,17 +96,32 @@ declaration's initializer or outside its block.
 
 `selfhost/types.yx` shares the AST reader with the module resolver and uses
 the binding identities to look up local types. It checks primitive literals,
-`let` and `var` initializers and direct assignments, known function calls
-and function values, and non-generic struct construction and field reads.
-Function signatures and struct names are available before bodies are checked.
-Literal typing uses annotations, argument types, and field types as context.
+`let` and `var` initializers and direct assignments, function calls and
+function values, structs, and methods on concrete types with inherent
+`impl` blocks. It infers basic type arguments for generic functions,
+struct literals, and enum constructors, and checks function `Copy` bounds.
+It checks match payloads and guards and finds missing cases in enum and
+Bool patterns, including nested variants and alternatives. For `Option`
+and `Result` it handles constructors, selected prelude methods, and `?`.
+Arithmetic checking covers contextual numeric literals, operand types,
+integer division by ranges that may contain zero, and wrapping methods.
+Runtime overflow and divide-by-zero checks run in the production backends.
 
-Run `types locals FILE.ast` for binding and capture rows, or
-`types types FILE.ast` for inferred binding types and basic type errors.
-`yerux types-file file.yx` exposes the production Rust checker's source
-binding types before compile-time evaluation. The harness compares two
-accepted programs and eight rejected programs for this type subset. It
-checks the principal diagnostic messages on the rejected programs.
+The ownership mode uses the same types and lexical binding identities. It
+tracks moves of owned bindings and by-value receivers, use after move,
+reinitialization by assignment, and the states reaching joins in branches
+and loops. It checks shared and mutable loans of known arguments and
+receivers within a call and protects a match subject while an arm borrows
+its payloads.
+
+Run `types locals FILE.ast` for binding and capture rows, `types types FILE.ast`
+for inferred binding types and type errors, or `types ownership FILE.ast`
+for type and ownership errors. The input comes from the self-hosted parser
+using positioned tokens. `yerux types-file file.yx` exposes the production
+Rust checker's binding types before compile-time evaluation.
+`tests/selfhost_types.sh` compares sorted binding rows on 5 accepted type
+fixtures and 3 accepted ownership fixtures, and principal diagnostic
+messages on 20 type rejections and 12 ownership rejections.
 `tests/run_all.sh` includes the harness.
 
 ## Remaining work
@@ -118,14 +133,16 @@ import alias and an uppercase type name, because the definition is in another
 file. The dumps omit AST spans, and parser diagnostic messages and notes have
 yet to be ported.
 
-The basic type checker is file-local. Unsupported expressions and types
-carry an unknown type so that constructs outside its subset can continue
-through the source pass. Module signatures, generics and traits, member
-dispatch, complete return and operator checking, ownership and capture
-modes, flow narrowing, exhaustive patterns, constant evaluation, and full
-diagnostic spans and notes remain in the Rust front end. Bootstrapping the
-compiler also needs a staged build. At present `comptime` evaluates
-scalars, while the lexer and parser run as ordinary Yerux programs.
+The type and ownership passes are file-local. Unsupported expressions
+and types can carry an unknown type so checking can continue. Module
+signatures, trait resolution, general generic bounds, flow narrowing,
+constant evaluation, and diagnostic spans and notes still require the
+Rust front end. Pattern exhaustiveness outside the covered enum and Bool
+cases, closure capture modes, defer lifetimes, and precise loans for
+indexed places and nested call arguments also remain in the Rust front
+end. Bootstrapping the compiler needs a staged build. At present
+`comptime` evaluates scalars, while the lexer and parser run as ordinary
+Yerux programs.
 
 These constraints do not prevent writing the parser and checker as runtime
 Yerux programs, but they make a feature-for-feature port a separate milestone.

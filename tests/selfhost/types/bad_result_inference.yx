@@ -1,0 +1,1 @@
+fn main() { let value = Ok(12); print(value.is_ok()) }

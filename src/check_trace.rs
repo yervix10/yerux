@@ -1,6 +1,6 @@
 // Binding types from the production checker, before compile-time evaluation.
 use crate::syntax::{lex, Program, Stmt, Tok, Ty, Types, PRELUDE_LINE, SK};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type Bindings = HashMap<(usize, usize), String>;
 
@@ -19,7 +19,19 @@ pub fn binding_types(program: &Program, source: &str) -> Vec<String> {
         })
         .collect();
     let mut rows = Vec::new();
-    for function in program.funcs.iter().chain(&program.templates) {
+    // A source snapshot includes each generic definition once. Its instantiated
+    // copies share its source position, while the template preserves parameter types.
+    let template_positions: HashSet<_> = program
+        .templates
+        .iter()
+        .map(|f| (f.pos.line, f.pos.col))
+        .collect();
+    for function in program.templates.iter().chain(
+        program
+            .funcs
+            .iter()
+            .filter(|f| !template_positions.contains(&(f.pos.line, f.pos.col))),
+    ) {
         if function.pos.line < PRELUDE_LINE {
             block(&function.body, &program.types, &declarations, &mut rows);
         }
