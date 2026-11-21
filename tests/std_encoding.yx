@@ -1,0 +1,39 @@
+// std.base64 and std.hex round trips, vectors and malformed inputs.
+import std.base64
+import std.hex
+
+fn main() {
+  let empty = String.new()
+  print(base64.encode(empty))
+  let raw = String.from("Man")
+  print(base64.encode(raw))
+  match base64.decode("TWFu") {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }
+  }
+  let one = String.from("M")
+  print(base64.encode(one))
+  let two = String.from("Ma")
+  print(base64.encode(two))
+  match base64.decode("TWE=") {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }
+  }
+  print(hex.encode("Aé"))
+  match hex.decode("41c3a9") {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }
+  }
+  match hex.decode("0xz") {
+    Ok(_) => { print("bad") }
+    Err(_) => { print("hex rejected") }
+  }
+  match base64.decode("TQ==") {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }
+  }
+  match base64.decode("TQ=A") {
+    Ok(_) => { print("bad") }
+    Err(_) => { print("base64 rejected") }
+  }
+}

@@ -1,0 +1,36 @@
+// std.hex: hexadecimal encoding for UTF-8 bytes (docs/STDLIB.md).
+fn digit(n: Int) -> Int {
+  if n < 10 { return 48 + n }
+  return 87 + n
+}
+
+pub fn encode(s: view String) -> String {
+  var out = String.new()
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    out.push_byte(digit(b / 16))
+    out.push_byte(digit(b % 16))
+  }
+  return move out
+}
+
+fn value(b: Int) -> Int {
+  if b >= 48 && b <= 57 { return b - 48 }
+  if b >= 65 && b <= 70 { return b - 65 + 10 }
+  if b >= 97 && b <= 102 { return b - 97 + 10 }
+  return -1
+}
+
+pub fn decode(s: view String) -> Result<String, String> {
+  if s.len() % 2 != 0 { return Err(String.from("hex input must have even length")) }
+  var out = String.new()
+  var i = 0
+  while i < s.len() {
+    let hi = value(s.byte(i))
+    let lo = value(s.byte(i + 1))
+    if hi < 0 || lo < 0 { return Err(String.from("invalid hex digit")) }
+    out.push_byte(hi * 16 + lo)
+    i = i + 2
+  }
+  return Ok(move out)
+}

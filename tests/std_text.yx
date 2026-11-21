@@ -36,6 +36,8 @@ fn main() {
   print(text.digit_value('g', 16))
   print(text.char_to_upper('q'))
   print(text.char_to_lower('Q'))
+  print(text.char_to_upper('é'))
+  print(text.char_to_lower('Z'))
 
   let u = String.from("aéz€😀")
   let cs = text.chars(u)
@@ -70,6 +72,11 @@ fn main() {
   print(text.to_upper(tr))
   print(text.capitalize("élan vital"))
   print(text.capitalize("word"))
+  let unicode_upper = text.to_upper("Straße Ελληνικά")
+  print(unicode_upper)
+  print(text.to_lower("CAFÉ"))
+  print(text.find(u, "€"))
+  print(text.replace(u, "é", "e"))
   print(text.repeat("ab", 3))
 
   match text.strip_prefix("prefix-body", "prefix-") {

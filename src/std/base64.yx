@@ -1,0 +1,64 @@
+// std.base64: RFC 4648 standard alphabet, with required '=' padding.
+fn alphabet(n: Int) -> Int {
+  if n < 26 { return 65 + n }
+  if n < 52 { return 97 + n - 26 }
+  if n < 62 { return 48 + n - 52 }
+  if n == 62 { return 43 }
+  return 47
+}
+
+fn value(b: Int) -> Int {
+  if b >= 65 && b <= 90 { return b - 65 }
+  if b >= 97 && b <= 122 { return b - 97 + 26 }
+  if b >= 48 && b <= 57 { return b - 48 + 52 }
+  if b == 43 { return 62 }
+  if b == 47 { return 63 }
+  return -1
+}
+
+pub fn encode(s: view String) -> String {
+  var out = String.new()
+  var i = 0
+  while i < s.len() {
+    let a = s.byte(i)
+    var b = 0
+    var c = 0
+    let has_b = i + 1 < s.len()
+    let has_c = i + 2 < s.len()
+    if has_b { b = s.byte(i + 1) }
+    if has_c { c = s.byte(i + 2) }
+    out.push_byte(alphabet(a / 4))
+    out.push_byte(alphabet((a % 4) * 16 + b / 16))
+    if has_b { out.push_byte(alphabet((b % 16) * 4 + c / 64)) } else { out.push_byte(61) }
+    if has_c { out.push_byte(alphabet(c % 64)) } else { out.push_byte(61) }
+    i = i + 3
+  }
+  return move out
+}
+
+pub fn decode(s: view String) -> Result<String, String> {
+  if s.len() % 4 != 0 { return Err(String.from("base64 length must be a multiple of 4")) }
+  var out = String.new()
+  var i = 0
+  while i < s.len() {
+    let a = value(s.byte(i))
+    let b = value(s.byte(i + 1))
+    let last = i + 4 == s.len()
+    let pad_c = s.byte(i + 2) == 61
+    let pad_d = s.byte(i + 3) == 61
+    if a < 0 || b < 0 || (!pad_c && value(s.byte(i + 2)) < 0) || (!pad_d && value(s.byte(i + 3)) < 0) { return Err(String.from("invalid base64 character")) }
+    if pad_c && !pad_d { return Err(String.from("invalid base64 padding")) }
+    if (!last && (pad_c || pad_d)) { return Err(String.from("base64 padding is only valid at the end")) }
+    if pad_c && b % 16 != 0 { return Err(String.from("invalid base64 padding bits")) }
+    if pad_d && !pad_c && value(s.byte(i + 2)) % 4 != 0 { return Err(String.from("invalid base64 padding bits")) }
+    var c = 0
+    var d = 0
+    if !pad_c { c = value(s.byte(i + 2)) }
+    if !pad_d { d = value(s.byte(i + 3)) }
+    out.push_byte(a * 4 + b / 16)
+    if !pad_c { out.push_byte((b % 16) * 16 + c / 4) }
+    if !pad_d { out.push_byte((c % 4) * 64 + d) }
+    i = i + 4
+  }
+  return Ok(move out)
+}
