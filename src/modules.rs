@@ -124,6 +124,21 @@ fn mangle(key: &str, name: &str) -> String {
     }
 }
 
+static OVERLAY: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Replace the contents of the editor's open buffers (path, text): the loader reads these instead of the
+/// disk (used by `yerux lsp`; empty for every other command).
+pub fn set_overlay(files: Vec<(String, String)>) {
+    *OVERLAY.lock().unwrap() = files;
+}
+
+fn read_source(path: &str) -> std::io::Result<String> {
+    if let Some((_, text)) = OVERLAY.lock().unwrap().iter().find(|(p, _)| p == path) {
+        return Ok(text.clone());
+    }
+    std::fs::read_to_string(path)
+}
+
 /// Load `entry` and everything it imports.
 pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
     load_with(entry, mode, false).0
@@ -226,7 +241,7 @@ impl Loader {
         // modules of the standard library (`import std.io`) are embedded in the compiler
         let src = match crate::stdlib::source(key).filter(|_| !entry) {
             Some(s) => s.to_string(),
-            None => match std::fs::read_to_string(path) {
+            None => match read_source(path) {
                 Ok(s) => s,
                 Err(e) => {
                     self.errs

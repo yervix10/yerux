@@ -1,0 +1,32 @@
+import helper
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+enum Shape {
+    Circle(Int),
+    Dot,
+}
+
+trait Area {
+    fn area(self) -> Int
+}
+
+impl Area for Point {
+    fn area(self) -> Int {
+        return self.x * self.y
+    }
+}
+
+fn scale(p: Point, k: Int) -> Int {
+    let total = p.x + p.y
+    return helper.double(total) * k
+}
+
+fn main() {
+    let origin = Point { x: 3, y: 4 }
+    let n = scale(origin, 2)
+    print(n)
+}
