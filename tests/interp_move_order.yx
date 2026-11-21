@@ -1,0 +1,15 @@
+fn tag(n: Int) -> Int {
+  print("eval {n}")
+  return n
+}
+fn label(n: Int) -> String {
+  print("label {n}")
+  return "L{n}"
+}
+fn main() {
+  let r: Result<Int, String> = Err("bad")
+  print("{r.is_err()} {r.err()}")
+  let o: Option<String> = Some("x")
+  print("{o.is_some()}-{o}")
+  print("a{tag(1)} b{label(2)} c{tag(3)} d{label(4)}")
+}

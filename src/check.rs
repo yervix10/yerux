@@ -4772,6 +4772,9 @@ impl<'a> Checker<'a> {
         // `"{expr}"` with an owned temporary (a String, a List): the formatter takes it instead of borrowing it
         let mut gi = gi;
         if g.name == "std__fmt_val" && args.len() == 2 && !self.isp(&args[1]) {
+            // the text built so far comes first: `"{r.is_err()} {r.err()}"` reads `r` before moving it
+            self.hint = Some(Ty::String);
+            pre[0] = Some(self.expr(&mut args[0]));
             let t = self.expr(&mut args[1]);
             pre[1] = Some(t);
             if self.types.owned(t) {

@@ -1,0 +1,4 @@
+fn main() {
+  let r: Result<Int, String> = Err("bad")
+  print("{r.err()} {r.is_err()}")
+}
