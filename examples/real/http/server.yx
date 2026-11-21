@@ -1,0 +1,131 @@
+import std.env
+import std.fs
+import std.io
+import std.net
+import wire
+
+fn error_response(peer: view net.TcpStream, code: Int, message: view String) -> Result<Int, io.IoError> {
+  let body = fs.string_bytes(message)
+  return wire.respond(peer, code, body[..])
+}
+
+fn segment_char(b: Int) -> Bool {
+  return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) ||
+    b == '.'.to_int() || b == '-'.to_int() || b == '_'.to_int()
+}
+
+fn relative_path(target: view String) -> Result<String, io.IoError> {
+  if !wire.request_path(target) { return Err(wire.bad("invalid path")) }
+  if target.eq("/") { return Ok("index.html") }
+  let path = target.slice(1, target.len())
+  let parts = path.split("/")
+  for i in 0..parts.len() {
+    if parts.at(i).is_empty() || parts.at(i).eq(".") || parts.at(i).eq("..") {
+      return Err(wire.bad("invalid path segment"))
+    }
+    for j in 0..parts.at(i).len() {
+      if !segment_char(parts.at(i).byte(j)) { return Err(wire.bad("invalid path character")) }
+    }
+  }
+  return Ok(move path)
+}
+
+fn read_file(root: view String, relative: view String) -> Result<List<UInt8>, io.IoError> {
+  let parts = relative.split("/")
+  var path = String.from(root)
+  for i in 0..parts.len() {
+    if !path.ends_with("/") { path.push_str("/") }
+    path.push_str(parts.at(i))
+    let meta = fs.symlink_metadata(path)?
+    if i + 1 == parts.len() {
+      if !meta.kind.eq(fs.FileKind.File) || meta.size > wire.body_limit() {
+        return Err(wire.bad("not a supported static file"))
+      }
+    } else if !meta.kind.eq(fs.FileKind.Dir) {
+      return Err(wire.bad("not a directory"))
+    }
+  }
+  var file = fs.open(path)?
+  var scratch = [0u8; 4096]
+  var out = List<UInt8>.new()
+  while true {
+    let n = file.read(scratch[..])?
+    if n == 0 { return Ok(move out) }
+    if out.len() + n > wire.body_limit() { return Err(wire.bad("static file is too large")) }
+    for i in 0..n { out.push(scratch[i]) }
+  }
+}
+
+fn dispatch(peer: view net.TcpStream, root: view String, message: view wire.Message) -> Result<Int, io.IoError> {
+  let words = message.start.split(" ")
+  if words.len() != 3 || !words.at(2).eq("HTTP/1.1") {
+    return error_response(peer, 400, "Bad Request\n")
+  }
+  let target = relative_path(words.at(1))
+  match target {
+    Ok(relative) => {
+      if words.at(0).eq("POST") {
+        if words.at(1).eq("/echo") { return wire.respond(peer, 200, message.body[..]) }
+        return error_response(peer, 404, "Not Found\n")
+      }
+      if !words.at(0).eq("GET") { return error_response(peer, 400, "Bad Request\n") }
+      match read_file(root, relative) {
+        Ok(body) => { return wire.respond(peer, 200, body[..]) }
+        Err(_) => { return error_response(peer, 404, "Not Found\n") }
+      }
+    }
+    Err(_) => { return error_response(peer, 400, "Bad Request\n") }
+  }
+}
+
+fn serve_one(peer: view net.TcpStream, root: view String) -> Result<Int, io.IoError> {
+  match wire.receive(peer, true) {
+    Ok(message) => { return dispatch(peer, root, message) }
+    Err(_) => { return error_response(peer, 400, "Bad Request\n") }
+  }
+}
+
+fn serve(root: view String, port: Int, limit: Int) -> Result<Int, io.IoError> {
+  let info = fs.symlink_metadata(root)?
+  if !info.kind.eq(fs.FileKind.Dir) { return Err(wire.bad("static root must be a directory")) }
+  let addr = net.address("127.0.0.1", port)?
+  let listener = net.listen(addr)?
+  let ready = io.write_stdout("READY {port}\n")?
+  var served = 0
+  while limit == 0 || served < limit {
+    let peer = net.accept(listener)?
+    match serve_one(peer, root) {
+      Ok(_) => {}
+      Err(e) => { io.eprintln("{e}") }
+    }
+    if limit != 0 { served = served + 1 }
+  }
+  return Ok(0)
+}
+
+fn run() -> Int {
+  let args = env.args()
+  if args.len() != 3 && args.len() != 4 {
+    io.eprintln("usage: http-server PORT DIRECTORY [COUNT]")
+    return 2
+  }
+  let port = wire.decimal(args.at(1), 65535)
+  var limit = 0
+  if args.len() == 4 { limit = wire.decimal(args.at(3), 1000000) }
+  if port <= 0 || limit < 0 {
+    io.eprintln("expected a valid port and connection count")
+    return 2
+  }
+  match serve(args.at(2), port, limit) {
+    Ok(code) => { return code }
+    Err(e) => {
+      io.eprintln("{e}")
+      return 1
+    }
+  }
+}
+
+fn main() {
+  let status = run()
+  if status != 0 { io.exit(status) }
+}
