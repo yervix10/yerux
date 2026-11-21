@@ -4,33 +4,38 @@ mod a64;
 mod cgen;
 mod check;
 mod comptime;
+mod dropscc;
+mod elfdyn;
 mod fmt;
 mod inline;
 mod ir;
 mod layout;
+mod loopopt;
 mod memopt;
 mod modules;
 mod numeric;
-mod loopopt;
 mod opt;
 mod regalloc;
-mod stdlib;
 mod sroa;
+mod stdlib;
 mod syntax;
 mod x64;
-mod elfdyn;
-mod dropscc;
 
 use std::process::{exit, Command};
 use std::{env, fs};
 use syntax::Parser;
 
-fn frontend(file: &str, mode: modules::Mode) -> Result<(syntax::Program, check::Sigs), Vec<String>> {
+fn frontend(
+    file: &str,
+    mode: modules::Mode,
+) -> Result<(syntax::Program, check::Sigs), Vec<String>> {
     let loaded = modules::load(file, mode)?;
     let mut ps = Parser::new(loaded.toks.clone());
     let mut prog = ps.program().map_err(|d| vec![loaded.render(&d)])?;
-    let sigs = check::check_program(&mut prog, &mut ps).map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
-    comptime::run(&mut prog).map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
+    let sigs = check::check_program(&mut prog, &mut ps)
+        .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
+    comptime::run(&mut prog)
+        .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
     Ok((prog, sigs))
 }
 
@@ -54,7 +59,17 @@ fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
     let cfile = tmp_path("c");
     fs::write(&cfile, c).map_err(|_| "could not write the temporary C file".to_string())?;
     let mut cmd = Command::new("cc");
-    cmd.args(["-O2", "-w", "-fno-math-errno", "-ffp-contract=off", "-pthread", "-o", out]).arg(&cfile).arg("-lm");
+    cmd.args([
+        "-O2",
+        "-w",
+        "-fno-math-errno",
+        "-ffp-contract=off",
+        "-pthread",
+        "-o",
+        out,
+    ])
+    .arg(&cfile)
+    .arg("-lm");
     for lib in links {
         if lib.starts_with("lib") && lib.contains(".so") {
             cmd.arg(format!("-Wl,-l:{}", lib));
@@ -62,14 +77,29 @@ fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
             cmd.arg(format!("-l{}", lib));
         }
     }
-    let st = cmd.status().map_err(|_| "C compiler (cc) not found".to_string())?;
+    let st = cmd
+        .status()
+        .map_err(|_| "C compiler (cc) not found".to_string())?;
     let _ = fs::remove_file(&cfile);
-    if st.success() { Ok(()) } else { Err("the C compiler failed".into()) }
+    if st.success() {
+        Ok(())
+    } else {
+        Err("the C compiler failed".into())
+    }
 }
 
-fn native_build(prog: &syntax::Program, out: &str, debug_alloc: bool, optimize: bool, target: &str) {
+fn native_build(
+    prog: &syntax::Program,
+    out: &str,
+    debug_alloc: bool,
+    optimize: bool,
+    target: &str,
+) {
     if !prog.externs.is_empty() && (target == "aarch64" || target == "windows") {
-        eprintln!("error: native backend: extern C is not supported on the {} target yet", target);
+        eprintln!(
+            "error: native backend: extern C is not supported on the {} target yet",
+            target
+        );
         exit(1);
     }
     let mut ir = ir::lower(prog).unwrap_or_else(|e| {
@@ -79,7 +109,7 @@ fn native_build(prog: &syntax::Program, out: &str, debug_alloc: bool, optimize: 
     if optimize {
         opt::run(&mut ir);
     }
-    if target != "" && target != "linux" {
+    if !target.is_empty() && target != "linux" {
         if let Some(what) = ir::os_intrinsics_error(&ir) {
             eprintln!("error: native backend: {} is not supported on the {} target yet (available on x86-64 Linux)", what, target);
             exit(1);
@@ -105,7 +135,9 @@ const USAGE: &str = "usage: yerux <check|c|ir|build|run> file.yx [-o output] [--
 
 fn main() {
     // the front end and the IR passes are recursive: run on a thread with a large (lazily committed) stack
-    let h = std::thread::Builder::new().stack_size(2 << 30).spawn(real_main);
+    let h = std::thread::Builder::new()
+        .stack_size(2 << 30)
+        .spawn(real_main);
     match h {
         Ok(h) => {
             if h.join().is_err() {
@@ -143,13 +175,23 @@ fn real_main() {
     if args.iter().any(|a| a == "--check-ranges") {
         ir::CHECK_RANGES.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let target = args.iter().position(|a| a == "--target").and_then(|i| args.get(i + 1)).map(|s| s.as_str()).unwrap_or("");
+    let target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str())
+        .unwrap_or("");
     if !matches!(target, "" | "linux" | "aarch64" | "windows") {
-        eprintln!("unknown target: {} (expected linux, aarch64 or windows)", target);
+        eprintln!(
+            "unknown target: {} (expected linux, aarch64 or windows)",
+            target
+        );
         exit(2);
     }
     // Explicit cross targets select the corresponding native backend.
-    let native = debug_alloc || matches!(target, "aarch64" | "windows") || args.iter().any(|a| a == "--native");
+    let native = debug_alloc
+        || matches!(target, "aarch64" | "windows")
+        || args.iter().any(|a| a == "--native");
     if cmd == "ir" {
         match ir::lower(&prog) {
             Ok(mut p) => {
@@ -165,7 +207,11 @@ fn real_main() {
         }
         return;
     }
-    let c = if native { String::new() } else { cgen::generate(&prog, sigs) };
+    let c = if native {
+        String::new()
+    } else {
+        cgen::generate(&prog, sigs)
+    };
     let build = |out: &str| {
         if let Err(e) = c_compile(&c, out, &prog.links) {
             eprintln!("{}", e);
@@ -182,7 +228,11 @@ fn real_main() {
                 .and_then(|i| args.get(i + 1).cloned())
                 .unwrap_or_else(|| {
                     let stem = file.trim_end_matches(".yx");
-                    if target == "windows" { format!("{}.exe", stem) } else { stem.to_string() }
+                    if target == "windows" {
+                        format!("{}.exe", stem)
+                    } else {
+                        stem.to_string()
+                    }
                 });
             if native {
                 native_build(&prog, &out, debug_alloc, !no_opt, target);
@@ -207,7 +257,9 @@ fn real_main() {
             } else {
                 Command::new(&exe)
             };
-            let st = cmd.status().expect("could not run the program (for --target windows on this OS, wine is needed)");
+            let st = cmd.status().expect(
+                "could not run the program (for --target windows on this OS, wine is needed)",
+            );
             let _ = fs::remove_file(&exe);
             exit(st.code().unwrap_or(1));
         }
@@ -228,19 +280,29 @@ fn collect_test_files(dir: &std::path::Path, out: &mut Vec<String>) {
     };
     entries.sort();
     for p in entries {
-        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         if p.is_dir() {
             if !name.starts_with('.') && name != "target" && name != "node_modules" {
                 collect_test_files(&p, out);
             }
-        } else if name.ends_with(".yx") && fs::read_to_string(&p).map_or(false, |s| s.contains("test \"")) {
+        } else if name.ends_with(".yx")
+            && fs::read_to_string(&p).is_ok_and(|s| s.contains("test \""))
+        {
             out.push(p.to_string_lossy().trim_start_matches("./").to_string());
         }
     }
 }
 
 /// Build the program for one test and run it. Ok(None) = passed, Ok(Some(why)) = failed.
-fn run_one_test(file: &str, idx: usize, native: bool, optimize: bool) -> Result<Option<String>, Vec<String>> {
+fn run_one_test(
+    file: &str,
+    idx: usize,
+    native: bool,
+    optimize: bool,
+) -> Result<Option<String>, Vec<String>> {
     let (prog, sigs) = frontend(file, modules::Mode::Test(idx))?;
     let exe = tmp_path("bin").to_string_lossy().to_string();
     if native {
@@ -253,7 +315,8 @@ fn run_one_test(file: &str, idx: usize, native: bool, optimize: bool) -> Result<
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&exe, fs::Permissions::from_mode(0o755));
     } else {
-        c_compile(&cgen::generate(&prog, sigs), &exe, &prog.links).map_err(|e| vec![format!("error: {}", e)])?;
+        c_compile(&cgen::generate(&prog, sigs), &exe, &prog.links)
+            .map_err(|e| vec![format!("error: {}", e)])?;
     }
     let (so, se) = (tmp_path("out"), tmp_path("err"));
     let child = Command::new(&exe)
@@ -276,7 +339,11 @@ fn run_one_test(file: &str, idx: usize, native: bool, optimize: bool) -> Result<
     };
     let stdout = fs::read_to_string(&so).unwrap_or_default();
     let stderr = fs::read_to_string(&se).unwrap_or_default();
-    for p in [&exe, &so.to_string_lossy().to_string(), &se.to_string_lossy().to_string()] {
+    for p in [
+        &exe,
+        &so.to_string_lossy().to_string(),
+        &se.to_string_lossy().to_string(),
+    ] {
         let _ = fs::remove_file(p);
     }
     let mut detail = String::new();
@@ -288,7 +355,11 @@ fn run_one_test(file: &str, idx: usize, native: bool, optimize: bool) -> Result<
     }
     match status {
         Some(st) if st.success() => Ok(None),
-        Some(st) => Ok(Some(format!("exit code {}\n{}", st.code().unwrap_or(-1), detail))),
+        Some(st) => Ok(Some(format!(
+            "exit code {}\n{}",
+            st.code().unwrap_or(-1),
+            detail
+        ))),
         None => Ok(Some(format!("timed out after 30 s\n{}", detail))),
     }
 }
@@ -340,8 +411,11 @@ fn run_tests(args: &[String]) -> i32 {
                 continue;
             }
         };
-        let wanted: Vec<(usize, &String)> =
-            names.iter().enumerate().filter(|(_, n)| filter.as_ref().map_or(true, |x| n.contains(x.as_str()))).collect();
+        let wanted: Vec<(usize, &String)> = names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| filter.as_ref().is_none_or(|x| n.contains(x.as_str())))
+            .collect();
         if wanted.is_empty() {
             continue;
         }
@@ -377,6 +451,15 @@ fn run_tests(args: &[String]) -> i32 {
         return 0;
     }
     println!();
-    println!("test result: {}. {} passed; {} failed", if failed == 0 { "ok" } else { "FAILED" }, passed, failed);
-    if failed == 0 { 0 } else { 1 }
+    println!(
+        "test result: {}. {} passed; {} failed",
+        if failed == 0 { "ok" } else { "FAILED" },
+        passed,
+        failed
+    );
+    if failed == 0 {
+        0
+    } else {
+        1
+    }
 }

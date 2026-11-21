@@ -34,7 +34,7 @@ pub const XMM_ALLOC: u16 = 0xFFFC;
 pub enum Loc {
     None, // never defined nor used
     Reg(u8),
-    Xmm(u8),      // xmm2..xmm15 (xmm0/xmm1 are scratch); only for vregs that never live across a call
+    Xmm(u8), // xmm2..xmm15 (xmm0/xmm1 are scratch); only for vregs that never live across a call
     Spill(usize), // spill slot number
     Const(i64),
     Slot(usize),
@@ -53,11 +53,29 @@ pub struct Alloc {
 
 pub fn inst_def(i: &Inst) -> Option<V> {
     match i {
-        Inst::Const(d, _) | Inst::Text(d, _) | Inst::FnAddr(d, _) | Inst::VTableAddr(d, _) | Inst::Mov(d, _) | Inst::Bin(d, ..) | Inst::Neg(d, _) | Inst::Not(d, _) => Some(*d),
-        Inst::Slot(d, _) | Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::Lea(d, ..) | Inst::ListGet(d, ..) => Some(*d),
-        Inst::Alloc(d, _) | Inst::Load8(d, ..) | Inst::Realloc(d, ..) | Inst::LoadX(d, ..) | Inst::LeaX(d, ..) => Some(*d),
+        Inst::Const(d, _)
+        | Inst::Text(d, _)
+        | Inst::FnAddr(d, _)
+        | Inst::VTableAddr(d, _)
+        | Inst::Mov(d, _)
+        | Inst::Bin(d, ..)
+        | Inst::Neg(d, _)
+        | Inst::Not(d, _) => Some(*d),
+        Inst::Slot(d, _)
+        | Inst::Load(d, ..)
+        | Inst::LoadH(d, ..)
+        | Inst::Lea(d, ..)
+        | Inst::ListGet(d, ..) => Some(*d),
+        Inst::Alloc(d, _)
+        | Inst::Load8(d, ..)
+        | Inst::Realloc(d, ..)
+        | Inst::LoadX(d, ..)
+        | Inst::LeaX(d, ..) => Some(*d),
         Inst::N(_, d, ..) => Some(*d),
-        Inst::Thread(_, d, _) | Inst::Atomic(_, d, _) | Inst::Syscall(d, _) | Inst::Global(d, _) => Some(*d),
+        Inst::Thread(_, d, _)
+        | Inst::Atomic(_, d, _)
+        | Inst::Syscall(d, _)
+        | Inst::Global(d, _) => Some(*d),
         Inst::Call(d, ..) | Inst::ExternCall(d, ..) | Inst::CallInd(d, ..) => *d,
         _ => None,
     }
@@ -65,8 +83,15 @@ pub fn inst_def(i: &Inst) -> Option<V> {
 
 pub fn inst_uses(i: &Inst) -> Vec<V> {
     match i {
-        Inst::Const(..) | Inst::Text(..) | Inst::Slot(..) | Inst::FnAddr(..) | Inst::VTableAddr(..) | Inst::Global(..) => vec![],
-        Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => args.clone(),
+        Inst::Const(..)
+        | Inst::Text(..)
+        | Inst::Slot(..)
+        | Inst::FnAddr(..)
+        | Inst::VTableAddr(..)
+        | Inst::Global(..) => vec![],
+        Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => {
+            args.clone()
+        }
         Inst::Mov(_, s) | Inst::Neg(_, s) | Inst::Not(_, s) => vec![*s],
         Inst::Bin(_, _, a, b) | Inst::N(_, _, a, b) => vec![*a, *b],
         Inst::Call(_, _, args) | Inst::ExternCall(_, _, args, ..) => args.clone(),
@@ -76,12 +101,23 @@ pub fn inst_uses(i: &Inst) -> Vec<V> {
             v
         }
         Inst::PrintInt(v) | Inst::PrintBool(v) | Inst::PrintText(v) => vec![*v],
-        Inst::Load(_, a, _) | Inst::LoadH(_, a, _) | Inst::Lea(_, a, _) | Inst::ListFree(a) => vec![*a],
-        Inst::Alloc(_, n) | Inst::Free(n) | Inst::CheckNonEmpty(n) | Inst::Assert(n) | Inst::Load8(_, n, _) => vec![*n],
+        Inst::Load(_, a, _) | Inst::LoadH(_, a, _) | Inst::Lea(_, a, _) | Inst::ListFree(a) => {
+            vec![*a]
+        }
+        Inst::Alloc(_, n)
+        | Inst::Free(n)
+        | Inst::CheckNonEmpty(n)
+        | Inst::Assert(n)
+        | Inst::Load8(_, n, _) => vec![*n],
         Inst::MemCpy(a, b, c) => vec![*a, *b, *c],
         Inst::Realloc(_, a, b, c) => vec![*a, *b, *c],
-        Inst::Store8(a, _, v) | Inst::PrintBytes(a, v) | Inst::Panic(a, v) | Inst::Check(a, v) => vec![*a, *v],
-        Inst::Store(a, _, v) | Inst::Copy(a, v, _) | Inst::ListPush(a, v) | Inst::ListGet(_, a, v) => vec![*a, *v],
+        Inst::Store8(a, _, v) | Inst::PrintBytes(a, v) | Inst::Panic(a, v) | Inst::Check(a, v) => {
+            vec![*a, *v]
+        }
+        Inst::Store(a, _, v)
+        | Inst::Copy(a, v, _)
+        | Inst::ListPush(a, v)
+        | Inst::ListGet(_, a, v) => vec![*a, *v],
         Inst::LoadX(_, b, i, _) | Inst::LeaX(_, b, i, _) => vec![*b, *i],
         Inst::StoreX(b, i, _, v) => vec![*b, *i, *v],
     }
@@ -93,7 +129,8 @@ pub fn is_call(i: &Inst) -> bool {
         Inst::Call(..)
             | Inst::ExternCall(..)
             | Inst::CallInd(..)
-            | Inst::Thread(..) | Inst::Syscall(..)
+            | Inst::Thread(..)
+            | Inst::Syscall(..)
             | Inst::ListPush(..)
             | Inst::ListGet(..)
             | Inst::ListFree(..)
@@ -132,7 +169,7 @@ fn is_cmp(op: Op) -> bool {
 struct Bits(Vec<u64>);
 impl Bits {
     fn new(n: usize) -> Bits {
-        Bits(vec![0; (n + 63) / 64])
+        Bits(vec![0; n.div_ceil(64)])
     }
     fn set(&mut self, i: usize) {
         self.0[i / 64] |= 1 << (i % 64);
@@ -141,7 +178,11 @@ impl Bits {
         self.0[i / 64] >> (i % 64) & 1 == 1
     }
     fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.iter().enumerate().flat_map(|(w, &x)| (0..64).filter(move |b| x >> b & 1 == 1).map(move |b| w * 64 + b))
+        self.0.iter().enumerate().flat_map(|(w, &x)| {
+            (0..64)
+                .filter(move |b| x >> b & 1 == 1)
+                .map(move |b| w * 64 + b)
+        })
     }
 }
 
@@ -245,7 +286,8 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
         }
         inst_def(i).filter(|d| !remat[*d])
     };
-    let eff_uses = |i: &Inst| -> Vec<V> { inst_uses(i).into_iter().filter(|u| !remat[*u]).collect() };
+    let eff_uses =
+        |i: &Inst| -> Vec<V> { inst_uses(i).into_iter().filter(|u| !remat[*u]).collect() };
 
     // ── block-level liveness ──
     let mut gen: Vec<Bits> = vec![Bits::new(nv); nb];
@@ -282,7 +324,11 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
                 }
             }
             let mut inn = out.clone();
-            for (w, (k, g)) in inn.0.iter_mut().zip(kill[bi].0.iter().zip(gen[bi].0.iter())) {
+            for (w, (k, g)) in inn
+                .0
+                .iter_mut()
+                .zip(kill[bi].0.iter().zip(gen[bi].0.iter()))
+            {
                 *w = (*w & !*k) | *g;
             }
             if inn.0 != live_in[bi].0 || out.0 != live_out[bi].0 {
@@ -352,13 +398,21 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
                 }
                 Inst::ExternCall(_, _, args, floats, ret_float) => {
                     for (v, is_float) in args.iter().zip(floats) {
-                        if *is_float { fl.push(*v); } else { gw[*v] += w; }
+                        if *is_float {
+                            fl.push(*v);
+                        } else {
+                            gw[*v] += w;
+                        }
                     }
                     if *ret_float {
-                        if let Some(d) = inst_def(i) { fl.push(d); }
+                        if let Some(d) = inst_def(i) {
+                            fl.push(d);
+                        }
                     }
                 }
-                Inst::Const(d, _) | Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::LoadX(d, ..) => neutral.push(*d),
+                Inst::Const(d, _) | Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::LoadX(d, ..) => {
+                    neutral.push(*d)
+                }
                 Inst::Store(_, _, v) | Inst::StoreX(_, _, _, v) => neutral.push(*v),
                 _ => {}
             }
@@ -466,7 +520,18 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
         for (ii, i) in b.insts.iter().enumerate().rev() {
             let p = h + 1 + ii;
             if is_call(i) {
-                if cold[bi] && matches!(i, Inst::Call(..) | Inst::CallInd(..) | Inst::Realloc(..) | Inst::Alloc(..) | Inst::Free(..) | Inst::Thread(..) | Inst::Syscall(..)) {
+                if cold[bi]
+                    && matches!(
+                        i,
+                        Inst::Call(..)
+                            | Inst::CallInd(..)
+                            | Inst::Realloc(..)
+                            | Inst::Alloc(..)
+                            | Inst::Free(..)
+                            | Inst::Thread(..)
+                            | Inst::Syscall(..)
+                    )
+                {
                     soft.push((bi, ii, p));
                 } else {
                     calls.push(p);
@@ -484,7 +549,12 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
                     hint[d] = match i {
                         Inst::Mov(_, s) | Inst::Neg(_, s) | Inst::Not(_, s) => Some(*s),
                         Inst::Bin(_, _, x, _) => Some(*x),
-                        Inst::N(NOp::FAdd | NOp::FSub | NOp::FMul | NOp::FDiv | NOp::FSqrt | NOp::FNeg, _, x, _) => Some(*x),
+                        Inst::N(
+                            NOp::FAdd | NOp::FSub | NOp::FMul | NOp::FDiv | NOp::FSqrt | NOp::FNeg,
+                            _,
+                            x,
+                            _,
+                        ) => Some(*x),
                         _ => None,
                     };
                 }
@@ -529,7 +599,13 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
     }
     let mut ivs: Vec<Iv> = (0..nv)
         .filter(|&v| !ranges[v].is_empty())
-        .map(|v| Iv { v, start: ranges[v][0].0, end: ranges[v].last().unwrap().1, weight: weight[v], hint: hint[v] })
+        .map(|v| Iv {
+            v,
+            start: ranges[v][0].0,
+            end: ranges[v].last().unwrap().1,
+            weight: weight[v],
+            hint: hint[v],
+        })
         .collect();
     ivs.sort_by_key(|i| (i.start, i.v));
     if std::env::var_os("YERUX_RA_NOHOLES").is_some() {
@@ -621,11 +697,10 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
                 // evict the cheapest set of conflicting intervals if they are cheaper than us
                 let mut best: Option<(u64, u8)> = None;
                 for r in 0..32u8 {
-                    if mask >> r & 1 == 1 && conflict_w[r as usize] != u64::MAX {
-                        if best.map_or(true, |(w, _)| conflict_w[r as usize] < w) {
+                    if mask >> r & 1 == 1 && conflict_w[r as usize] != u64::MAX
+                        && best.is_none_or(|(w, _)| conflict_w[r as usize] < w) {
                             best = Some((conflict_w[r as usize], r));
                         }
-                    }
                 }
                 match best {
                     Some((w, r)) if w < cw && !(mask >> 16 != 0 && false) => {
@@ -647,7 +722,11 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
             };
             if let Some(r) = chosen {
                 reg_of[idx] = Some(r);
-                loc[cv] = if r >= 16 { Loc::Xmm(r - 16) } else { Loc::Reg(r) };
+                loc[cv] = if r >= 16 {
+                    Loc::Xmm(r - 16)
+                } else {
+                    Loc::Reg(r)
+                };
                 assigned[r as usize].push(idx);
                 done = true;
                 break;
@@ -693,7 +772,13 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
         }
     }
     let callee_used = (0..16u8).filter(|r| callee_used >> r & 1 == 1).collect();
-    let param_live = (0..nb).map(|bi| (0..f.nparams.min(nv)).map(|p| remat[p] || live_in[bi].get(p)).collect()).collect();
+    let param_live = (0..nb)
+        .map(|bi| {
+            (0..f.nparams.min(nv))
+                .map(|p| remat[p] || live_in[bi].get(p))
+                .collect()
+        })
+        .collect();
     let mut saves = std::collections::HashMap::new();
     for &(bi, ii, p) in &soft {
         let (mut gs, mut xs) = (vec![], vec![]);
@@ -712,5 +797,12 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
             saves.insert((bi, ii), (gs, xs));
         }
     }
-    Alloc { loc, nspill, callee_used, fused, saves, param_live }
+    Alloc {
+        loc,
+        nspill,
+        callee_used,
+        fused,
+        saves,
+        param_live,
+    }
 }

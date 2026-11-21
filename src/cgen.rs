@@ -271,7 +271,7 @@ struct Gen<'a> {
     vars: HashMap<usize, (String, bool, Ty)>, // id -> (C name, is reference, type)
     capture_flags: HashSet<usize>,
     recover_panics: bool,
-    scopes: Vec<Vec<usize>>,                  // owned variables per scope (to free)
+    scopes: Vec<Vec<usize>>, // owned variables per scope (to free)
     tmp: usize,
     loops: Vec<std::rc::Rc<CLoop>>,
 }
@@ -330,7 +330,11 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
         g.emit_body(*t, &mut done);
     }
     // 3. drop functions: declared first because owned types refer to each other (recursion)
-    let mut owned_tys: Vec<Ty> = all.iter().copied().filter(|t| g.types.owned(*t) || matches!(t, Ty::List(_))).collect();
+    let mut owned_tys: Vec<Ty> = all
+        .iter()
+        .copied()
+        .filter(|t| g.types.owned(*t) || matches!(t, Ty::List(_)))
+        .collect();
     for i in 0..g.types.boxes.len() {
         if !g.types.has_param(Ty::Box(i)) {
             owned_tys.push(Ty::Box(i));
@@ -387,10 +391,22 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
     g.line("");
     for f in &prog.externs {
         let ps: Vec<String> = f.params.iter().map(|p| g.types.cty(p.ty)).collect();
-        let ps = if f.variadic { format!("{}, ...", ps.join(", ")) } else if ps.is_empty() { "void".to_string() } else { ps.join(", ") };
+        let ps = if f.variadic {
+            format!("{}, ...", ps.join(", "))
+        } else if ps.is_empty() {
+            "void".to_string()
+        } else {
+            ps.join(", ")
+        };
         // Declared under a private name bound to the C symbol with an asm label, so a Yerux prototype
         // (`Ptr<UInt8>` instead of `char *`) never conflicts with a libc header declaration.
-        g.line(&format!("extern {} nx_x_{}({}) __asm__(\"{}\");", g.types.cty(f.ret), f.name, ps, f.name));
+        g.line(&format!(
+            "extern {} nx_x_{}({}) __asm__(\"{}\");",
+            g.types.cty(f.ret),
+            f.name,
+            ps,
+            f.name
+        ));
     }
     for f in &prog.funcs {
         let ps: Vec<String> = f
@@ -404,7 +420,11 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
                 }
             })
             .collect();
-        let ps = if ps.is_empty() { "void".to_string() } else { ps.join(", ") };
+        let ps = if ps.is_empty() {
+            "void".to_string()
+        } else {
+            ps.join(", ")
+        };
         let line = format!("static {} nx_f_{}({});", g.types.cty(f.ret), f.name, ps);
         g.line(&line);
     }
@@ -433,7 +453,10 @@ impl Gen<'_> {
         for (id, table) in self.types.dyn_tables.iter().enumerate() {
             let drop_name = format!("nx_dyn_{}_drop", id);
             let drop = if self.types.owned(table.concrete) {
-                self.drop_call(table.concrete, &format!("(({} *)data)", self.types.cty(table.concrete))) + ";"
+                self.drop_call(
+                    table.concrete,
+                    &format!("(({} *)data)", self.types.cty(table.concrete)),
+                ) + ";"
             } else {
                 "(void)data;".into()
             };
@@ -444,21 +467,36 @@ impl Gen<'_> {
                 let wrapper = format!("nx_dyn_{}_{slot}", id);
                 let mut params = vec!["void *data".to_string()];
                 let cty = self.types.cty(table.concrete);
-                let deref = if self.is_ref(f.params[0].mode, table.concrete) { "" } else { "*" };
+                let deref = if self.is_ref(f.params[0].mode, table.concrete) {
+                    ""
+                } else {
+                    "*"
+                };
                 let mut args = vec![format!("{deref}(({cty} *)data)")];
                 for (i, param) in f.params.iter().enumerate().skip(1) {
                     let ty = self.types.cty(param.ty);
-                    let pointer = if self.is_ref(param.mode, param.ty) { "*" } else { "" };
+                    let pointer = if self.is_ref(param.mode, param.ty) {
+                        "*"
+                    } else {
+                        ""
+                    };
                     params.push(format!("{ty} {pointer}a{i}"));
                     args.push(format!("a{i}"));
                 }
                 let ret = if f.ret == Ty::Unit { "" } else { "return " };
-                self.line(&format!("static {} {wrapper}({}) {{ {ret}nx_f_{method}({}); }}",
-                    self.types.cty(f.ret), params.join(", "), args.join(", ")));
+                self.line(&format!(
+                    "static {} {wrapper}({}) {{ {ret}nx_f_{method}({}); }}",
+                    self.types.cty(f.ret),
+                    params.join(", "),
+                    args.join(", ")
+                ));
                 slots.push(wrapper);
             }
             let slots: Vec<_> = slots.iter().map(|f| format!("(NxDynSlot){f}")).collect();
-            self.line(&format!("static const NxDynSlot nx_vtable_{id}[] = {{ {} }};", slots.join(", ")));
+            self.line(&format!(
+                "static const NxDynSlot nx_vtable_{id}[] = {{ {} }};",
+                slots.join(", ")
+            ));
         }
     }
 
@@ -477,9 +515,11 @@ impl Gen<'_> {
     fn box_fanout(&self, ty: Ty, bi: usize) -> usize {
         match ty {
             Ty::Box(b) => (b == bi) as usize,
-            Ty::Struct(sid) if self.plain_struct(sid) => {
-                self.types.structs[sid].fields.iter().map(|(_, f)| self.box_fanout(*f, bi)).sum()
-            }
+            Ty::Struct(sid) if self.plain_struct(sid) => self.types.structs[sid]
+                .fields
+                .iter()
+                .map(|(_, f)| self.box_fanout(*f, bi))
+                .sum(),
             Ty::Enum(eid) => self.types.enums[eid]
                 .variants
                 .iter()
@@ -494,7 +534,11 @@ impl Gen<'_> {
     /// on the worklist `w` (`n`, `cap` are its counters) instead of recursing into them.
     fn defer_c(&self, ty: Ty, addr: &str, bi: usize, bc: &str) -> String {
         if self.box_fanout(ty, bi) == 0 {
-            return if self.types.owned(ty) { format!("{};", self.drop_call(ty, addr)) } else { String::new() };
+            return if self.types.owned(ty) {
+                format!("{};", self.drop_call(ty, addr))
+            } else {
+                String::new()
+            };
         }
         match ty {
             Ty::Box(_) => format!("if (n == cap) {{ cap *= 2; w = realloc(w, cap * sizeof({bc})); }} w[n++] = *({addr});"),
@@ -538,7 +582,11 @@ impl Gen<'_> {
     /// Like `defer_c` for a component: nested member boxes and lists are pushed as `{tag, a, b}` items.
     fn defer_scc_c(&self, ty: Ty, addr: &str, members: &[HeapNode]) -> String {
         if !self.types.reaches_node(ty, members) {
-            return if self.types.owned(ty) { format!("{};", self.drop_call(ty, addr)) } else { String::new() };
+            return if self.types.owned(ty) {
+                format!("{};", self.drop_call(ty, addr))
+            } else {
+                String::new()
+            };
         }
         let push = |tag: usize, a: String, b: String| {
             format!("if (n == cap) {{ cap *= 2; w = (NxWI *)realloc(w, cap * sizeof(NxWI)); if (!w) nx_panic(\"out of memory\"); }} w[n].tag = {tag}; w[n].a = (void *)({a}); w[n].b = {b}; n++;")
@@ -549,7 +597,10 @@ impl Gen<'_> {
                 push(tag, format!("*({addr})"), "0".into())
             }
             Ty::List(l) => {
-                let tag = members.iter().position(|m| *m == HeapNode::List(l)).unwrap();
+                let tag = members
+                    .iter()
+                    .position(|m| *m == HeapNode::List(l))
+                    .unwrap();
                 push(tag, format!("({addr})->d"), format!("({addr})->len"))
             }
             Ty::Struct(sid) => {
@@ -569,7 +620,9 @@ impl Gen<'_> {
                         .iter()
                         .enumerate()
                         .filter(|(_, p)| self.types.owned(**p))
-                        .map(|(k, p)| self.defer_scc_c(*p, &format!("&({addr})->u.v_{vn}.a{k}"), members))
+                        .map(|(k, p)| {
+                            self.defer_scc_c(*p, &format!("&({addr})->u.v_{vn}.a{k}"), members)
+                        })
                         .collect();
                     if !drops.is_empty() {
                         b += &format!(" case {vi}: {{ {drops} }} break;");
@@ -590,7 +643,8 @@ impl Gen<'_> {
                 HeapNode::Box(b) => {
                     let (bc, inner) = (self.types.cty(Ty::Box(*b)), self.types.boxes[*b]);
                     let body = self.defer_scc_c(inner, "c", members);
-                    cases += &format!(" case {k}: {{ {bc} c = ({bc})it.a; {body} free(c); }} break;");
+                    cases +=
+                        &format!(" case {k}: {{ {bc} c = ({bc})it.a; {body} free(c); }} break;");
                 }
                 HeapNode::List(l) => {
                     let et = self.types.lists[*l];
@@ -621,7 +675,10 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
 
     /// The `struct` definition of a type (everything it holds by value is defined before it).
     fn emit_body(&mut self, t: Ty, done: &mut HashSet<Ty>) {
-        if !matches!(t, Ty::Struct(_) | Ty::Enum(_) | Ty::List(_)) || self.types.has_param(t) || !done.insert(t) {
+        if !matches!(t, Ty::Struct(_) | Ty::Enum(_) | Ty::List(_))
+            || self.types.has_param(t)
+            || !done.insert(t)
+        {
             return;
         }
         let cname = self.types.cty(t);
@@ -683,19 +740,29 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 let et = self.types.cty(el);
                 let c = &cname;
                 let owned = self.types.owned(el);
-                self.line(&format!("static inline {c} nx_new_{c}(void) {{ {c} l = {{0, 0, 0}}; return l; }}"));
-                self.line(&format!("static inline void nx_push_{c}({c} *l, {et} v) {{"));
+                self.line(&format!(
+                    "static inline {c} nx_new_{c}(void) {{ {c} l = {{0, 0, 0}}; return l; }}"
+                ));
+                self.line(&format!(
+                    "static inline void nx_push_{c}({c} *l, {et} v) {{"
+                ));
                 self.line("  if (l->len == l->cap) {");
                 self.line(&format!("    if (l->cap > INT64_MAX / 2 / (int64_t)sizeof({et})) nx_panic(\"list too large\");"));
                 self.line("    int64_t nc = l->cap ? l->cap * 2 : 4;");
-                self.line(&format!("    {et} *nd = ({et} *)realloc(l->d, (size_t)nc * sizeof({et}));"));
+                self.line(&format!(
+                    "    {et} *nd = ({et} *)realloc(l->d, (size_t)nc * sizeof({et}));"
+                ));
                 self.line("    if (!nd) nx_panic(\"out of memory\");");
                 self.line("    l->d = nd; l->cap = nc;");
                 self.line("  }");
                 self.line("  l->d[l->len++] = v;");
                 self.line("}");
-                self.line(&format!("static inline int64_t nx_len_{c}({c} *l) {{ return l->len; }}"));
-                self.line(&format!("static inline {et} *nx_at_{c}({c} *l, int64_t i) {{"));
+                self.line(&format!(
+                    "static inline int64_t nx_len_{c}({c} *l) {{ return l->len; }}"
+                ));
+                self.line(&format!(
+                    "static inline {et} *nx_at_{c}({c} *l, int64_t i) {{"
+                ));
                 self.line("  if (i < 0 || i >= l->len) nx_panic(\"index out of range\");");
                 self.line("  return &l->d[i];");
                 self.line("}");
@@ -703,16 +770,29 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 self.line("  if (l->len == 0) nx_panic(\"pop from an empty list\");");
                 self.line("  return l->d[--l->len];");
                 self.line("}");
-                let drop_p = if owned { format!(" {};", self.drop_call(el, "p")) } else { String::new() };
+                let drop_p = if owned {
+                    format!(" {};", self.drop_call(el, "p"))
+                } else {
+                    String::new()
+                };
                 self.line(&format!("static inline void nx_set_{c}({c} *l, int64_t i, {et} v) {{ {et} *p = nx_at_{c}(l, i);{drop_p} *p = v; }}"));
-                let drop_i = if owned { format!(" {};", self.drop_call(el, "&l->d[i]")) } else { String::new() };
+                let drop_i = if owned {
+                    format!(" {};", self.drop_call(el, "&l->d[i]"))
+                } else {
+                    String::new()
+                };
                 self.line(&format!("static inline void nx_swap_{c}({c} *l, int64_t i, int64_t j) {{ {et} *a = nx_at_{c}(l, i); {et} *b = nx_at_{c}(l, j); {et} t = *a; *a = *b; *b = t; }}"));
                 if let Some(members) = self.types.general_scc(HeapNode::List(i)) {
                     // recursive through lists/boxes: released by the component's worklist (clear gives the buffer up too)
-                    let tag = members.iter().position(|m| *m == HeapNode::List(i)).unwrap();
+                    let tag = members
+                        .iter()
+                        .position(|m| *m == HeapNode::List(i))
+                        .unwrap();
                     let scc = self.scc_name(&members);
                     self.line(&format!("static inline void nx_free_{c}({c} *l) {{ void *d = l->d; int64_t n = l->len; l->d = 0; l->len = 0; l->cap = 0; {scc}({tag}, d, n); }}"));
-                    self.line(&format!("static inline void nx_clear_{c}({c} *l) {{ nx_free_{c}(l); }}"));
+                    self.line(&format!(
+                        "static inline void nx_clear_{c}({c} *l) {{ nx_free_{c}(l); }}"
+                    ));
                 } else {
                     self.line(&format!("static inline void nx_clear_{c}({c} *l) {{ for (int64_t i = 0; i < l->len; i++) {{{drop_i} }} l->len = 0; }}"));
                     self.line(&format!("static inline void nx_free_{c}({c} *l) {{ nx_clear_{c}(l); free(l->d); l->d = 0; l->cap = 0; }}"));
@@ -759,7 +839,11 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                         if !self.types.owned(*f) {
                             continue;
                         }
-                        let guard = self.types.capture_live_field(i, n).map(|flag| format!("if (s->f_{flag}) ")).unwrap_or_default();
+                        let guard = self
+                            .types
+                            .capture_live_field(i, n)
+                            .map(|flag| format!("if (s->f_{flag}) "))
+                            .unwrap_or_default();
                         if matches!(f, Ty::Fn(_)) {
                             d += &format!("{guard}nx_envpush(wl, s->f_{n}.env); ");
                         } else {
@@ -772,13 +856,21 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
             Ty::Enum(i) => {
                 if self.types.owned(t) {
                     let def = self.types.enums[i].clone();
-                    let mut b = format!("static void nx_drop_{}({} *s) {{ switch (s->tag) {{", cname, cname);
+                    let mut b = format!(
+                        "static void nx_drop_{}({} *s) {{ switch (s->tag) {{",
+                        cname, cname
+                    );
                     for (vi, (vn, ps)) in def.variants.iter().enumerate() {
                         let drops: Vec<String> = ps
                             .iter()
                             .enumerate()
                             .filter(|(_, p)| self.types.owned(**p))
-                            .map(|(k, p)| format!("{};", self.drop_call(*p, &format!("&s->u.v_{}.a{}", vn, k))))
+                            .map(|(k, p)| {
+                                format!(
+                                    "{};",
+                                    self.drop_call(*p, &format!("&s->u.v_{}.a{}", vn, k))
+                                )
+                            })
                             .collect();
                         if !drops.is_empty() {
                             b += &format!(" case {}: {} break;", vi, drops.join(" "));
@@ -805,7 +897,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     ));
                     return;
                 }
-                let d = if self.types.owned(inner) { format!("{}; ", self.drop_call(inner, "*b")) } else { String::new() };
+                let d = if self.types.owned(inner) {
+                    format!("{}; ", self.drop_call(inner, "*b"))
+                } else {
+                    String::new()
+                };
                 self.line(&format!("static void nx_drop_{cname}({cname} *b) {{ if (*b) {{ {d}free(*b); *b = 0; }} }}"));
             }
             _ => {}
@@ -830,7 +926,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             EK::Var(_, id) => self.lv(*id),
             EK::Field(b, f) => format!("{}.f_{}", self.place_with_indices(b, index), f),
             // `b.get()` / `*b`: the cell of a Box
-            EK::Method { recv, m, args } if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() => {
+            EK::Method { recv, m, args }
+                if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() =>
+            {
                 let place = self.place_with_indices(recv, index);
                 if m == "locked_value" {
                     format!("(*{place}.f_value)")
@@ -843,7 +941,12 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             // payload of an enum place (a borrowing `match` binding)
             EK::Payload(b, vid, k) => {
                 let Ty::Enum(eid) = b.ty else { unreachable!() };
-                format!("{}.u.v_{}.a{}", self.place_with_indices(b, index), self.types.enums[eid].variants[*vid].0, k)
+                format!(
+                    "{}.u.v_{}.a{}",
+                    self.place_with_indices(b, index),
+                    self.types.enums[eid].variants[*vid].0,
+                    k
+                )
             }
             // `l.at(i)`: a bounds-checked pointer into the list, dereferenced
             EK::Method { recv, args, .. } => {
@@ -859,7 +962,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
     fn emit_cleanup(&mut self, ty: Ty) {
         let name = self.types.cty(ty);
         let drop = self.drop_call(ty, "p");
-        self.line(&format!("static void nx_cleanup_{name}(void *p) {{ {drop}; }}"));
+        self.line(&format!(
+            "static void nx_cleanup_{name}(void *p) {{ {drop}; }}"
+        ));
     }
 
     fn track(&mut self, id: usize) {
@@ -868,14 +973,20 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
         if self.recover_panics {
             let ty = self.types.cty(ty);
             self.line(&format!("NxCleanup {name}_cleanup;"));
-            self.line(&format!("nx_cleanup_push(&{name}_cleanup, &{name}_live, &{name}, nx_cleanup_{ty});"));
+            self.line(&format!(
+                "nx_cleanup_push(&{name}_cleanup, &{name}_live, &{name}, nx_cleanup_{ty});"
+            ));
         }
         self.scopes.last_mut().unwrap().push(id);
     }
 
     fn drop_local(&self, id: usize) -> String {
         let (name, _, ty) = &self.vars[&id];
-        let pop = if self.recover_panics { "nx_cleanup_pop(); " } else { "" };
+        let pop = if self.recover_panics {
+            "nx_cleanup_pop(); "
+        } else {
+            ""
+        };
         let drop = self.drop_call(*ty, &format!("&{name}"));
         format!("{pop}if ({name}_live) {drop};")
     }
@@ -892,7 +1003,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 }
             }
             UnpackPat::Tuple(items, _) => {
-                let Ty::Struct(sid) = ty else { unreachable!("tuple pattern on a non-tuple") };
+                let Ty::Struct(sid) = ty else {
+                    unreachable!("tuple pattern on a non-tuple")
+                };
                 let fields = self.types.structs[sid].fields.clone();
                 for (it, (fname, fty)) in items.iter().zip(fields) {
                     self.unpack_c(it, &format!("{}.f_{}", path, fname), fty);
@@ -925,11 +1038,24 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             let n = format!("v{}_{}", p.id, p.name);
             let r = self.is_ref(p.mode, p.ty);
             let c = self.types.cty(p.ty);
-            ps.push(if r { format!("{} *{}", c, n) } else { format!("{} {}", c, n) });
+            ps.push(if r {
+                format!("{} *{}", c, n)
+            } else {
+                format!("{} {}", c, n)
+            });
             self.vars.insert(p.id, (n, r, p.ty));
         }
-        let params = if ps.is_empty() { "void".to_string() } else { ps.join(", ") };
-        let head = format!("static {} nx_f_{}({}) {{", self.types.cty(f.ret), f.name, params);
+        let params = if ps.is_empty() {
+            "void".to_string()
+        } else {
+            ps.join(", ")
+        };
+        let head = format!(
+            "static {} nx_f_{}({}) {{",
+            self.types.cty(f.ret),
+            f.name,
+            params
+        );
         self.line(&head);
         self.ind += 1;
         for p in &f.params {
@@ -983,7 +1109,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     match &target.k {
                         EK::Var(_, id) if self.capture_flags.contains(id) => {
                             let live = format!("(*{}_live)", self.vars[id].0);
-                            self.line(&format!("{{ {c} t_ = {e}; if ({live}) {drop}; {pc} = t_; {live} = true; }}"));
+                            self.line(&format!(
+                                "{{ {c} t_ = {e}; if ({live}) {drop}; {pc} = t_; {live} = true; }}"
+                            ));
                         }
                         EK::Var(_, id) if !self.vars[id].1 => {
                             let n = self.vars[id].0.clone();
@@ -991,7 +1119,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                         }
                         _ => {
                             let drop = self.drop_call(val.ty, "p_");
-                            self.line(&format!("{{ {c} t_ = {e}; {c} *p_ = &{pc}; {drop}; *p_ = t_; }}"))
+                            self.line(&format!(
+                                "{{ {c} t_ = {e}; {c} *p_ = &{pc}; {drop}; *p_ = t_; }}"
+                            ))
                         }
                     }
                 } else if pc.contains("nx_at_") {
@@ -1019,7 +1149,12 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 let cc = self.ex(c);
                 self.line(&format!("while ({}) {{", cc));
                 self.ind += 1;
-                self.loops.push(std::rc::Rc::new(CLoop { id: meta.id, depth: self.scopes.len(), brk: false.into(), cont: false.into() }));
+                self.loops.push(std::rc::Rc::new(CLoop {
+                    id: meta.id,
+                    depth: self.scopes.len(),
+                    brk: false.into(),
+                    cont: false.into(),
+                }));
                 self.line("{");
                 self.block(b);
                 self.line("}");
@@ -1028,7 +1163,12 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     self.line(&format!("nx_cont_{}: ;", meta.id));
                 }
                 // the step runs after the body (and after `continue`), outside the body's scope
-                self.loops.push(std::rc::Rc::new(CLoop { id: meta.id, depth: self.scopes.len(), brk: false.into(), cont: false.into() }));
+                self.loops.push(std::rc::Rc::new(CLoop {
+                    id: meta.id,
+                    depth: self.scopes.len(),
+                    brk: false.into(),
+                    cont: false.into(),
+                }));
                 self.stmts(&meta.step);
                 let lp2 = self.loops.pop().unwrap();
                 self.ind -= 1;
@@ -1039,7 +1179,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             }
             SK::Break(_, id) | SK::Continue(_, id) => {
                 let is_break = matches!(s.k, SK::Break(..));
-                let pos = self.loops.iter().rposition(|l| l.id == *id).expect("loop of break/continue");
+                let pos = self
+                    .loops
+                    .iter()
+                    .rposition(|l| l.id == *id)
+                    .expect("loop of break/continue");
                 if is_break {
                     self.loops[pos].brk.set(true);
                 } else {
@@ -1058,7 +1202,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 for d in ds {
                     self.line(&d);
                 }
-                self.line(&format!("goto nx_{}_{};", if is_break { "brk" } else { "cont" }, id));
+                self.line(&format!(
+                    "goto nx_{}_{};",
+                    if is_break { "brk" } else { "cont" },
+                    id
+                ));
                 self.ind -= 1;
                 self.line("}");
             }
@@ -1078,8 +1226,13 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             SK::Bind(name, mode, place, id) => {
                 let n = format!("v{}_{}", id, name);
                 if *mode == Mode::Own {
-                    let EK::Field(env, capture) = &place.k else { unreachable!("worker capture") };
-                    self.line(&format!("int64_t *{n}_live = &{}.f_live_{capture};", self.place_c(env)));
+                    let EK::Field(env, capture) = &place.k else {
+                        unreachable!("worker capture")
+                    };
+                    self.line(&format!(
+                        "int64_t *{n}_live = &{}.f_live_{capture};",
+                        self.place_c(env)
+                    ));
                     self.capture_flags.insert(*id);
                 }
                 let pc = self.place_c(place);
@@ -1099,7 +1252,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                         Some(vi) => format!("{}.tag == {}", t, vi),
                         None => "1".to_string(),
                     };
-                    self.line(&format!("{}if ({}) {{", if ai == 0 { "" } else { "else " }, cond));
+                    self.line(&format!(
+                        "{}if ({}) {{",
+                        if ai == 0 { "" } else { "else " },
+                        cond
+                    ));
                     self.scopes.push(vec![]);
                     self.ind += 1;
                     if let (Some(vi), Ty::Enum(ei)) = (arm.variant, scrut.ty) {
@@ -1108,7 +1265,14 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                             let pty = payload[k];
                             let n = format!("v{}_{}", bid, bn);
                             self.vars.insert(*bid, (n.clone(), false, pty));
-                            self.line(&format!("{} {} = {}.u.v_{}.a{};", self.types.cty(pty), n, t, vname, k));
+                            self.line(&format!(
+                                "{} {} = {}.u.v_{}.a{};",
+                                self.types.cty(pty),
+                                n,
+                                t,
+                                vname,
+                                k
+                            ));
                         }
                     }
                     self.stmts(&arm.body);
@@ -1133,7 +1297,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 for d in drops {
                     self.line(&d);
                 }
-                self.line(if ex.is_some() { "return r_;" } else { "return;" });
+                self.line(if ex.is_some() {
+                    "return r_;"
+                } else {
+                    "return;"
+                });
                 self.ind -= 1;
                 self.line("}");
             }
@@ -1142,21 +1310,41 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
 
     /// A by-value argument (see `call_c`).
     fn val_c(&self, e: &Expr) -> Arg {
-        Arg { code: self.ex(e), val: true, lit: is_lit(e), impure: !is_pure(e) }
+        Arg {
+            code: self.ex(e),
+            val: true,
+            lit: is_lit(e),
+            impure: !is_pure(e),
+        }
     }
 
     /// A Text or borrowed-String argument, as a `Str` view.
     fn text_c(&self, e: &Expr) -> Arg {
         if e.ty == Ty::String {
-            Arg { code: format!("nx_str_view(&{})", self.place_c(e)), val: false, lit: false, impure: !is_pure(e) }
+            Arg {
+                code: format!("nx_str_view(&{})", self.place_c(e)),
+                val: false,
+                lit: false,
+                impure: !is_pure(e),
+            }
         } else {
-            Arg { code: format!("nx_str_text({})", self.ex(e)), val: true, lit: is_lit(e), impure: !is_pure(e) }
+            Arg {
+                code: format!("nx_str_text({})", self.ex(e)),
+                val: true,
+                lit: is_lit(e),
+                impure: !is_pure(e),
+            }
         }
     }
 
     /// A borrowed place argument (`&place`).
     fn ref_c(&self, e: &Expr) -> Arg {
-        Arg { code: format!("&{}", self.place_c(e)), val: false, lit: false, impure: !is_pure(e) }
+        Arg {
+            code: format!("&{}", self.place_c(e)),
+            val: false,
+            lit: false,
+            impure: !is_pure(e),
+        }
     }
 
     /// Build a C call with a DEFINED evaluation order (SPEC: left to right). C leaves the order of
@@ -1168,7 +1356,8 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
     /// the borrowed places (in order).
     fn call_c(&self, f: &str, args: Vec<Arg>) -> String {
         let impure = args.iter().any(|a| a.impure);
-        let hazard = args.iter().any(|a| !a.val && a.code.contains("nx_at_")) && args.iter().any(|a| a.val && !a.lit);
+        let hazard = args.iter().any(|a| !a.val && a.code.contains("nx_at_"))
+            && args.iter().any(|a| a.val && !a.lit);
         let nonlit = args.iter().filter(|a| !a.lit).count();
         if !(hazard || (impure && nonlit >= 2)) {
             let cs: Vec<String> = args.into_iter().map(|a| a.code).collect();
@@ -1191,7 +1380,10 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
         let impure = args.iter().any(|a| a.impure);
         let nonlit = args.iter().filter(|a| !a.lit).count();
         if impure && nonlit >= 2 {
-            format!("({{ __auto_type l_ = {}; __auto_type r_ = {}; (l_ {} r_); }})", args[0].code, args[1].code, op)
+            format!(
+                "({{ __auto_type l_ = {}; __auto_type r_ = {}; (l_ {} r_); }})",
+                args[0].code, args[1].code, op
+            )
         } else {
             format!("({} {} {})", args[0].code, op, args[1].code)
         }
@@ -1210,7 +1402,10 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             }
             format!("({{ {}{}{}{}; }})", pre, head, inits.join(", "), tail)
         } else {
-            let inits: Vec<String> = items.iter().map(|(n, e)| format!("{}{}", n, self.ex(e))).collect();
+            let inits: Vec<String> = items
+                .iter()
+                .map(|(n, e)| format!("{}{}", n, self.ex(e)))
+                .collect();
             format!("{}{}{}", head, inits.join(", "), tail)
         }
     }
@@ -1240,7 +1435,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     nested.line(&format!("(void)({value});"));
                     "(void)0"
                 } else {
-                    nested.line(&format!("{} nx_value = {};", self.types.cty(result.ty), value));
+                    nested.line(&format!(
+                        "{} nx_value = {};",
+                        self.types.cty(result.ty),
+                        value
+                    ));
                     "nx_value"
                 };
                 for drop in nested.drops(false) {
@@ -1248,24 +1447,47 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 }
                 format!("({{\n{}{tail}; }})", nested.out)
             }
-            EK::GenStruct { .. } | EK::GenVariant { .. } => unreachable!("generic literal left by the checker"),
+            EK::GenStruct { .. } | EK::GenVariant { .. } => {
+                unreachable!("generic literal left by the checker")
+            }
             EK::Int(_) | EK::Float(..) => self.num_lit(e),
             EK::Char(n) => format!("INT64_C({})", n),
             EK::Conv(x, trunc) => self.conv_c(x, e.ty, *trunc),
             EK::IsVariant(b, vid) => format!("({}.tag == {})", self.ex(b), vid),
             EK::Payload(b, vid, k) => {
                 let Ty::Enum(eid) = b.ty else { unreachable!() };
-                format!("{}.u.v_{}.a{}", self.ex(b), self.types.enums[eid].variants[*vid].0, k)
+                format!(
+                    "{}.u.v_{}.a{}",
+                    self.ex(b),
+                    self.types.enums[eid].variants[*vid].0,
+                    k
+                )
             }
             EK::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
-            EK::Text(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t").replace('\r', "\\r")),
+            EK::Text(s) => format!(
+                "\"{}\"",
+                s.replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+                    .replace('\t', "\\t")
+                    .replace('\r', "\\r")
+            ),
             EK::Var(..) | EK::Field(..) => self.place_c(e),
             EK::Method { m, .. } if m == "at" => self.place_c(e),
-            EK::Method { m, args, .. } if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() => self.place_c(e),
+            EK::Method { m, args, .. }
+                if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() =>
+            {
+                self.place_c(e)
+            }
             EK::Method { recv, m, .. } if m == "take" && matches!(recv.ty, Ty::Box(_)) => {
                 let Ty::Box(i) = recv.ty else { unreachable!() };
                 let t = self.types.cty(self.types.boxes[i]);
-                format!("({{ {} b_ = {}; {} v_ = *b_; free(b_); v_; }})", self.types.cty(recv.ty), self.ex(recv), t)
+                format!(
+                    "({{ {} b_ = {}; {} v_ = *b_; free(b_); v_; }})",
+                    self.types.cty(recv.ty),
+                    self.ex(recv),
+                    t
+                )
             }
             EK::Method { recv, m, .. } if recv.ty == Ty::Char => match m.as_str() {
                 "utf8_len" => format!("nx_char_utf8_len({})", self.ex(recv)),
@@ -1296,11 +1518,18 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 }
             }
             EK::Bin(op, a, b) => {
-                let arg = |x: &Expr| Arg { code: self.ex(x), val: true, lit: is_lit(x), impure: !is_pure(x) };
+                let arg = |x: &Expr| Arg {
+                    code: self.ex(x),
+                    val: true,
+                    lit: is_lit(x),
+                    impure: !is_pure(x),
+                };
                 let args = vec![arg(a), arg(b)];
                 match *op {
                     "&&" | "||" => format!("({} {} {})", args[0].code, op, args[1].code), // sequenced in C
-                    "+" | "-" | "*" | "/" | "%" | "+%" | "-%" | "*%" => self.num_bin(op, a, b, args),
+                    "+" | "-" | "*" | "/" | "%" | "+%" | "-%" | "*%" => {
+                        self.num_bin(op, a, b, args)
+                    }
                     o => {
                         // comparison: operands are unsequenced in C too
                         self.cmp_c(o, args)
@@ -1312,7 +1541,14 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 match recv.ty {
                     Ty::String => {
                         for (k, x) in args.iter().enumerate() {
-                            a.push(if matches!(m.as_str(), "push_str" | "eq" | "push_slice") && k == 0 { self.text_c(x) } else { self.val_c(x) });
+                            a.push(
+                                if matches!(m.as_str(), "push_str" | "eq" | "push_slice") && k == 0
+                                {
+                                    self.text_c(x)
+                                } else {
+                                    self.val_c(x)
+                                },
+                            );
                         }
                         self.call_c(&format!("nx_str_{}", m), a)
                     }
@@ -1329,15 +1565,39 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     }
                 }
             }
-            EK::Static { ty: Ty::Box(_), f, args } if f == "from_runtime_word" => {
-                format!("(({})(intptr_t)({}))", self.types.cty(e.ty), self.ex(&args[0]))
+            EK::Static {
+                ty: Ty::Box(_),
+                f,
+                args,
+            } if f == "from_runtime_word" => {
+                format!(
+                    "(({})(intptr_t)({}))",
+                    self.types.cty(e.ty),
+                    self.ex(&args[0])
+                )
             }
-            EK::Static { ty: Ty::Box(i), f, args } if f == "new" => {
+            EK::Static {
+                ty: Ty::Box(i),
+                f,
+                args,
+            } if f == "new" => {
                 let t = self.types.cty(self.types.boxes[*i]);
                 format!("({{ {t} v_ = {}; {t} *p_ = ({t} *)malloc(sizeof({t})); if (!p_) nx_panic(\"out of memory\"); *p_ = v_; p_; }})", self.ex(&args[0]))
             }
-            EK::Static { ty: Ty::Char, f, args } => {
-                format!("{}({})", if f == "is_valid" { "nx_char_valid" } else { "nx_char_from_int" }, self.ex(&args[0]))
+            EK::Static {
+                ty: Ty::Char,
+                f,
+                args,
+            } => {
+                format!(
+                    "{}({})",
+                    if f == "is_valid" {
+                        "nx_char_valid"
+                    } else {
+                        "nx_char_from_int"
+                    },
+                    self.ex(&args[0])
+                )
             }
             EK::Static { ty, f, args } => match ty {
                 Ty::String => {
@@ -1351,16 +1611,29 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 if fields.is_empty() {
                     return format!("({}){{0}}", c);
                 }
-                let items: Vec<(String, &Expr)> = fields.iter().map(|(n, v)| (format!(".f_{} = ", n), v)).collect();
+                let items: Vec<(String, &Expr)> = fields
+                    .iter()
+                    .map(|(n, v)| (format!(".f_{} = ", n), v))
+                    .collect();
                 self.init_c(&format!("({}){{ ", c), items, " }")
             }
-            EK::Variant { eid, vname, vid, args } => {
+            EK::Variant {
+                eid,
+                vname,
+                vid,
+                args,
+            } => {
                 let c = self.types.cty(Ty::Enum(*eid));
                 if args.is_empty() {
                     format!("({}){{ .tag = {} }}", c, vid)
                 } else {
-                    let items: Vec<(String, &Expr)> = args.iter().map(|x| (String::new(), x)).collect();
-                    self.init_c(&format!("({}){{ .tag = {}, .u.v_{} = {{ ", c, vid, vname), items, " } }")
+                    let items: Vec<(String, &Expr)> =
+                        args.iter().map(|x| (String::new(), x)).collect();
+                    self.init_c(
+                        &format!("({}){{ .tag = {}, .u.v_{} = {{ ", c, vid, vname),
+                        items,
+                        " } }",
+                    )
                 }
             }
             EK::DynBox { table, value } => {
@@ -1374,7 +1647,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 let mut names = vec!["a0_->data".to_string()];
                 for (i, (mode, ty)) in sig.params.iter().enumerate().skip(1) {
                     let cty = self.types.cty(*ty);
-                    params.push(if self.is_ref(*mode, *ty) { format!("{cty} *") } else { cty });
+                    params.push(if self.is_ref(*mode, *ty) {
+                        format!("{cty} *")
+                    } else {
+                        cty
+                    });
                     names.push(format!("a{i}_"));
                 }
                 // Use the same two evaluation phases as an ordinary call. In particular,
@@ -1400,8 +1677,13 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     refs += &format!("__auto_type a{i}_ = &{place}; ");
                 }
                 pre += &refs;
-                format!("({{ {pre}(({} (*)({}))a0_->table[{}])({}); }})",
-                    self.types.cty(sig.ret), params.join(", "), slot + 1, names.join(", "))
+                format!(
+                    "({{ {pre}(({} (*)({}))a0_->table[{}])({}); }})",
+                    self.types.cty(sig.ret),
+                    params.join(", "),
+                    slot + 1,
+                    names.join(", ")
+                )
             }
             EK::Closure { .. } => unreachable!("closure literal left by the checker"),
             EK::AddrOf(p, _) => format!("((int64_t)(intptr_t)&{})", self.place_c(p)),
@@ -1422,10 +1704,17 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 }
             },
             EK::CallFn(callee, args) => {
-                let Ty::Fn(fi) = callee.ty else { unreachable!("call of a non-function") };
+                let Ty::Fn(fi) = callee.ty else {
+                    unreachable!("call of a non-function")
+                };
                 let ft = self.types.fns[fi].clone();
                 let mut pts = vec!["void *".to_string()];
-                let mut a: Vec<Arg> = vec![Arg { code: "f_->env".into(), val: true, lit: true, impure: false }];
+                let mut a: Vec<Arg> = vec![Arg {
+                    code: "f_->env".into(),
+                    val: true,
+                    lit: true,
+                    impure: false,
+                }];
                 for (x, (mode, pty)) in args.iter().zip(ft.params.iter()) {
                     if self.is_ref(*mode, *pty) {
                         pts.push(format!("{} *", self.types.cty(*pty)));
@@ -1435,7 +1724,14 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                         a.push(self.val_c(x));
                     }
                 }
-                let call = self.call_c(&format!("(({} (*)({}))f_->code)", self.types.cty(ft.ret), pts.join(", ")), a);
+                let call = self.call_c(
+                    &format!(
+                        "(({} (*)({}))f_->code)",
+                        self.types.cty(ft.ret),
+                        pts.join(", ")
+                    ),
+                    a,
+                );
                 format!("({{ NxFn *f_ = &{}; {}; }})", self.place_c(callee), call)
             }
             EK::Call(name, args) => match name.as_str() {
@@ -1449,34 +1745,82 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 },
                 "__atomic_load" | "__atomic_store" | "__atomic_cmpxchg" | "__atomic_fetch_add"
                 | "__futex_park" | "__futex_wake" => {
-                    let operands = args.iter().map(|x| Arg {
-                        code: self.ex(x), val: true, lit: is_lit(x), impure: !is_pure(x),
-                    }).collect();
+                    let operands = args
+                        .iter()
+                        .map(|x| Arg {
+                            code: self.ex(x),
+                            val: true,
+                            lit: is_lit(x),
+                            impure: !is_pure(x),
+                        })
+                        .collect();
                     self.call_c(&format!("nx_{}", &name[2..]), operands)
                 }
                 "__check_shared_content" => "((void)0)".into(),
-                "__thread_pack" | "__box_address" => format!("((int64_t)(intptr_t)({}))", self.ex(&args[0])),
-                "__locked_unbox" =>
-                    format!("({{ __auto_type lock_ = {}; free(lock_.f_mutex); lock_.f_value; }})", self.ex(&args[0])),
-                "__parallel_address" => format!("((int64_t)(intptr_t)&({}))", self.place_c(&args[0])),
-                "__parallel_call" => self.call_c("nx_parallel_call", args.iter().map(|x| self.val_c(x)).collect()),
-                "__thread_start" | "__thread_start_recover" =>
-                    format!("nx_thread_start({}, {})", self.ex(&args[0]), name == "__thread_start_recover"),
+                "__thread_pack" | "__box_address" => {
+                    format!("((int64_t)(intptr_t)({}))", self.ex(&args[0]))
+                }
+                "__locked_unbox" => format!(
+                    "({{ __auto_type lock_ = {}; free(lock_.f_mutex); lock_.f_value; }})",
+                    self.ex(&args[0])
+                ),
+                "__parallel_address" => {
+                    format!("((int64_t)(intptr_t)&({}))", self.place_c(&args[0]))
+                }
+                "__parallel_call" => self.call_c(
+                    "nx_parallel_call",
+                    args.iter().map(|x| self.val_c(x)).collect(),
+                ),
+                "__thread_start" | "__thread_start_recover" => format!(
+                    "nx_thread_start({}, {})",
+                    self.ex(&args[0]),
+                    name == "__thread_start_recover"
+                ),
                 "__thread_wait" => format!("nx_thread_wait({})", self.ex(&args[0])),
-                "__syscall" => format!("nx_syscall({})", args.iter().map(|x| self.ex(x)).collect::<Vec<_>>().join(", ")),
+                "__syscall" => format!(
+                    "nx_syscall({})",
+                    args.iter()
+                        .map(|x| self.ex(x))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
                 "__global" => format!("((int64_t)(intptr_t)&nx_globals[{}])", self.ex(&args[0])),
                 "__alloc" => format!("nx_alloc({})", self.ex(&args[0])),
                 "__free" => format!("nx_free({})", self.ex(&args[0])),
                 "__ptr_null" => format!("(({})0)", self.types.cty(e.ty)),
-                "__ptr_alloc" => format!("(({})nx_alloc(({}) * ({})))", self.types.cty(e.ty), self.ex(&args[0]), self.ex(&args[1])),
+                "__ptr_alloc" => format!(
+                    "(({})nx_alloc(({}) * ({})))",
+                    self.types.cty(e.ty),
+                    self.ex(&args[0]),
+                    self.ex(&args[1])
+                ),
                 "__ptr_free" => format!("free((void *)({}))", self.ex(&args[0])),
                 "__ptr_is_null" => format!("(({}) == 0)", self.ex(&args[0])),
                 "__load8" | "__load64" | "__store8" | "__store64" => {
-                    format!("nx_{}({})", &name[2..], args.iter().map(|x| self.ex(x)).collect::<Vec<_>>().join(", "))
+                    format!(
+                        "nx_{}({})",
+                        &name[2..],
+                        args.iter()
+                            .map(|x| self.ex(x))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 }
                 "__sqrt" => format!("nx_sqrt({})", self.ex(&args[0])),
-                "__bits" => format!("nx_bits{}({})", if args[0].ty == Ty::Num(Nk::F32) { 32 } else { 64 }, self.ex(&args[0])),
-                "__from_bits" => format!("nx_from_bits{}({})", if e.ty == Ty::Num(Nk::F32) { 32 } else { 64 }, self.ex(&args[0])),
+                "__bits" => format!(
+                    "nx_bits{}({})",
+                    if args[0].ty == Ty::Num(Nk::F32) {
+                        32
+                    } else {
+                        64
+                    },
+                    self.ex(&args[0])
+                ),
+                "__from_bits" => format!(
+                    "nx_from_bits{}({})",
+                    if e.ty == Ty::Num(Nk::F32) { 32 } else { 64 },
+                    self.ex(&args[0])
+                ),
                 "print" => {
                     let c = self.ex(&args[0]);
                     match args[0].ty {
@@ -1505,7 +1849,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     for x in args.iter().skip(sig.params.len()) {
                         a.push(self.val_c(x));
                     }
-                    let target = if self.externs.contains(name) { format!("nx_x_{}", name) } else { format!("nx_f_{}", name) };
+                    let target = if self.externs.contains(name) {
+                        format!("nx_x_{}", name)
+                    } else {
+                        format!("nx_f_{}", name)
+                    };
                     self.call_c(&target, a)
                 }
             },
@@ -1521,18 +1869,33 @@ struct Arg {
 }
 
 fn is_lit(e: &Expr) -> bool {
-    matches!(e.k, EK::Int(_) | EK::Float(..) | EK::Char(_) | EK::Bool(_) | EK::Text(_))
+    matches!(
+        e.k,
+        EK::Int(_) | EK::Float(..) | EK::Char(_) | EK::Bool(_) | EK::Text(_)
+    )
 }
 
 /// No side effects and cannot panic (so its position in the evaluation order is unobservable).
 fn is_pure(e: &Expr) -> bool {
     match &e.k {
-        EK::Int(_) | EK::Float(..) | EK::Char(_) | EK::Bool(_) | EK::Text(_) | EK::Var(..) | EK::Move(..) => true,
+        EK::Int(_)
+        | EK::Float(..)
+        | EK::Char(_)
+        | EK::Bool(_)
+        | EK::Text(_)
+        | EK::Var(..)
+        | EK::Move(..) => true,
         EK::Field(b, _) => is_pure(b),
         EK::Un(op, x) => (*op == "!" || crate::numeric::is_float(e.ty)) && is_pure(x),
-        EK::Conv(x, _) => (crate::numeric::is_float(e.ty) || (!crate::numeric::is_float(x.ty) && false)) && is_pure(x),
+        EK::Conv(x, _) => {
+            (crate::numeric::is_float(e.ty) || (!crate::numeric::is_float(x.ty) && false))
+                && is_pure(x)
+        }
         EK::Bin(op, a, b) => {
-            (!matches!(*op, "+" | "-" | "*" | "/" | "%" | "+%" | "-%" | "*%") || crate::numeric::is_float(a.ty)) && is_pure(a) && is_pure(b)
+            (!matches!(*op, "+" | "-" | "*" | "/" | "%" | "+%" | "-%" | "*%")
+                || crate::numeric::is_float(a.ty))
+                && is_pure(a)
+                && is_pure(b)
         }
         _ => false,
     }
@@ -1568,7 +1931,11 @@ impl Gen<'_> {
                 }
             }
             (EK::Int(n), Ty::Range(..)) => {
-                if *n == i64::MIN { "(-INT64_C(9223372036854775807) - 1)".to_string() } else { format!("INT64_C({})", n) }
+                if *n == i64::MIN {
+                    "(-INT64_C(9223372036854775807) - 1)".to_string()
+                } else {
+                    format!("INT64_C({})", n)
+                }
             }
             (EK::Int(n), Ty::Num(Nk::U64)) => format!("UINT64_C({})", *n as u64),
             (EK::Int(n), Ty::Num(k)) => format!("(({}){})", k.cty(), n),
@@ -1594,7 +1961,13 @@ impl Gen<'_> {
                     if int_range(from).0 >= lo as i128 && int_range(from).1 <= hi as i128 {
                         c
                     } else {
-                        let k = |n: i64| if n == i64::MIN { "(-INT64_C(9223372036854775807) - 1)".to_string() } else { format!("INT64_C({})", n) };
+                        let k = |n: i64| {
+                            if n == i64::MIN {
+                                "(-INT64_C(9223372036854775807) - 1)".to_string()
+                            } else {
+                                format!("INT64_C({})", n)
+                            }
+                        };
                         format!("nx_to_range((__int128)({}), {}, {})", c, k(lo), k(hi))
                     }
                 } else {
@@ -1607,7 +1980,7 @@ impl Gen<'_> {
         }
     }
 
-    fn num_bin(&self, op: &str, a: &Expr, b: &Expr, args: Vec<Arg>) -> String {
+    fn num_bin(&self, op: &str, a: &Expr, _b: &Expr, args: Vec<Arg>) -> String {
         use crate::numeric::*;
         let t = a.ty;
         if is_float(t) {
@@ -1625,7 +1998,11 @@ impl Gen<'_> {
             "-%" => "wsub",
             _ => "wmul",
         };
-        let name = if matches!(t, Ty::Int | Ty::Range(..)) { format!("nx_{}", f) } else { format!("nx_{}_{}", f, s) };
+        let name = if matches!(t, Ty::Int | Ty::Range(..)) {
+            format!("nx_{}", f)
+        } else {
+            format!("nx_{}_{}", f, s)
+        };
         self.call_c(&name, args)
     }
 }

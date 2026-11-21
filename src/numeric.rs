@@ -21,7 +21,17 @@ pub enum Nk {
     F64,
 }
 
-pub const ALL_NK: [Nk; 9] = [Nk::I8, Nk::I16, Nk::I32, Nk::U8, Nk::U16, Nk::U32, Nk::U64, Nk::F32, Nk::F64];
+pub const ALL_NK: [Nk; 9] = [
+    Nk::I8,
+    Nk::I16,
+    Nk::I32,
+    Nk::U8,
+    Nk::U16,
+    Nk::U32,
+    Nk::U64,
+    Nk::F32,
+    Nk::F64,
+];
 
 impl Nk {
     pub fn name(self) -> &'static str {
@@ -99,14 +109,16 @@ pub fn ty_from_name(n: &str) -> Option<Ty> {
 
 /// Names that cannot be used for user types.
 pub const NUMERIC_TYPE_NAMES: &[&str] = &[
-    "Int64", "Int8", "Int16", "Int32", "UInt8", "UInt16", "UInt32", "UInt64", "Float32", "Float", "i8", "i16", "i32", "i64", "u8", "u16",
-    "u32", "u64", "f32", "f64",
+    "Int64", "Int8", "Int16", "Int32", "UInt8", "UInt16", "UInt32", "UInt64", "Float32", "Float",
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
 ];
 
 /// Literal suffixes (`5u8`).
 pub fn suffix_ty(s: &str) -> Option<Ty> {
     match s {
-        "i64" | "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" => ty_from_name(s),
+        "i64" | "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" => {
+            ty_from_name(s)
+        }
         _ => None,
     }
 }
@@ -182,7 +194,9 @@ pub fn sfx(t: Ty) -> &'static str {
 
 /// All numeric method names that convert (`to_int8`, `truncate_uint16`, ...).
 pub fn conv_target(m: &str) -> Option<(Ty, bool)> {
-    let all: Vec<Ty> = std::iter::once(Ty::Int).chain(ALL_NK.iter().map(|k| Ty::Num(*k))).collect();
+    let all: Vec<Ty> = std::iter::once(Ty::Int)
+        .chain(ALL_NK.iter().map(|k| Ty::Num(*k)))
+        .collect();
     for t in all {
         if m == conv_method(t) {
             return Some((t, false));

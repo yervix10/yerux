@@ -44,8 +44,8 @@ const LE: u32 = 13;
 
 #[derive(Clone, Copy)]
 enum Fix {
-    B26,      // b / bl: imm26 words
-    B19,      // b.cond / cbz / cbnz: imm19 words
+    B26, // b / bl: imm26 words
+    B19, // b.cond / cbz / cbnz: imm19 words
 }
 
 // ───────────────────────── Encoder ─────────────────────────
@@ -55,12 +55,18 @@ pub struct Asm {
     labels: Vec<Option<usize>>,
     fix: Vec<(usize, Fix, usize)>, // (instruction position, kind, label)
     dfix: Vec<(usize, usize)>,     // (position of ADRP; ADD follows, data blob id)
-    lfix: Vec<(usize, usize)>,     // (position of ADRP; ADD follows, code label): address of a function
+    lfix: Vec<(usize, usize)>, // (position of ADRP; ADD follows, code label): address of a function
 }
 
 impl Asm {
     pub fn new() -> Asm {
-        Asm { code: vec![], labels: vec![], fix: vec![], dfix: vec![], lfix: vec![] }
+        Asm {
+            code: vec![],
+            labels: vec![],
+            fix: vec![],
+            dfix: vec![],
+            lfix: vec![],
+        }
     }
     pub fn emit(&mut self, w: u32) {
         self.code.extend_from_slice(&w.to_le_bytes());
@@ -85,7 +91,14 @@ impl Asm {
     }
     pub fn mov_imm(&mut self, rd: u32, v: i64) {
         let u = v as u64;
-        let chunks = |x: u64| [(x & 0xFFFF) as u32, ((x >> 16) & 0xFFFF) as u32, ((x >> 32) & 0xFFFF) as u32, ((x >> 48) & 0xFFFF) as u32];
+        let chunks = |x: u64| {
+            [
+                (x & 0xFFFF) as u32,
+                ((x >> 16) & 0xFFFF) as u32,
+                ((x >> 32) & 0xFFFF) as u32,
+                ((x >> 48) & 0xFFFF) as u32,
+            ]
+        };
         let zeros = chunks(u).iter().filter(|c| **c == 0).count();
         let ones = chunks(u).iter().filter(|c| **c == 0xFFFF).count();
         if ones > zeros {
@@ -193,7 +206,7 @@ impl Asm {
 
     // --- memory. `mem` picks scaled-unsigned, unscaled-signed (ldur/stur) or an x16-computed address.
     fn mem(&mut self, scaled_op: u32, unscaled_op: u32, scale: u32, rt: u32, rn: u32, off: i32) {
-        if off >= 0 && off as u32 % scale == 0 && (off as u32 / scale) < 4096 {
+        if off >= 0 && (off as u32).is_multiple_of(scale) && (off as u32 / scale) < 4096 {
             self.emit(scaled_op | (off as u32 / scale) << 10 | rn << 5 | rt);
         } else if (-256..256).contains(&off) {
             self.emit(unscaled_op | ((off as u32) & 0x1FF) << 12 | rn << 5 | rt);
@@ -419,24 +432,37 @@ impl Asm {
             let mut w = u32::from_le_bytes(self.code[p..p + 4].try_into().unwrap());
             match kind {
                 Fix::B26 => {
-                    assert!(words >= -(1 << 25) && words < (1 << 25), "branch out of range");
+                    assert!(
+                        (-(1 << 25)..(1 << 25)).contains(&words),
+                        "branch out of range"
+                    );
                     w |= (words as u32) & 0x03FF_FFFF;
                 }
                 Fix::B19 => {
-                    assert!(words >= -(1 << 18) && words < (1 << 18), "conditional branch out of range");
+                    assert!(
+                        (-(1 << 18)..(1 << 18)).contains(&words),
+                        "conditional branch out of range"
+                    );
                     w |= ((words as u32) & 0x7FFFF) << 5;
                 }
             }
             self.code[p..p + 4].copy_from_slice(&w.to_le_bytes());
         }
-        let mut addr_fix: Vec<(usize, u64)> = self.dfix.iter().map(|&(p, id)| (p, base + (data_start + data_offs[id]) as u64)).collect();
+        let mut addr_fix: Vec<(usize, u64)> = self
+            .dfix
+            .iter()
+            .map(|&(p, id)| (p, base + (data_start + data_offs[id]) as u64))
+            .collect();
         for &(p, l) in &self.lfix {
             addr_fix.push((p, base + self.labels[l].expect("unbound label") as u64));
         }
         for (p, target) in addr_fix {
             let pc = base + p as u64;
             let pages = ((target >> 12) as i64) - ((pc >> 12) as i64);
-            assert!(pages >= -(1 << 20) && pages < (1 << 20), "adrp out of range");
+            assert!(
+                (-(1 << 20)..(1 << 20)).contains(&pages),
+                "adrp out of range"
+            );
             let imm = (pages as u32) & 0x1F_FFFF;
             let mut w = u32::from_le_bytes(self.code[p..p + 4].try_into().unwrap());
             w |= (imm & 3) << 29 | (imm >> 2) << 5;
@@ -513,7 +539,12 @@ fn slot(v: V) -> u32 {
 pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let mut a = Asm::new();
 
-    let mut data: Vec<Vec<u8>> = vec![b"panic: ".to_vec(), b"\n".to_vec(), b"true\n".to_vec(), b"false\n".to_vec()];
+    let mut data: Vec<Vec<u8>> = vec![
+        b"panic: ".to_vec(),
+        b"\n".to_vec(),
+        b"true\n".to_vec(),
+        b"false\n".to_vec(),
+    ];
     for m in PANIC_MSGS {
         data.push(m.as_bytes().to_vec());
     }
@@ -538,7 +569,8 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let l_panic_bytes = a.label();
     let l_range_panic = a.label();
     let l_write_int2 = a.label();
-    let (l_mmap, l_alloc, l_free, l_push, l_get) = (a.label(), a.label(), a.label(), a.label(), a.label());
+    let (l_mmap, l_alloc, l_free, l_push, l_get) =
+        (a.label(), a.label(), a.label(), a.label(), a.label());
     let (l_realloc, l_memcpy) = (a.label(), a.label());
     let l_panic: Vec<usize> = (0..PANIC_MSGS.len()).map(|_| a.label()).collect();
     let l_funcs: Vec<usize> = ir.funcs.iter().map(|_| a.label()).collect();
@@ -867,8 +899,14 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
 
     // rt_memcpy: x0 = dst, x1 = src, x2 = n (no overlap). Leaf; clobbers x0-x5, x16.
     {
-        let (l_lt8, l_lt4, l_byte, l_big, l_words, l_ret) =
-            (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+        let (l_lt8, l_lt4, l_byte, l_big, l_words, l_ret) = (
+            a.label(),
+            a.label(),
+            a.label(),
+            a.label(),
+            a.label(),
+            a.label(),
+        );
         a.bind(l_memcpy);
         a.mov_imm(X16, 16);
         a.cmp(X2, X16);
@@ -1055,7 +1093,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
             a.bind(bl[bi]);
             for ins in &b.insts {
                 match ins {
-                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Syscall(..) | Inst::Global(..) => unreachable!("rejected by os_intrinsics_error"),
+                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Syscall(..) | Inst::Global(..) => {
+                        unreachable!("rejected by os_intrinsics_error")
+                    }
                     Inst::Const(d, n) => {
                         a.mov_imm(X0, *n);
                         a.str(X0, SP, slot(*d));
@@ -1288,7 +1328,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         a.lea_label(X0, l_funcs[*fid]);
                         a.str(X0, SP, slot(*d));
                     }
-                    Inst::Call(dst, _, args) | Inst::CallInd(dst, _, args) | Inst::ExternCall(dst, _, args, ..) => {
+                    Inst::Call(dst, _, args)
+                    | Inst::CallInd(dst, _, args)
+                    | Inst::ExternCall(dst, _, args, ..) => {
                         let sz = ((8 * args.len() + 15) & !15) as u32;
                         if sz > 0 {
                             a.sub_sp_const(SP, SP, sz, false);
@@ -1299,7 +1341,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         }
                         match ins {
                             Inst::Call(_, fid, _) => a.bl(l_funcs[*fid]),
-                            Inst::ExternCall(..) => unreachable!("extern calls are unsupported on aarch64"),
+                            Inst::ExternCall(..) => {
+                                unreachable!("extern calls are unsupported on aarch64")
+                            }
                             Inst::CallInd(_, code, _) => {
                                 a.ldr(X16, SP, slot(*code) + sz);
                                 a.blr(X16);
@@ -1492,14 +1536,14 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     }
 
     // lay out: code, padding to 16, then data blobs (each 8-aligned)
-    while a.code.len() % 16 != 0 {
+    while !a.code.len().is_multiple_of(16) {
         a.code.push(0);
     }
     let data_start = a.code.len();
     let mut offs = vec![];
     let mut blob: Vec<u8> = vec![];
     for d in &data {
-        while blob.len() % 8 != 0 {
+        while !blob.len().is_multiple_of(8) {
             blob.push(0);
         }
         offs.push(blob.len());

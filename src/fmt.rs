@@ -35,10 +35,13 @@ const SYMS3: &[&str] = &["..="];
 const SYMS2: &[&str] = &["==", "!=", "<=", ">=", "&&", "||", "->", "=>", ".."];
 const SYMS1: &str = "(){},:;=<>+-*/%!.|@?";
 const KEYWORDS: &[&str] = &[
-    "fn", "let", "var", "if", "else", "while", "return", "move", "view", "mut", "struct", "enum", "match", "defer", "import", "pub", "test",
-    "as", "impl", "trait", "dyn", "for", "in", "break", "continue",
+    "fn", "let", "var", "if", "else", "while", "return", "move", "view", "mut", "struct", "enum",
+    "match", "defer", "import", "pub", "test", "as", "impl", "trait", "dyn", "for", "in", "break",
+    "continue",
 ];
-const BINOPS: &[&str] = &["+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">=", "&&", "||", "="];
+const BINOPS: &[&str] = &[
+    "+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">=", "&&", "||", "=",
+];
 
 fn tokenize(src: &str) -> Result<Vec<T>, String> {
     let cs: Vec<char> = src.chars().collect();
@@ -63,9 +66,15 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
                 i += 1;
             }
             k = K::Comment;
-            s = cs[start..i].iter().collect::<String>().trim_end().to_string();
+            s = cs[start..i]
+                .iter()
+                .collect::<String>()
+                .trim_end()
+                .to_string();
         } else if c.is_ascii_digit() {
-            let after_dot = out.last().map_or(false, |t: &T| t.k == K::Sym && t.s == ".");
+            let after_dot = out
+                .last()
+                .is_some_and(|t: &T| t.k == K::Sym && t.s == ".");
             let scan = |i: &mut usize| {
                 while *i < cs.len() && (cs[*i].is_ascii_alphanumeric() || cs[*i] == '_') {
                     *i += 1;
@@ -73,18 +82,23 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
             };
             scan(&mut i);
             let dec = |t: &[char]| t.iter().all(|c| c.is_ascii_digit() || *c == '_');
-            let next_digit = |j: usize| cs.get(j).map_or(false, |c| c.is_ascii_digit());
+            let next_digit = |j: usize| cs.get(j).is_some_and(|c| c.is_ascii_digit());
             // float literals: `1.5`, `1e-3`, `2.5e+10f32` (hex / binary literals have no fractions or exponents)
             if !after_dot && dec(&cs[start..i]) && cs.get(i) == Some(&'.') && next_digit(i + 1) {
                 i += 1;
                 scan(&mut i);
             }
             let txt: String = cs[start..i].iter().collect();
-            let hexbin = txt.starts_with("0x") || txt.starts_with("0X") || txt.starts_with("0b") || txt.starts_with("0B");
+            let hexbin = txt.starts_with("0x")
+                || txt.starts_with("0X")
+                || txt.starts_with("0b")
+                || txt.starts_with("0B");
             if !after_dot
                 && !hexbin
                 && (txt.ends_with('e') || txt.ends_with('E'))
-                && txt[..txt.len() - 1].chars().all(|c| c.is_ascii_digit() || c == '_' || c == '.')
+                && txt[..txt.len() - 1]
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == '_' || c == '.')
                 && matches!(cs.get(i), Some('+') | Some('-'))
                 && next_digit(i + 1)
             {
@@ -237,8 +251,14 @@ fn generics(toks: &[T]) -> Vec<bool> {
             continue;
         }
         let pw = &toks[i - 1].s;
-        let upper = pw.chars().next().map_or(false, |c| c.is_ascii_uppercase());
-        let decl = pw == "impl" || (i >= 2 && toks[i - 2].k == K::Word && matches!(toks[i - 2].s.as_str(), "fn" | "struct" | "enum" | "trait" | "impl"));
+        let upper = pw.chars().next().is_some_and(|c| c.is_ascii_uppercase());
+        let decl = pw == "impl"
+            || (i >= 2
+                && toks[i - 2].k == K::Word
+                && matches!(
+                    toks[i - 2].s.as_str(),
+                    "fn" | "struct" | "enum" | "trait" | "impl"
+                ));
         if !(upper || decl) {
             continue;
         }
@@ -260,7 +280,8 @@ fn generics(toks: &[T]) -> Vec<bool> {
                 // range bounds: `Int<0..255>`, `Int<-5..>`, `Int<..9>`
                 (K::Num, _) | (K::Sym, "..") | (K::Sym, "-") if pw == "Int" => {}
                 // function types as type arguments: `List<fn(Int) -> Int>`
-                (K::Sym, "(") | (K::Sym, ")") | (K::Sym, "->") if toks[i + 1..j].iter().any(|x| x.k == K::Word && x.s == "fn") => {}
+                (K::Sym, "(") | (K::Sym, ")") | (K::Sym, "->")
+                    if toks[i + 1..j].iter().any(|x| x.k == K::Word && x.s == "fn") => {}
                 _ => break,
             }
             j += 1;
@@ -268,7 +289,16 @@ fn generics(toks: &[T]) -> Vec<bool> {
         if let Some(c) = close {
             let ok = match toks.get(c + 1) {
                 None => true,
-                Some(n) => n.nl > 0 || n.k == K::Comment || (n.k == K::Word && n.s == "else") || (n.k == K::Sym && matches!(n.s.as_str(), "(" | "." | "{" | "}" | "," | ")" | "=" | ">" | ";")),
+                Some(n) => {
+                    n.nl > 0
+                        || n.k == K::Comment
+                        || (n.k == K::Word && n.s == "else")
+                        || (n.k == K::Sym
+                            && matches!(
+                                n.s.as_str(),
+                                "(" | "." | "{" | "}" | "," | ")" | "=" | ">" | ";"
+                            ))
+                }
             };
             if ok {
                 g[i] = true;
@@ -290,7 +320,11 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
     let mut multi = vec![false; toks.len()];
     for i in 0..toks.len() {
         if is_sym(&toks[i], "{") {
-            multi[i] = mb[i] > i + 1 && toks[i + 1..mb[i]].iter().any(|t| t.nl > 0 || t.k == K::Comment) || toks.get(i + 1).map_or(false, |t| t.k == K::Comment);
+            multi[i] = mb[i] > i + 1
+                && toks[i + 1..mb[i]]
+                    .iter()
+                    .any(|t| t.nl > 0 || t.k == K::Comment)
+                || toks.get(i + 1).is_some_and(|t| t.k == K::Comment);
         }
     }
     let struct_names: Vec<&str> = toks
@@ -312,7 +346,11 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
             unary[i] = match prev {
                 None => true,
                 Some(p) => match p.k {
-                    K::Sym => !(p.s == ")" || (p.s == ">" && gen[toks[..i].iter().rposition(|q| q.k != K::Comment).unwrap()])),
+                    K::Sym => {
+                        !(p.s == ")"
+                            || (p.s == ">"
+                                && gen[toks[..i].iter().rposition(|q| q.k != K::Comment).unwrap()]))
+                    }
                     K::Word => is_kw(&p.s) && p.s != "as",
                     _ => false,
                 },
@@ -345,7 +383,14 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
         }
     }
 
-    let mut f = F { toks, out: String::new(), at_start: true, stack: vec![], pd: 0, cont: false };
+    let mut f = F {
+        toks,
+        out: String::new(),
+        at_start: true,
+        stack: vec![],
+        pd: 0,
+        cont: false,
+    };
     let mut prev: Option<usize> = None; // previous emitted non-comment token
     let mut prev_comment = false; // the last thing written was a comment
     let mut just_opened = false; // right after a multi-line `{`
@@ -357,7 +402,7 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
     let mut last_closed: Option<(Br, bool)> = None; // kind of the `}` just written
 
     for (i, t) in toks.iter().enumerate() {
-        let ctx_multi = f.stack.last().map_or(true, |o| o.multi);
+        let ctx_multi = f.stack.last().is_none_or(|o| o.multi);
         let ctx_kind = f.stack.last().map(|o| o.kind);
 
         // ── comments ──
@@ -419,25 +464,30 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
             }
         }
         if b == B::None {
-            if is_close && f.stack.last().map_or(false, |o| o.multi) {
+            if is_close && f.stack.last().is_some_and(|o| o.multi) {
                 b = B::Hard(false);
             } else if pending_hard {
                 b = B::Hard(src_blank);
             } else if top_item_end {
                 b = B::Hard(true);
             } else if prev_comment {
-                b = if f.pd > 0 { B::Cont } else { B::Hard(src_blank) };
+                b = if f.pd > 0 {
+                    B::Cont
+                } else {
+                    B::Hard(src_blank)
+                };
             } else if just_opened {
                 b = B::Hard(false);
             } else if f.pd == 0
                 && matches!(ctx_kind, Some(Br::Decl) | Some(Br::Lit))
                 && ctx_multi
-                && p.map_or(false, |p| is_sym(p, ","))
+                && p.is_some_and(|p| is_sym(p, ","))
             {
                 b = B::Hard(src_blank); // one field / variant / initializer per line
             } else if let Some((kind, _)) = last_closed {
                 // after a `}` that ends a block: a new statement, unless `else`, `,`, `)` continue it
-                let continues = t.k == K::Sym && matches!(t.s.as_str(), "," | ")" | "." ) || (t.k == K::Word && t.s == "else");
+                let continues = t.k == K::Sym && matches!(t.s.as_str(), "," | ")" | ".")
+                    || (t.k == K::Word && t.s == "else");
                 // inside a block written on one line the statements stay on that line
                 if kind != Br::Lit && !continues && !is_close && ctx_multi {
                     b = B::Hard(src_blank);
@@ -449,16 +499,22 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
             if f.pd > 0 {
                 // join
             } else if ctx_kind == Some(Br::Lit) {
-                if pt.map_or(false, |p| is_sym(p, ",")) {
+                if pt.is_some_and(|p| is_sym(p, ",")) {
                     b = B::Hard(src_blank);
                 }
             } else if t.k == K::Word && t.s == "else" || is_sym(t, "{") {
                 // join
             } else if is_sym(t, ".") {
                 b = B::Cont;
-            } else if pt.map_or(false, |p| p.k == K::Sym && BINOPS.contains(&p.s.as_str()) && !(p.s == ">" && prev.map_or(false, |j| gen[j]))) {
+            } else if pt.is_some_and(|p| {
+                p.k == K::Sym
+                    && BINOPS.contains(&p.s.as_str())
+                    && !(p.s == ">" && prev.is_some_and(|j| gen[j]))
+            }) {
                 b = B::Cont;
-            } else if pt.map_or(false, |p| p.k == K::Sym && matches!(p.s.as_str(), "->" | "=>" | ".")) {
+            } else if pt.is_some_and(|p| {
+                p.k == K::Sym && matches!(p.s.as_str(), "->" | "=>" | ".")
+            }) {
                 // join
             } else {
                 b = B::Hard(src_blank);
@@ -496,8 +552,16 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
                         None => false,
                         // inside closure bars: `|x, y|`
                         Some(_) if bar_close[i] => false,
-                        Some(_) if prev.map_or(false, |j| bar_open[j]) => false,
-                        Some(p) => space(p, t, prev.map_or(false, |j| gen[j]), gen[i], unary[prev.unwrap_or(0)], is_close, closing.as_ref().map_or(false, |o| o.multi)),
+                        Some(_) if prev.is_some_and(|j| bar_open[j]) => false,
+                        Some(p) => space(
+                            p,
+                            t,
+                            prev.is_some_and(|j| gen[j]),
+                            gen[i],
+                            unary[prev.unwrap_or(0)],
+                            is_close,
+                            closing.as_ref().is_some_and(|o| o.multi),
+                        ),
                     };
                     if sp {
                         f.out.push(' ');
@@ -513,7 +577,10 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
         pending_hard = false;
         pending_semi = false;
         top_item_end = false;
-        let was_import_start = t.k == K::Word && (t.s == "import" || t.s == "type") && f.stack.is_empty() && f.at_start;
+        let was_import_start = t.k == K::Word
+            && (t.s == "import" || t.s == "type")
+            && f.stack.is_empty()
+            && f.at_start;
         f.write(&t.s);
         prev_comment = false;
         just_opened = false;
@@ -526,21 +593,42 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
         match (t.k, t.s.as_str()) {
             (K::Sym, "(") => f.pd += 1,
             (K::Sym, ")") => f.pd -= 1,
-            (K::Word, "struct") | (K::Word, "enum") if f.stack.is_empty() || ctx_kind == Some(Br::Block) => decl_pending = true,
+            (K::Word, "struct") | (K::Word, "enum")
+                if f.stack.is_empty() || ctx_kind == Some(Br::Block) =>
+            {
+                decl_pending = true
+            }
             (K::Sym, "{") => {
                 let kind = if decl_pending && f.pd == 0 {
                     Br::Decl
                 } else {
-                    let lit = p.map_or(false, |p| {
+                    let lit = p.is_some_and(|p| {
                         p.k == K::Word && struct_names.contains(&p.s.as_str()) && {
-                            let pp = prev.and_then(|j| if j > 0 { Some(&toks[j - 1]) } else { None });
-                            !pp.map_or(false, |x| x.k == K::Sym && x.s == "->" || x.k == K::Word && matches!(x.s.as_str(), "impl" | "for" | "struct" | "enum"))
+                            let pp =
+                                prev.and_then(|j| if j > 0 { Some(&toks[j - 1]) } else { None });
+                            !pp.is_some_and(|x| {
+                                x.k == K::Sym && x.s == "->"
+                                    || x.k == K::Word
+                                        && matches!(
+                                            x.s.as_str(),
+                                            "impl" | "for" | "struct" | "enum"
+                                        )
+                            })
                         }
                     });
-                    if lit { Br::Lit } else { Br::Block }
+                    if lit {
+                        Br::Lit
+                    } else {
+                        Br::Block
+                    }
                 };
                 decl_pending = false;
-                f.stack.push(Open { kind, multi: multi[i], pd: f.pd, cont: f.cont });
+                f.stack.push(Open {
+                    kind,
+                    multi: multi[i],
+                    pd: f.pd,
+                    cont: f.cont,
+                });
                 f.pd = 0;
                 f.cont = false;
                 just_opened = multi[i];
@@ -566,10 +654,20 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
 }
 
 /// Is there a space between two tokens written on the same line?
-fn space(p: &T, t: &T, p_gen: bool, t_gen: bool, p_unary: bool, t_close: bool, close_multi: bool) -> bool {
+fn space(
+    p: &T,
+    t: &T,
+    p_gen: bool,
+    t_gen: bool,
+    p_unary: bool,
+    t_close: bool,
+    close_multi: bool,
+) -> bool {
     let _ = close_multi;
     // ranges: `0..n`, `1..=9`
-    if (p.k == K::Sym && matches!(p.s.as_str(), ".." | "..=")) || (t.k == K::Sym && matches!(t.s.as_str(), ".." | "..=")) {
+    if (p.k == K::Sym && matches!(p.s.as_str(), ".." | "..="))
+        || (t.k == K::Sym && matches!(t.s.as_str(), ".." | "..="))
+    {
         // an open range pattern before `=>` (`100.. => ..`): `..=>` would lex as `..=` `>`
         return p.k == K::Sym && p.s == ".." && t.k == K::Sym && t.s.starts_with('=');
     }
@@ -611,10 +709,22 @@ pub fn format_source(src: &str) -> Result<String, String> {
     let toks = tokenize(src)?;
     let out = format_tokens(&toks)?;
     // safety net: formatting must not change the program
-    let after = lex(&out).map_err(|d| format!("internal error: the formatted text does not lex (line {}: {})", d.pos.line, d.msg))?;
-    let strip = |v: Vec<crate::syntax::Token>| -> Vec<Tok> { v.into_iter().map(|t| t.t).filter(|t| *t != Tok::Sym(";")).collect() };
+    let after = lex(&out).map_err(|d| {
+        format!(
+            "internal error: the formatted text does not lex (line {}: {})",
+            d.pos.line, d.msg
+        )
+    })?;
+    let strip = |v: Vec<crate::syntax::Token>| -> Vec<Tok> {
+        v.into_iter()
+            .map(|t| t.t)
+            .filter(|t| *t != Tok::Sym(";"))
+            .collect()
+    };
     if strip(before) != strip(after) {
-        return Err("internal error: formatting would change the program; nothing was written".into());
+        return Err(
+            "internal error: formatting would change the program; nothing was written".into(),
+        );
     }
     Ok(out)
 }
@@ -627,13 +737,16 @@ fn collect(path: &std::path::Path, out: &mut Vec<String>) {
         };
         es.sort();
         for p in es {
-            let n = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let n = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             if p.is_dir() && (n.starts_with('.') || n == "target" || n == "node_modules") {
                 continue;
             }
             collect(&p, out);
         }
-    } else if path.extension().map_or(false, |e| e == "yx") {
+    } else if path.extension().is_some_and(|e| e == "yx") {
         out.push(path.to_string_lossy().trim_start_matches("./").to_string());
     }
 }
@@ -647,7 +760,10 @@ pub fn run_cli(args: &[String]) -> i32 {
             "--check" => check = true,
             "--stdout" => stdout = true,
             x if x.starts_with("--") => {
-                eprintln!("unknown option {}\nusage: yerux fmt [--check|--stdout] file.yx|dir ...", x);
+                eprintln!(
+                    "unknown option {}\nusage: yerux fmt [--check|--stdout] file.yx|dir ...",
+                    x
+                );
                 return 2;
             }
             x => paths.push(x.to_string()),

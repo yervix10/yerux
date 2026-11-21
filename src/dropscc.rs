@@ -89,7 +89,10 @@ impl Types {
         if !r.contains(&n) {
             return None;
         }
-        let mut m: Vec<HeapNode> = r.into_iter().filter(|x| *x == n || self.reach_from(*x).contains(&n)).collect();
+        let mut m: Vec<HeapNode> = r
+            .into_iter()
+            .filter(|x| *x == n || self.reach_from(*x).contains(&n))
+            .collect();
         m.sort();
         m.dedup();
         Some(m)

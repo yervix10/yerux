@@ -38,7 +38,11 @@ fn calls_of(f: &IrFunc) -> Vec<usize> {
 }
 
 fn is_leaf(f: &IrFunc) -> bool {
-    !f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Call(..) | Inst::CallInd(..))))
+    !f.blocks.iter().any(|b| {
+        b.insts
+            .iter()
+            .any(|i| matches!(i, Inst::Call(..) | Inst::CallInd(..)))
+    })
 }
 
 /// Per block: is it inside a loop (a back edge j -> i with i <= j covers blocks i..=j)?
@@ -119,7 +123,14 @@ fn clone_func(f: &IrFunc) -> IrFunc {
         vranges: f.vranges.clone(),
         nvregs: f.nvregs,
         slots: f.slots.clone(),
-        blocks: f.blocks.iter().map(|b| Block { insts: b.insts.clone(), term: b.term.clone() }).collect(),
+        blocks: f
+            .blocks
+            .iter()
+            .map(|b| Block {
+                insts: b.insts.clone(),
+                term: b.term.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -153,19 +164,43 @@ fn inline_at(f: &mut IrFunc, bi: usize, ci: usize, callee: &IrFunc) {
     for (k, a) in args.iter().enumerate() {
         f.blocks[bi].insts.push(Inst::Mov(vbase + k, *a));
     }
-    f.blocks.push(Block { insts: tail, term: old_term });
+    f.blocks.push(Block {
+        insts: tail,
+        term: old_term,
+    });
     for b in &callee.blocks {
         let mut insts = Vec::with_capacity(b.insts.len() + 1);
         for i in &b.insts {
             let mut i = i.clone();
             match &mut i {
-                Inst::Const(d, _) | Inst::Text(d, _) | Inst::FnAddr(d, _) | Inst::VTableAddr(d, _) | Inst::Mov(d, _) | Inst::Bin(d, ..) | Inst::Neg(d, _) | Inst::Not(d, _) => *d += vbase,
+                Inst::Const(d, _)
+                | Inst::Text(d, _)
+                | Inst::FnAddr(d, _)
+                | Inst::VTableAddr(d, _)
+                | Inst::Mov(d, _)
+                | Inst::Bin(d, ..)
+                | Inst::Neg(d, _)
+                | Inst::Not(d, _) => *d += vbase,
                 Inst::Slot(d, k) => {
                     *d += vbase;
                     *k += sbase;
                 }
-                Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::LoadX(d, ..) | Inst::LeaX(d, ..) | Inst::Lea(d, ..) | Inst::ListGet(d, ..) | Inst::Alloc(d, _) | Inst::Load8(d, ..) | Inst::N(_, d, ..) | Inst::Thread(_, d, _) | Inst::Atomic(_, d, _) | Inst::Syscall(d, _) | Inst::Global(d, _) => *d += vbase,
-                Inst::Call(Some(d), ..) | Inst::CallInd(Some(d), ..) | Inst::ExternCall(Some(d), ..) => *d += vbase,
+                Inst::Load(d, ..)
+                | Inst::LoadH(d, ..)
+                | Inst::LoadX(d, ..)
+                | Inst::LeaX(d, ..)
+                | Inst::Lea(d, ..)
+                | Inst::ListGet(d, ..)
+                | Inst::Alloc(d, _)
+                | Inst::Load8(d, ..)
+                | Inst::N(_, d, ..)
+                | Inst::Thread(_, d, _)
+                | Inst::Atomic(_, d, _)
+                | Inst::Syscall(d, _)
+                | Inst::Global(d, _) => *d += vbase,
+                Inst::Call(Some(d), ..)
+                | Inst::CallInd(Some(d), ..)
+                | Inst::ExternCall(Some(d), ..) => *d += vbase,
                 _ => {}
             }
             uses_mut(&mut i, &mut |u| *u += vbase);
@@ -195,7 +230,10 @@ fn inline_at(f: &mut IrFunc, bi: usize, ci: usize, callee: &IrFunc) {
     for (new, old) in ord.iter().enumerate() {
         pos[*old] = new;
     }
-    let mut old: Vec<Option<Block>> = std::mem::take(&mut f.blocks).into_iter().map(Some).collect();
+    let mut old: Vec<Option<Block>> = std::mem::take(&mut f.blocks)
+        .into_iter()
+        .map(Some)
+        .collect();
     for o in &ord {
         let mut b = old[*o].take().unwrap();
         remap_term(&mut b.term, &|x| pos[x]);
@@ -208,64 +246,82 @@ pub fn run(p: &mut IrProgram, optf: &mut dyn FnMut(&mut IrFunc)) {
     let rec = recursive(p);
     let orig: Vec<usize> = p.funcs.iter().map(size).collect();
     let ord = order(p);
-    let rounds: usize = std::env::var("YERUX_REC_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(REC_ROUNDS);
+    let rounds: usize = std::env::var("YERUX_REC_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(REC_ROUNDS);
     for fi in ord {
-      for round in 0..rounds {
-        if round > 0 && !(rec[fi] && orig[fi] <= RECURSIVE_ONE_LEVEL && size(&p.funcs[fi]) <= REC_ROUND_MAX) {
-            break;
-        }
-        let cap = MIN_CAP.max(3 * orig[fi]);
-        let one_level = rec[fi] && orig[fi] <= RECURSIVE_ONE_LEVEL && !p.funcs[fi].name.starts_with("__") && std::env::var_os("YERUX_NO_REC_INLINE").is_none();
-        let snapshot = if one_level { Some(clone_func(&p.funcs[fi])) } else { None };
-        let mut fresh = vec![false; p.funcs[fi].blocks.len()]; // blocks that came from inlining
-        let mut did = false;
-        let mut bi = 0;
-        while bi < p.funcs[fi].blocks.len() {
-            let mut ci = 0;
-            while ci < p.funcs[fi].blocks[bi].insts.len() {
-                let (callee_id, nargs) = match &p.funcs[fi].blocks[bi].insts[ci] {
-                    Inst::Call(_, c, a) => (*c, a.len()),
-                    _ => {
+        for round in 0..rounds {
+            if round > 0
+                && !(rec[fi]
+                    && orig[fi] <= RECURSIVE_ONE_LEVEL
+                    && size(&p.funcs[fi]) <= REC_ROUND_MAX)
+            {
+                break;
+            }
+            let cap = MIN_CAP.max(3 * orig[fi]);
+            let one_level = rec[fi]
+                && orig[fi] <= RECURSIVE_ONE_LEVEL
+                && !p.funcs[fi].name.starts_with("__")
+                && std::env::var_os("YERUX_NO_REC_INLINE").is_none();
+            let snapshot = if one_level {
+                Some(clone_func(&p.funcs[fi]))
+            } else {
+                None
+            };
+            let mut fresh = vec![false; p.funcs[fi].blocks.len()]; // blocks that came from inlining
+            let mut did = false;
+            let mut bi = 0;
+            while bi < p.funcs[fi].blocks.len() {
+                let mut ci = 0;
+                while ci < p.funcs[fi].blocks[bi].insts.len() {
+                    let (callee_id, nargs) = match &p.funcs[fi].blocks[bi].insts[ci] {
+                        Inst::Call(_, c, a) => (*c, a.len()),
+                        _ => {
+                            ci += 1;
+                            continue;
+                        }
+                    };
+                    let f = &p.funcs[fi];
+                    let self_call = callee_id == fi;
+                    let ok = if self_call {
+                        // one level only, and only for call sites of the original body
+                        snapshot.is_some() && !fresh[bi] && size(f) < cap
+                    } else {
+                        let g = &p.funcs[callee_id];
+                        let looped = in_loop(f)[bi];
+                        !rec[callee_id]
+                            && !g.name.starts_with("__")
+                            && callee_id != p.main
+                            && g.nparams == nargs
+                            && size(f) + size(g) <= cap
+                            && (size(g) <= SMALL || (looped && is_leaf(g) && size(g) <= LEAF_LOOP))
+                    };
+                    if !ok {
                         ci += 1;
                         continue;
                     }
-                };
-                let f = &p.funcs[fi];
-                let self_call = callee_id == fi;
-                let ok = if self_call {
-                    // one level only, and only for call sites of the original body
-                    snapshot.is_some() && !fresh[bi] && size(f) < cap
-                } else {
-                    let g = &p.funcs[callee_id];
-                    let looped = in_loop(f)[bi];
-                    !rec[callee_id]
-                        && !g.name.starts_with("__")
-                        && callee_id != p.main
-                        && g.nparams == nargs
-                        && size(f) + size(g) <= cap
-                        && (size(g) <= SMALL || (looped && is_leaf(g) && size(g) <= LEAF_LOOP))
-                };
-                if !ok {
-                    ci += 1;
-                    continue;
+                    let callee = if self_call {
+                        clone_func(snapshot.as_ref().unwrap())
+                    } else {
+                        clone_func(&p.funcs[callee_id])
+                    };
+                    let cn = callee.blocks.len();
+                    inline_at(&mut p.funcs[fi], bi, ci, &callee);
+                    // same permutation as inline_at: [..=bi] [callee blocks] [continuation] [rest]
+                    let tail = fresh.split_off(bi + 1);
+                    let inherit = fresh[bi];
+                    fresh.extend(std::iter::repeat_n(true, cn));
+                    fresh.push(inherit);
+                    fresh.extend(tail);
+                    did = true;
+                    break; // rest of this block moved to the continuation block, which is visited later
                 }
-                let callee = if self_call { clone_func(snapshot.as_ref().unwrap()) } else { clone_func(&p.funcs[callee_id]) };
-                let cn = callee.blocks.len();
-                inline_at(&mut p.funcs[fi], bi, ci, &callee);
-                // same permutation as inline_at: [..=bi] [callee blocks] [continuation] [rest]
-                let tail = fresh.split_off(bi + 1);
-                let inherit = fresh[bi];
-                fresh.extend(std::iter::repeat(true).take(cn));
-                fresh.push(inherit);
-                fresh.extend(tail);
-                did = true;
-                break; // rest of this block moved to the continuation block, which is visited later
+                bi += 1;
             }
-            bi += 1;
+            if did {
+                optf(&mut p.funcs[fi]);
+            }
         }
-        if did {
-            optf(&mut p.funcs[fi]);
-        }
-      }
     }
 }

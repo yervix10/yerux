@@ -111,8 +111,15 @@ fn mangle(key: &str, name: &str) -> String {
 /// Load `entry` and everything it imports.
 pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
     let path = Path::new(entry);
-    let root = path.parent().map(|p| p.to_path_buf()).filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| PathBuf::from("."));
-    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let root = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     let mut l = Loader {
         root,
         mode,
@@ -133,17 +140,31 @@ pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
         return Err(l.errs);
     }
     let mut toks = vec![];
-    let mut last = Pos { line: 1, col: 1, len: 1 };
+    let mut last = Pos {
+        line: 1,
+        col: 1,
+        len: 1,
+    };
     for m in &l.mods {
         toks.extend(m.toks.iter().cloned());
     }
     if let Some(t) = toks.last() {
         last = t.pos;
     }
-    toks.push(Token { t: Tok::Eof, pos: last });
+    toks.push(Token {
+        t: Tok::Eof,
+        pos: last,
+    });
     let mut names = l.names;
     names.sort_by_key(|(m, _)| std::cmp::Reverse(m.len()));
-    Ok(Loaded { toks, files: l.files, names, imports: l.imports, exports: l.exports, tests: l.tests })
+    Ok(Loaded {
+        toks,
+        files: l.files,
+        names,
+        imports: l.imports,
+        exports: l.exports,
+        tests: l.tests,
+    })
 }
 
 impl Loader {
@@ -160,13 +181,17 @@ impl Loader {
             None => match std::fs::read_to_string(path) {
                 Ok(s) => s,
                 Err(e) => {
-                    self.errs.push(format!("error: could not read {}: {}", path, e));
+                    self.errs
+                        .push(format!("error: could not read {}: {}", path, e));
                     return false;
                 }
             },
         };
         let file = self.files.len();
-        self.files.push(SourceFile { path: path.to_string(), src: src.clone() });
+        self.files.push(SourceFile {
+            path: path.to_string(),
+            src: src.clone(),
+        });
         self.imports.push(vec![]);
         let toks = match lex(&src) {
             Ok(t) => t,
@@ -179,12 +204,17 @@ impl Loader {
         self.stack.push(key.to_string());
         let ok = self.module_body(key, file, toks, entry);
         self.stack.pop();
-        self.by_key.insert(key.to_string(), if ok { Some(file) } else { None });
+        self.by_key
+            .insert(key.to_string(), if ok { Some(file) } else { None });
         ok
     }
 
     fn module_body(&mut self, key: &str, file: usize, toks: Vec<Token>, entry: bool) -> bool {
-        let ekey = if entry { String::new() } else { key.to_string() };
+        let ekey = if entry {
+            String::new()
+        } else {
+            key.to_string()
+        };
         // ── imports ──
         let mut i = 0;
         let mut aliases: HashMap<String, String> = HashMap::new(); // alias -> module key
@@ -199,8 +229,11 @@ impl Loader {
                         i += 1;
                     }
                     None => {
-                        self.report(file, diag("expected a module name after `import`", toks[i].pos)
-                            .note("example: `import math` or `import utils.strings`"));
+                        self.report(
+                            file,
+                            diag("expected a module name after `import`", toks[i].pos)
+                                .note("example: `import math` or `import utils.strings`"),
+                        );
                         return false;
                     }
                 }
@@ -229,8 +262,10 @@ impl Loader {
             if aliases.contains_key(&alias) {
                 self.report(
                     file,
-                    diag(format!("the name '{}' is imported twice", alias), mpos)
-                        .note(format!("help: rename one of them: `import {} as other_name`", dep)),
+                    diag(format!("the name '{}' is imported twice", alias), mpos).note(format!(
+                        "help: rename one of them: `import {} as other_name`",
+                        dep
+                    )),
                 );
                 continue;
             }
@@ -249,7 +284,11 @@ impl Loader {
             }
             if !self.by_key.contains_key(&dep) {
                 let rel = format!("{}.yx", segs.join("/"));
-                let p = if crate::stdlib::source(&dep).is_some() { PathBuf::from(format!("<std>/{}", rel.trim_start_matches("std/"))) } else { self.root.join(&rel) };
+                let p = if crate::stdlib::source(&dep).is_some() {
+                    PathBuf::from(format!("<std>/{}", rel.trim_start_matches("std/")))
+                } else {
+                    self.root.join(&rel)
+                };
                 if !crate::stdlib::source(&dep).is_some() && !p.is_file() {
                     self.report(
                         file,
@@ -281,12 +320,25 @@ impl Loader {
         let mut export_list: Vec<(String, Kind)> = vec![];
         for sp in &spans {
             if let Some(n) = &sp.name {
-                if items.insert(n.clone(), Item { kind: sp.kind, public: sp.public }).is_none() && sp.public {
+                if items
+                    .insert(
+                        n.clone(),
+                        Item {
+                            kind: sp.kind,
+                            public: sp.public,
+                        },
+                    )
+                    .is_none()
+                    && sp.public
+                {
                     export_list.push((n.clone(), sp.kind));
                 }
             }
             if sp.test.is_some() && sp.public {
-                self.report(file, diag("`pub` cannot be used on a test", toks[sp.start].pos));
+                self.report(
+                    file,
+                    diag("`pub` cannot be used on a test", toks[sp.start].pos),
+                );
             }
         }
         for t in &toks[i..] {
@@ -301,7 +353,10 @@ impl Loader {
         }
         if !entry {
             for n in items.keys() {
-                self.names.push((mangle(&ekey, n), format!("{}.{}", key.rsplit('.').next().unwrap_or(key), n)));
+                self.names.push((
+                    mangle(&ekey, n),
+                    format!("{}.{}", key.rsplit('.').next().unwrap_or(key), n),
+                ));
             }
         }
         self.exports.insert(key.to_string(), export_list);
@@ -335,7 +390,12 @@ impl Loader {
                         let tp = toks[sp.start].pos;
                         let body = &toks[sp.start + 2..sp.end];
                         let mk = |t: Tok| Token { t, pos: tp };
-                        let mut v = vec![mk(Tok::Id("fn".into())), mk(Tok::Id("main".into())), mk(Tok::Sym("(")), mk(Tok::Sym(")"))];
+                        let mut v = vec![
+                            mk(Tok::Id("fn".into())),
+                            mk(Tok::Id("main".into())),
+                            mk(Tok::Sym("(")),
+                            mk(Tok::Sym(")")),
+                        ];
                         v.extend(body.iter().cloned());
                         let r = self.rewrite(file, &ekey, &items, &aliases, &imported, &v);
                         out.extend(r);
@@ -344,7 +404,11 @@ impl Loader {
                 }
                 continue;
             }
-            if entry && matches!(self.mode, Mode::Test(_)) && sp.name.as_deref() == Some("main") && sp.kind == Kind::Func {
+            if entry
+                && matches!(self.mode, Mode::Test(_))
+                && sp.name.as_deref() == Some("main")
+                && sp.kind == Kind::Func
+            {
                 continue; // the program's own main is replaced by the test body
             }
             let body: Vec<Token> = toks[sp.head..sp.end].to_vec();
@@ -389,7 +453,9 @@ impl Loader {
             };
             let next = toks.get(j + 1);
             if let Some(dep) = aliases.get(&x) {
-                if matches!(next, Some(n) if is_sym(n, ".")) && toks.get(j + 2).map_or(false, |n| matches!(n.t, Tok::Id(_))) {
+                if matches!(next, Some(n) if is_sym(n, "."))
+                    && toks.get(j + 2).is_some_and(|n| matches!(n.t, Tok::Id(_)))
+                {
                     let y = match &toks[j + 2].t {
                         Tok::Id(y) => y.clone(),
                         _ => unreachable!(),
@@ -398,17 +464,30 @@ impl Loader {
                     let dep = dep.clone();
                     match self.items_by_key.get(&dep).and_then(|m| m.get(&y)) {
                         None => {
-                            let pubs: Vec<String> = self.exports.get(&dep).map(|v| v.iter().map(|(n, _)| n.clone()).collect()).unwrap_or_default();
-                            let mut d = diag(format!("module '{}' has no item called '{}'", dep, y), p);
+                            let pubs: Vec<String> = self
+                                .exports
+                                .get(&dep)
+                                .map(|v| v.iter().map(|(n, _)| n.clone()).collect())
+                                .unwrap_or_default();
+                            let mut d =
+                                diag(format!("module '{}' has no item called '{}'", dep, y), p);
                             if pubs.is_empty() {
                                 d = d.note(format!("module '{}' has no `pub` items", dep));
                             } else {
-                                d = d.note(format!("public items of '{}': {}", dep, pubs.join(", ")));
+                                d = d.note(format!(
+                                    "public items of '{}': {}",
+                                    dep,
+                                    pubs.join(", ")
+                                ));
                             }
                             self.report(file, d);
                         }
                         Some(it) if !it.public => {
-                            let what = if it.kind == Kind::Func { "function" } else { "type" };
+                            let what = if it.kind == Kind::Func {
+                                "function"
+                            } else {
+                                "type"
+                            };
                             self.report(
                                 file,
                                 diag(format!("'{}' is private in module '{}'", y, dep), p).note(format!(
@@ -422,11 +501,16 @@ impl Loader {
                         }
                         Some(_) => {}
                     }
-                    out.push(Token { t: Tok::Id(mangle(&dep, &y)), pos: p });
+                    out.push(Token {
+                        t: Tok::Id(mangle(&dep, &y)),
+                        pos: p,
+                    });
                     j += 3;
                     continue;
                 }
-                if !shadowed.contains(&x) && !matches!(next, Some(n) if is_sym(n, ":") || is_sym(n, "=")) {
+                if !shadowed.contains(&x)
+                    && !matches!(next, Some(n) if is_sym(n, ":") || is_sym(n, "="))
+                {
                     self.report(
                         file,
                         diag(format!("'{}' is a module, not a value", x), t.pos)
@@ -449,8 +533,10 @@ impl Loader {
                 if flag {
                     self.report(
                         file,
-                        diag(format!("'{}' is not defined in this file", x), t.pos)
-                            .note(format!("help: it comes from module '{}': write `{}.{}`", aliases[alias], alias, x)),
+                        diag(format!("'{}' is not defined in this file", x), t.pos).note(format!(
+                            "help: it comes from module '{}': write `{}.{}`",
+                            aliases[alias], alias, x
+                        )),
                     );
                 }
             }
@@ -458,20 +544,28 @@ impl Loader {
                 let prev_fn = j > 0 && is_id(&toks[j - 1], "fn");
                 // `fn name<T>(..)`: the definition of a generic function; methods inside `impl`/`trait`
                 // blocks are looked up by type, so their names stay as written
-                let methods_here = toks.first().map_or(false, |f| is_id(f, "impl") || is_id(f, "trait"));
+                let methods_here = toks
+                    .first()
+                    .is_some_and(|f| is_id(f, "impl") || is_id(f, "trait"));
                 if prev_fn && methods_here {
                     out.push(t.clone());
                     j += 1;
                     continue;
                 }
-                let call = matches!(next, Some(n) if is_sym(n, "(")) || (prev_fn && matches!(next, Some(n) if is_sym(n, "<")));
+                let call = matches!(next, Some(n) if is_sym(n, "("))
+                    || (prev_fn && matches!(next, Some(n) if is_sym(n, "<")));
                 if !ekey.is_empty() && (it.kind == Kind::Type || call) {
-                    out.push(Token { t: Tok::Id(mangle(ekey, &x)), pos: t.pos });
+                    out.push(Token {
+                        t: Tok::Id(mangle(ekey, &x)),
+                        pos: t.pos,
+                    });
                     j += 1;
                     continue;
                 }
             }
-            if (x == "let" || x == "var") && matches!(next.map(|n| &n.t), Some(Tok::Id(v)) if aliases.contains_key(v)) {
+            if (x == "let" || x == "var")
+                && matches!(next.map(|n| &n.t), Some(Tok::Id(v)) if aliases.contains_key(v))
+            {
                 let n = next.unwrap();
                 if let Tok::Id(v) = &n.t {
                     shadowed.insert(v.clone());
@@ -501,18 +595,26 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
             i += 1;
         }
         let head = i;
-        if toks.get(i).is_some_and(|t| is_sym(t, "@")) && toks.get(i + 1).is_some_and(|t| is_id(t, "thread_bound")) {
+        if toks.get(i).is_some_and(|t| is_sym(t, "@"))
+            && toks.get(i + 1).is_some_and(|t| is_id(t, "thread_bound"))
+        {
             i += 2;
         }
         let Some(item) = toks.get(i) else { break };
         let (kind, name, test) = match &item.t {
             Tok::Id(w) if w == "fn" || w == "struct" || w == "enum" || w == "trait" => {
                 match toks.get(i + 1).and_then(id_of) {
-                    Some(n) => (if w == "fn" { Kind::Func } else { Kind::Type }, Some(n.to_string()), None),
+                    Some(n) => (
+                        if w == "fn" { Kind::Func } else { Kind::Type },
+                        Some(n.to_string()),
+                        None,
+                    ),
                     None => break,
                 }
             }
-            Tok::Id(w) if w == "test" && matches!(toks.get(i + 1).map(|t| &t.t), Some(Tok::Str(_))) => {
+            Tok::Id(w)
+                if w == "test" && matches!(toks.get(i + 1).map(|t| &t.t), Some(Tok::Str(_))) =>
+            {
                 let n = match &toks[i + 1].t {
                     Tok::Str(n) => n.clone(),
                     _ => unreachable!(),
@@ -546,7 +648,15 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
             }
             end += 1;
         }
-        v.push(Span { start: s, end, public, head, name, kind, test });
+        v.push(Span {
+            start: s,
+            end,
+            public,
+            head,
+            name,
+            kind,
+            test,
+        });
         i = end;
     }
     v
@@ -556,7 +666,15 @@ impl Loaded {
     /// Render a diagnostic of the merged program: pick the file, decode the line, show names as written.
     pub fn render(&self, d: &Diag) -> String {
         if d.pos.line & PRELUDE_LINE != 0 {
-            let d2 = Diag { msg: d.msg.clone(), pos: Pos { line: d.pos.line & !PRELUDE_LINE, col: d.pos.col, len: d.pos.len }, notes: d.notes.clone() };
+            let d2 = Diag {
+                msg: d.msg.clone(),
+                pos: Pos {
+                    line: d.pos.line & !PRELUDE_LINE,
+                    col: d.pos.col,
+                    len: d.pos.len,
+                },
+                notes: d.notes.clone(),
+            };
             return render(&d2, "<built-in library>", PRELUDE);
         }
         let file = (d.pos.line >> FILE_SHIFT).min(self.files.len().saturating_sub(1));
@@ -596,15 +714,29 @@ impl Loaded {
             if let Some(r) = d.msg.strip_prefix(pre) {
                 if let Some(name) = r.split('\'').next() {
                     for (alias, dep) in &self.imports[file] {
-                        let found = self.exports.get(dep).map_or(false, |v| v.iter().any(|(n, _)| n == name));
+                        let found = self
+                            .exports
+                            .get(dep)
+                            .is_some_and(|v| v.iter().any(|(n, _)| n == name));
                         if found {
-                            notes.push(format!("help: '{}' is defined in module '{}': write `{}.{}`", name, dep, alias, name));
+                            notes.push(format!(
+                                "help: '{}' is defined in module '{}': write `{}.{}`",
+                                name, dep, alias, name
+                            ));
                         }
                     }
                 }
             }
         }
-        let d2 = Diag { msg, pos: Pos { line, col: d.pos.col, len: d.pos.len }, notes };
+        let d2 = Diag {
+            msg,
+            pos: Pos {
+                line,
+                col: d.pos.col,
+                len: d.pos.len,
+            },
+            notes,
+        };
         render(&d2, &self.files[file].path, &self.files[file].src)
     }
 }

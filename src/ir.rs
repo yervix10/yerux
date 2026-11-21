@@ -65,7 +65,7 @@ pub enum Rng {
     U8,
     U16,
     U32,
-    NonNeg, // 0 ..= i64::MAX (only for Chk)
+    NonNeg,       // 0 ..= i64::MAX (only for Chk)
     Iv(i64, i64), // an arbitrary inclusive interval, the type of an `Int<lo..hi>` (only for Chk)
 }
 
@@ -128,11 +128,11 @@ pub enum NOp {
     FNe,
     FNeg,
     FSqrt,
-    I2F, // (double) of a signed 64-bit integer
-    I2S, // (float) of a signed 64-bit integer, one rounding
-    S2F, // binary32 -> binary64 (exact)
-    F2S, // binary64 -> binary32 (round to nearest even)
-    F2I, // truncate toward zero; panics (MSG_F2I) on NaN or outside i64
+    I2F,          // (double) of a signed 64-bit integer
+    I2S,          // (float) of a signed 64-bit integer, one rounding
+    S2F,          // binary32 -> binary64 (exact)
+    F2S,          // binary64 -> binary32 (round to nearest even)
+    F2I,          // truncate toward zero; panics (MSG_F2I) on NaN or outside i64
     Chk(Rng, u8), // d = a; panics with message `u8` unless a is in the range
     Ext(Rng),     // d = sign/zero-extension of the low 8/16/32 bits of a
     WAdd,         // wrapping 64-bit arithmetic
@@ -150,10 +150,24 @@ pub enum NOp {
 impl NOp {
     /// Cannot panic: may be deleted when its result is unused.
     pub fn pure(self) -> bool {
-        !matches!(self, NOp::F2I | NOp::Chk(..) | NOp::UAdd | NOp::USub | NOp::UMul | NOp::UDiv | NOp::UMod)
+        !matches!(
+            self,
+            NOp::F2I | NOp::Chk(..) | NOp::UAdd | NOp::USub | NOp::UMul | NOp::UDiv | NOp::UMod
+        )
     }
     pub fn unary(self) -> bool {
-        matches!(self, NOp::FNeg | NOp::FSqrt | NOp::I2F | NOp::I2S | NOp::S2F | NOp::F2S | NOp::F2I | NOp::Chk(..) | NOp::Ext(_))
+        matches!(
+            self,
+            NOp::FNeg
+                | NOp::FSqrt
+                | NOp::I2F
+                | NOp::I2S
+                | NOp::S2F
+                | NOp::F2S
+                | NOp::F2I
+                | NOp::Chk(..)
+                | NOp::Ext(_)
+        )
     }
 }
 
@@ -197,27 +211,27 @@ pub enum Inst {
     PrintBool(V),
     PrintText(V),
     // ── aggregates: memory is addressed through plain vregs holding pointers ──
-    Slot(V, usize),       // vreg = address of frame slot #n (see IrFunc::slots)
-    Load(V, V, i32),      // vreg = [addr + off]
-    LoadH(V, V, i32),     // like Load, but the word is a list/string header field ({ptr,len,cap}): memopt may cache it
-    Store(V, i32, V),     // [addr + off] = vreg
-    Lea(V, V, i32),       // vreg = addr + off
-    Copy(V, V, usize),    // copy n words: [dst..] = [src..]
+    Slot(V, usize),    // vreg = address of frame slot #n (see IrFunc::slots)
+    Load(V, V, i32),   // vreg = [addr + off]
+    LoadH(V, V, i32), // like Load, but the word is a list/string header field ({ptr,len,cap}): memopt may cache it
+    Store(V, i32, V), // [addr + off] = vreg
+    Lea(V, V, i32),   // vreg = addr + off
+    Copy(V, V, usize), // copy n words: [dst..] = [src..]
     // ── heap: a List is 3 words {ptr, len, cap} at the given address ──
-    ListPush(V, V),       // list address, value (amortised growth; may allocate)
-    ListGet(V, V, V),     // vreg = list[idx], panics "index out of range"
-    ListFree(V),          // release the buffer (no-op when empty)
+    ListPush(V, V),   // list address, value (amortised growth; may allocate)
+    ListGet(V, V, V), // vreg = list[idx], panics "index out of range"
+    ListFree(V),      // release the buffer (no-op when empty)
     // ── raw heap / byte primitives (String, generic List<T>): all side-effecting ──
-    Alloc(V, V),          // vreg = fresh heap block of n bytes
-    Free(V),              // release a heap block (null is ignored)
-    Realloc(V, V, V, V),  // vreg = block of >= n bytes holding the first `used` bytes of `old` (null: fresh); old is released: dst, old, n, used
-    MemCpy(V, V, V),      // copy n bytes forward: dst, src, n
-    Load8(V, V, i32),     // vreg = zero-extended byte [addr + off]
-    Store8(V, i32, V),    // byte [addr + off] = low byte of vreg
-    PrintBytes(V, V),     // write `len` bytes at `ptr`, then a newline
-    Check(V, V),          // panic "index out of range" unless 0 <= idx < len
-    CheckNonEmpty(V),     // panic "pop from an empty list" when len == 0
-    Assert(V),            // panic "assertion failed" when the value is 0 (`assert`, `assert_eq`)
+    Alloc(V, V),         // vreg = fresh heap block of n bytes
+    Free(V),             // release a heap block (null is ignored)
+    Realloc(V, V, V, V), // vreg = block of >= n bytes holding the first `used` bytes of `old` (null: fresh); old is released: dst, old, n, used
+    MemCpy(V, V, V),     // copy n bytes forward: dst, src, n
+    Load8(V, V, i32),    // vreg = zero-extended byte [addr + off]
+    Store8(V, i32, V),   // byte [addr + off] = low byte of vreg
+    PrintBytes(V, V),    // write `len` bytes at `ptr`, then a newline
+    Check(V, V),         // panic "index out of range" unless 0 <= idx < len
+    CheckNonEmpty(V),    // panic "pop from an empty list" when len == 0
+    Assert(V),           // panic "assertion failed" when the value is 0 (`assert`, `assert_eq`)
     /// Raw Linux system call (x86-64 ELF only): d = syscall(args[0] = number, args[1..7] = arguments); the
     /// raw kernel result (-errno on failure). Behaves like a call: may read and write any memory.
     Syscall(V, Vec<V>),
@@ -226,13 +240,13 @@ pub enum Inst {
     Thread(ThreadOp, V, Vec<V>),
     /// d = address of global cell #n (8 zero-initialised bytes that live as long as the program)
     Global(V, usize),
-    Panic(V, V),          // `panic(msg)`: print "panic: " + `len` bytes at `ptr` + newline to stderr, exit 101 (never returns)
+    Panic(V, V), // `panic(msg)`: print "panic: " + `len` bytes at `ptr` + newline to stderr, exit 101 (never returns)
     // ── indexed list-element access: address = base + idx * scale (scale in 1,2,4,8), no overflow check ──
     // LoadX/StoreX are WORD accesses to a list/array element buffer. Contract used by memopt: they never
     // touch a list header word ({ptr,len,cap}), so they cannot invalidate a cached header load.
-    LoadX(V, V, V, u8),   // vreg = [base + idx*scale]; scale 0 = packed byte element: zero-extended [base + idx]
-    StoreX(V, V, u8, V),  // [base + idx*scale] = vreg; scale 0 = low byte to [base + idx]
-    LeaX(V, V, V, u8),    // vreg = base + idx*scale
+    LoadX(V, V, V, u8), // vreg = [base + idx*scale]; scale 0 = packed byte element: zero-extended [base + idx]
+    StoreX(V, V, u8, V), // [base + idx*scale] = vreg; scale 0 = low byte to [base + idx]
+    LeaX(V, V, V, u8),  // vreg = base + idx*scale
 }
 
 #[derive(Clone, Debug)]
@@ -328,11 +342,15 @@ const H_DROP_BOX: u8 = 11; // key: box type index; fn(box): drop the pointee, fr
 
 impl Helpers {
     fn cleanup(&mut self, ty: Ty) -> usize {
-        let key = self.cleanup_types.iter().position(|t| *t == ty).unwrap_or_else(|| {
-            let key = self.cleanup_types.len();
-            self.cleanup_types.push(ty);
-            key
-        });
+        let key = self
+            .cleanup_types
+            .iter()
+            .position(|t| *t == ty)
+            .unwrap_or_else(|| {
+                let key = self.cleanup_types.len();
+                self.cleanup_types.push(ty);
+                key
+            });
         self.get(H_PANIC_DROP, key)
     }
 
@@ -360,7 +378,7 @@ struct L<'a> {
     recover_panics: bool,
     cleanup_slots: HashMap<usize, V>,
     capture_flags: HashMap<usize, V>, // variable id -> address of its environment drop flag
-    flags: HashMap<usize, V>, // variable id -> drop flag vreg (1 = still owns its value)
+    flags: HashMap<usize, V>,         // variable id -> drop flag vreg (1 = still owns its value)
     blocks: Vec<(Vec<Inst>, Option<Term>)>,
     cur: usize,
     nv: usize,
@@ -395,7 +413,16 @@ enum StrPre {
 mod num;
 
 fn is_agg(t: Ty) -> bool {
-    matches!(t, Ty::Struct(_) | Ty::Enum(_) | Ty::List(_) | Ty::String | Ty::Box(_) | Ty::Fn(_) | Ty::Dyn(_))
+    matches!(
+        t,
+        Ty::Struct(_)
+            | Ty::Enum(_)
+            | Ty::List(_)
+            | Ty::String
+            | Ty::Box(_)
+            | Ty::Fn(_)
+            | Ty::Dyn(_)
+    )
 }
 
 fn is_ref(types: &Types, mode: Mode, ty: Ty) -> bool {
@@ -404,8 +431,25 @@ fn is_ref(types: &Types, mode: Mode, ty: Ty) -> bool {
 
 fn supported(t: Ty, what: &str) -> LR<()> {
     match t {
-        Ty::Int | Ty::Range(..) | Ty::Num(_) | Ty::Char | Ty::Bool | Ty::Text | Ty::Ptr(_) | Ty::Unit | Ty::Struct(_) | Ty::Enum(_) | Ty::List(_) | Ty::String | Ty::Box(_) | Ty::Fn(_) | Ty::Dyn(_) => Ok(()),
-        _ => Err(format!("native backend: {} of this type are not supported", what)),
+        Ty::Int
+        | Ty::Range(..)
+        | Ty::Num(_)
+        | Ty::Char
+        | Ty::Bool
+        | Ty::Text
+        | Ty::Ptr(_)
+        | Ty::Unit
+        | Ty::Struct(_)
+        | Ty::Enum(_)
+        | Ty::List(_)
+        | Ty::String
+        | Ty::Box(_)
+        | Ty::Fn(_)
+        | Ty::Dyn(_) => Ok(()),
+        _ => Err(format!(
+            "native backend: {} of this type are not supported",
+            what
+        )),
     }
 }
 
@@ -455,7 +499,9 @@ fn scan_expr(e: &Expr, sigs: &HashMap<String, Sig>, types: &Types, out: &mut Has
             scan_stmts(stmts, sigs, types, out);
             scan_expr(result, sigs, types, out);
         }
-        EK::Field(b, _) | EK::Conv(b, _) | EK::IsVariant(b, _) | EK::Payload(b, ..) => scan_expr(b, sigs, types, out),
+        EK::Field(b, _) | EK::Conv(b, _) | EK::IsVariant(b, _) | EK::Payload(b, ..) => {
+            scan_expr(b, sigs, types, out)
+        }
         EK::Un(_, x) => scan_expr(x, sigs, types, out),
         EK::Bin(_, a, b) => {
             scan_expr(a, sigs, types, out);
@@ -465,7 +511,9 @@ fn scan_expr(e: &Expr, sigs: &HashMap<String, Sig>, types: &Types, out: &mut Has
             scan_expr(recv, sigs, types, out);
             args.iter().for_each(|a| scan_expr(a, sigs, types, out));
         }
-        EK::StructLit { fields, .. } => fields.iter().for_each(|(_, f)| scan_expr(f, sigs, types, out)),
+        EK::StructLit { fields, .. } => fields
+            .iter()
+            .for_each(|(_, f)| scan_expr(f, sigs, types, out)),
         EK::Variant { args, .. } => args.iter().for_each(|a| scan_expr(a, sigs, types, out)),
         EK::Static { args, .. } => args.iter().for_each(|a| scan_expr(a, sigs, types, out)),
         EK::DynBox { value, .. } => scan_expr(value, sigs, types, out),
@@ -545,7 +593,11 @@ impl<'a> L<'a> {
             Ty::List(_) | Ty::String => 3,
             Ty::Fn(_) | Ty::Dyn(_) => 2,
             Ty::Box(_) => 1,
-            Ty::Struct(i) => self.types.structs[i].fields.iter().map(|(_, f)| self.words(*f)).sum(),
+            Ty::Struct(i) => self.types.structs[i]
+                .fields
+                .iter()
+                .map(|(_, f)| self.words(*f))
+                .sum(),
             Ty::Enum(i) => {
                 1 + self.types.enums[i]
                     .variants
@@ -596,8 +648,16 @@ impl<'a> L<'a> {
     }
     /// Fresh temporaries (not shared with any variable) can be adopted without copying.
     fn fresh(e: &Expr) -> bool {
-        matches!(e.k, EK::StructLit { .. } | EK::Variant { .. } | EK::Static { .. } | EK::MkClosure { .. } | EK::CallFn(..) | EK::DynCall { .. } | EK::DynBox { .. })
-            || matches!(&e.k, EK::Call(n, _) if n != "print" && n != "assert")
+        matches!(
+            e.k,
+            EK::StructLit { .. }
+                | EK::Variant { .. }
+                | EK::Static { .. }
+                | EK::MkClosure { .. }
+                | EK::CallFn(..)
+                | EK::DynCall { .. }
+                | EK::DynBox { .. }
+        ) || matches!(&e.k, EK::Call(n, _) if n != "print" && n != "assert")
             || matches!(&e.k, EK::Method { m, .. } if m == "pop" || m == "take")
     }
     /// A private copy of an aggregate in a new frame slot.
@@ -640,7 +700,11 @@ impl<'a> L<'a> {
                 v.push(self.expr(&args[0])?);
                 v
             }
-            EK::Method { recv, m, args } if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() => self.prep(recv)?,
+            EK::Method { recv, m, args }
+                if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() =>
+            {
+                self.prep(recv)?
+            }
             EK::Payload(b, ..) => self.prep(b)?,
             _ => vec![self.expr(e)?],
         })
@@ -651,11 +715,15 @@ impl<'a> L<'a> {
         match &e.k {
             EK::Var(_, id) | EK::Move(_, id) => match self.vars[id] {
                 Loc::Mem(a) => Ok((a, 0)),
-                Loc::Val(_) => Err("native backend: internal error, address of a register variable".into()),
+                Loc::Val(_) => {
+                    Err("native backend: internal error, address of a register variable".into())
+                }
             },
             EK::Field(b, f) => {
                 let (base, off) = self.place_at(b, it)?;
-                let Ty::Struct(sid) = b.ty else { return Err("native backend: field of a non-struct".into()) };
+                let Ty::Struct(sid) = b.ty else {
+                    return Err("native backend: field of a non-struct".into());
+                };
                 let (fo, _) = self.field_off(sid, f);
                 Ok((base, off + fo))
             }
@@ -666,7 +734,9 @@ impl<'a> L<'a> {
                 Ok((self.elem_addr(la, i, e.ty), 0))
             }
             EK::Deref(_) => Ok((it.next().expect("prepared address"), 0)),
-            EK::Method { recv, m, args } if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() => {
+            EK::Method { recv, m, args }
+                if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() =>
+            {
                 // `*b`: the cell the Box points to
                 let (bb, bo) = self.place_at(recv, it)?;
                 let p = self.load(bb, bo + if m == "locked_value" { 8 } else { 0 });
@@ -679,7 +749,9 @@ impl<'a> L<'a> {
             }
             EK::Payload(b, vid, k) => {
                 let (base, off) = self.place_at(b, it)?;
-                let Ty::Enum(eid) = b.ty else { return Err("native backend: payload of a non-enum".into()) };
+                let Ty::Enum(eid) = b.ty else {
+                    return Err("native backend: payload of a non-enum".into());
+                };
                 let (po, _) = self.payload_off(eid, *vid, *k);
                 Ok((base, off + po))
             }
@@ -819,7 +891,11 @@ impl<'a> L<'a> {
     /// first (the source may live inside a list that is about to change).
     fn value_arg(&mut self, e: &Expr) -> LR<V> {
         let v = self.expr(e)?;
-        Ok(if is_agg(e.ty) && !Self::fresh(e) { self.copy_temp(v, e.ty) } else { v })
+        Ok(if is_agg(e.ty) && !Self::fresh(e) {
+            self.copy_temp(v, e.ty)
+        } else {
+            v
+        })
     }
     /// Store/copy value `x` of type `ty` into memory at `addr`.
     fn put(&mut self, addr: V, x: V, ty: Ty) {
@@ -1032,13 +1108,22 @@ impl<'a> L<'a> {
             let unused = self.v();
             self.emit(Inst::FnAddr(drop, glue));
             self.emit(Inst::Store(record, 0, flag));
-            self.emit(Inst::Thread(ThreadOp::CleanupPush, unused, vec![record, addr, drop]));
+            self.emit(Inst::Thread(
+                ThreadOp::CleanupPush,
+                unused,
+                vec![record, addr, drop],
+            ));
             self.cleanup_slots.insert(id, record);
             Some(record)
         } else {
             None
         };
-        self.scopes.last_mut().unwrap().push(Owned { flag, addr, ty, cleanup });
+        self.scopes.last_mut().unwrap().push(Owned {
+            flag,
+            addr,
+            ty,
+            cleanup,
+        });
     }
 
     // ── statements ──
@@ -1054,7 +1139,11 @@ impl<'a> L<'a> {
         supported(init.ty, "variables")?;
         let v = self.expr(init)?;
         if is_agg(init.ty) {
-            let a = if Self::fresh(init) { v } else { self.copy_temp(v, init.ty) };
+            let a = if Self::fresh(init) {
+                v
+            } else {
+                self.copy_temp(v, init.ty)
+            };
             self.vars.insert(id, Loc::Mem(a));
             if self.types.owned(init.ty) {
                 self.track(id, a, init.ty);
@@ -1103,7 +1192,9 @@ impl<'a> L<'a> {
                 }
             }
             UnpackPat::Tuple(items, _) => {
-                let Ty::Struct(sid) = ty else { return Err("native backend: tuple pattern on a non-tuple".into()) };
+                let Ty::Struct(sid) = ty else {
+                    return Err("native backend: tuple pattern on a non-tuple".into());
+                };
                 let fields = self.types.structs[sid].fields.clone();
                 for (it, (fname, fty)) in items.iter().zip(fields) {
                     let (fo, _) = self.field_off(sid, &fname);
@@ -1142,13 +1233,23 @@ impl<'a> L<'a> {
                         };
                         match (flag, capture_flag) {
                             (Some(f), _) => {
-                                let o = Owned { flag: f, addr: base, ty: val.ty, cleanup: None };
+                                let o = Owned {
+                                    flag: f,
+                                    addr: base,
+                                    ty: val.ty,
+                                    cleanup: None,
+                                };
                                 self.drop_if_live(&o);
                                 guard = Some(f);
                             }
                             (_, Some(addr)) => {
                                 let live = self.load(addr, 0);
-                                let o = Owned { flag: live, addr: base, ty: val.ty, cleanup: None };
+                                let o = Owned {
+                                    flag: live,
+                                    addr: base,
+                                    ty: val.ty,
+                                    cleanup: None,
+                                };
                                 self.drop_if_live(&o);
                                 let one = self.konst(1);
                                 self.emit(Inst::Store(addr, 0, one));
@@ -1192,12 +1293,21 @@ impl<'a> L<'a> {
             SK::While(c, body, meta) => {
                 let (hb, bb, eb) = (self.block(), self.block(), self.block());
                 // `continue` goes to the step (when there is one), otherwise straight to the test
-                let cb = if meta.step.is_empty() { hb } else { self.block() };
+                let cb = if meta.step.is_empty() {
+                    hb
+                } else {
+                    self.block()
+                };
                 self.term(Term::Jmp(hb));
                 self.switch(hb);
                 self.cond(c, bb, eb)?;
                 self.switch(bb);
-                self.loops.push(LoopL { id: meta.id, depth: self.scopes.len(), brk: eb, cont: cb });
+                self.loops.push(LoopL {
+                    id: meta.id,
+                    depth: self.scopes.len(),
+                    brk: eb,
+                    cont: cb,
+                });
                 self.scoped(body)?;
                 self.term(Term::Jmp(cb));
                 if cb != hb {
@@ -1209,8 +1319,20 @@ impl<'a> L<'a> {
                 self.switch(eb);
             }
             SK::Break(_, id) | SK::Continue(_, id) => {
-                let lp = self.loops.iter().rev().find(|l| l.id == *id).expect("loop of break/continue");
-                let (depth, target) = (lp.depth, if matches!(s.k, SK::Break(..)) { lp.brk } else { lp.cont });
+                let lp = self
+                    .loops
+                    .iter()
+                    .rev()
+                    .find(|l| l.id == *id)
+                    .expect("loop of break/continue");
+                let (depth, target) = (
+                    lp.depth,
+                    if matches!(s.k, SK::Break(..)) {
+                        lp.brk
+                    } else {
+                        lp.cont
+                    },
+                );
                 // release everything declared inside the loop body, innermost first
                 for i in (depth..self.scopes.len()).rev() {
                     self.drop_scope(i);
@@ -1230,8 +1352,12 @@ impl<'a> L<'a> {
                 let a = self.at(base, off);
                 self.vars.insert(*id, Loc::Mem(a));
                 if *mode == Mode::Own {
-                    let EK::Field(env, capture) = &place.k else { unreachable!("worker capture") };
-                    let Ty::Struct(sid) = env.ty else { unreachable!("closure environment") };
+                    let EK::Field(env, capture) = &place.k else {
+                        unreachable!("worker capture")
+                    };
+                    let Ty::Struct(sid) = env.ty else {
+                        unreachable!("closure environment")
+                    };
                     let (flag, _) = self.field_off(sid, &format!("live_{capture}"));
                     let live = self.at(base, flag);
                     self.capture_flags.insert(*id, live);
@@ -1263,7 +1389,9 @@ impl<'a> L<'a> {
             }
             SK::Defer(_) => unreachable!("`defer` is expanded by the checker"),
             SK::Match(scrut, arms) => {
-                let Ty::Enum(eid) = scrut.ty else { return Err("native backend: match on a non-enum".into()) };
+                let Ty::Enum(eid) = scrut.ty else {
+                    return Err("native backend: match on a non-enum".into());
+                };
                 let a = self.expr(scrut)?;
                 let tag = self.v();
                 self.emit(Inst::Load(tag, a, 0));
@@ -1315,7 +1443,11 @@ impl<'a> L<'a> {
 
     /// Phase 1 of a Text-or-String argument: a Text is evaluated now, a String place is only prepared.
     fn str_prep(&mut self, e: &Expr) -> LR<StrPre> {
-        Ok(if e.ty == Ty::String { StrPre::Place(self.prep(e)?) } else { StrPre::Text(self.expr(e)?) })
+        Ok(if e.ty == Ty::String {
+            StrPre::Place(self.prep(e)?)
+        } else {
+            StrPre::Text(self.expr(e)?)
+        })
     }
     /// Phase 2: (pointer to the bytes, length).
     fn str_view(&mut self, e: &Expr, pre: StrPre) -> LR<(V, V)> {
@@ -1340,7 +1472,9 @@ impl<'a> L<'a> {
         let mut pre_xs: Vec<V> = vec![];
         match m {
             "push_str" | "eq" => pre_apre = Some(self.str_prep(&args[0])?),
-            "push_int" | "byte" | "push_byte" | "push_char" | "char_at" | "char_size" => pre_x = Some(self.expr(&args[0])?),
+            "push_int" | "byte" | "push_byte" | "push_char" | "char_at" | "char_size" => {
+                pre_x = Some(self.expr(&args[0])?)
+            }
             "push_slice" => {
                 // by-value arguments first (the two offsets), then the borrowed Text/String place
                 pre_xs = vec![self.expr(&args[1])?, self.expr(&args[2])?];
@@ -1445,7 +1579,14 @@ impl<'a> L<'a> {
                 let x = pre_x.unwrap();
                 let (b, o) = self.place_at(recv, &mut rpre.into_iter())?;
                 let la = self.at(b, o);
-                let h = self.helpers.get(match m { "push_char" => H_STR_PUSH_CHAR, "char_at" => H_STR_CHAR_AT, _ => H_STR_CHAR_SIZE }, 0);
+                let h = self.helpers.get(
+                    match m {
+                        "push_char" => H_STR_PUSH_CHAR,
+                        "char_at" => H_STR_CHAR_AT,
+                        _ => H_STR_CHAR_SIZE,
+                    },
+                    0,
+                );
                 if m == "push_char" {
                     self.emit(Inst::Call(None, h, vec![la, x]));
                     Ok(self.v())
@@ -1468,17 +1609,26 @@ impl<'a> L<'a> {
                 self.emit(Inst::Load8(d, addr, 0));
                 Ok(d)
             }
-            other => Err(format!("native backend: String method '{}' is not supported yet", other)),
+            other => Err(format!(
+                "native backend: String method '{}' is not supported yet",
+                other
+            )),
         }
     }
 
     fn list_method(&mut self, recv: &Expr, m: &str, args: &[Expr]) -> LR<V> {
-        let Ty::List(li) = recv.ty else { return Err("native backend: method on a non-list".into()) };
+        let Ty::List(li) = recv.ty else {
+            return Err("native backend: method on a non-list".into());
+        };
         let et = self.types.lists[li];
         // by-value arguments first (left to right), then the list place
         let mut argv = vec![];
         for (k, a) in args.iter().enumerate() {
-            argv.push(if m == "push" || (m == "set" && k == 1) { self.value_arg(a)? } else { self.expr(a)? });
+            argv.push(if m == "push" || (m == "set" && k == 1) {
+                self.value_arg(a)?
+            } else {
+                self.expr(a)?
+            });
         }
         let rpre = self.prep(recv)?;
         let (b, o) = self.place_at(recv, &mut rpre.into_iter())?;
@@ -1501,7 +1651,12 @@ impl<'a> L<'a> {
                     let dst = self.elem_ptr(ptr, len, esz);
                     self.put(dst, x, et);
                 } else {
-                    self.emit(Inst::StoreX(ptr, len, if et == Ty::Bool { 0 } else { 8 }, x));
+                    self.emit(Inst::StoreX(
+                        ptr,
+                        len,
+                        if et == Ty::Bool { 0 } else { 8 },
+                        x,
+                    ));
                 }
                 let n1 = self.bink(Op::AddU, len, 1);
                 self.emit(Inst::Store(la, 8, n1));
@@ -1526,7 +1681,12 @@ impl<'a> L<'a> {
                     self.emit(Inst::Check(argv[0], len));
                     let ptr = self.hload(la, 0);
                     let d = self.v();
-                    self.emit(Inst::LoadX(d, ptr, argv[0], if et == Ty::Bool { 0 } else { 8 }));
+                    self.emit(Inst::LoadX(
+                        d,
+                        ptr,
+                        argv[0],
+                        if et == Ty::Bool { 0 } else { 8 },
+                    ));
                     Ok(d)
                 } else {
                     Ok(self.elem_addr(la, argv[0], et))
@@ -1537,7 +1697,12 @@ impl<'a> L<'a> {
                     let len = self.hload(la, 8);
                     self.emit(Inst::Check(argv[0], len));
                     let ptr = self.hload(la, 0);
-                    self.emit(Inst::StoreX(ptr, argv[0], if et == Ty::Bool { 0 } else { 8 }, argv[1]));
+                    self.emit(Inst::StoreX(
+                        ptr,
+                        argv[0],
+                        if et == Ty::Bool { 0 } else { 8 },
+                        argv[1],
+                    ));
                     return Ok(self.v());
                 }
                 let addr = self.elem_addr(la, argv[0], et);
@@ -1573,7 +1738,10 @@ impl<'a> L<'a> {
                 }
                 Ok(self.v())
             }
-            other => Err(format!("native backend: List method '{}' is not supported yet", other)),
+            other => Err(format!(
+                "native backend: List method '{}' is not supported yet",
+                other
+            )),
         }
     }
 
@@ -1611,9 +1779,18 @@ impl<'a> L<'a> {
         }
         if let Ty::Range(lo, hi) = e.ty {
             // the value just produced by a call or a load is of the (range) type of the expression
-            if matches!(e.k, EK::Call(..) | EK::CallFn(..) | EK::Method { .. } | EK::Field(..) | EK::Payload(..)) {
-                if let Some(Inst::Call(Some(d), ..) | Inst::CallInd(Some(d), ..) | Inst::ListGet(d, ..) | Inst::Load(d, ..) | Inst::LoadX(d, ..) | Inst::Load8(d, ..)) =
-                    self.blocks[self.cur].0.last()
+            if matches!(
+                e.k,
+                EK::Call(..) | EK::CallFn(..) | EK::Method { .. } | EK::Field(..) | EK::Payload(..)
+            ) {
+                if let Some(
+                    Inst::Call(Some(d), ..)
+                    | Inst::CallInd(Some(d), ..)
+                    | Inst::ListGet(d, ..)
+                    | Inst::Load(d, ..)
+                    | Inst::LoadX(d, ..)
+                    | Inst::Load8(d, ..),
+                ) = self.blocks[self.cur].0.last()
                 {
                     if *d == v {
                         self.vr.insert(v, (lo, hi));
@@ -1645,7 +1822,9 @@ impl<'a> L<'a> {
                 self.scopes.pop();
                 value
             }
-            EK::GenStruct { .. } | EK::GenVariant { .. } => unreachable!("generic literal left by the checker"),
+            EK::GenStruct { .. } | EK::GenVariant { .. } => {
+                unreachable!("generic literal left by the checker")
+            }
             EK::Int(n) => self.konst(*n),
             EK::Char(n) => self.konst(*n),
             EK::Float(..) | EK::Conv(..) => self.num_expr(e)?,
@@ -1656,7 +1835,9 @@ impl<'a> L<'a> {
                 self.bin(Op::Eq, tag, c)
             }
             EK::Payload(b, vid, k) => {
-                let Ty::Enum(eid) = b.ty else { return Err("native backend: payload of a non-enum".into()) };
+                let Ty::Enum(eid) = b.ty else {
+                    return Err("native backend: payload of a non-enum".into());
+                };
                 let a = self.expr(b)?;
                 let (off, pty) = self.payload_off(eid, *vid, *k);
                 if is_agg(pty) {
@@ -1733,11 +1914,18 @@ impl<'a> L<'a> {
                 let inner = self.types.boxes[bi];
                 let a = self.expr(recv)?; // `Move(b)`: the Box variable gives up its cell
                 let p = self.load(a, 0);
-                let r = if is_agg(inner) { self.copy_temp(p, inner) } else { self.load(p, 0) };
+                let r = if is_agg(inner) {
+                    self.copy_temp(p, inner)
+                } else {
+                    self.load(p, 0)
+                };
                 self.emit(Inst::Free(p));
                 r
             }
-            EK::Method { m, args, .. } if (m == "at") || (matches!(m.as_str(), "get" | "locked_value") && args.is_empty()) => {
+            EK::Method { m, args, .. }
+                if (m == "at")
+                    || (matches!(m.as_str(), "get" | "locked_value") && args.is_empty()) =>
+            {
                 let (base, off) = self.place(e)?;
                 if is_agg(e.ty) {
                     self.at(base, off)
@@ -1767,7 +1955,11 @@ impl<'a> L<'a> {
                 Ty::String => self.string_method(recv, m, args)?,
                 _ => self.list_method(recv, m, args)?,
             },
-            EK::Static { ty: Ty::String, f, args } => match f.as_str() {
+            EK::Static {
+                ty: Ty::String,
+                f,
+                args,
+            } => match f.as_str() {
                 "new" => self.zero_slot(3),
                 "from" => {
                     let s = self.zero_slot(3);
@@ -1788,16 +1980,31 @@ impl<'a> L<'a> {
                     self.emit(Inst::Call(None, h, vec![s, p, n]));
                     s
                 }
-                other => return Err(format!("native backend: String.{} is not supported yet", other)),
+                other => {
+                    return Err(format!(
+                        "native backend: String.{} is not supported yet",
+                        other
+                    ))
+                }
             },
-            EK::Static { ty: Ty::List(_), f, .. } if f == "new" => self.zero_slot(3),
-            EK::Static { ty: Ty::Box(_), f, args } if f == "from_runtime_word" => {
+            EK::Static {
+                ty: Ty::List(_), f, ..
+            } if f == "new" => self.zero_slot(3),
+            EK::Static {
+                ty: Ty::Box(_),
+                f,
+                args,
+            } if f == "from_runtime_word" => {
                 let address = self.expr(&args[0])?;
                 let b = self.new_slot(1);
                 self.emit(Inst::Store(b, 0, address));
                 b
             }
-            EK::Static { ty: Ty::Box(bi), f, args } if f == "new" => {
+            EK::Static {
+                ty: Ty::Box(bi),
+                f,
+                args,
+            } if f == "new" => {
                 let inner = self.types.boxes[*bi];
                 let words = self.words(inner).max(1);
                 // the value is evaluated first (it may allocate itself), then the cell is allocated and filled
@@ -1810,10 +2017,19 @@ impl<'a> L<'a> {
                 self.emit(Inst::Store(slot, 0, p));
                 slot
             }
-            EK::Static { ty: Ty::Char, f, args } => {
+            EK::Static {
+                ty: Ty::Char,
+                f,
+                args,
+            } => {
                 let i = self.expr(&args[0])?;
                 // valid: 0 <= i <= 0x10FFFF and not a surrogate (0xD800..=0xDFFF)
-                let (z, hi, s0, s1) = (self.konst(0), self.konst(0x10FFFF), self.konst(0xD800), self.konst(0xDFFF));
+                let (z, hi, s0, s1) = (
+                    self.konst(0),
+                    self.konst(0x10FFFF),
+                    self.konst(0xD800),
+                    self.konst(0xDFFF),
+                );
                 let a = self.bin(Op::Ge, i, z);
                 let b = self.bin(Op::Le, i, hi);
                 let c = self.bin(Op::Ge, i, s0);
@@ -1830,14 +2046,23 @@ impl<'a> L<'a> {
                     i
                 }
             }
-            EK::Static { f, .. } => return Err(format!("native backend: static function '{}' is not supported yet", f)),
+            EK::Static { f, .. } => {
+                return Err(format!(
+                    "native backend: static function '{}' is not supported yet",
+                    f
+                ))
+            }
             EK::Un(op, x) => {
                 let xv = self.expr(x)?;
                 if *op != "!" && !matches!(x.ty, Ty::Int | Ty::Range(..)) {
                     return Ok(self.num_neg(xv, x.ty));
                 }
                 let d = self.v();
-                self.emit(if *op == "!" { Inst::Not(d, xv) } else { Inst::Neg(d, xv) });
+                self.emit(if *op == "!" {
+                    Inst::Not(d, xv)
+                } else {
+                    Inst::Neg(d, xv)
+                });
                 d
             }
             EK::Bin(op, a, b) if *op == "&&" || *op == "||" => {
@@ -1846,7 +2071,11 @@ impl<'a> L<'a> {
                 let av = self.expr(a)?;
                 self.emit(Inst::Mov(r, av));
                 let (rhs, end) = (self.block(), self.block());
-                self.term(if *op == "&&" { Term::Br(r, rhs, end) } else { Term::Br(r, end, rhs) });
+                self.term(if *op == "&&" {
+                    Term::Br(r, rhs, end)
+                } else {
+                    Term::Br(r, end, rhs)
+                });
                 self.switch(rhs);
                 let bv = self.expr(b)?;
                 self.emit(Inst::Mov(r, bv));
@@ -1889,7 +2118,9 @@ impl<'a> L<'a> {
                     }
                 }
                 "assert" => {
-                    if matches!(&args[0].k, EK::Bin(op, ..) if *op == "&&" || *op == "||") || matches!(&args[0].k, EK::Un("!", _)) {
+                    if matches!(&args[0].k, EK::Bin(op, ..) if *op == "&&" || *op == "||")
+                        || matches!(&args[0].k, EK::Un("!", _))
+                    {
                         // a compound condition becomes one branch per operand (see `cond`): the optimizer
                         // learns each comparison on the passing path
                         let (ok, bad) = (self.block(), self.block());
@@ -1962,7 +2193,11 @@ impl<'a> L<'a> {
                     let (op, operands) = match name.as_str() {
                         "__thread_wait" => (ThreadOp::Wait, vec![arg]),
                         _ => {
-                            let op = if name == "__thread_start" { ThreadOp::Start } else { ThreadOp::StartRecover };
+                            let op = if name == "__thread_start" {
+                                ThreadOp::Start
+                            } else {
+                                ThreadOp::StartRecover
+                            };
                             (op, vec![self.load(arg, 0), self.load(arg, 8)])
                         }
                     };
@@ -1973,7 +2208,11 @@ impl<'a> L<'a> {
                 "__futex_park" | "__futex_wake" => {
                     let address = self.expr(&args[0])?;
                     let value = self.expr(&args[1])?;
-                    let op = if name == "__futex_park" { ThreadOp::Park } else { ThreadOp::Wake };
+                    let op = if name == "__futex_park" {
+                        ThreadOp::Park
+                    } else {
+                        ThreadOp::Wake
+                    };
                     let d = self.v();
                     self.emit(Inst::Thread(op, d, vec![address, value]));
                     d
@@ -2036,13 +2275,21 @@ impl<'a> L<'a> {
                 "__load8" | "__load64" => {
                     let p = self.expr(&args[0])?;
                     let d = self.v();
-                    self.emit(if name == "__load8" { Inst::Load8(d, p, 0) } else { Inst::Load(d, p, 0) });
+                    self.emit(if name == "__load8" {
+                        Inst::Load8(d, p, 0)
+                    } else {
+                        Inst::Load(d, p, 0)
+                    });
                     d
                 }
                 "__store8" | "__store64" => {
                     let p = self.expr(&args[0])?;
                     let x = self.expr(&args[1])?;
-                    self.emit(if name == "__store8" { Inst::Store8(p, 0, x) } else { Inst::Store(p, 0, x) });
+                    self.emit(if name == "__store8" {
+                        Inst::Store8(p, 0, x)
+                    } else {
+                        Inst::Store(p, 0, x)
+                    });
                     self.v()
                 }
                 "print" => {
@@ -2075,7 +2322,9 @@ impl<'a> L<'a> {
                 _ => {
                     let mut modes: Vec<(Mode, Ty)> = self.sigs[name].params.clone();
                     // extra arguments of a C variadic call are passed by value
-                    for a in args.iter().skip(modes.len()) { modes.push((Mode::Own, a.ty)); }
+                    for a in args.iter().skip(modes.len()) {
+                        modes.push((Mode::Own, a.ty));
+                    }
                     self.lower_call(CallTarget::Direct(name), args, &modes, e.ty)?
                 }
             },
@@ -2114,7 +2363,9 @@ impl<'a> L<'a> {
                 out
             }
             EK::CallFn(callee, args) => {
-                let Ty::Fn(fi) = callee.ty else { return Err("native backend: call of a non-function".into()) };
+                let Ty::Fn(fi) = callee.ty else {
+                    return Err("native backend: call of a non-function".into());
+                };
                 let modes = self.types.fns[fi].params.clone();
                 self.lower_call(CallTarget::Closure(callee), args, &modes, e.ty)?
             }
@@ -2134,12 +2385,16 @@ impl<'a> L<'a> {
                 self.emit(Inst::Store(slot, 0, p));
                 slot
             }
-            EK::DynCall { slot, sig, args } => self.lower_call(CallTarget::Dyn(*slot), args, &sig.params, e.ty)?,
+            EK::DynCall { slot, sig, args } => {
+                self.lower_call(CallTarget::Dyn(*slot), args, &sig.params, e.ty)?
+            }
             EK::AddrOf(p, _) => {
                 let (b, o) = self.place(p)?;
                 self.at(b, o)
             }
-            EK::Closure { .. } | EK::Deref(_) => return Err("native backend: internal error, unexpected closure node".into()),
+            EK::Closure { .. } | EK::Deref(_) => {
+                return Err("native backend: internal error, unexpected closure node".into())
+            }
         })
     }
 
@@ -2151,7 +2406,13 @@ impl<'a> L<'a> {
         self.bin(Op::AddU, table, displacement)
     }
 
-    fn lower_call(&mut self, target: CallTarget<'_>, args: &[Expr], modes: &[(Mode, Ty)], ty: Ty) -> LR<V> {
+    fn lower_call(
+        &mut self,
+        target: CallTarget<'_>,
+        args: &[Expr],
+        modes: &[(Mode, Ty)],
+        ty: Ty,
+    ) -> LR<V> {
         supported(ty, "return values")?;
         enum Arg {
             Val(V),
@@ -2192,7 +2453,7 @@ impl<'a> L<'a> {
         }
         // phase 2: borrowed element addresses, bounds-checked, right before the call
         let mut writeback = vec![];
-        for (i, (a, p)) in args.iter().zip(pre.into_iter()).enumerate() {
+        for (i, (a, p)) in args.iter().zip(pre).enumerate() {
             match p {
                 Arg::Val(v) => vs.push(v),
                 Arg::Ref(idx) => {
@@ -2220,13 +2481,26 @@ impl<'a> L<'a> {
                 }
             }
         }
-        let dst = if ty == Ty::Unit || ret_slot.is_some() { None } else { Some(self.v()) };
+        let dst = if ty == Ty::Unit || ret_slot.is_some() {
+            None
+        } else {
+            Some(self.v())
+        };
         match (code, target) {
             (Some(c), _) => self.emit(Inst::CallInd(dst, c, vs)),
             (None, CallTarget::Direct(n)) if self.extern_ids.contains_key(n) => {
-                let float_args = args.iter().map(|a| crate::numeric::is_float(a.ty)).collect();
-                self.emit(Inst::ExternCall(dst, self.extern_ids[n], vs, float_args, crate::numeric::is_float(ty)))
-            },
+                let float_args = args
+                    .iter()
+                    .map(|a| crate::numeric::is_float(a.ty))
+                    .collect();
+                self.emit(Inst::ExternCall(
+                    dst,
+                    self.extern_ids[n],
+                    vs,
+                    float_args,
+                    crate::numeric::is_float(ty),
+                ))
+            }
             (None, CallTarget::Direct(n)) => self.emit(Inst::Call(dst, self.ids[n], vs)),
             _ => unreachable!("call without a target"),
         }
@@ -2257,9 +2531,11 @@ impl<'a> L<'a> {
     fn box_fanout(&self, ty: Ty, bi: usize) -> usize {
         match ty {
             Ty::Box(b) => (b == bi) as usize,
-            Ty::Struct(sid) if self.plain_struct(sid) => {
-                self.types.structs[sid].fields.iter().map(|(_, f)| self.box_fanout(*f, bi)).sum()
-            }
+            Ty::Struct(sid) if self.plain_struct(sid) => self.types.structs[sid]
+                .fields
+                .iter()
+                .map(|(_, f)| self.box_fanout(*f, bi))
+                .sum(),
             Ty::Enum(eid) => self.types.enums[eid]
                 .variants
                 .iter()
@@ -2272,7 +2548,14 @@ impl<'a> L<'a> {
 
     /// Drop a value of `ty` at base+off like `drop_value`, but instead of recursing into nested cells of box type
     /// `bi` hand them to `defer` (called with the cell pointer; the cell is then dropped and freed by the caller).
-    fn drop_deferring(&mut self, ty: Ty, base: V, off: i32, bi: usize, defer: &mut dyn FnMut(&mut Self, V)) {
+    fn drop_deferring(
+        &mut self,
+        ty: Ty,
+        base: V,
+        off: i32,
+        bi: usize,
+        defer: &mut dyn FnMut(&mut Self, V),
+    ) {
         if self.box_fanout(ty, bi) == 0 {
             if self.types.owned(ty) {
                 self.drop_value(ty, base, off);
@@ -2333,7 +2616,9 @@ impl<'a> L<'a> {
                 |l| Ok(l.bin(Op::Ne, cur, zero)),
                 |l| {
                     l.emit(Inst::Mov(next, zero));
-                    l.drop_deferring(inner, cur, 0, bi, &mut |l, cell| l.emit(Inst::Mov(next, cell)));
+                    l.drop_deferring(inner, cur, 0, bi, &mut |l, cell| {
+                        l.emit(Inst::Mov(next, cell))
+                    });
                     l.emit(Inst::Free(cur));
                     l.emit(Inst::Mov(cur, next));
                     Ok(())
@@ -2381,7 +2666,14 @@ impl<'a> L<'a> {
     /// Like `drop_deferring`, for a strongly connected component of heap nodes (see dropscc.rs): nested boxes
     /// and lists that belong to `members` are handed to `push(tag, a, b)` (a box cell: `a` = cell; a list
     /// buffer: `a` = buffer, `b` = length), everything else is dropped in place.
-    fn drop_deferring_scc(&mut self, ty: Ty, base: V, off: i32, members: &[HeapNode], push: &mut dyn FnMut(&mut Self, i64, V, V)) {
+    fn drop_deferring_scc(
+        &mut self,
+        ty: Ty,
+        base: V,
+        off: i32,
+        members: &[HeapNode],
+        push: &mut dyn FnMut(&mut Self, i64, V, V),
+    ) {
         if !self.types.reaches_node(ty, members) {
             if self.types.owned(ty) {
                 self.drop_value(ty, base, off);
@@ -2390,13 +2682,19 @@ impl<'a> L<'a> {
         }
         match ty {
             Ty::Box(b) => {
-                let tag = members.iter().position(|m| *m == HeapNode::Box(b)).expect("box member") as i64;
+                let tag = members
+                    .iter()
+                    .position(|m| *m == HeapNode::Box(b))
+                    .expect("box member") as i64;
                 let cell = self.load(base, off);
                 let zero = self.konst(0);
                 push(self, tag, cell, zero);
             }
             Ty::List(l) => {
-                let tag = members.iter().position(|m| *m == HeapNode::List(l)).expect("list member") as i64;
+                let tag = members
+                    .iter()
+                    .position(|m| *m == HeapNode::List(l))
+                    .expect("list member") as i64;
                 let a = self.at(base, off);
                 let (ptr, len) = (self.hload(a, 0), self.hload(a, 8));
                 push(self, tag, ptr, len);
@@ -2532,7 +2830,7 @@ impl<'a> L<'a> {
                     }
                     let (fo, _) = self.field_off(key, n);
                     let flag = self.types.capture_live_field(key, n);
-                    let mut body = |l: &mut Self| -> LR<()> {
+                    let body = |l: &mut Self| -> LR<()> {
                         if matches!(f, Ty::Fn(_)) {
                             // no worklist (v1 == 0, the worker thread's exit path): drop the closure right here
                             let z = l.konst(0);
@@ -2581,7 +2879,10 @@ impl<'a> L<'a> {
             }
             H_DROP | H_CLEAR if self.types.general_scc(HeapNode::List(key)).is_some() => {
                 let members = self.types.general_scc(HeapNode::List(key)).unwrap();
-                let tag = members.iter().position(|m| *m == HeapNode::List(key)).unwrap() as i64;
+                let tag = members
+                    .iter()
+                    .position(|m| *m == HeapNode::List(key))
+                    .unwrap() as i64;
                 let (ptr, len) = (self.hload(0, 0), self.hload(0, 8));
                 if kind == H_CLEAR {
                     // the buffer is released (the list is left empty without capacity): same worklist as a drop
@@ -2639,7 +2940,10 @@ impl<'a> L<'a> {
             }
             H_DROP_BOX if self.types.general_scc(HeapNode::Box(key)).is_some() => {
                 let members = self.types.general_scc(HeapNode::Box(key)).unwrap();
-                let tag = members.iter().position(|m| *m == HeapNode::Box(key)).unwrap() as i64;
+                let tag = members
+                    .iter()
+                    .position(|m| *m == HeapNode::Box(key))
+                    .unwrap() as i64;
                 let cell = self.load(0, 0);
                 let zero = self.konst(0);
                 self.drop_scc_run(&members, tag, cell, zero);
@@ -2752,7 +3056,9 @@ impl<'a> L<'a> {
                     Ok(())
                 })?;
                 let table = self.v();
-                let digits = (0..100).flat_map(|n| [b'0' + n / 10, b'0' + n % 10]).collect();
+                let digits = (0..100)
+                    .flat_map(|n| [b'0' + n / 10, b'0' + n % 10])
+                    .collect();
                 self.emit(Inst::Text(table, self.texts.len()));
                 self.texts.push(digits);
                 let pairs = self.at(table, 8);
@@ -3034,17 +3340,46 @@ impl<'a> L<'a> {
 }
 
 pub fn lower(prog: &Program) -> Result<IrProgram, String> {
-    let ids: HashMap<String, usize> = prog.funcs.iter().enumerate().map(|(i, f)| (f.name.clone(), i)).collect();
+    let ids: HashMap<String, usize> = prog
+        .funcs
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.name.clone(), i))
+        .collect();
     let mut sigs: HashMap<String, Sig> = prog
         .funcs
         .iter()
-        .map(|f| (f.name.clone(), Sig { params: f.params.iter().map(|p| (p.mode, p.ty)).collect() }))
+        .map(|f| {
+            (
+                f.name.clone(),
+                Sig {
+                    params: f.params.iter().map(|p| (p.mode, p.ty)).collect(),
+                },
+            )
+        })
         .collect();
-    for f in &prog.externs { sigs.insert(f.name.clone(), Sig { params: f.params.iter().map(|p| (p.mode, p.ty)).collect() }); }
-    let extern_ids: HashMap<String, usize> = prog.externs.iter().enumerate().map(|(i, f)| (f.name.clone(), i)).collect();
+    for f in &prog.externs {
+        sigs.insert(
+            f.name.clone(),
+            Sig {
+                params: f.params.iter().map(|p| (p.mode, p.ty)).collect(),
+            },
+        );
+    }
+    let extern_ids: HashMap<String, usize> = prog
+        .externs
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.name.clone(), i))
+        .collect();
     let mut texts = vec![];
     let mut funcs = vec![];
-    let mut helpers = Helpers { base: prog.funcs.len(), all: vec![], ids: HashMap::new(), cleanup_types: vec![] };
+    let mut helpers = Helpers {
+        base: prog.funcs.len(),
+        all: vec![],
+        ids: HashMap::new(),
+        cleanup_types: vec![],
+    };
     let recover_panics = prog.has_recoverable_workers();
     for f in &prog.funcs {
         for p in &f.params {
@@ -3109,11 +3444,18 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         }
         l.stmts(&f.body)?;
         l.drop_scope(0);
-        l.term(if f.ret == Ty::Unit { Term::Ret(None) } else { Term::Unreachable });
+        l.term(if f.ret == Ty::Unit {
+            Term::Ret(None)
+        } else {
+            Term::Unreachable
+        });
         let blocks = l
             .blocks
             .into_iter()
-            .map(|(insts, t)| Block { insts, term: t.unwrap_or(Term::Unreachable) })
+            .map(|(insts, t)| Block {
+                insts,
+                term: t.unwrap_or(Term::Unreachable),
+            })
             .collect();
         let mut vranges = vec![None; l.nv];
         for (v, r) in &l.vr {
@@ -3122,21 +3464,40 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         for (i, p) in f.params.iter().enumerate() {
             // a by-value scalar parameter: its vreg holds a value of the declared type
             if p.mode != Mode::Mut && !is_agg(p.ty) {
-                if let Ty::Range(lo, hi) = p.ty { vranges[hidden + i] = Some((lo, hi)); }
+                if let Ty::Range(lo, hi) = p.ty {
+                    vranges[hidden + i] = Some((lo, hi));
+                }
             }
         }
-        funcs.push(IrFunc { name: f.name.clone(), nparams, vranges, nvregs: l.nv, slots: l.slots, blocks });
+        funcs.push(IrFunc {
+            name: f.name.clone(),
+            nparams,
+            vranges,
+            nvregs: l.nv,
+            slots: l.slots,
+            blocks,
+        });
     }
-    let vtables = prog.types.dyn_tables.iter().enumerate().map(|(table, entry)| {
-        let mut slots = vec![helpers.get(H_DROP_DYN_DATA, table)];
-        for name in &entry.methods {
-            let target = ids[name];
-            let (mode, ty) = sigs[name].params[0];
-            let adapter = !is_ref(&prog.types, mode, ty) && !is_agg(ty);
-            slots.push(if adapter { helpers.get(H_DYN_ADAPTER, target) } else { target });
-        }
-        slots
-    }).collect();
+    let vtables = prog
+        .types
+        .dyn_tables
+        .iter()
+        .enumerate()
+        .map(|(table, entry)| {
+            let mut slots = vec![helpers.get(H_DROP_DYN_DATA, table)];
+            for name in &entry.methods {
+                let target = ids[name];
+                let (mode, ty) = sigs[name].params[0];
+                let adapter = !is_ref(&prog.types, mode, ty) && !is_agg(ty);
+                slots.push(if adapter {
+                    helpers.get(H_DYN_ADAPTER, target)
+                } else {
+                    target
+                });
+            }
+            slots
+        })
+        .collect();
     // runtime helpers requested while lowering (they may request more helpers themselves)
     let mut k = 0;
     while k < helpers.all.len() {
@@ -3194,7 +3555,11 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
                 let mut args: Vec<V> = (0..nparams).collect();
                 let i = is_agg(f.ret) as usize;
                 args[i] = l.load(args[i], 0);
-                let dst = if f.ret == Ty::Unit || i == 1 { None } else { Some(l.v()) };
+                let dst = if f.ret == Ty::Unit || i == 1 {
+                    None
+                } else {
+                    Some(l.v())
+                };
                 l.emit(Inst::Call(dst, key, args));
                 dst
             }
@@ -3204,13 +3569,30 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         let blocks = l
             .blocks
             .into_iter()
-            .map(|(insts, t)| Block { insts, term: t.unwrap_or(Term::Unreachable) })
+            .map(|(insts, t)| Block {
+                insts,
+                term: t.unwrap_or(Term::Unreachable),
+            })
             .collect();
-        funcs.push(IrFunc { name, nparams, vranges: vec![None; nparams], nvregs: l.nv, slots: l.slots, blocks });
+        funcs.push(IrFunc {
+            name,
+            nparams,
+            vranges: vec![None; nparams],
+            nvregs: l.nv,
+            slots: l.slots,
+            blocks,
+        });
         k += 1;
     }
     let main = ids["main"];
-    Ok(IrProgram { funcs, texts, main, vtables, externs: prog.externs.iter().map(|f| f.name.clone()).collect(), links: prog.links.clone() })
+    Ok(IrProgram {
+        funcs,
+        texts,
+        main,
+        vtables,
+        externs: prog.externs.iter().map(|f| f.name.clone()).collect(),
+        links: prog.links.clone(),
+    })
 }
 
 fn fmt_inst(i: &Inst) -> String {
@@ -3252,7 +3634,9 @@ fn fmt_inst(i: &Inst) -> String {
         Inst::Alloc(d, n) => format!("v{} = alloc v{}", d, n),
         Inst::Free(p) => format!("free v{}", p),
         Inst::Realloc(d, o, n, u) => format!("v{} = realloc v{}, v{} bytes, keep v{}", d, o, n, u),
-        Inst::MemCpy(d, s, n) => format!("memcpy [v{}] <- [v{}], {} bytes", d, s, format!("v{}", n)),
+        Inst::MemCpy(d, s, n) => {
+            format!("memcpy [v{}] <- [v{}], {} bytes", d, s, format!("v{}", n))
+        }
         Inst::Load8(d, a, o) => format!("v{} = load8 [v{}{:+}]", d, a, o),
         Inst::Store8(a, o, v) => format!("store8 [v{}{:+}] = v{}", a, o, v),
         Inst::PrintBytes(p, n) => format!("print_bytes v{}, v{}", p, n),
@@ -3263,7 +3647,14 @@ fn fmt_inst(i: &Inst) -> String {
         Inst::LeaX(d, b, i, k) => format!("v{} = lea [v{}+v{}*{}]", d, b, i, k),
         Inst::Assert(n) => format!("assert v{}", n),
         Inst::Panic(p, n) => format!("panic v{}, v{}", p, n),
-        Inst::Syscall(d, a) => format!("v{} = syscall {}", d, a.iter().map(|x| format!("v{}", x)).collect::<Vec<_>>().join(", ")),
+        Inst::Syscall(d, a) => format!(
+            "v{} = syscall {}",
+            d,
+            a.iter()
+                .map(|x| format!("v{}", x))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Inst::Thread(op, d, args) => format!("v{} = thread.{:?} {:?}", d, op, args),
         Inst::Atomic(op, d, args) => format!("v{} = atomic.{:?} {:?}", d, op, args),
         Inst::Global(d, n) => format!("v{} = global #{}", d, n),
@@ -3280,9 +3671,17 @@ fn fmt_inst(i: &Inst) -> String {
 pub fn dump(p: &IrProgram) -> String {
     let mut s = String::new();
     for (fi, f) in p.funcs.iter().enumerate() {
-        s += &format!("fn f{} {}({} params, {} vregs)\n", fi, f.name, f.nparams, f.nvregs);
+        s += &format!(
+            "fn f{} {}({} params, {} vregs)\n",
+            fi, f.name, f.nparams, f.nvregs
+        );
         if !f.slots.is_empty() {
-            let sl: Vec<String> = f.slots.iter().enumerate().map(|(i, w)| format!("slot{}={}w", i, w)).collect();
+            let sl: Vec<String> = f
+                .slots
+                .iter()
+                .enumerate()
+                .map(|(i, w)| format!("slot{}={}w", i, w))
+                .collect();
             s += &format!("  frame: {}\n", sl.join(" "));
         }
         for (i, b) in f.blocks.iter().enumerate() {
@@ -3303,9 +3702,24 @@ pub fn os_intrinsics_error(p: &IrProgram) -> Option<String> {
         for b in &f.blocks {
             for i in &b.insts {
                 match i {
-                    Inst::Thread(..) | Inst::Atomic(..) => return Some(format!("thread runtime intrinsics (used by function '{}')", f.name)),
-                    Inst::Syscall(..) => return Some(format!("raw system calls (std.io, used by function '{}')", f.name)),
-                    Inst::Global(..) => return Some(format!("raw system calls (std.io, used by function '{}')", f.name)),
+                    Inst::Thread(..) | Inst::Atomic(..) => {
+                        return Some(format!(
+                            "thread runtime intrinsics (used by function '{}')",
+                            f.name
+                        ))
+                    }
+                    Inst::Syscall(..) => {
+                        return Some(format!(
+                            "raw system calls (std.io, used by function '{}')",
+                            f.name
+                        ))
+                    }
+                    Inst::Global(..) => {
+                        return Some(format!(
+                            "raw system calls (std.io, used by function '{}')",
+                            f.name
+                        ))
+                    }
                     _ => {}
                 }
             }
