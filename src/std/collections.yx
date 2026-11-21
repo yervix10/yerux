@@ -1,0 +1,103 @@
+// Iteration helpers for Yerux's built-in generic Map<K, V> and Set<T>.
+
+/// Visits map entries by borrowed key/value in the map's current storage order.
+pub fn map_for_each<K: Hash + Equal, V>(m: view Map<K, V>, f: view fn(view K, view V)) {
+  var i = 0
+  while i < m.keys.len() {
+    f(m.keys.at(i), m.vals.at(i))
+    i = i + 1
+  }
+}
+
+/// Visits set elements by borrow in the set's current storage order.
+pub fn set_for_each<T: Hash + Equal>(s: view Set<T>, f: view fn(view T)) {
+  var i = 0
+  while i < s.items.keys.len() {
+    f(s.items.keys.at(i))
+    i = i + 1
+  }
+}
+
+// Growable double-ended queue. Free functions are used because generic impl blocks
+// are not yet supported for module-defined types.
+pub fn vecdeque_len<T>(q: view List<T>) -> Int { return q.len() }
+pub fn vecdeque_push_back<T>(q: mut List<T>, value: T) { q.push(move value) }
+pub fn vecdeque_push_front<T>(q: mut List<T>, value: T) { q.insert(0, move value) }
+pub fn vecdeque_pop_back<T>(q: mut List<T>) -> Option<T> {
+  if q.is_empty() { return None }
+  return Some(q.pop())
+}
+pub fn vecdeque_pop_front<T>(q: mut List<T>) -> Option<T> {
+  if q.is_empty() { return None }
+  return Some(q.remove(0))
+}
+pub fn vecdeque_for_each<T>(q: view List<T>, f: view fn(view T)) {
+  var i = 0
+  while i < q.len() { f(q.at(i)); i = i + 1 }
+}
+
+// Max heap / priority queue stored in a List<T>; the greatest Ordered value is popped first.
+pub fn heap_push<T: Ordered>(h: mut List<T>, value: T) {
+  h.push(move value)
+  var i = h.len() - 1
+  while i > 0 {
+    let p = (i - 1) / 2
+    if h.at(p).cmp(h.at(i)) >= 0 { break }
+    h.swap(p, i)
+    i = p
+  }
+}
+pub fn heap_pop<T: Ordered>(h: mut List<T>) -> Option<T> {
+  if h.is_empty() { return None }
+  h.swap(0, h.len() - 1)
+  let result = h.pop()
+  var i = 0
+  while i * 2 + 1 < h.len() {
+    var c = i * 2 + 1
+    if c + 1 < h.len() && h.at(c).cmp(h.at(c + 1)) < 0 { c = c + 1 }
+    if h.at(i).cmp(h.at(c)) >= 0 { break }
+    h.swap(i, c)
+    i = c
+  }
+  return Some(move result)
+}
+pub fn heap_peek<T: Ordered + Copy>(h: view List<T>) -> Option<T> {
+  if h.is_empty() { return None }
+  return Some(h.get(0))
+}
+pub fn heap_for_each<T>(h: view List<T>, f: view fn(view T)) {
+  var i = 0
+  while i < h.len() { f(h.at(i)); i = i + 1 }
+}
+
+// Sorted map represented by a List of key/value pairs. Lookup is O(log n), insertion O(n).
+pub fn btree_find<K: Ordered, V>(m: view List<(K, V)>, key: view K) -> Int {
+  var lo = 0
+  var hi = m.len()
+  while lo < hi {
+    let mid = lo + (hi - lo) / 2
+    let cmp = m.at(mid).0.cmp(key)
+    if cmp < 0 { lo = mid + 1 } else { hi = mid }
+  }
+  if lo < m.len() && m.at(lo).0.cmp(key) == 0 { return lo }
+  return -lo - 1
+}
+pub fn btree_insert<K: Ordered, V>(m: mut List<(K, V)>, key: K, value: V) {
+  let i = btree_find(m, key)
+  if i >= 0 {
+    m.set(i, (move key, move value))
+  } else {
+    m.insert(-i - 1, (move key, move value))
+  }
+}
+pub fn btree_get<K: Ordered, V: Copy>(m: view List<(K, V)>, key: view K) -> Option<V> {
+  let i = btree_find(m, key)
+  if i < 0 { return None }
+  return Some(m.at(i).1)
+}
+pub fn btree_for_each<K, V>(m: view List<(K, V)>, f: view fn(view K, view V)) {
+  var i = 0
+  while i < m.len() { f(m.at(i).0, m.at(i).1); i = i + 1 }
+}
+
+

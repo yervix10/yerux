@@ -1,0 +1,24 @@
+import std.collections
+
+fn main() {
+  var m = Map<Int, Int>.new()
+  m.insert(4, 40)
+  m.insert(7, 70)
+  m.insert(4, 41)
+  print(m.len())
+  print(m.contains(4))
+  print(m.get(4))
+  print(m.get_or(99, -1))
+  collections.map_for_each(m, |k: view Int, v: view Int| { print(k + v) })
+  print(m.remove(7))
+  print(m.remove(7))
+  print(m.take(4))
+  print(m.is_empty())
+  var strings = Map<String, Int>.new()
+  strings.insert(String.from("one"), 1)
+  print(strings.get("one"))
+  var s = Set<Int>.new()
+  s.insert(8)
+  s.insert(3)
+  collections.set_for_each(s, |x: view Int| { print(x) })
+}

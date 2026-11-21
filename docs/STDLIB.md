@@ -643,6 +643,16 @@ Beyond interpolation. Widths count characters.
 
 `parse(argv)` accepts a `List<String>` including the program name; `parse_process()` uses `std.io.args()`. The schema free parser collects `--name=value` in `options`, long flags in `flags`, splits short flag groups (`-abc`), treats the first positional as `subcommand`, and keeps later values in `positionals`. `--` ends option parsing; `--help` sets `help` and adds the `help` flag. Use `has_flag(parsed, name)`, `option(parsed, name)` (last value wins), and `help_line(program, usage)` to build a usage line. Options without `=value` are flags because no option schema is provided.
 
+### `std.collections`
+
+The prelude already provides generic open-addressed `Map<K, V>` and `Set<T>` (`Hash + Equal` keys), so this module adds borrowed iteration helpers: `map_for_each(m, f)` and `set_for_each(s, f)`. Map `get`/`get_or` require `V: Copy`; `take` moves a value out. Iteration follows current storage order, which can change after removals.
+
+`vecdeque_push_front/back`, `vecdeque_pop_front/back`, `vecdeque_len`, and `vecdeque_for_each` provide double-ended queue operations over a `List<T>`. This backing representation keeps FIFO/LIFO ends available; front insertion/removal costs O(n). Owned elements are moved.
+
+`heap_push`, `heap_pop`, `heap_peek`, and `heap_for_each` implement a max priority queue over `List<T>` (`T: Ordered`; `peek` also needs `Copy`). `heap_pop` returns `Option<T>` and removes the greatest item; `heap_for_each` visits the internal heap order, not sorted order.
+
+`btree_insert`, `btree_find`, `btree_get`, and `btree_for_each` implement a sorted map over `List<(K, V)>` (`K: Ordered`; `get` also needs `V: Copy`). `btree_find` returns the index or `-insertion_index-1`; duplicate insert replaces the value. The sorted list gives O(log n) lookup and O(n) insertion.
+
 ### `std.time`
 A duration is a `time.Duration` (Copy struct of nanoseconds with `Equal`/`Ordered`/`Show` and methods `add` `sub` `mul` `div` ..., see [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md#stdtime-duration)). `nanos` `micros` `millis` `seconds` `minutes` `hours` build one; `as_micros` `as_millis` `as_secs` `as_secs_float` `as_millis_float` convert; `format(d)` prints `850 ns`, `12.5 us`, `3.2 ms`, `1.5 s`, `2m 05s`, `1h 02m 03s`; `sleep(d)`, `sleep_ms(ms)`; `measure(f: fn()) -> Duration`. Clocks: `monotonic_ns()`, `unix_nanos()`, `unix_millis()`, `unix_secs()`; `now() -> Instant` (monotonic; `elapsed`, `since`, `add`, `is_before`), `deadline_in(d)`, `sleep_until(t)`. Calendar (UTC): `DateTime`, `utc_from_unix(secs)`, `utc_now()`, `utc(y, mo, d, h, mi, s) -> Result<DateTime, io.IoError>`, `to_unix`, `format_iso`, `parse_iso(s) -> Result<..>`, `is_leap_year`, `days_in_month` (details in [STDLIB_IO.md](STDLIB_IO.md#stdtime-clocks-sleep-utc-calendar)). `stopwatch()` returns a `Stopwatch` (monotonic clock, from `std.io`) with methods `elapsed()`, `elapsed_ms()`, `lap()` (time since the previous lap, starts a new one) and `restart()`:
 

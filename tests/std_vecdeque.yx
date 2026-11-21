@@ -1,0 +1,13 @@
+import std.collections
+fn main() {
+  var q = List<Int>.new()
+  collections.vecdeque_push_back(q, 2)
+  collections.vecdeque_push_front(q, 1)
+  collections.vecdeque_push_back(q, 3)
+  print(collections.vecdeque_len(q))
+  collections.vecdeque_for_each(q, |x: view Int| { print(x) })
+  match collections.vecdeque_pop_front(q) { Some(x) => { print(x) } None => { print(-1) } }
+  match collections.vecdeque_pop_back(q) { Some(x) => { print(x) } None => { print(-1) } }
+  match collections.vecdeque_pop_back(q) { Some(x) => { print(x) } None => { print(-1) } }
+  match collections.vecdeque_pop_back(q) { Some(x) => { print(x) } None => { print(-1) } }
+}
