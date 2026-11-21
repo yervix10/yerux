@@ -1,0 +1,187 @@
+/* Primitive string and process operations used while bootstrapping the prelude. */
+#include <sys/stat.h>
+
+static inline bool sc_boundary(String *s, int64_t i) {
+  return i == 0 || i == s->len || ((unsigned char)s->d[i] & 0xc0) != 0x80;
+}
+
+static inline String sc_str_slice(String *s, int64_t start, int64_t end) {
+  if (start >= 0 && start <= s->len && !sc_boundary(s, start))
+    nx_panic("String.slice start is not a character boundary");
+  if (end >= 0 && end <= s->len && !sc_boundary(s, end))
+    nx_panic("String.slice end is not a character boundary");
+  if (start < 0 || end < start || end > s->len) nx_panic("index out of range");
+  if (start == end) return nx_str_new();
+  return nx_str_from((Str){s->d + start, end - start});
+}
+
+static inline bool sc_space(unsigned char b) { return b == 32 || (b >= 9 && b <= 13); }
+
+static inline String sc_str_trim(String *s) {
+  int64_t lo = 0, hi = s->len;
+  while (lo < hi && sc_space(s->d[lo])) ++lo;
+  while (lo < hi && sc_space(s->d[hi - 1])) --hi;
+  return sc_str_slice(s, lo, hi);
+}
+
+static inline int64_t sc_find(Str src, Str part, int64_t start) {
+  if (part.n == 0) return start <= src.n ? start : -1;
+  for (int64_t i = start; i <= src.n - part.n; ++i)
+    if (!memcmp(src.p + i, part.p, (size_t)part.n)) return i;
+  return -1;
+}
+
+static inline bool sc_str_starts_with(String *s, Str part) {
+  return part.n <= s->len && (!part.n || !memcmp(s->d, part.p, (size_t)part.n));
+}
+
+static inline bool sc_str_ends_with(String *s, Str part) {
+  return part.n <= s->len && (!part.n || !memcmp(s->d + s->len - part.n, part.p, (size_t)part.n));
+}
+
+static inline int64_t sc_str_find(String *s, Str part) { return sc_find(nx_str_view(s), part, 0); }
+static inline bool sc_str_contains(String *s, Str part) { return sc_str_find(s, part) >= 0; }
+
+static inline String sc_str_replace(String *s, Str from, Str to) {
+  if (!from.n || !s->len) return nx_str_from(nx_str_view(s));
+  String result = nx_str_new();
+  int64_t start = 0;
+  for (int64_t i; (i = sc_find(nx_str_view(s), from, start)) >= 0; start = i + from.n) {
+    nx_str_push_str(&result, (Str){s->d + start, i - start});
+    nx_str_push_str(&result, to);
+  }
+  nx_str_push_str(&result, (Str){s->d + start, s->len - start});
+  return result;
+}
+
+static inline int sc_compare(Str a, Str b) {
+  int64_t n = a.n < b.n ? a.n : b.n;
+  int cmp = n ? memcmp(a.p, b.p, (size_t)n) : 0;
+  return cmp ? cmp : (a.n > b.n) - (a.n < b.n);
+}
+
+static inline bool sc_str_parse_int(String *s, int64_t *out) {
+  int64_t i = 0, value = 0;
+  bool negative = false;
+  if (s->len && (s->d[0] == '+' || s->d[0] == '-')) {
+    negative = s->d[0] == '-';
+    ++i;
+  }
+  if (i == s->len) return false;
+  for (; i < s->len; ++i) {
+    int digit = (unsigned char)s->d[i] - '0';
+    if (digit < 0 || digit > 9 || value < (INT64_MIN + digit) / 10) return false;
+    value = value * 10 - digit;
+  }
+  if (!negative && value == INT64_MIN) return false;
+  *out = negative ? value : -value;
+  return true;
+}
+
+static inline String sc_fmt_text(String dst, Str part) { nx_str_push_str(&dst, part); return dst; }
+static inline String sc_fmt_int(String dst, int64_t v) { nx_str_push_int(&dst, v); return dst; }
+static inline String sc_fmt_char(String dst, int64_t v) { nx_str_push_char(&dst, v); return dst; }
+static inline String sc_fmt_bool(String dst, bool v) { return sc_fmt_text(dst, nx_str_text(v ? "true" : "false")); }
+static inline String sc_fmt_uint(String dst, uint64_t v) {
+  char buf[32];
+  int n = snprintf(buf, sizeof buf, "%llu", (unsigned long long)v);
+  return sc_fmt_text(dst, (Str){buf, n});
+}
+
+static int sc_argc;
+static char **sc_argv;
+
+static inline bool sc_utf8(Str text) {
+  for (int64_t i = 0; i < text.n;) {
+    unsigned char b = text.p[i++];
+    if (b < 0x80) continue;
+    int n = b < 0xc2 ? 0 : b < 0xe0 ? 1 : b < 0xf0 ? 2 : b <= 0xf4 ? 3 : 0;
+    if (!n || n > text.n - i) return false;
+    unsigned char next = text.p[i];
+    if ((b == 0xe0 && next < 0xa0) || (b == 0xed && next >= 0xa0) ||
+        (b == 0xf0 && next < 0x90) || (b == 0xf4 && next >= 0x90)) return false;
+    while (n--) if (((unsigned char)text.p[i++] & 0xc0) != 0x80) return false;
+  }
+  return true;
+}
+
+static inline String sc_cstr(const char *arg) {
+  String s = nx_str_from(nx_str_text(arg));
+  if (!sc_utf8(nx_str_view(&s))) {
+    for (int64_t i = 0; i < s.len; ++i) if ((unsigned char)s.d[i] >= 128) s.d[i] = '?';
+  }
+  return s;
+}
+
+static inline String sc_read_error(const char *op, String *path, int err) {
+  String out = nx_str_from(nx_str_text(op));
+  if (path->len) {
+    nx_str_push_str(&out, nx_str_text(" '"));
+    nx_str_push_str(&out, nx_str_view(path));
+    nx_str_push_str(&out, nx_str_text("'"));
+  }
+  nx_str_push_str(&out, nx_str_text(": "));
+  nx_str_push_str(&out, nx_str_text(strerror(err)));
+  nx_str_push_str(&out, nx_str_text(" (os error "));
+  nx_str_push_int(&out, err);
+  nx_str_push_byte(&out, ')');
+  return out;
+}
+
+static inline bool sc_read_file(String *path, String *data, String *error) {
+  if (path->len && memchr(path->d, 0, (size_t)path->len)) {
+    *error = nx_str_from(nx_str_text("path contains a NUL byte"));
+    return false;
+  }
+  String name = nx_str_from(nx_str_view(path));
+  nx_str_push_byte(&name, 0);
+  FILE *file = fopen(name.d, "rb");
+  int err = errno;
+  nx_str_free(&name);
+  if (!file) { *error = sc_read_error("open", path, err); return false; }
+  char buf[8192];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof buf, file)) != 0) nx_str_push_str(data, (Str){buf, n});
+  err = ferror(file) ? errno : 0;
+  fclose(file);
+  if (err || !sc_utf8(nx_str_view(data))) {
+    nx_str_free(data);
+    *error = err ? sc_read_error("read", path, err) : nx_str_from(nx_str_text("stream did not contain valid UTF-8"));
+    return false;
+  }
+  return true;
+}
+
+static inline bool sc_is_file(String *path) {
+  if (path->len && memchr(path->d, 0, (size_t)path->len)) return false;
+  String name = nx_str_from(nx_str_view(path));
+  nx_str_push_byte(&name, 0);
+  struct stat st;
+  bool found = stat(name.d, &st) == 0 && S_ISREG(st.st_mode);
+  nx_str_free(&name);
+  return found;
+}
+
+static inline void sc_eprintln(Str s) {
+  fflush(stdout);
+  if (s.n) fwrite(s.p, 1, (size_t)s.n, stderr);
+  putc('\n', stderr);
+}
+
+static inline int64_t sc_write_fd(int fd, Str text, String *error) {
+  fflush(stdout);
+  int64_t done = 0;
+  while (done < text.n) {
+    ssize_t count = write(fd, text.p + done, (size_t)(text.n - done));
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) {
+      const char *op = fd == 1 ? "write stdout" : "write stderr";
+      String empty = nx_str_new();
+      *error = count < 0 ? sc_read_error(op, &empty, errno) :
+        nx_str_from(nx_str_text("write made no progress"));
+      return -1;
+    }
+    done += count;
+  }
+  return done;
+}
