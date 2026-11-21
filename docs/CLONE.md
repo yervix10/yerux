@@ -43,8 +43,7 @@ downstream sees plain impls and errors point at the `derive` line.
 - `Show`: `Person { name: Ana, tags: [a], age: 30 }`, `Circle(3)`, `Dot` (fields shown with `{x}`).
 - Every field type must implement the trait (`tests/e1033_derive_field_not_clone.yx`); an unknown trait or type
   gives the usual error (`e1032`, `e1034`). `Ordered`, `Hash`, `Drop` are not derivable.
-- Generic structs/enums cannot be derived (generic user impls are not supported); write the impl by hand
-  for a concrete type. A manual `impl Clone for X { .. }` still works.
+- Generic structs/enums can be derived too (`derive Clone for Pair` gives `impl<A: Clone, B: Clone> Clone for Pair<A, B>`). A manual `impl Clone for X { .. }` still works.
 
 ## Limits
 

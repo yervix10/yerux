@@ -1,0 +1,16 @@
+error: unknown trait 'Nope' in the bound of T
+ --> tests/e1037_generic_impl_unknown_bound.yx:3:9
+  |
+3 | impl<T: Nope> Stack<T> {
+  |         ^^^^
+  = known traits: Copy, Equal, Ordered, Show, Drop, Clone, Hash
+  = help: declare it with `trait Name { fn method(view self) -> Int }`
+
+error: type Stack<Int> has no method 'size'
+ --> tests/e1037_generic_impl_unknown_bound.yx:9:9
+  |
+9 |   print(s.size())
+  |         ^^^^^^^^
+  = 'size' needs T: Nope, but Int does not implement Nope
+
+2 error(s). Nothing was generated.

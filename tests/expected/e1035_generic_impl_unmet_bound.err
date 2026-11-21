@@ -1,0 +1,9 @@
+error: type Stack<Plain> has no method 'has'
+  --> tests/e1035_generic_impl_unmet_bound.yx:18:9
+   |
+18 |   print(s.has(p))
+   |         ^^^^^^^^
+   = 'has' needs T: Equal, but Plain does not implement Equal
+   = help: add `impl Equal for Plain { .. }`
+
+1 error(s). Nothing was generated.

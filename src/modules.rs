@@ -246,7 +246,7 @@ impl Loader {
         }
         self.trace(file, "module", &[]);
         let toks = match lex(&src) {
-            Ok(t) => t,
+            Ok(t) => crate::syntax::expand_derives(t),
             Err(d) => {
                 self.trace(file, "error", &["lex"]);
                 self.report(file, d);

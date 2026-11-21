@@ -1,0 +1,14 @@
+struct Stack<T> { items: List<T> }
+
+impl<T> Stack<T> {
+  fn push(mut self, x: T) { self.items.push(move x) }
+}
+
+impl<T: Equal> Stack<T> {
+  fn push(mut self, x: T) { self.items.push(move x) }
+}
+
+fn main() {
+  var s = Stack<Int> { items: List<Int>.new() }
+  s.push(1)
+}

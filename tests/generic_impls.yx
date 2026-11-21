@@ -1,0 +1,74 @@
+trait Area { fn area(view self) -> Int }
+struct Sq { s: Int }
+impl Area for Sq { fn area(view self) -> Int { return self.s * self.s } }
+
+struct Stack<T> { items: List<T> }
+
+impl<T> Stack<T> {
+  fn new() -> Stack<T> { return Stack { items: List<T>.new() } }
+  fn push(mut self, x: T) { self.items.push(move x) }
+  fn len(view self) -> Int { return self.items.len() }
+  fn pop(mut self) -> T { return self.items.pop() }
+}
+
+impl<T: Equal> Stack<T> {
+  fn has(view self, x: view T) -> Bool { return self.items.contains(x) }
+}
+
+impl<T: Area> Stack<T> {
+  fn total(view self) -> Int {
+    var s = 0
+    var i = 0
+    while i < self.items.len() {
+      s = s + self.items.at(i).area()
+      i = i + 1
+    }
+    return s
+  }
+}
+
+impl<T: Show> Show for Stack<T> {
+  fn show(view self) -> String { return "Stack{self.items}" }
+}
+
+impl<T: Clone> Clone for Stack<T> {
+  fn clone(view self) -> Stack<T> { return Stack { items: self.items.clone() } }
+}
+
+struct Pair<A, B> { a: A, b: B }
+derive Clone, Equal, Show for Pair
+
+enum Tree<T> { Leaf, Node(T, T) }
+derive Clone, Equal, Show for Tree
+
+fn main() {
+  var s = Stack<Int>.new()
+  s.push(1)
+  s.push(2)
+  print(s.has(2))
+  print(s.show())
+  let c = s.clone()
+  s.push(3)
+  print(c.len())
+  print(s.len())
+  print(s.pop())
+  var q = Stack<Sq>.new()
+  q.push(Sq { s: 3 })
+  q.push(Sq { s: 4 })
+  print(q.total())
+  var names = Stack<String>.new()
+  names.push(String.from("a"))
+  names.push(String.from("b"))
+  let n2 = names.clone()
+  print(n2.show())
+  let p = Pair { a: 1, b: String.from("x") }
+  let p2 = p.clone()
+  print(p == p2)
+  print(p2.show())
+  let t = Tree.Node(1, 2)
+  let t2 = t.clone()
+  print(t == t2)
+  print(t2.show())
+  let tl: Tree<Int> = Tree.Leaf
+  print(tl.show())
+}

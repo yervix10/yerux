@@ -1,0 +1,8 @@
+error: method 'push' is defined twice for overlapping impls of Stack<T>
+ --> tests/e1036_generic_impl_duplicate.yx:8:6
+  |
+8 |   fn push(mut self, x: T) { self.items.push(move x) }
+  |      ^^^^
+  = two `impl` blocks of the same generic type cannot both define a method with this name, even with different bounds
+
+1 error(s). Nothing was generated.

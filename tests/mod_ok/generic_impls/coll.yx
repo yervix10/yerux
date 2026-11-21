@@ -1,0 +1,14 @@
+pub struct Stack<T> { items: List<T> }
+
+impl<T> Stack<T> {
+  fn new() -> Stack<T> { return Stack { items: List<T>.new() } }
+  fn push(mut self, x: T) { self.items.push(move x) }
+  fn len(view self) -> Int { return self.items.len() }
+}
+
+impl<T: Show> Show for Stack<T> {
+  fn show(view self) -> String { return "Stack{self.items}" }
+}
+
+pub struct Pair<A, B> { a: A, b: B }
+derive Clone, Equal, Show for Pair
