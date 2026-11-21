@@ -1,0 +1,9 @@
+error: cannot use 'f': it was already moved
+ --> tests/e986_fs_use_after_close.yx:7:11
+  |
+7 |   let n = f.write_str("late")?
+  |           ^
+  = 'f' was moved on line 6
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

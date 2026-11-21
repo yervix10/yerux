@@ -5,32 +5,30 @@ x86-64 native backend and the C backend (oracle), raw syscalls, no libc on the n
 is an `io.IoError` value (`Result<T, io.IoError>`). `--target windows` / `aarch64` refuse these modules at
 compile time (`tests/io_targets.sh`).
 
-## No user-defined `Drop`: handles are closed explicitly
+## Handles close themselves (`Drop`)
 
-Yerux has no way for user code to run something when a value is dropped (no `Drop` trait; the drop glue
-only frees memory, joins threads and unlocks guards). So file handles follow the "explicit close that
-consumes the handle" pattern:
+`fs.File` implements `Drop` (see DROP.md): its descriptor is closed when the value goes away, on scope exit,
+early `return`/`?`, a conditional move that did not happen, or when a `List`/struct holding it is destroyed.
+`Reader` and `Writer` own a `File`, so they close it too; a `Writer` first writes out its pending buffer
+(`Drop for Writer`), so a Writer dropped without `finish` no longer loses bytes.
 
-- `fs.close(move f)` consumes the `File` and reports the error of `close(2)`; `fs.close_reader(move r)` and
-  `fs.finish(move w)` do the same for a `Reader` / `Writer` (the latter flushes first).
-- A handle that is simply dropped **leaks its file descriptor** (its memory is freed normally); a `Writer`
-  that is dropped **loses whatever is still buffered**. The compiler cannot warn about it. Move-only
-  ownership at least prevents closing twice or using a closed handle (`close` takes the value).
-- Functions that open a file internally (`read_bytes`, `write_bytes`, `copy`, `open_reader` ...) close it
-  before returning, on every path.
-
-(A first version of this work added a general `impl Drop`; it was removed on request. It is in the git
-history of this branch, commit 1b6b49f and its revert, if the language ever wants it.)
+- Explicit forms stay, for when you want the error: `fs.close(move f)`, `fs.close_reader(move r)`,
+  `fs.finish(move w)` (flush + close) return `Result<Int, IoError>`. Errors from close/flush done by a
+  destructor are ignored (a destructor cannot report them).
+- After an explicit close the handle is consumed, so there is no double close (`fs.close` then use is a
+  compile error, `e986`); the destructor of the consumed value finds fd -1 and does nothing.
+- A field cannot be moved out of a `Writer` (it has a destructor).
+- Functions that open a file internally close it before returning, on every path.
 
 ## `std.fs` file handles
 
 ```
 var f = fs.create("out.bin")?           // fs.File: owns the descriptor
 let n = f.write(bytes)?                 // bytes: List<UInt8>, [UInt8; N] or x[a..b]
-let r = fs.close(move f)?               // required: nothing closes it automatically
+let r = fs.close(move f)?               // optional: closes early and reports close(2); otherwise drop closes it
 ```
 
-`pub struct File { fd: Int, path: String }` (owned: move-only, no automatic close). Opening:
+`pub struct File { fd: Int, path: String }` (owned: move-only, closes its fd on drop). Opening:
 
 | Function | Result | Notes |
 |---|---|---|
@@ -38,7 +36,7 @@ let r = fs.close(move f)?               // required: nothing closes it automatic
 | `create(path)` | | write, create, truncate (0644) |
 | `open_append(path)` | | append, create |
 | `options()` / `open_with(path, o)` | | `OpenOptions { read, write, append, create, truncate, create_new, mode }`; nonsense combinations are `InvalidInput`; `create_new` on an existing file is `AlreadyExists` |
-| `close(f)` | `Result<Int, IoError>` | explicit close, consumes the handle (`fs.close(move f)`) |
+| `close(f)` | `Result<Int, IoError>` | explicit close, consumes the handle (`fs.close(move f)`); dropping does it silently |
 
 Methods (`f` must be `var`): `read(buf: mut [UInt8]) -> Result<Int>` (0 at end), `read_bytes(max) ->
 Result<List<UInt8>>`, `read_to_end() -> Result<List<UInt8>>`, `read_to_string() -> Result<String>`,
@@ -60,8 +58,8 @@ block first and reads unpack them: O(n) extra copying.
   Result<Option<UInt8>>`, `read(buf: mut [UInt8])`, `read_to_string()`.
 - `writer(f: File) -> Writer`, `create_writer(path) -> Result<Writer>`: 64 KiB buffer; `write_str`,
   `write_line`, `write_byte`, `write(data: view [UInt8])`, `flush() -> Result<Int>`. A write bigger than the
-  buffer goes straight to the file. **Call `fs.finish(move w) -> Result<Int>`** (flush + close, errors
-  reported); a dropped Writer loses its buffered bytes.
+  buffer goes straight to the file. `fs.finish(move w) -> Result<Int>` (flush + close, errors
+  reported); a dropped Writer flushes and closes, ignoring errors.
 - Both own their File and keep their buffer in an owned String.
 
 ### Permissions and links
@@ -70,7 +68,7 @@ block first and reads unpack them: O(n) extra copying.
 `read_link(path) -> Result<String>` (`InvalidInput` when not a link; any length), `hard_link(target, link)`.
 `symlink_metadata` / `read_dir_entries` report links as `FileKind.Symlink`; `remove_dir_all` never follows them.
 
-Tests: `tests/fs_handles.yx` (3000 open/close pairs with no descriptor leak, `/proc/self/fd` counted
+Tests: `tests/fs_autoclose.yx` (scope, early return, `?`, conditional move, List/struct, 3000 opens without losing fds, Writer dropped without finish), `e986`/`e987` (errors), `tests/fs_handles.yx` (3000 open/close pairs with no descriptor leak, `/proc/self/fd` counted
 before/after), `tests/fs_buffered.yx`, `tests/fs_links.yx`.
 
 ## `std.env` set / remove
@@ -110,6 +108,6 @@ reported as an unqualified use. Test: `tests/mod_ok/variant_type_names`.
 
 ## Not done
 
-Automatic close/flush on drop (needs a language-level `Drop`), `Duration` operators,
+`Duration` operators,
 byte-packed `List<UInt8>` (binary I/O copies), `readv`/`writev`, file locking, `mmap`, `Reader`/`Writer`
 over stdin/stdout, propagating `env.set` to child processes (no spawn API), Windows/aarch64 implementations.

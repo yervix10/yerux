@@ -1,0 +1,24 @@
+scope 4
+early 0
+late 2
+q err 2
+after basic: true
+moved 1
+kept 0
+after cond: true
+held: 5
+after clear: true
+holder: 1 7
+after struct: true
+close ok 0
+close ok 0
+line ok
+after reader: true
+after 3000: true
+dropped writer 14
+pending bytes
+
+big 208890
+finish ok
+once
+end: true

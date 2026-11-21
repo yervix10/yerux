@@ -1,0 +1,9 @@
+error: cannot move 'w.file' out of 'w': a field cannot be moved out of an owned fs.Writer
+ --> tests/e987_fs_move_out_of_drop.yx:5:10
+  |
+5 |   return move w.file
+  |          ^^^^^^^^^^^
+  = `move` takes a whole variable; moving one field would leave the struct half freed
+  = help: borrow the field instead (pass 'w.file' as `view`/`mut`, or call a method on it), or move all of 'w'
+
+1 error(s). Nothing was generated.

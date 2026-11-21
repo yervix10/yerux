@@ -1,0 +1,157 @@
+// std.fs automatic close: File closes its fd on drop, Reader/Writer flush and close on drop
+import std.fs
+import std.io
+
+fn open_fds() -> Int {
+  match fs.read_dir("/proc/self/fd") {
+    Ok(l) => { return l.len() }
+    Err(e) => { return -1 }
+  }
+}
+
+struct Holder {
+  f: fs.File,
+  tag: Int,
+}
+
+fn scope_only(path: view String) -> Result<Int, io.IoError> {
+  var f = fs.open(path)?
+  let b = f.read_bytes(4)?
+  return Ok(b.len())
+}
+
+fn early(path: view String, bail: Bool) -> Result<Int, io.IoError> {
+  var f = fs.open(path)?
+  if bail {
+    return Ok(0)
+  }
+  let b = f.read_bytes(2)?
+  return Ok(b.len())
+}
+
+fn question(path: view String) -> Result<Int, io.IoError> {
+  var f = fs.open(path)?
+  let missing = fs.open("/nonexistent/yerux")?
+  return Ok(1)
+}
+
+fn take(f: fs.File) -> Int {
+  return f.raw_fd() * 0 + 1
+}
+
+fn cond_move(path: view String, give: Bool) -> Result<Int, io.IoError> {
+  let f = fs.open(path)?
+  if give {
+    return Ok(take(move f))
+  }
+  return Ok(0)
+}
+
+fn write_dropped(path: view String) -> Result<Int, io.IoError> {
+  var w = fs.create_writer(path)?
+  let a = w.write_str("pending ")?
+  let b = w.write_line("bytes")?
+  return Ok(a + b)
+}
+
+fn main() {
+  let dir = "/tmp/yerux_fs_autoclose_{io.process_id()}"
+  let path = "{dir}/a.txt"
+  match fs.create_dir(dir) { Ok(n) => {} Err(e) => { print("mkdir failed") } }
+  match fs.write(path, "abcdef") { Ok(n) => {} Err(e) => { print("write failed") } }
+  let base = open_fds()
+
+  // scope exit and early return
+  match scope_only(path) { Ok(n) => { print("scope {n}") } Err(e) => { print("scope err") } }
+  match early(path, true) { Ok(n) => { print("early {n}") } Err(e) => { print("early err") } }
+  match early(path, false) { Ok(n) => { print("late {n}") } Err(e) => { print("late err") } }
+  match question(path) { Ok(n) => { print("q {n}") } Err(e) => { print("q err {e.code}") } }
+  print("after basic: {open_fds() == base}")
+
+  // conditional move: callee closes when given, scope closes otherwise
+  match cond_move(path, true) { Ok(n) => { print("moved {n}") } Err(e) => { print("err") } }
+  match cond_move(path, false) { Ok(n) => { print("kept {n}") } Err(e) => { print("err") } }
+  print("after cond: {open_fds() == base}")
+
+  // inside a List and a struct
+  var files = List<fs.File>.new()
+  var i = 0
+  while i < 5 {
+    match fs.open(path) { Ok(f) => { files.push(move f) } Err(e) => { print("open err") } }
+    i = i + 1
+  }
+  print("held: {open_fds() - base}")
+  files.clear()
+  print("after clear: {open_fds() == base}")
+  match fs.open(path) {
+    Ok(f) => {
+      let h = Holder { f: move f, tag: 7 }
+      print("holder: {open_fds() - base} {h.tag}")
+    }
+    Err(e) => { print("err") }
+  }
+  print("after struct: {open_fds() == base}")
+
+  // explicit close still works and reports; the later drop does not close twice
+  match fs.open(path) {
+    Ok(f) => { report_close(fs.close(move f)) }
+    Err(e) => { print("err") }
+  }
+  match fs.open_reader(path) {
+    Ok(r) => { report_close(fs.close_reader(move r)) }
+    Err(e) => { print("err") }
+  }
+  match fs.open_reader(path) {
+    Ok(r) => {
+      var rr = move r
+      match rr.read_line() { Ok(l) => { print("line ok") } Err(e) => { print("err") } }
+    }
+    Err(e) => { print("err") }
+  }
+  print("after reader: {open_fds() == base}")
+
+  // 3000 openings without explicit close
+  var k = 0
+  while k < 3000 {
+    match fs.open(path) { Ok(f) => { var g = move f } Err(e) => { print("open err {e.code}") } }
+    match fs.open_reader(path) { Ok(r) => { var g = move r } Err(e) => { print("open err {e.code}") } }
+    k = k + 1
+  }
+  print("after 3000: {open_fds() == base}")
+
+  // a Writer dropped without finish writes everything and closes
+  let out = "{dir}/out.txt"
+  match write_dropped(out) { Ok(n) => { print("dropped writer {n}") } Err(e) => { print("err") } }
+  match fs.read_to_string(out) { Ok(s) => { print(s) } Err(e) => { print("read err") } }
+  match fs.create_writer(out) {
+    Ok(w) => {
+      var x = move w
+      var j = 0
+      while j < 20000 {
+        match x.write_line("line {j}") { Ok(n) => {} Err(e) => { print("w err") } }
+        j = j + 1
+      }
+    }
+    Err(e) => { print("err") }
+  }
+  match fs.read_to_string(out) { Ok(s) => { print("big {s.len()}") } Err(e) => { print("read err") } }
+  // finish then drop: nothing written twice
+  match fs.create_writer(out) {
+    Ok(w) => {
+      var x = move w
+      let a = x.write_str("once")
+      match fs.finish(move x) { Ok(n) => { print("finish ok") } Err(e) => { print("finish err") } }
+    }
+    Err(e) => { print("err") }
+  }
+  match fs.read_to_string(out) { Ok(s) => { print(s) } Err(e) => { print("read err") } }
+  print("end: {open_fds() == base}")
+  match fs.remove_dir_all(dir) { Ok(n) => {} Err(e) => { print("cleanup failed") } }
+}
+
+fn report_close(r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => { print("close ok {n}") }
+    Err(e) => { print("close err {e.code}") }
+  }
+}
