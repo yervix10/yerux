@@ -3,14 +3,18 @@
 // Diagnostics come from the real front end (module loader, parser, checker) run on the editor's buffers
 // (`modules::set_overlay`). Symbols, definition and the shape of hover use the lexer only, so they keep
 // working while the file does not compile; the *types* shown by hover come from the checker.
+mod ide;
+
 use crate::json::{self, n, obj, s, Json};
 use crate::syntax::{self, Tok, Token};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 // ───────────────────────── documents ─────────────────────────
 
-struct Doc {
+pub struct Doc {
     text: String,
     lines: Vec<Vec<char>>,
     toks: Vec<Token>,
@@ -20,7 +24,7 @@ struct Doc {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum SymKind {
+pub enum SymKind {
     Fn,
     Method,
     Struct,
@@ -33,7 +37,7 @@ enum SymKind {
     Variant,
 }
 
-struct Sym {
+pub struct Sym {
     name: String,
     kind: SymKind,
     /// token indices: the name, the first token of the item (`pub` included) and its last token
@@ -326,16 +330,121 @@ impl Doc {
 // ───────────────────────── symbol resolution (lexical) ─────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Decl {
+pub enum Decl {
     Let,
     For,
     Param,
+    /// a name of a tuple pattern: `let (a, b) = ..`
+    Tuple,
+    /// a closure parameter: `|x, y| ..`
+    Closure,
+    /// a name bound by a `match` arm pattern: `Some(v) =>`
+    Arm,
 }
 
-/// Is token `i` the name of a declaration (`let x`, `for x`, parameter `x:`)?
+fn is_operand_end(t: &Token) -> bool {
+    match &t.t {
+        Tok::Id(s) => !syntax::KW.contains(&s.as_str()) || s == "self" || s == "true" || s == "false",
+        Tok::Num(_) | Tok::NumT(..) | Tok::Float(..) | Tok::Str(_) | Tok::Char(_) => true,
+        Tok::Sym(s) => *s == ")" || *s == "]",
+        Tok::Eof => false,
+    }
+}
+
+/// For a closure parameter at `i`: the index of the closing `|` of its parameter list.
+fn closure_bars(toks: &[Token], i: usize) -> Option<(usize, usize)> {
+    let ok = |t: &Token| match &t.t {
+        Tok::Id(_) => true,
+        Tok::Sym(s) => [",", ":", "<", ">", "(", ")", "[", "]", "&"].contains(s),
+        _ => false,
+    };
+    let mut k = i;
+    loop {
+        if k == 0 {
+            return None;
+        }
+        k -= 1;
+        if is_sym(&toks[k], "|") {
+            break;
+        }
+        if !ok(&toks[k]) || toks[k].pos.line + 3 < toks[i].pos.line {
+            return None;
+        }
+    }
+    // the `|` must start a closure, not be a binary or: nothing that ends an operand before it
+    if k > 0 && is_operand_end(&toks[k - 1]) && !is_id(&toks[k - 1], "move") {
+        return None;
+    }
+    let mut e = i + 1;
+    while e < toks.len() {
+        if is_sym(&toks[e], "|") {
+            return Some((k, e));
+        }
+        if !ok(&toks[e]) {
+            return None;
+        }
+        e += 1;
+    }
+    None
+}
+
+/// End (token index) of the body of the closure whose parameter list closes at bar `close`.
+fn closure_end(toks: &[Token], close: usize) -> usize {
+    if close + 1 >= toks.len() {
+        return close;
+    }
+    if is_sym(&toks[close + 1], "{") {
+        return matching(toks, close + 1);
+    }
+    let line = toks[close].pos.line;
+    let mut d = 0i32;
+    let mut j = close + 1;
+    while j < toks.len() {
+        let t = &toks[j];
+        if is_sym(t, "(") || is_sym(t, "[") || is_sym(t, "{") {
+            d += 1;
+        } else if is_sym(t, ")") || is_sym(t, "]") || is_sym(t, "}") {
+            d -= 1;
+            if d < 0 {
+                return j - 1;
+            }
+        } else if d == 0 && (is_sym(t, ",") || t.pos.line > line) {
+            return j - 1;
+        }
+        j += 1;
+    }
+    toks.len() - 1
+}
+
+/// The `(` that encloses `from` when only pattern tokens lie between them.
+fn pattern_open(toks: &[Token], from: usize) -> Option<usize> {
+    let mut d = 0i32;
+    let mut k = from;
+    while k > 0 {
+        k -= 1;
+        let t = &toks[k];
+        if is_sym(t, ")") {
+            d += 1;
+        } else if is_sym(t, "(") {
+            if d == 0 {
+                return Some(k);
+            }
+            d -= 1;
+        } else if !(matches!(&t.t, Tok::Id(_)) || is_sym(t, ",")) {
+            return None;
+        }
+    }
+    None
+}
+
+/// Is token `i` the name of a declaration (`let x`, `for x`, a parameter, a tuple-pattern name, a closure
+/// parameter, a name bound by a match arm)?
 fn decl_at(doc: &Doc, i: usize) -> Option<Decl> {
     let toks = &doc.toks;
-    id_name(&toks[i])?;
+    let name = id_name(&toks[i])?;
+    if syntax::KW.contains(&name) && name != "self" {
+        return None;
+    }
     if i > 0 && (is_id(&toks[i - 1], "let") || is_id(&toks[i - 1], "var")) {
         return Some(Decl::Let);
     }
@@ -353,13 +462,67 @@ fn decl_at(doc: &Doc, i: usize) -> Option<Decl> {
             } else if is_sym(&toks[j], "(") {
                 if d == 0 {
                     // `fn name (` or `fn name <T> (`
-                    return (j >= 2 && is_id(&toks[j - 2], "fn") || (j >= 1 && is_id(&toks[j - 1], "fn"))
-                        || header_before(toks, j))
-                    .then_some(Decl::Param);
+                    if (j >= 2 && is_id(&toks[j - 2], "fn")) || (j >= 1 && is_id(&toks[j - 1], "fn")) || header_before(toks, j) {
+                        return Some(Decl::Param);
+                    }
+                    break;
                 }
                 d -= 1;
             } else if is_sym(&toks[j], "{") || is_sym(&toks[j], "}") {
-                return None;
+                break;
+            }
+        }
+    }
+    // `let (a, b)` / `for (a, b) in`
+    if i > 0 && (is_sym(&toks[i - 1], "(") || is_sym(&toks[i - 1], ",") || is_id(&toks[i - 1], "mut")) {
+        let mut open = pattern_open(toks, i + 1);
+        while let Some(o) = open {
+            let before = o.checked_sub(1).map(|b| &toks[b]);
+            if let Some(b) = before {
+                if is_id(b, "let") || is_id(b, "var") || is_id(b, "for") || (is_id(b, "mut") && o >= 2 && is_id(&toks[o - 2], "for")) {
+                    return Some(Decl::Tuple);
+                }
+                if is_sym(b, "(") || is_sym(b, ",") {
+                    open = pattern_open(toks, o);
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+    // closure parameter
+    if closure_bars(toks, i).is_some() {
+        return Some(Decl::Closure);
+    }
+    // match-arm binding: lowercase name inside a pattern that ends with `=>`
+    let first = name.chars().next().unwrap_or('A');
+    if (first.is_lowercase() || first == '_') && name != "_" && name != "self" {
+        let next_ok = i + 1 < toks.len() && !(is_sym(&toks[i + 1], "(") || is_sym(&toks[i + 1], ".") || is_sym(&toks[i + 1], "{") || is_sym(&toks[i + 1], ":"));
+        let prev_ok = i > 0 && !is_sym(&toks[i - 1], ".");
+        if next_ok && prev_ok {
+            let pat = |t: &Token| matches!(&t.t, Tok::Id(_) | Tok::Num(_) | Tok::Str(_) | Tok::Char(_)) || [",", "(", ")", "|", "..", "..=", "."].iter().any(|s| is_sym(t, s));
+            // forward to `=>` through pattern tokens
+            let mut e = i + 1;
+            while e < toks.len() && pat(&toks[e]) && !is_id(&toks[e], "if") && toks[e].pos.line == toks[i].pos.line {
+                e += 1;
+            }
+            if e < toks.len() && is_sym(&toks[e], "=>") {
+                // backward to the arm start: `{`, `}` or a `,` between arms
+                let mut d = 0i32;
+                let mut k = i;
+                while k > 0 {
+                    k -= 1;
+                    let u = &toks[k];
+                    if is_sym(u, ")") {
+                        d += 1;
+                    } else if is_sym(u, "(") {
+                        d -= 1;
+                    } else if (is_sym(u, "{") || is_sym(u, "}") || is_sym(u, ",")) && d <= 0 {
+                        return Some(Decl::Arm);
+                    } else if !pat(u) {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -385,69 +548,63 @@ fn all_syms<'a>(syms: &'a [Sym], out: &mut Vec<&'a Sym>) {
     }
 }
 
-/// Where is the identifier at token `i` declared? A token index in the same document.
-fn declaration_of(doc: &Doc, i: usize) -> Option<usize> {
-    let toks = &doc.toks;
-    let name = id_name(&toks[i])?;
-    if decl_at(doc, i).is_some() {
-        return Some(i);
-    }
-    let after_dot = i > 0 && is_sym(&toks[i - 1], ".");
-    if !after_dot {
-        // locals: walk back through the enclosing blocks of the function around `i`
-        let mut flat = vec![];
-        all_syms(&doc.syms, &mut flat);
-        let owner = flat
-            .iter()
-            .filter(|s| matches!(s.kind, SymKind::Fn | SymKind::Method) && s.start <= i && i <= s.end)
-            .min_by_key(|s| s.end - s.start);
-        if let Some(f) = owner {
-            let mut depth = 0i32; // closed blocks we are skipping
-            let mut j = i;
-            while j > f.start {
-                j -= 1;
-                let t = &toks[j];
-                if is_sym(t, "}") {
-                    depth += 1;
-                } else if is_sym(t, "{") {
-                    if depth > 0 {
-                        depth -= 1;
-                    }
-                } else if depth == 0 && id_name(t) == Some(name) && decl_at(doc, j).is_some() {
-                    return Some(j);
-                }
-            }
-            // parameters
-            for j in f.start..i {
-                if is_sym(&toks[j], "{") {
-                    break;
-                }
-                if id_name(&toks[j]) == Some(name) && decl_at(doc, j) == Some(Decl::Param) {
-                    return Some(j);
-                }
-            }
-        }
-        // items of the file
-        for s in &doc.syms {
-            if s.name == name && !matches!(s.kind, SymKind::Impl) {
-                return Some(s.name_tok);
-            }
-        }
-        for s in &doc.syms {
-            for c in &s.children {
-                if c.kind == SymKind::Variant && c.name == name {
-                    return Some(c.name_tok);
-                }
-            }
-        }
-        return None;
-    }
-    // member: `x.name`: a method or field of some type of this file
+/// The innermost function or method whose text contains token `i`.
+fn enclosing_fn(doc: &Doc, i: usize) -> Option<&Sym> {
     let mut flat = vec![];
     all_syms(&doc.syms, &mut flat);
-    flat.iter()
-        .find(|s| s.name == name && matches!(s.kind, SymKind::Method | SymKind::Field))
-        .map(|s| s.name_tok)
+    flat.into_iter()
+        .filter(|s| matches!(s.kind, SymKind::Fn | SymKind::Method) && s.start <= i && i <= s.end)
+        .min_by_key(|s| s.end - s.start)
+}
+
+/// Declarations (token indices of their names) visible at token `i`, nearest first: the locals of the
+/// enclosing blocks of its function, then its parameters.
+fn visible_locals(doc: &Doc, i: usize) -> Vec<usize> {
+    let toks = &doc.toks;
+    let mut out = vec![];
+    let Some(f) = enclosing_fn(doc, i) else {
+        return out;
+    };
+    let mut depth = 0i32; // closed blocks we are skipping
+    let mut skip_line = 0usize; // header line of a closed block: its `for x in ..`/`Some(v) =>` names are not visible
+    let mut j = i;
+    while j > f.start {
+        j -= 1;
+        let t = &toks[j];
+        if is_sym(t, "}") {
+            depth += 1;
+        } else if is_sym(t, "{") {
+            if depth > 0 {
+                depth -= 1;
+                // a struct literal (`Point { x: 1 }`) is not a block with a header of its own
+                let literal = j > 0 && id_name(&toks[j - 1]).is_some_and(|x| x.chars().next().is_some_and(|c| c.is_uppercase()));
+                if depth == 0 && !literal {
+                    skip_line = t.pos.line;
+                }
+            }
+        } else if depth == 0 && t.pos.line != skip_line && id_name(t).is_some() {
+            match decl_at(doc, j) {
+                Some(Decl::Param) | None => {}
+                Some(Decl::Closure) => {
+                    if let Some((_, close)) = closure_bars(toks, j) {
+                        if i <= closure_end(toks, close) {
+                            out.push(j);
+                        }
+                    }
+                }
+                Some(_) => out.push(j),
+            }
+        }
+    }
+    for j in f.start..i {
+        if is_sym(&toks[j], "{") {
+            break;
+        }
+        if id_name(&toks[j]).is_some() && decl_at(doc, j) == Some(Decl::Param) {
+            out.push(j);
+        }
+    }
+    out
 }
 
 /// `import a.b as c` lines: (alias, module path)
@@ -556,11 +713,15 @@ struct Analysis {
 }
 
 /// Run the compiler front end on the document at `path` with the open buffers overlaid.
-fn analyze(path: &str, docs: &HashMap<String, Doc>, uri_paths: &HashMap<String, String>) -> Analysis {
-    let overlay: Vec<(String, String)> = docs
+fn analyze(path: &str, docs: &HashMap<String, Doc>, uri_paths: &HashMap<String, String>, replace: Option<String>) -> Analysis {
+    let mut overlay: Vec<(String, String)> = docs
         .iter()
         .filter_map(|(u, d)| uri_paths.get(u).map(|p| (p.clone(), d.text.clone())))
         .collect();
+    if let Some(text) = replace {
+        overlay.retain(|(p, _)| p != path);
+        overlay.push((path.to_string(), text));
+    }
     crate::modules::set_overlay(overlay);
     let entry = path.to_string();
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -606,6 +767,9 @@ struct Server {
     docs: HashMap<String, Doc>,
     paths: HashMap<String, String>,
     shutdown: bool,
+    /// documents whose diagnostics are waiting for the typing pause, and when it ends
+    pending: Vec<String>,
+    deadline: Option<Instant>,
 }
 
 fn uri_to_path(uri: &str) -> String {
@@ -738,11 +902,7 @@ fn item_signature(doc: &Doc, name_tok: usize) -> Option<String> {
             text
         }
         SymKind::Field | SymKind::Variant => {
-            let mut text = doc.slice(sym.start, sym.end);
-            if sym.kind == SymKind::Variant {
-                text = format!("{}.{}", "variant", text);
-            }
-            text
+            doc.slice(sym.start, sym.end)
         }
         SymKind::Const | SymKind::Alias => doc.slice(sym.start, sym.end),
     })
@@ -754,7 +914,7 @@ impl Server {
             Some(p) => p.clone(),
             None => return,
         };
-        let an = analyze(&path, &self.docs, &self.paths);
+        let an = analyze(&path, &self.docs, &self.paths, None);
         let mut diags = vec![];
         if let Some(doc) = self.docs.get_mut(uri) {
             let has_main = doc.syms.iter().any(|s| s.name == "main" && s.kind == SymKind::Fn);
@@ -788,7 +948,18 @@ impl Server {
     fn open(&mut self, uri: &str, text: String) {
         self.paths.insert(uri.to_string(), uri_to_path(uri));
         self.docs.insert(uri.to_string(), Doc::new(text));
+        self.pending.retain(|u| u != uri);
         self.publish(uri);
+    }
+
+    /// Publish the diagnostics that were waiting for the typing pause.
+    fn flush(&mut self) {
+        self.deadline = None;
+        for u in std::mem::take(&mut self.pending) {
+            if self.docs.contains_key(&u) {
+                self.publish(&u);
+            }
+        }
     }
 
     fn handle(&mut self, msg: &Json) -> bool {
@@ -803,7 +974,30 @@ impl Server {
                     obj(vec![
                         (
                             "textDocumentSync",
-                            obj(vec![("openClose", Json::Bool(true)), ("change", n(1)), ("save", Json::Bool(true))]),
+                            obj(vec![("openClose", Json::Bool(true)), ("change", n(2)), ("save", Json::Bool(true))]),
+                        ),
+                        (
+                            "completionProvider",
+                            obj(vec![("triggerCharacters", Json::Arr(vec![s(".")])), ("resolveProvider", Json::Bool(false))]),
+                        ),
+                        (
+                            "signatureHelpProvider",
+                            obj(vec![("triggerCharacters", Json::Arr(vec![s("("), s(",")]))]),
+                        ),
+                        ("referencesProvider", Json::Bool(true)),
+                        ("renameProvider", obj(vec![("prepareProvider", Json::Bool(true))])),
+                        (
+                            "semanticTokensProvider",
+                            obj(vec![
+                                (
+                                    "legend",
+                                    obj(vec![
+                                        ("tokenTypes", Json::Arr(ide::TOKEN_TYPES.iter().map(|x| s(*x)).collect())),
+                                        ("tokenModifiers", Json::Arr(ide::TOKEN_MODIFIERS.iter().map(|x| s(*x)).collect())),
+                                    ]),
+                                ),
+                                ("full", Json::Bool(true)),
+                            ]),
                         ),
                         ("documentSymbolProvider", Json::Bool(true)),
                         ("definitionProvider", Json::Bool(true)),
@@ -824,25 +1018,41 @@ impl Server {
                 None
             }
             "textDocument/didChange" => {
-                let text = params
-                    .get("contentChanges")
-                    .and_then(|c| c.arr())
-                    .and_then(|c| c.last())
-                    .and_then(|c| c.get("text"))
-                    .and_then(|t| t.str())
-                    .map(|t| t.to_string());
-                if let Some(t) = text {
-                    self.open(&uri, t);
+                if let Some(doc) = self.docs.get(&uri) {
+                    let mut text = doc.text.clone();
+                    for ch in params.get("contentChanges").and_then(|c| c.arr()).unwrap_or(&[]) {
+                        let Some(new) = ch.get("text").and_then(|x| x.str()) else { continue };
+                        match ch.get("range") {
+                            Some(r) => {
+                                let pos = |k: &str| -> Option<(usize, usize)> {
+                                    Some((r.path(&format!("{}.line", k))?.int()? as usize, r.path(&format!("{}.character", k))?.int()? as usize))
+                                };
+                                if let (Some(a), Some(b)) = (pos("start"), pos("end")) {
+                                    let (oa, ob) = (byte_offset(&text, a), byte_offset(&text, b));
+                                    text.replace_range(oa..ob.max(oa), new);
+                                }
+                            }
+                            None => text = new.to_string(),
+                        }
+                    }
+                    self.docs.insert(uri.clone(), Doc::new(text));
+                    // diagnostics wait for a pause in typing
+                    if !self.pending.contains(&uri) {
+                        self.pending.push(uri.clone());
+                    }
+                    self.deadline = Some(Instant::now() + debounce());
                 }
                 None
             }
             "textDocument/didSave" => {
+                self.pending.retain(|u| *u != uri);
                 if self.docs.contains_key(&uri) {
                     self.publish(&uri);
                 }
                 None
             }
             "textDocument/didClose" => {
+                self.pending.retain(|u| *u != uri);
                 self.docs.remove(&uri);
                 self.paths.remove(&uri);
                 send(&obj(vec![
@@ -857,6 +1067,24 @@ impl Server {
                 None => Json::Arr(vec![]),
             }),
             "textDocument/definition" => Some(self.definition(&uri, &params)),
+            "textDocument/completion" => Some(self.completion(&uri, &params)),
+            "textDocument/signatureHelp" => Some(self.at_cursor(&uri, &params, ide::signature_help)),
+            "textDocument/references" => Some(self.references(&uri, &params)),
+            "textDocument/prepareRename" | "textDocument/rename" => {
+                let r = self.rename(&uri, &params, method == "textDocument/rename");
+                match (r, id) {
+                    (Ok(v), _) => Some(v),
+                    (Err(m), Some(id)) => {
+                        reply_err(id, -32803, &m);
+                        return true;
+                    }
+                    (Err(_), None) => return true,
+                }
+            }
+            "textDocument/semanticTokens/full" => Some(match self.ctx(&uri) {
+                Some(c) => ide::semantic_tokens(&c),
+                None => Json::Null,
+            }),
             "textDocument/hover" => Some(self.hover(&uri, &params)),
             "textDocument/formatting" => {
                 let Some(d) = self.docs.get(&uri) else {
@@ -899,151 +1127,189 @@ impl Server {
         true
     }
 
-    fn locate(&self, uri: &str, params: &Json) -> Option<(&Doc, usize)> {
+    fn cursor(&self, params: &Json) -> Option<(usize, usize)> {
+        Some((params.path("position.line")?.int()? as usize, params.path("position.character")?.int()? as usize))
+    }
+
+    fn id_under_cursor(&self, uri: &str, params: &Json) -> Option<usize> {
         let doc = self.docs.get(uri)?;
-        let line = params.path("position.line")?.int()? as usize;
-        let ch = params.path("position.character")?.int()? as usize;
-        let i = doc.id_at(line, ch)?;
-        Some((doc, i))
+        let (line, ch) = self.cursor(params)?;
+        doc.id_at(line, ch)
     }
 
-    fn definition(&self, uri: &str, params: &Json) -> Json {
-        let Some((doc, i)) = self.locate(uri, params) else {
-            return Json::Null;
-        };
-        // `alias.name` where `alias` is an imported module: look the item up in that module's file
-        if i >= 2 && is_sym(&doc.toks[i - 1], ".") {
-            if let Some(alias) = id_name(&doc.toks[i - 2]) {
-                if let Some((_, module)) = imports(doc).into_iter().find(|(a, _)| a == alias) {
-                    return self.in_module(uri, &module, id_name(&doc.toks[i]).unwrap_or(""));
-                }
-            }
-        }
-        match declaration_of(doc, i) {
-            Some(d) => obj(vec![("uri", s(uri)), ("range", doc.tok_range(d))]),
-            None => Json::Null,
-        }
-    }
-
-    /// The document of imported module `module` (an open buffer, else the file next to `uri`'s file); `std.*`
-    /// modules are embedded in the compiler and have no file.
-    fn module_doc(&self, uri: &str, module: &str) -> Option<(String, Doc)> {
-        let root = std::path::Path::new(self.paths.get(uri)?).parent()?.to_path_buf();
-        let file = root.join(format!("{}.yx", module.replace('.', "/")));
-        let furi = path_to_uri(&file.to_string_lossy());
-        let text = match self.docs.get(&furi) {
-            Some(d) => d.text.clone(),
-            None => std::fs::read_to_string(&file).ok()?,
-        };
-        Some((furi, Doc::new(text)))
-    }
-
-    fn in_module(&self, uri: &str, module: &str, name: &str) -> Json {
-        match self.module_doc(uri, module) {
-            Some((furi, d)) => d
-                .syms
-                .iter()
-                .find(|x| x.name == name && x.kind != SymKind::Impl)
-                .map_or(Json::Null, |x| obj(vec![("uri", s(&furi)), ("range", d.tok_range(x.name_tok))])),
-            None => Json::Null,
-        }
-    }
-
-    fn hover(&mut self, uri: &str, params: &Json) -> Json {
-        let located = self.locate(uri, params).map(|(_, i)| i);
-        let Some(i) = located else {
-            return Json::Null;
-        };
-        // types come from the checker; refresh them when the buffer changed since the last analysis
+    /// Make sure the checker's types are known for the document (they are dropped by every edit).
+    fn ensure_types(&mut self, uri: &str) {
         if self.docs.get(uri).is_some_and(|d| d.types.is_none()) {
             if let Some(path) = self.paths.get(uri).cloned() {
-                let an = analyze(&path, &self.docs, &self.paths);
+                let an = analyze(&path, &self.docs, &self.paths, None);
                 if let Some(d) = self.docs.get_mut(uri) {
                     d.types = an.types;
                 }
             }
         }
-        let doc = &self.docs[uri];
-        let hover = |text: String, doc: &Doc| {
-            obj(vec![
-                ("contents", obj(vec![("kind", s("markdown")), ("value", s(format!("```yerux\n{}\n```", text)))])),
-                ("range", doc.tok_range(i)),
-            ])
+    }
+
+    fn at_cursor(&self, uri: &str, params: &Json, f: fn(&ide::Ctx, usize, usize) -> Json) -> Json {
+        match (self.ctx(uri), self.cursor(params)) {
+            (Some(c), Some((l, ch))) => f(&c, l, ch),
+            _ => Json::Null,
+        }
+    }
+
+    fn definition(&self, uri: &str, params: &Json) -> Json {
+        let (Some(i), Some(ctx)) = (self.id_under_cursor(uri, params), self.ctx(uri)) else {
+            return Json::Null;
         };
-        if i >= 2 && is_sym(&doc.toks[i - 1], ".") {
-            if let Some(alias) = id_name(&doc.toks[i - 2]) {
-                if let Some((_, module)) = imports(doc).into_iter().find(|(a, _)| a == alias) {
-                    let name = id_name(&doc.toks[i]).unwrap_or("");
-                    let sig = self.module_doc(uri, &module).and_then(|(_, md)| {
-                        let x = md.syms.iter().find(|x| x.name == name && x.kind != SymKind::Impl)?;
-                        item_signature(&md, x.name_tok)
-                    });
-                    return sig.map_or(Json::Null, |sg| hover(sg, doc));
+        match ide::resolve(&ctx, 0, i) {
+            Some(l) => ide::loc_json(&ctx, &l),
+            None => Json::Null,
+        }
+    }
+
+    fn hover(&mut self, uri: &str, params: &Json) -> Json {
+        self.ensure_types(uri);
+        let (Some(i), Some(ctx)) = (self.id_under_cursor(uri, params), self.ctx(uri)) else {
+            return Json::Null;
+        };
+        let Some(l) = ide::resolve(&ctx, 0, i) else {
+            return Json::Null;
+        };
+        let Some(text) = ide::describe(&ctx, &l) else {
+            return Json::Null;
+        };
+        obj(vec![
+            ("contents", obj(vec![("kind", s("markdown")), ("value", s(format!("```yerux\n{}\n```", text)))])),
+            ("range", ctx.doc(0).tok_range(i)),
+        ])
+    }
+
+    fn completion(&mut self, uri: &str, params: &Json) -> Json {
+        self.ensure_types(uri);
+        // typing `p.na` leaves a file that does not compile; the types come from the text without the
+        // member being typed
+        if self.docs.get(uri).is_some_and(|d| d.types.is_none()) {
+            if let (Some((line, ch)), Some(path)) = (self.cursor(params), self.paths.get(uri).cloned()) {
+                let doc = &self.docs[uri];
+                let cs: Vec<char> = doc.lines.get(line).cloned().unwrap_or_default();
+                let (_, c) = doc.from_lsp(line, ch);
+                let mut a = (c - 1).min(cs.len());
+                while a > 0 && (cs[a - 1].is_alphanumeric() || cs[a - 1] == '_') {
+                    a -= 1;
+                }
+                if a > 0 && cs[a - 1] == '.' {
+                    // the line being typed is dropped; the lets before it keep their types
+                    let mut text = String::new();
+                    for (k, l) in doc.lines.iter().enumerate() {
+                        if k > 0 {
+                            text.push('\n');
+                        }
+                        if k != line {
+                            text.extend(l);
+                        }
+                    }
+                    let an = analyze(&path, &self.docs, &self.paths, Some(text));
+                    if let Some(d) = self.docs.get_mut(uri) {
+                        d.types = an.types;
+                    }
                 }
             }
         }
-        let Some(d) = declaration_of(doc, i) else {
+        self.at_cursor(uri, params, ide::completion)
+    }
+
+    fn references(&self, uri: &str, params: &Json) -> Json {
+        let (Some(i), Some(ctx)) = (self.id_under_cursor(uri, params), self.ctx(uri)) else {
             return Json::Null;
         };
-        let name = id_name(&doc.toks[i]).unwrap_or("");
-        let text = match decl_at(doc, d) {
-            Some(Decl::Let) => {
-                let kw = &doc.toks[d - 1];
-                let ty = doc
-                    .types
-                    .as_ref()
-                    .and_then(|t| t.iter().find(|r| r.0 == kw.pos.line && r.1 == kw.pos.col))
-                    .map(|r| r.3.clone());
-                let kw_name = if is_id(kw, "var") { "var" } else { "let" };
-                match ty {
-                    Some(ty) => format!("{} {}: {}", kw_name, name, ty),
-                    None => {
-                        // not checked (the file has errors): show the annotation when there is one
-                        let line = doc.toks[d].pos.line;
-                        let mut e = d;
-                        while e + 1 < doc.toks.len() && doc.toks[e + 1].pos.line == line && !is_sym(&doc.toks[e + 1], "=") {
-                            e += 1;
-                        }
-                        format!("{} {}", kw_name, doc.slice(d, e))
-                    }
-                }
-            }
-            Some(Decl::Param) => {
-                let mut e = d + 1;
-                let mut dd = 0i32;
-                while e + 1 < doc.toks.len() {
-                    let u = &doc.toks[e + 1];
-                    if is_sym(u, "(") || is_sym(u, "<") {
-                        dd += 1;
-                    } else if is_sym(u, ">") {
-                        dd -= 1;
-                    } else if is_sym(u, ")") {
-                        if dd == 0 {
-                            break;
-                        }
-                        dd -= 1;
-                    } else if dd == 0 && is_sym(u, ",") {
-                        break;
-                    }
-                    e += 1;
-                }
-                format!("(parameter) {}", doc.slice(d, e))
-            }
-            Some(Decl::For) => format!("(loop variable) {}", name),
-            None => match item_signature(doc, d) {
-                Some(sig) => sig,
-                None => return Json::Null,
-            },
+        let Some(target) = ide::resolve(&ctx, 0, i) else {
+            return Json::Arr(vec![]);
         };
-        hover(text, doc)
+        let include = params.path("context.includeDeclaration").map_or(true, |b| *b != Json::Bool(false));
+        let turi = ctx.docs[target.doc].uri.clone();
+        let mut out = vec![];
+        let mut refs = ide::references(self, uri, &target, &ctx);
+        if self.docs.contains_key(&turi) && !refs.iter().any(|(u, j, _)| *u == turi && *j == target.tok) {
+            refs.push((turi.clone(), target.tok, true));
+        }
+        refs.sort();
+        for (u, j, _) in refs {
+            if !include && u == turi && j == target.tok {
+                continue;
+            }
+            out.push(obj(vec![("uri", s(&u)), ("range", self.docs[&u].tok_range(j))]));
+        }
+        Json::Arr(out)
+    }
+
+    fn rename(&self, uri: &str, params: &Json, apply: bool) -> Result<Json, String> {
+        let i = self.id_under_cursor(uri, params).ok_or("nothing to rename here")?;
+        let ctx = self.ctx(uri).ok_or("unknown document")?;
+        let fail = |e: ide::RenameError| match e {
+            ide::RenameError::Msg(m) => m,
+        };
+        if !apply {
+            let (_, range) = ide::prepare_rename(&ctx, i).map_err(fail)?;
+            let name = id_name(&ctx.doc(0).toks[i]).unwrap_or("").to_string();
+            return Ok(obj(vec![("range", range), ("placeholder", s(name))]));
+        }
+        let new = params.get("newName").and_then(|x| x.str()).ok_or("missing newName")?;
+        ide::rename(self, uri, i, new).map_err(fail)
     }
 }
 
+/// Typing pause before diagnostics are recomputed (`YERUX_LSP_DEBOUNCE_MS` overrides it).
+fn debounce() -> Duration {
+    let ms = std::env::var("YERUX_LSP_DEBOUNCE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(150);
+    Duration::from_millis(ms)
+}
+
+/// Byte offset in `text` of an LSP position (line, UTF-16 column).
+fn byte_offset(text: &str, (line, col): (usize, usize)) -> usize {
+    let mut off = 0;
+    for (k, l) in text.split('\n').enumerate() {
+        if k == line {
+            let mut u = 0;
+            for (b, c) in l.char_indices() {
+                if u >= col {
+                    return off + b;
+                }
+                u += c.len_utf16();
+            }
+            return off + l.len();
+        }
+        off += l.len() + 1;
+    }
+    text.len()
+}
+
 pub fn run() -> i32 {
-    let stdin = std::io::stdin();
-    let mut inp = stdin.lock();
-    let mut server = Server { docs: HashMap::new(), paths: HashMap::new(), shutdown: false };
-    while let Some(msg) = read_message(&mut inp) {
+    // a reader thread feeds the main loop, which can then wake up for the typing-pause deadline
+    let (tx, rx) = mpsc::channel::<Json>();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let mut inp = stdin.lock();
+        while let Some(msg) = read_message(&mut inp) {
+            if tx.send(msg).is_err() {
+                return;
+            }
+        }
+    });
+    let mut server = Server { docs: HashMap::new(), paths: HashMap::new(), shutdown: false, pending: vec![], deadline: None };
+    loop {
+        let msg = match server.deadline {
+            Some(d) => match rx.recv_timeout(d.saturating_duration_since(Instant::now())) {
+                Ok(m) => m,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    server.flush();
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            },
+            None => match rx.recv() {
+                Ok(m) => m,
+                Err(_) => break,
+            },
+        };
         if !server.handle(&msg) {
             return if server.shutdown { 0 } else { 1 };
         }

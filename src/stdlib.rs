@@ -1,6 +1,9 @@
 // The embedded standard-library modules: `import std.io` loads src/std/io.yx from inside the compiler, so no
 // file has to exist next to the program. Everything else about a std module is an ordinary module (modules.rs).
 
+/// Every embedded standard-library module.
+pub const MODULES: &[&str] = &["std.io", "std.text", "std.sort", "std.iter", "std.fmt", "std.args", "std.collections", "std.time", "std.path", "std.math", "std.fs", "std.env", "std.net", "std.process", "std.hex", "std.hash", "std.rand"];
+
 /// Source text of the standard-library module `key` (`std.io`), if there is one.
 pub fn source(key: &str) -> Option<&'static str> {
     match key {

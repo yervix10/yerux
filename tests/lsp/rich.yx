@@ -1,0 +1,51 @@
+import std.fs
+import helper
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+enum Shape {
+    Circle(Int),
+    Rect(Int, Int),
+    Dot,
+}
+
+impl Point {
+    fn sum(self) -> Int {
+        return self.x + self.y
+    }
+}
+
+fn apply(f: fn(Int) -> Int, v: Int) -> Int {
+    return f(v)
+}
+
+fn area(s: Shape) -> Int {
+    match s {
+        Circle(r) => {
+            return 3 * r * r
+        }
+        Rect(w, h) => {
+            return w * h
+        }
+        Dot => {
+            return 0
+        }
+    }
+}
+
+fn main() {
+    var names = List<String>.new()
+    names.push("a")
+    let p = Point { x: 1, y: 2 }
+    let (left, right) = (p.x, p.y)
+    let doubled = apply(|n| n * 2, left)
+    let ok = fs.exists("/tmp")
+    let total = p.sum() + right + doubled + helper.double(1)
+    print(total)
+    print(ok)
+    print(names.len())
+    print(area(Shape.Dot))
+}
