@@ -1,0 +1,8 @@
+error: unknown type 'Missing'
+ --> tests/e1032_derive_errors.yx:7:1
+  |
+7 | derive Clone for Missing
+  | ^^^^^^
+  = built-in types: Int, Char, Bool, Text, String, List<T>, Float, Float32, Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64
+
+1 error(s). Nothing was generated.

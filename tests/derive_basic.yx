@@ -1,0 +1,69 @@
+struct Person { name: String, tags: List<String>, age: Int }
+
+derive Clone, Equal, Show for Person
+
+struct Unit {}
+
+derive Clone, Equal, Show for Unit
+
+enum Shape { Dot, Circle(Int), Rect(Int, String) }
+
+derive Clone, Equal, Show for Shape
+
+struct Holder { shape: Shape, p: Person, arr: [Int; 2], ot: Option<String> }
+
+derive Clone, Equal, Show for Holder
+
+fn dup<T: Clone>(x: view T) -> T {
+  return x.clone()
+}
+
+fn main() {
+  var p = Person { name: String.from("Ana"), tags: List<String>.new(), age: 30 }
+  p.tags.push(String.from("a"))
+  var q = p.clone()
+  print(p == q)
+  q.tags.push(String.from("b"))
+  print(p == q)
+  print(p != q)
+  print(p.show())
+  print("{q}")
+
+  let u = Unit {}
+  let uc = u.clone()
+  print(uc == u)
+  print(u.show())
+
+  let shapes = [Shape.Dot, Shape.Circle(3), Shape.Rect(2, String.from("r"))]
+  var i = 0
+  while i < 3 {
+    let c = shapes[i].clone()
+    print(c == shapes[i])
+    print(c.show())
+    i = i + 1
+  }
+  let c3 = Shape.Circle(3)
+  let c4 = Shape.Circle(4)
+  let d0 = Shape.Dot
+  print(c3 == c4)
+  print(c3 == d0)
+
+  let h = Holder { shape: Shape.Rect(1, String.from("x")), p: p.clone(), arr: [5, 6], ot: Some(String.from("o")) }
+  let h2 = dup(h)
+  print(h == h2)
+  print(h2.show())
+  var l = List<Holder>.new()
+  l.push(h2.clone())
+  let l2 = l.clone()
+  print(l2.at(0) == h)
+
+  let owned = [String.from("p"), String.from("q")]
+  var oc = owned.clone()
+  oc.set(0, String.from("changed"))
+  print(owned[0])
+  print(oc[0])
+  let tp = (String.from("t"), [1, 2])
+  let tp2 = tp.clone()
+  print(tp2.0)
+  print(tp2.1 [1])
+}

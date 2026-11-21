@@ -1,0 +1,8 @@
+struct Plain { n: Int }
+
+struct Wrap { p: Plain }
+
+derive Clone for Wrap
+
+fn main() {
+}

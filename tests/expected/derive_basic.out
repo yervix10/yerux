@@ -1,0 +1,22 @@
+true
+false
+true
+Person { name: Ana, tags: [a], age: 30 }
+Person { name: Ana, tags: [a, b], age: 30 }
+true
+Unit
+true
+Dot
+true
+Circle(3)
+true
+Rect(2, r)
+false
+false
+true
+Holder { shape: Rect(1, x), p: Person { name: Ana, tags: [a], age: 30 }, arr: [5, 6], ot: Some(o) }
+true
+p
+changed
+t
+2

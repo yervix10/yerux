@@ -1595,7 +1595,7 @@ impl Parser {
         } else {
             (vec![], 0)
         };
-        t.extend(user);
+        t.extend(if with_prelude { expand_derives(user) } else { user });
         let mut names = HashMap::new();
         let mut types = Types::default();
         let blank = |n: &str| (n.to_string(), Pos::default());
@@ -4292,5 +4292,243 @@ impl Parser {
         // variable, then any chain of .field / .method(...)
         let e = mk(EK::Var(x, 0), pos);
         self.postfix(e)
+    }
+}
+
+/// `derive Clone, Equal, Show for Name` (top level, after or before the definition): replaced by ordinary
+/// `impl` blocks generated field by field / variant by variant, so every later stage sees plain impls.
+/// An unknown trait or type name produces an impl the checker rejects with its usual error.
+fn expand_derives(user: Vec<Token>) -> Vec<Token> {
+    if !user
+        .iter()
+        .any(|t| matches!(&t.t, Tok::Id(k) if k == "derive"))
+    {
+        return user;
+    }
+    // definitions: name -> (is_struct, generic, body tokens between the braces)
+    let mut defs: HashMap<String, (bool, Vec<Token>)> = HashMap::new();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < user.len() {
+        match &user[i].t {
+            Tok::Sym("{") => depth += 1,
+            Tok::Sym("}") => depth -= 1,
+            Tok::Id(k) if depth == 0 && (k == "struct" || k == "enum") => {
+                if let Some(Tok::Id(n)) = user.get(i + 1).map(|t| &t.t) {
+                    let mut j = i + 2;
+                    while j < user.len() && user[j].t != Tok::Sym("{") {
+                        j += 1;
+                    }
+                    let mut d = 0;
+                    let mut body = vec![];
+                    let mut k2 = j;
+                    while k2 < user.len() {
+                        match user[k2].t {
+                            Tok::Sym("{") => d += 1,
+                            Tok::Sym("}") => d -= 1,
+                            _ => {}
+                        }
+                        if d == 0 {
+                            break;
+                        }
+                        if k2 > j {
+                            body.push(user[k2].clone());
+                        }
+                        k2 += 1;
+                    }
+                    defs.insert(n.clone(), (k == "struct", body));
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // split a body at top-level commas
+    fn parts(body: &[Token]) -> Vec<&[Token]> {
+        let (mut out, mut d, mut s) = (vec![], 0i32, 0usize);
+        for (k, t) in body.iter().enumerate() {
+            match t.t {
+                Tok::Sym("(") | Tok::Sym("[") | Tok::Sym("<") | Tok::Sym("{") => d += 1,
+                Tok::Sym(")") | Tok::Sym("]") | Tok::Sym(">") | Tok::Sym("}") => d -= 1,
+                Tok::Sym(",") if d == 0 => {
+                    out.push(&body[s..k]);
+                    s = k + 1;
+                }
+                _ => {}
+            }
+        }
+        if s < body.len() {
+            out.push(&body[s..]);
+        }
+        out
+    }
+    let mut out: Vec<Token> = vec![];
+    let mut gen = String::new();
+    let mut at = Pos::default();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < user.len() {
+        match &user[i].t {
+            Tok::Sym("{") => depth += 1,
+            Tok::Sym("}") => depth -= 1,
+            _ => {}
+        }
+        let is_derive = depth == 0 && matches!(&user[i].t, Tok::Id(k) if k == "derive");
+        if is_derive {
+            let mut j = i + 1;
+            let mut traits = vec![];
+            while let Some(Tok::Id(t)) = user.get(j).map(|t| &t.t) {
+                if t == "for" {
+                    break;
+                }
+                traits.push(t.clone());
+                j += 1;
+                if user.get(j).map(|t| &t.t) == Some(&Tok::Sym(",")) {
+                    j += 1;
+                }
+            }
+            if let (Some(Tok::Id(f)), Some(Tok::Id(name))) = (
+                user.get(j).map(|t| &t.t),
+                user.get(j + 1).map(|t| &t.t),
+            ) {
+                if f == "for" && !traits.is_empty() {
+                    at = user[i].pos;
+                    for tr in &traits {
+                        gen.push_str(&derive_impl(tr, name, defs.get(name), &parts));
+                    }
+                    i = j + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(user[i].clone());
+        i += 1;
+    }
+    if gen.is_empty() {
+        return out;
+    }
+    let eof = out.pop();
+    match lex(&gen) {
+        Ok(mut g) => {
+            g.pop();
+            for t in g.iter_mut() {
+                t.pos = at;
+            }
+            out.extend(g);
+        }
+        Err(_) => {}
+    }
+    out.extend(eof);
+    out
+}
+
+fn derive_impl(
+    tr: &str,
+    name: &str,
+    def: Option<&(bool, Vec<Token>)>,
+    parts: &dyn Fn(&[Token]) -> Vec<&[Token]>,
+) -> String {
+    let Some((is_struct, body)) = def else {
+        return format!("impl {} for {} {{ }}\n", tr, name);
+    };
+    if *is_struct {
+        // field names: `name: Type`
+        let fields: Vec<String> = parts(body)
+            .iter()
+            .filter_map(|p| match (p.first().map(|t| &t.t), p.get(1).map(|t| &t.t)) {
+                (Some(Tok::Id(n)), Some(Tok::Sym(":"))) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        match tr {
+            "Clone" => {
+                let init: Vec<String> =
+                    fields.iter().map(|f| format!("{f}: self.{f}.clone()")).collect();
+                format!(
+                    "impl Clone for {name} {{ fn clone(view self) -> {name} {{ return {name} {{ {} }} }} }}\n",
+                    init.join(", ")
+                )
+            }
+            "Equal" => {
+                let mut b = String::new();
+                for f in &fields {
+                    b += &format!("if self.{f} != other.{f} {{ return false }}\n");
+                }
+                format!("impl Equal for {name} {{ fn eq(view self, other: view {name}) -> Bool {{\n{b}return true }} }}\n")
+            }
+            "Show" => {
+                let items: Vec<String> =
+                    fields.iter().map(|f| format!("{f}: {{self.{f}}}")).collect();
+                let text = if items.is_empty() {
+                    format!("{name}")
+                } else {
+                    format!("{name} {{{{ {} }}}}", items.join(", "))
+                };
+                format!("impl Show for {name} {{ fn show(view self) -> String {{ return \"{text}\" }} }}\n")
+            }
+            _ => format!("impl {tr} for {name} {{ }}\n"),
+        }
+    } else {
+        // variants: `V` or `V(T1, T2)`: name and payload count
+        let vars: Vec<(String, usize)> = parts(body)
+            .iter()
+            .filter_map(|p| {
+                let Some(Tok::Id(v)) = p.first().map(|t| &t.t) else {
+                    return None;
+                };
+                let n = if p.get(1).map(|t| &t.t) == Some(&Tok::Sym("(")) {
+                    parts(&p[2..p.len().saturating_sub(1)]).len()
+                } else {
+                    0
+                };
+                Some((v.clone(), n))
+            })
+            .collect();
+        let names = |pre: &str, n: usize| -> Vec<String> { (0..n).map(|k| format!("{pre}{k}")).collect() };
+        let pat = |v: &str, ns: &[String]| {
+            if ns.is_empty() { v.to_string() } else { format!("{v}({})", ns.join(", ")) }
+        };
+        match tr {
+            "Clone" => {
+                let mut arms = String::new();
+                for (v, n) in &vars {
+                    let a = names("a", *n);
+                    let args: Vec<String> = a.iter().map(|x| format!("{x}.clone()")).collect();
+                    let val = if *n == 0 { format!("{name}.{v}") } else { format!("{name}.{v}({})", args.join(", ")) };
+                    arms += &format!("{} => {{ return {val} }}\n", pat(v, &a));
+                }
+                format!("impl Clone for {name} {{ fn clone(view self) -> {name} {{ match self {{\n{arms}}} }} }}\n")
+            }
+            "Equal" => {
+                let mut arms = String::new();
+                for (v, n) in &vars {
+                    let (a, b) = (names("a", *n), names("b", *n));
+                    let cmp: Vec<String> =
+                        a.iter().zip(&b).map(|(x, y)| format!("{x} == {y}")).collect();
+                    let r = if cmp.is_empty() { "true".to_string() } else { cmp.join(" && ") };
+                    arms += &format!(
+                        "{} => {{ match other {{ {} => {{ return {r} }} _ => {{ return false }} }} }}\n",
+                        pat(v, &a),
+                        pat(v, &b)
+                    );
+                }
+                format!("impl Equal for {name} {{ fn eq(view self, other: view {name}) -> Bool {{ match self {{\n{arms}}} }} }}\n")
+            }
+            "Show" => {
+                let mut arms = String::new();
+                for (v, n) in &vars {
+                    let a = names("a", *n);
+                    let txt = if *n == 0 {
+                        v.clone()
+                    } else {
+                        let xs: Vec<String> = a.iter().map(|x| format!("{{{x}}}")).collect();
+                        format!("{v}({})", xs.join(", "))
+                    };
+                    arms += &format!("{} => {{ return \"{txt}\" }}\n", pat(v, &a));
+                }
+                format!("impl Show for {name} {{ fn show(view self) -> String {{ match self {{\n{arms}}} }} }}\n")
+            }
+            _ => format!("impl {tr} for {name} {{ }}\n"),
+        }
     }
 }
