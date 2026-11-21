@@ -11,30 +11,51 @@ These measurements were collected on a shared build host while other regression 
 `python3 bench/concurrency.py --runs 5` compares the native backend's serial
 loop with `thread_pool_map` on a four-worker persistent pool. Each run computes
 four batches of 5,000 items; each item performs 12,000 rounds of the same
-integer recurrence. The pool binary includes worker startup, four map/join
-barriers, result collection, and shutdown. The script checks identical output
-and reports median wall time, including process startup. This raises useful
-work per callback substantially over the original 1,000-round case.
+integer recurrence. It verifies identical output and reports median wall time
+and child user/system CPU for five timed runs after one warm-up. Pool timings
+include worker startup, four map/join barriers, result collection, and
+shutdown. `bench/concurrency_pthreads.c` is a C reference with the same work
+and per-worker local sums; compile it using
+`gcc -O2 -pthread bench/concurrency_pthreads.c -o /tmp/concurrency-c` and run
+with no argument for serial or any argument for four pthreads.
 
-Measured on the same 12-CPU Linux 6.12.117 host (five timed runs after one
-warm-up):
+The previous pool benchmark was slower than serial because each map callback
+created a capturing closure just to write one result. Native closure creation
+allocates an environment and dropping it frees the environment. The native
+allocator protects its shared arena and free lists with one global futex lock,
+so this caused two globally serialized allocator operations per item. This is
+not a GIL: callback arithmetic ran on the worker threads, but each callback
+also waited on the allocator. Result writes additionally take the list's
+mutex, while the shared reference count uses atomics. There is no per-item
+stdout. The scheduler separately used to lock once per index; the previous
+change batches these claims into chunks of roughly one eighth of the range per
+worker.
 
-| Workload | Median wall time | Relative to serial |
-|---|---:|---:|
-| Serial native loop, 1,000 rounds (previous run) | 0.109 s | 1.00x |
-| Four-worker pool map, 1,000 rounds (previous run) | 0.137 s | 1.25x |
-| Serial native loop, 12,000 rounds | 1.391 s | 1.00x |
-| Four-worker pool map, 12,000 rounds | 1.528 s | 1.10x |
+`Locked<List<T>>.set_index` now does the typed list mutation under the mutex
+directly, without allocating a capturing closure for every index. This keeps
+the short result-write lock, but lets expensive callback work proceed outside
+it. Measurements on the 12-CPU Linux host (five timed runs after warm-up):
 
-The larger workload narrows the slowdown but still does not show a speedup.
-Inspection found one avoidable scheduler cost: workers previously acquired the
-shared state lock once per index. They now reserve chunks (about one eighth of
-the work per worker, with a minimum of one index) and process each chunk
-without touching the lock. `thread_pool_map` still takes a shared result lock
-for every callback, and all workers poll the completion state; these costs
-remain visible even when callbacks are expensive. The measurements are honest
-end-to-end results, not evidence that this machine or API scales. Reproduce
-with `bench/concurrency.py`; timings vary with host load and CPU quota.
+| Background load at run | Workload | Wall | User CPU | System CPU | Pool wall / serial |
+|---|---|---:|---:|---:|---:|
+| load avg 5.21 / 5.42 / 5.13 | Yerux serial | 1.299 s | 1.298 s | 0.000 s | 1.00x |
+| load avg 5.21 / 5.42 / 5.13 | Yerux pool, 4 workers | 0.334 s | 1.663 s | 0.000 s | 0.26x |
+| load avg 3.89 / 5.10 / 5.02 | C serial | 1.136 s | 1.135 s | 0.000 s | 1.00x |
+| load avg 3.89 / 5.10 / 5.02 | C pthreads, 4 workers | 0.292 s | 1.139 s | 0.004 s | 0.26x |
+| low short-term load, 1.78 / 3.97 / 4.62 | Yerux serial | 1.298 s | 1.297 s | 0.000 s | 1.00x |
+| low short-term load, 1.78 / 3.97 / 4.62 | Yerux pool, 4 workers | 0.334 s | 1.655 s | 0.016 s | 0.26x |
+| low short-term load, 1.78 / 3.97 / 4.62 | C serial | 1.136 s | 1.133 s | 0.002 s | 1.00x |
+| low short-term load, 1.78 / 3.97 / 4.62 | C pthreads, 4 workers | 0.288 s | 1.138 s | 0.002 s | 0.25x |
+
+The pool's user CPU is about five times its wall time, confirming that more
+than one core is doing work. Yerux and C both take about 0.26 of the serial
+wall time (3.77x and 3.95x speedup respectively in the low short-term load
+run). The moderate-load readings were collected while other workers were
+building and testing; the low-load reading had a one-minute load of 1.78 on
+12 CPUs, with a five-minute average of 3.97, so it was not a completely idle
+machine. Use the recorded uptime load averages to interpret wall-time changes.
+The benchmark includes result locking, startup, and shutdown rather than
+timing only the recurrence.
 
 ## fib - fib(40) recursion (spec asked 38; raised so the run is not ~0.1 s)
 

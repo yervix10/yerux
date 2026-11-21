@@ -315,6 +315,16 @@ fn __locked_with_view<T, R>(lock: view Locked<T>, body: view fn(view T) -> R) ->
     return body(lock.locked_value())
 }
 
+// Fast typed mutation for a protected list. Avoids creating a capturing closure
+// for every result written by thread_pool_map.
+impl<T> Locked<List<T>> {
+    fn set_index(view self, index: Int, value: T) {
+        let address = __box_address(self.mutex)
+        let held = __lock_word(address)
+        self.locked_value().set(index, move value)
+    }
+}
+
 // Named mutex facade for code that prefers the standard synchronization term.
 struct Mutex<T> { inner: Locked<T> }
 
@@ -519,7 +529,7 @@ fn thread_pool_map<T>(pool: view ThreadPool, first: Int, end: Int, body: view fn
     for _ in first..end { slots.push(Option<T>.None) }
     let results = Shared.new(Locked.new(move slots))
     pool.parallel_for(first, end, |index| {
-        results.get().with(|items| items.set(index - first, Some(body(index))))
+        results.get().set_index(index - first, Some(body(index)))
     })
     return results.get().with(|items| {
         var output = List<T>.new()
