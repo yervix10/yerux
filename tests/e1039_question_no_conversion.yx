@@ -1,0 +1,23 @@
+struct Opaque { n: Int }
+
+struct Other { m: Int }
+
+fn a() -> Result<Int, Opaque> { return Err(Opaque { n: 1 }) }
+
+fn to_string_err() -> Result<Int, String> {
+  let v = a()?
+  return Ok(v)
+}
+
+fn to_other() -> Result<Int, Other> {
+  let v = a()?
+  return Ok(v)
+}
+
+fn ctx() -> Result<Int, String> {
+  let v = a().context("x")?
+  return Ok(v)
+}
+
+fn main() {
+}

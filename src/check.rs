@@ -2129,7 +2129,15 @@ impl<'a> Checker<'a> {
             if !self.sigs.contains_key(&fname) && !self.in_generic {
                 self.load_lazy(&fname);
             }
-            match self.sigs.get(&fname).cloned() {
+            let show_to_string = rargs[1] == Ty::String
+                && !self.sigs.contains_key(&fname)
+                && self.implements(targs[1], "Show");
+            if show_to_string {
+                // any error that can be shown becomes its message: `Result<T, MyError>?` in a `Result<U, String>` function
+                self.load_lazy("std__show_err");
+                conv = Some("std__show_err".to_string());
+            }
+            match self.sigs.get(&fname).cloned().filter(|_| !show_to_string) {
                 Some(sg)
                     if sg.params.len() == 1
                         && sg.params[0] == (Mode::Own, targs[1])
@@ -2137,6 +2145,7 @@ impl<'a> Checker<'a> {
                 {
                     conv = Some(fname)
                 }
+                _ if show_to_string => {}
                 found => {
                     let mut d = diag(
                         format!(
@@ -2156,6 +2165,9 @@ impl<'a> Checker<'a> {
                         ));
                     }
                     d = d.note(format!("help: write the conversion: `fn {}(e: {}) -> {} {{ .. }}` and `?` will call it", fname, e1, e2));
+                    if rargs[1] == Ty::String {
+                        d = d.note(format!("or implement Show for {}: a Show-able error becomes the String message automatically", e1));
+                    }
                     self.err(d);
                     return Ty::Err;
                 }
