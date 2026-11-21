@@ -84,6 +84,76 @@ each `parallel for` still create their own workers.
 `parallel for` creates and joins its own workers rather than reusing a pool.
 The actor/channel examples below describe APIs beyond this release.
 
+## Current APIs and runnable examples
+
+The examples in `examples/` and fixtures in `tests/` use the implemented
+prelude APIs. Run them with `tests/run_all.sh --fast` (or
+`tests/run_all.sh concurrency_` for the focused concurrency fixtures).
+
+### Channels
+
+`Sender<T>.bounded(capacity)` and `Sender<T>.unbounded()` return a sender and
+single receiver. `send(value)` returns `Bool`; `recv()` returns `Option<T>`.
+The sender may be cloned for multiple producers. Closing is explicit: call
+`close()` on a sender to stop new sends, then the receiver drains queued values
+and gets `None`. Closing the receiver makes later sends return `false`.
+`tests/concurrency_channel.yx` and `examples/concurrency_channels.yx` show
+bounded back-pressure, unbounded transfer, and draining after close. Both
+`send` on a full bounded queue and `recv` on an empty open queue spin until
+progress is possible. Queue removal from the front is linear in queue length.
+
+```yerux
+let (tx, rx) = Sender<Int>.bounded(2)
+tx.send(20)
+tx.send(22)
+tx.close()
+print(rx.recv().unwrap() + rx.recv().unwrap())
+print(rx.recv().is_none())
+```
+
+### Locks and atomics
+
+`Mutex<T>` is a named facade over `Locked<T>`. Use `mutex_update` for a
+mutation and `mutex_with_view`/`mutex_with` when the callback returns an owned
+result. The callback keeps the lock held, so do not block or wait for another
+worker inside it. `RwLock<T>` exposes `rwlock_read` and `rwlock_write`; several
+read callbacks may overlap, while a write callback is exclusive. Acquisition
+spins and does not promise writer fairness. A panic in an RwLock callback can
+leave it held. `Atomic<Int>` and `Atomic<Bool>` expose sequentially consistent
+load/store and compare-and-swap operations (integer atomics also provide
+`add`).
+
+Runnable examples: `tests/concurrency_mutex.yx` and
+`tests/concurrency_rwlock.yx`. Atomic operations are also used by the thread
+pool and channel implementations. For a standalone counter, wrap the atomic
+in `Shared` before moving clones into workers:
+
+```yerux
+let counter = Shared.new(Atomic<Int>.new(0))
+scope {
+  let a = counter.clone()
+  let worker = spawn move { a.get().add(1) }
+  worker.join()
+}
+print(counter.get().load())
+```
+
+### Persistent thread pool
+
+`thread_pool_new(n)` creates `n` persistent workers;
+`pool.parallel_for(start, end, callback)` distributes integer indices and
+waits for the submitted range to finish. Call `pool.close()` to stop and join
+the workers. Shutdown is explicit. See `examples/thread_pool.yx` and
+`tests/concurrency_thread_pool.yx`.
+
+```yerux
+let pool = thread_pool_new(4)
+pool.parallel_for(0, 100, |i| { print(i) })
+pool.close()
+```
+
+The sample prints from concurrent workers, so line order is unspecified.
+
 The sections below retain the broader design. The implementation status above
 and SPEC.md define the available syntax and behavior where those differ.
 
