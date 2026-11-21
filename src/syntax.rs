@@ -1333,6 +1333,69 @@ fn mk(k: EK, pos: Pos) -> Expr {
     }
 }
 
+fn dump_hex(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
+}
+
+fn dump_expr(e: &Expr) -> String {
+    match &e.k {
+        EK::Int(n) => format!("Int({})", n),
+        EK::Float(_, text) => format!("Float({})", dump_hex(text)),
+        EK::Char(n) => format!("Char({})", n),
+        EK::Bool(b) => format!("Bool({})", b),
+        EK::Text(s) => format!("Text({})", dump_hex(s)),
+        EK::Var(n, _) => format!("Var({})", dump_hex(n)),
+        EK::Move(n, _) => format!("Move({})", dump_hex(n)),
+        EK::Un(op, x) => format!("Un({}, {})", dump_hex(op), dump_expr(x)),
+        EK::Bin(op, l, r) => format!("Bin({}, {}, {})", dump_hex(op), dump_expr(l), dump_expr(r)),
+        EK::Call(n, args) => format!("Call({}, {})", dump_hex(n), dump_exprs(args)),
+        EK::Field(x, n) => format!("Field({}, {})", dump_expr(x), dump_hex(n)),
+        EK::Method { recv, m, args } => format!("Method({}, {}, {})", dump_expr(recv), dump_hex(m), dump_exprs(args)),
+        EK::ArrayLit(items) => format!("Array({})", dump_exprs(items)),
+        _ => "Unsupported".into(),
+    }
+}
+
+fn dump_exprs(es: &[Expr]) -> String {
+    format!("[{}]", es.iter().map(dump_expr).collect::<Vec<_>>().join(","))
+}
+
+fn dump_stmt(s: &Stmt) -> String {
+    match &s.k {
+        SK::Let(name, mutable, value, _) => {
+            format!("Let({}, {}, {})", dump_hex(name), mutable, dump_expr(value))
+        }
+        SK::ExprS(e) => format!("Expr({})", dump_expr(e)),
+        SK::Return(Some(e)) => format!("Return({})", dump_expr(e)),
+        SK::Return(None) => "Return(None)".into(),
+        _ => "Unsupported".into(),
+    }
+}
+
+pub fn dump_expr_source(src: &str) -> Result<String, Diag> {
+    let toks = lex(src)?;
+    let mut p = Parser::new_raw(toks);
+    let e = p.expr()?;
+    if !matches!(p.peek(), Tok::Eof) {
+        return Err(diag("unexpected token after expression", p.pos()));
+    }
+    Ok(dump_expr(&e))
+}
+
+pub fn dump_stmt_source(src: &str) -> Result<String, Diag> {
+    let toks = lex(src)?;
+    let mut p = Parser::new_raw(toks);
+    let s = p.stmt()?;
+    if !matches!(p.peek(), Tok::Eof) {
+        return Err(diag("unexpected token after statement", p.pos()));
+    }
+    Ok(dump_stmt(&s))
+}
+
 // ───────────────────────── Parser ─────────────────────────
 
 pub type PR<T> = Result<T, Diag>;
@@ -1477,12 +1540,25 @@ pub fn impl_fn_name(types: &Types, trait_name: Option<&str>, ty: Ty, m: &str) ->
 
 impl Parser {
     pub fn new(user: Vec<Token>) -> Parser {
-        let mut t = lex(PRELUDE).unwrap_or_else(|d| panic!("prelude: {}", d.msg));
-        t.pop(); // the prelude's Eof
-        for tk in t.iter_mut() {
-            tk.pos.line |= PRELUDE_LINE;
-        }
-        let prelude_len = t.len();
+        Self::new_inner(user, true)
+    }
+
+    fn new_raw(user: Vec<Token>) -> Parser {
+        Self::new_inner(user, false)
+    }
+
+    fn new_inner(user: Vec<Token>, with_prelude: bool) -> Parser {
+        let (mut t, prelude_len) = if with_prelude {
+            let mut t = lex(PRELUDE).unwrap_or_else(|d| panic!("prelude: {}", d.msg));
+            t.pop(); // the prelude's Eof
+            for tk in t.iter_mut() {
+                tk.pos.line |= PRELUDE_LINE;
+            }
+            let n = t.len();
+            (t, n)
+        } else {
+            (vec![], 0)
+        };
         t.extend(user);
         let mut names = HashMap::new();
         let mut types = Types::default();

@@ -129,7 +129,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
 
@@ -174,6 +174,40 @@ fn dump_tokens(file: &str) {
     }
 }
 
+fn dump_ast_expr(file: &str) {
+    let src = fs::read_to_string(file).unwrap_or_else(|e| {
+        eprintln!("could not read {}: {}", file, e);
+        exit(2)
+    });
+    match syntax::dump_expr_source(&src) {
+        Ok(ast) => println!("{}", ast),
+        Err(d) => {
+            println!("Error:{}:{}:{}:{}", hex(d.msg.as_bytes()), d.pos.line, d.pos.col, d.pos.len);
+            for note in d.notes {
+                println!("Note:{}", hex(note.as_bytes()));
+            }
+            exit(1)
+        }
+    }
+}
+
+fn dump_ast_stmt(file: &str) {
+    let src = fs::read_to_string(file).unwrap_or_else(|e| {
+        eprintln!("could not read {}: {}", file, e);
+        exit(2)
+    });
+    match syntax::dump_stmt_source(&src) {
+        Ok(ast) => println!("{}", ast),
+        Err(d) => {
+            println!("Error:{}:{}:{}:{}", hex(d.msg.as_bytes()), d.pos.line, d.pos.col, d.pos.len);
+            for note in d.notes {
+                println!("Note:{}", hex(note.as_bytes()));
+            }
+            exit(1)
+        }
+    }
+}
+
 fn main() {
     // the front end and the IR passes are recursive: run on a thread with a large (lazily committed) stack
     let h = std::thread::Builder::new()
@@ -193,6 +227,14 @@ fn real_main() {
     let args: Vec<String> = env::args().collect();
     if args.len() == 3 && args[1] == "tokens" {
         dump_tokens(&args[2]);
+        return;
+    }
+    if args.len() == 3 && args[1] == "ast-expr" {
+        dump_ast_expr(&args[2]);
+        return;
+    }
+    if args.len() == 3 && args[1] == "ast-stmt" {
+        dump_ast_stmt(&args[2]);
         return;
     }
     if args.len() >= 2 && args[1] == "fmt" {

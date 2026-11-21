@@ -24,6 +24,14 @@ The current comparison passes on all 586 `.yx` files in `examples/` and
 numbers and suffixes, Unicode chars, and the checked-in lexical error cases.
 The canonical error rows preserve the Rust message, position, span, and notes.
 
+The parser has now started on an expression/statement subset. `yerux ast-expr`
+and `yerux ast-stmt` expose a Rust AST-shape oracle; `selfhost/parser.yx`
+consumes the canonical lexer rows and parses prefix/unary expressions,
+precedence-climbing binary expressions, calls, parentheses, `let`/`var`, and
+`return`. `tests/selfhost_parser.sh` compares 10 cases. It does not yet parse
+function declarations, types, blocks, conditionals, patterns, or most postfix
+forms, and its unsupported-input path is not yet diagnostic-equivalent.
+
 ## What remains before parser and checker ports
 
 The language already has recursive functions, generic structs/enums and lists,
