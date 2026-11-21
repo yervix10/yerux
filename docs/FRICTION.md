@@ -307,3 +307,13 @@ the first one outside any nested literal (inside a nested literal braces still f
 - **`io.exit` does not run destructors or flush**, so subcommand runners return a status up to `main` and exit
   there (as done here); worth a sentence in the std.io docs next to `exit`.
 
+## Fixed: calls nested into `view` arguments and chained on call results
+
+`s.push_str(args.help_line(..))` ("pass a variable here") and `d.len().show()` / `a.min(b).as_millis()` /
+`time.now().since(t)` ("expected a variable or a field here") now compile. Owned `String` temporaries given to a
+`view String` parameter of the built-in String methods (`push_str`, `starts_with`, `find`, `contains`, `==`
+arguments, ...) are bound to a hidden variable that lives for the call (the mechanism user functions already had),
+and a Copy receiver that is not a place (Int, Float, Bool, small structs and enums) is bound to a hidden
+variable like an Option/Result receiver was. Char and `Ptr` receivers keep their built-in handling. Test:
+`tests/chain_temps.yx` (C, native, ASan, leakcheck).
+

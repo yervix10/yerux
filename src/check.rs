@@ -1769,7 +1769,10 @@ impl<'a> Checker<'a> {
                 .is_some_and(|(name, _)| matches!(name.as_str(), "Option" | "Result")),
             _ => false,
         };
-        if !option_or_result && !self.types.owned(t) {
+        // Copy values (Int, Float, small structs, ...) are kept in a hidden variable like owned temporaries, so
+        // `d.len().show()` and `a.min(b).as_millis()` work; Char and Ptr have built-in methods that need no place
+        let hoistable = !matches!(t, Ty::Char | Ty::Ptr(_) | Ty::Err | Ty::Unit);
+        if !option_or_result && !self.types.owned(t) && !hoistable {
             let ty = match t {
                 Ty::Char => self.char_method(m, args, e.pos),
                 Ty::Err => Ty::Err,
@@ -2310,10 +2313,8 @@ impl<'a> Checker<'a> {
             let t = self.expr(a);
             match t {
                 Ty::Text | Ty::Err => {}
-                Ty::String => self.err(
-                    diag("pass a variable here (the function borrows it)", apos)
-                        .note("help: store the String with `let` first, then pass the variable"),
-                ),
+                // an owned String temporary (`s.push_str(make())`): kept in a hidden variable for the call
+                Ty::String => self.hoist_view_temp(a, Ty::String, &mut [], &[]),
                 t => {
                     let n = self.tn(t);
                     self.err(diag(
