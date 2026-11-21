@@ -1,0 +1,13 @@
+import std.unicode
+
+fn main() {
+  assert(unicode.is_letter('ñ'))
+  assert(unicode.is_number('٣'))
+  assert(unicode.is_whitespace('　'))
+  assert(unicode.char_width('界') == 2)
+  assert(unicode.char_width('e') == 1)
+  assert(unicode.char_width('́') == 0)
+  assert(unicode.width("A界é") == 4)
+  let normalized = unicode.normalize_nfc("é")
+  assert(normalized.eq("é"))
+}
