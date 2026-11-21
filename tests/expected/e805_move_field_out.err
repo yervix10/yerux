@@ -1,0 +1,9 @@
+error: cannot move 't.s' out of 't': a field cannot be moved out of an owned T
+ --> tests/e805_move_field_out.yx:6:8
+  |
+6 |   take(move t.s)
+  |        ^^^^^^^^
+  = `move` takes a whole variable; moving one field would leave the struct half freed
+  = help: borrow the field instead (pass 't.s' as `view`/`mut`, or call a method on it), or move all of 't'
+
+1 error(s). Nothing was generated.

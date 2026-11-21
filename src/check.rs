@@ -524,6 +524,16 @@ impl<'a> Checker<'a> {
                     }
                     if self.types.owned(t) {
                         let n = self.tn(t);
+                        if let EK::Move(v, _) = &base.k {
+                            // `move t.s` parses as `(move t).s`: what was meant is moving the field out
+                            let what = format!("{}.{}", v, f);
+                            self.err(
+                                diag(format!("cannot move '{}' out of '{}': a field cannot be moved out of an owned {}", what, v, n), pos)
+                                    .note("`move` takes a whole variable; moving one field would leave the struct half freed")
+                                    .note(format!("help: borrow the field instead (pass '{}' as `view`/`mut`, or call a method on it), or move all of '{}'", what, v)),
+                            );
+                            return None;
+                        }
                         self.err(
                             diag(format!("cannot take a field of a temporary {} that owns memory", n), pos)
                                 .note("the rest of the value would be thrown away without being freed")
