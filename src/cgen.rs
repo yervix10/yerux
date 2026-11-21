@@ -152,7 +152,7 @@ static inline int64_t nx_str_byte(String *s, int64_t i) {
 }
 static inline void nx_str_clear(String *s) { s->len = 0; }
 static inline void nx_str_push_byte(String *s, int64_t b) {
-  if (b < 0 || b > 255) nx_panic("index out of range");
+  if (b < 0 || b > 255) nx_panic("byte value out of range (0..255)");
   char c = (char)b; Str x = { &c, 1 }; nx_str_push_str(s, x);
 }
 static inline void nx_str_push_slice(String *s, Str x, int64_t a, int64_t b) {

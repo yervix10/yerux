@@ -182,11 +182,11 @@ s.len() s.is_empty() s.char_count()    s.byte(i)  s.eq(x)  s.push_str(x)  s.push
 s.starts_with(p)  s.ends_with(p)  s.contains(p)  s.find(p) -> byte index or -1  s.find_from(p, i)
 s.slice(from, to) -> String      (byte range; both ends must be character boundaries, else panic; s.is_boundary(i))
 s.split(sep) -> List<String>     (sep not empty)      parts.join(sep) -> String        s.replace(from, to)   s.repeat(n)
-s.trim()  s.trim_start()  s.trim_end()   (ASCII whitespace)        s.to_upper()  s.to_lower()   (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic)
+s.trim()  s.trim_start()  s.trim_end()   (ASCII whitespace: space \t \n \v \f \r)      s.to_upper()  s.to_lower()   (ASCII, Latin-1, Latin Extended-A, Greek incl. tonos/dialytika, Cyrillic; `µ` upper-cases to `Μ`)
 s.parse_int(out) -> Bool         (`var n = 0; if s.parse_int(n) { .. }`: optional sign, digits only, checked against overflow; `out` is written only on success)
 a < b   a == b   a.cmp(b)   a + b
 ```
-`push_byte` (0..255) and `push_slice` (bytes `[from, to)` of a Text or another String; out of range panics) are the two primitives everything else is built from. `p`, `sep`, `from`, `to` accept a Text (see above).
+`push_byte` (0..255; another value panics with "byte value out of range (0..255)") and `push_slice` (bytes `[from, to)` of a Text or another String; out of range panics) are the two primitives everything else is built from. `p`, `sep`, `from`, `to` accept a Text (see above).
 
 An owned temporary can be used as a method receiver (`String.from("x").to_upper()`). The temporary is kept alive for the call and dropped with the surrounding expression scope.
 
@@ -196,7 +196,7 @@ l.insert(i, x)   l.remove(i) -> T   l.swap_remove(i) -> T   l.swap(i, j)   l.rev
 l.contains(x)   l.index_of(x) -> i or -1      (T: Equal)        l.slice(from, to)   l.copy()   (T: Copy)
 l.sort()   l.is_sorted()                       (T: Ordered; quicksort + insertion sort + heapsort fallback, in place, not stable)
 ```
-All of them work for owned elements (elements are moved with `swap`, never copied). `first`/`last` are `l.at(0)` and `l.at(l.len() - 1)`. `l.swap(i, j)` is a built-in (both backends).
+All of them work for owned elements (elements are moved with `swap`, never copied). `first`/`last` are `l.at(0)` and `l.at(l.len() - 1)`. `l.swap(i, j)` is a built-in (both backends). `l.truncate(n)` keeps the first `n` elements (`n >= len` is a no-op; `n < 0` panics with "List.truncate length is negative").
 
 ## Numbers
 Types: `Int` = `Int64` (alias `i64`), `Int8 Int16 Int32`, `UInt8 UInt16 UInt32 UInt64` (aliases `i8 i16 i32 u8 u16 u32 u64`), `Float` (IEEE binary64, alias `f64`) and `Float32` (binary32, alias `f32`).

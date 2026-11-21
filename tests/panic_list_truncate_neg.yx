@@ -1,0 +1,12 @@
+// A negative truncate length panics with its own message (not "pop from an empty list").
+fn main() {
+  var l = List<Int>.new()
+  l.push(1)
+  l.push(2)
+  l.truncate(5)
+  print(l.len())
+  l.truncate(1)
+  print(l.len())
+  l.truncate(-1)
+  print("unreachable")
+}

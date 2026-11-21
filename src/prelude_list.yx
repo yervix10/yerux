@@ -45,8 +45,9 @@ impl<T> List<T> {
         }
     }
 
-    // Keeps the first `n` elements and drops the rest.
+    // Keeps the first `n` elements and drops the rest (`n >= len` keeps everything; `n < 0` panics).
     fn truncate(mut self, n: Int) {
+        if n < 0 { panic("List.truncate length is negative") }
         while self.len() > n {
             let x = self.pop()
         }

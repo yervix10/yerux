@@ -1,0 +1,9 @@
+// A negative byte for push_byte panics with the byte-range message.
+fn main() {
+  var s = String.new()
+  s.push_byte(65)
+  print(s)
+  var b = 0 - 1
+  s.push_byte(b)
+  print("unreachable")
+}
