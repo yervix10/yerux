@@ -218,9 +218,13 @@ pub enum Inst {
     Lea(V, V, i32),   // vreg = addr + off
     Copy(V, V, usize), // copy n words: [dst..] = [src..]
     // ── heap: a List is 3 words {ptr, len, cap} at the given address ──
-    ListPush(V, V),   // list address, value (amortised growth; may allocate)
+    // Legacy list instructions: no longer produced by the lowering (memopt.rs inlines list access), but
+    // every backend still implements them and the passes keep their semantics.
+    #[allow(dead_code)]
+    ListPush(V, V), // list address, value (amortised growth; may allocate)
+    #[allow(dead_code)]
     ListGet(V, V, V), // vreg = list[idx], panics "index out of range"
-    ListFree(V),      // release the buffer (no-op when empty)
+    ListFree(V), // release the buffer (no-op when empty)
     // ── raw heap / byte primitives (String, generic List<T>): all side-effecting ──
     Alloc(V, V),         // vreg = fresh heap block of n bytes
     Free(V),             // release a heap block (null is ignored)
@@ -1000,6 +1004,36 @@ impl<'a> L<'a> {
     // ── drop glue and scopes ──
     /// Release the heap memory held by a value of type `ty` at base+off.
     fn drop_value(&mut self, ty: Ty, base: V, off: i32) {
+        if let Some((et, n)) = self.types.array_of(ty) {
+            // `[T; N]` with owned elements: drop each element (a loop beyond a few)
+            if !self.types.owned(et) {
+                return;
+            }
+            let a = self.at(base, off);
+            let esz = self.esz(et);
+            if n <= 4 {
+                for k in 0..n {
+                    self.drop_value(et, a, (esz * k as i64) as i32);
+                }
+                return;
+            }
+            let i = self.v();
+            self.emit(Inst::Const(i, 0));
+            let (head, body, done) = (self.block(), self.block(), self.block());
+            self.term(Term::Jmp(head));
+            self.switch(head);
+            let nk = self.konst(n as i64);
+            let more = self.bin(Op::Lt, i, nk);
+            self.term(Term::Br(more, body, done));
+            self.switch(body);
+            let addr = self.elem_ptr(a, i, esz);
+            self.drop_value(et, addr, 0);
+            let i1 = self.bink(Op::AddU, i, 1);
+            self.emit(Inst::Mov(i, i1));
+            self.term(Term::Jmp(head));
+            self.switch(done);
+            return;
+        }
         match ty {
             Ty::String => {
                 let a = self.at(base, off);
@@ -1701,6 +1735,9 @@ impl<'a> L<'a> {
             }
             "set" => {
                 let addr = self.arr_elem_addr(a, argv[0], et, n);
+                if self.types.owned(et) {
+                    self.drop_value(et, addr, 0);
+                }
                 self.put_elem(addr, argv[1], et);
                 Ok(self.v())
             }

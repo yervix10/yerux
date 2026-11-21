@@ -1,0 +1,10 @@
+fn pick(i: Int) -> Int {
+  let a = [1, 2, 3]
+  return a[i]
+}
+
+fn table() -> [Int; 2] { return [1, 2] }
+
+fn main() {
+  print(comptime pick(5))
+}

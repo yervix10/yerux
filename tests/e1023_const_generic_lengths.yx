@@ -1,0 +1,5 @@
+fn dot<const K: Int>(a: [Int; K], b: [Int; K]) -> Int { return 0 }
+
+fn main() {
+  print(dot([1, 2], [1, 2, 3]))
+}

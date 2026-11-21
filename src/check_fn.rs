@@ -1032,14 +1032,35 @@ impl<'a> Checker<'a> {
                 let ne = self.subst_known(e, pids, bind);
                 if ne == e {
                     t
+                } else if self.types.slices.contains(&i) {
+                    self.types.intern_slice(ne)
                 } else {
-                    match self.types.lists.iter().position(|x| *x == ne) {
-                        Some(j) => Ty::List(j),
-                        None => {
-                            self.types.lists.push(ne);
-                            Ty::List(self.types.lists.len() - 1)
-                        }
+                    self.types.intern_list(ne)
+                }
+            }
+            Ty::Struct(_) if self.types.array_of(t).is_some() => {
+                let (e, n) = self.types.array_of(t).unwrap();
+                let ne = self.subst_known(e, pids, bind);
+                let nn = if n >= crate::syntax::CONST_LEN {
+                    match pids.iter().position(|x| *x == n - crate::syntax::CONST_LEN) {
+                        Some(k) => match bind[k] {
+                            Some(Ty::Range(v, _)) => v as usize,
+                            _ => n,
+                        },
+                        None => n,
                     }
+                } else {
+                    n
+                };
+                if ne == e && nn == n {
+                    t
+                } else {
+                    let pos = self.types.structs[match t {
+                        Ty::Struct(s) => s,
+                        _ => unreachable!(),
+                    }]
+                    .pos;
+                    self.types.intern_array(ne, nn, pos)
                 }
             }
             Ty::Fn(i) => {

@@ -1,0 +1,5 @@
+fn table() -> [Int; 2] { return [1, 2] }
+
+fn main() {
+  let t = comptime table()
+}

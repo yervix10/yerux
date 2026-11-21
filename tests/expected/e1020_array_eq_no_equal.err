@@ -1,0 +1,9 @@
+error: P does not implement Equal, which 'std__seq_eq' needs for T
+ --> tests/e1020_array_eq_no_equal.yx:6:9
+  |
+6 |   print(a == b)
+  |         ^^^^^^
+  = 'std__seq_eq' is declared `fn std__seq_eq<T: Equal>`
+  = help: add `impl Equal for P { fn eq(view self, other: view P) -> Bool { .. } }`
+
+1 error(s). Nothing was generated.

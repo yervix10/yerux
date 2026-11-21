@@ -1,0 +1,46 @@
+// Arrays inside compile-time code: literals, `[v; N]`, indexing, `set`/`swap`, loops, array parameters and results.
+const N = 10
+
+fn fib_table() -> [Int; N] {
+  var t = [0; N]
+  t[1] = 1
+  for i in 2..N { t[i] = t[i - 1] + t[i - 2] }
+  return t
+}
+
+fn sum_sq(a: [Int; 4]) -> Int {
+  var s = 0
+  for x in a { s = s + x * x }
+  return s
+}
+
+fn grid() -> Int {
+  var g = [[0; 3]; 3]
+  for i in 0..3 { for j in 0..3 { g[i][j] = i * 3 + j } }
+  g.swap(0, 2)
+  return g[0][1] * 100 + g[2][1]
+}
+
+fn pick(i: Int) -> Int {
+  let a = [1, 2, 3]
+  return a[i]
+}
+
+fn fib_at(i: Int) -> Int {
+  let t = fib_table()
+  return t[i]
+}
+
+fn table_len() -> Int {
+  let t = fib_table()
+  return t.len()
+}
+
+fn main() {
+  let f9 = comptime fib_at(9)
+  print(f9)
+  print(comptime sum_sq([1, 2, 3, 4]))
+  print(comptime grid())
+  print(comptime pick(2))
+  comptime assert(table_len() == 10)
+}

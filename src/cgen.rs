@@ -707,7 +707,10 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 self.line(&format!(
                     "static inline int64_t nx_len_{c}({c} *a) {{ (void)a; return {n}; }}"
                 ));
-                self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ *nx_at_{c}(a, i) = v; }}"));
+                if !self.types.owned(el) {
+                    // (with owned elements `nx_set_` drops the old value: emitted with the drop functions)
+                    self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ *nx_at_{c}(a, i) = v; }}"));
+                }
                 self.line(&format!("static inline void nx_swap_{c}({c} *a, int64_t i, int64_t j) {{ {et} *x = nx_at_{c}(a, i); {et} *y = nx_at_{c}(a, j); {et} t = *x; *x = *y; *y = t; }}"));
             }
             Ty::Struct(i) => {
@@ -823,6 +826,19 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                     self.line(&format!("static inline void nx_clear_{c}({c} *l) {{ for (int64_t i = 0; i < l->len; i++) {{{drop_i} }} l->len = 0; }}"));
                     self.line(&format!("static inline void nx_free_{c}({c} *l) {{ nx_clear_{c}(l); free(l->d); l->d = 0; l->cap = 0; }}"));
                 }
+            }
+            Ty::Struct(i) if self.types.arrays.contains_key(&i) => {
+                if !self.types.owned(t) {
+                    return; // Copy elements: the helpers are emitted with the struct body
+                }
+                // `[T; N]` with owned elements: drop every element; `set` drops the old one
+                let (el, n) = self.types.arrays[&i];
+                let et = self.types.cty(el);
+                let c = &cname;
+                let d = self.drop_call(el, "&s->e[i]");
+                self.line(&format!("static void nx_drop_{c}({c} *s) {{ for (int64_t i = 0; i < {n}; i++) {{ {d}; }} }}"));
+                let dp = self.drop_call(el, "p");
+                self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ {et} *p = nx_at_{c}(a, i); {dp}; *p = v; }}"));
             }
             Ty::Struct(i) => {
                 let def = self.types.structs[i].clone();
@@ -1260,6 +1276,14 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                         self.place_c(env)
                     ));
                     self.capture_flags.insert(*id);
+                }
+                if matches!(place.k, EK::SliceOf(..)) {
+                    // a slice header (by value) that lives for the rest of this C block
+                    let c = self.ex(place);
+                    self.line(&format!("{} {}_s = {};", self.types.cty(place.ty), n, c));
+                    self.line(&format!("{} *{} = &{}_s;", self.types.cty(place.ty), n, n));
+                    self.vars.insert(*id, (n.clone(), true, place.ty));
+                    return;
                 }
                 let pc = self.place_c(place);
                 self.vars.insert(*id, (n.clone(), true, place.ty));

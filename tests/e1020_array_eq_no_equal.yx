@@ -1,0 +1,7 @@
+struct P { x: Int }
+
+fn main() {
+  let a = [P { x: 1 }]
+  let b = [P { x: 1 }]
+  print(a == b)
+}

@@ -146,12 +146,6 @@ pub fn is_signed_int(t: Ty) -> bool {
         _ => false,
     }
 }
-pub fn bits_of(t: Ty) -> u32 {
-    match t {
-        Ty::Num(k) => k.bits(),
-        _ => 64,
-    }
-}
 /// Inclusive value range of an integer type.
 pub fn int_range(t: Ty) -> (i128, i128) {
     match t {

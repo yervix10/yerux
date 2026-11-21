@@ -1,0 +1,56 @@
+// `const` items (folded by the compiler) as array lengths and values; `const N: Int` generic parameters.
+const N = 4
+const M: Int = N * 2 + 1
+const BIG = N > 3 && M < 100
+const SEP: Char = '-'
+const LO: Int<0..9> = 3
+
+fn sum(a: [Int; M]) -> Int {
+  var t = 0
+  for x in a { t = t + x }
+  return t
+}
+
+fn total<const K: Int>(a: [Int; K]) -> Int {
+  var t = 0
+  for x in a { t = t + x }
+  return t
+}
+
+fn size<T: Copy, const K: Int>(a: [T; K]) -> Int { return K }
+
+fn rev<const K: Int>(a: [Int; K]) -> [Int; K] {
+  var r = a
+  for i in 0..K { r[i] = a[K - 1 - i] }
+  return r
+}
+
+fn dot<const K: Int>(a: [Int; K], b: [Int; K]) -> Int {
+  var t = 0
+  for i in 0..K { t = t + a[i] * b[i] }
+  return t
+}
+
+fn main() {
+  var a = [1; M]
+  a[N] = 10
+  print(sum(a))
+  print(a.len())
+  print(N + M)
+  print(BIG)
+  print(SEP)
+  let z: [Bool; N] = [true; N]
+  print(z)
+  let N = 100
+  print(N)
+  print(LO + 1)
+  let k = comptime M * 3
+  print(k)
+  print(total([1, 2, 3]))
+  print(total([5; 10]))
+  print(total(a))
+  print(size(["a", "b"]))
+  print(size([[1, 2], [3, 4], [5, 6]]))
+  print(rev([1, 2, 3, 4]))
+  print(dot([1, 2, 3], [4, 5, 6]))
+}

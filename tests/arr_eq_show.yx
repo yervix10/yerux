@@ -1,0 +1,48 @@
+// `==`, `!=`, `<` .. compare arrays and slices element by element; `print`, `"{a}"` and `show()` format them.
+struct P { x: Int }
+
+impl Show for P {
+  fn show(view self) -> String { return "P({self.x})" }
+}
+
+fn same(a: view [Int], b: view [Int]) -> Bool { return a == b }
+
+fn show_it<T: Show>(x: view T) -> String { return x.show() }
+
+fn eqs<T: Equal>(a: view T, b: view T) -> Bool { return a == b }
+
+fn main() {
+  let a = [1, 2, 3]
+  var b = [1, 2, 3]
+  print(a == b)
+  b[2] = 4
+  print(a != b)
+  print(a < b)
+  print(b >= a)
+  print(a)
+  print([true, false])
+  let s = a.show()
+  print(s)
+  print("a = {a} and {b}")
+  var l = List<Int>.new()
+  l.push(1)
+  print(same(a[..1], l))
+  print(same(a[1..], b[1..2]))
+  let g = [[1, 2], [3, 4]]
+  print(g)
+  print([1.5, 2.0] == [1.5, 2.0])
+  print(["x", "y"])
+  print([P { x: 1 }, P { x: 2 }])
+  var rows = List<[Int; 2]>.new()
+  rows.push([1, 2])
+  rows.push([3, 4])
+  print("{rows}")
+  print(rows.contains([3, 4]))
+  print(show_it([7, 8]))
+  print(eqs([1, 2], [1, 2]))
+  let o: Option<[Int; 2]> = Some([5, 6])
+  print("{o}")
+  print([[1, 2], [3, 5]] > [[1, 2], [3, 4]])
+  print(a.eq(b))
+  print(a.cmp(b))
+}

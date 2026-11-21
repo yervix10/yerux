@@ -13,11 +13,6 @@ fn put32(v: &mut Vec<u8>, n: u32) {
 fn put64(v: &mut Vec<u8>, n: u64) {
     v.extend_from_slice(&n.to_le_bytes());
 }
-fn align(v: &mut Vec<u8>, n: usize) {
-    while !v.len().is_multiple_of(n) {
-        v.push(0);
-    }
-}
 
 /// Build an ET_EXEC with a system-loader interpreter and eager GLOB_DAT relocations.
 pub fn write(b: &Built, links: &[String], imports: &[String]) -> Vec<u8> {

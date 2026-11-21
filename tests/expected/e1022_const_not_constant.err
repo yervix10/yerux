@@ -1,0 +1,8 @@
+error: a const must be computed from literals, other consts and arithmetic
+ --> tests/e1022_const_not_constant.yx:3:11
+  |
+3 | const N = f()
+  |           ^^^
+  = function calls are not allowed here yet; use `let x = comptime f(..)` inside a function
+
+1 error(s). Nothing was generated.

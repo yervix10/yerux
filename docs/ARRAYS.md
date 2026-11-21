@@ -7,7 +7,7 @@ records how they are built and what is left.
 
 | Form | Meaning |
 |---|---|
-| `[T; N]` | array type: `N` (integer literal, `1 <= N`, at most 1 MiB in total) Copy elements stored inline |
+| `[T; N]` | array type: `N` (integer literal, Int const or `const N: Int` parameter, `1 <= N`, at most 1 MiB in total) elements stored inline |
 | `[a, b, c]`, `[v; N]` | array literal; fill (one evaluation of `v`) |
 | `x[i]` | `x.at(i)`, a place (lists, arrays, slices); the `[` must be on the same line as `x` |
 | `x[i] = v` | `x.set(i, v)` (the parser rewrites it when the target ends with `]`) |
@@ -47,18 +47,59 @@ records how they are built and what is left.
   reuse the borrowing List loop (`for_each`), with `0 <= from <= to <= len` checked before the loop.
   Array element types are checked to be Copy at the end of `check_program` (struct fields are known then).
 
+## Second round: comparison, formatting, consts, chunks, comptime, owned elements
+
+- **`==` / `<` / print.** `Checker::seq_rewrite` turns `a == b`, `a != b`, `a < b` .. (left operand an array,
+  slice or array literal) into `std__seq_eq(a, b)` / `std__seq_cmp(a, b) <op> 0`, and `a.show()`, `a.eq(b)`,
+  `a.cmp(b)` into the same helpers (`src/prelude_fmt.yx`, generic over `view [T]`, so arrays, Lists and
+  slices are all lent to them). `print(a)` and `"{a}"` wrap the value in `std__seq_show`; an array returned
+  by a call is first kept in a hidden variable. `implements(array or slice, Show/Equal/Ordered)` holds when
+  the element type does, so `List<[Int; 2]>` prints and `contains` works, and generic `T: Show` code accepts
+  arrays (inside an instance the rewrite applies again).
+- **`const` items** (`Parser::const_item`, `fold_const`) are read in the parser's first pass, so they can be
+  array lengths anywhere in the file. Values live in `Types::consts`; the checker replaces a `Var` that is not
+  a local by the literal (`expr_checked`), so locals shadow consts and `comptime`/the optimizer see constants.
+- **`const N: Int` parameters** are type parameters with the pseudo-bound `$const` (`CONST_BOUND`). In the
+  template, `[T; N]` is an array whose length is the placeholder `CONST_LEN + pid` (a generic struct, never
+  emitted) and `N` as a value is `1`; `unify` binds `N` to the singleton range type `Int<n..n>` when it meets a
+  concrete array, and the instance is re-parsed with `N` = that length (as a type argument it also names the
+  instance: `total__Range_3_3`). Only inference from array arguments; no explicit `f<3>(..)`, no arithmetic
+  on `N` in types (`[Int; N + 1]`).
+- **chunks / windows**: `for_each` rewrites `for c in xs.chunks(k)` into an index loop whose body starts with
+  `SK::Bind(c, view|mut, SliceOf(xs, i, end))`; end and step are computed without overflow. The checker
+  types such a bind as a slice; the IR uses the slice header slot; C keeps a by-value header in the block.
+- **split_at / split_at_mut** are prelude functions `std__split_at*` called through method syntax; their
+  body lends `xs[..k]` and `xs[k..]` in one call, which `Checker::split_ok` allows only there (the halves are
+  disjoint by construction).
+- **comptime**: `comptime.rs` has an array value `V::A`; literals, `[v; N]`, `a[i]` / `get` / `set` / `swap` /
+  `len`, `for` (desugared), array parameters and results of called functions. The result of a `comptime`
+  expression is still a scalar (E-K3).
+- **Owned elements** (`Checker::array_elem_ok`): Copy values, or owned values made only of `String`,
+  `List<T>`, structs, enums, tuples and arrays of those, with no recursion. Then `[T; N]` is an owned
+  struct for the whole checker (moves, drop flags, borrow rules are the struct ones), `drop_value` (IR) loops
+  over the elements (unrolled up to 4) and the C oracle emits `nx_drop_<Arr>` with a loop; `set` drops the
+  old element. **Why not `Box`, closures, `dyn`, recursive types:** dropping those uses the iterative
+  worklists of BACKEND.md (`box_fanout`, `drop_deferring`, `drop_scc_run`, `nx_scc_*`), which walk struct
+  fields one by one and would see only one element of an array; making them count N elements (and push N
+  cells) is the remaining work. `List<Box<T>>` covers those cases today.
+
 ## Tests
 
-`tests/arr_basic.yx`, `tests/slice_basic.yx`, `tests/slice_for.yx`, `tests/range_array_loops.yx` (goldens, C,
-native, ASan; aarch64 via `tests/a64_emu.py`), run-time panics `tests/arr_oob.yx`, `tests/slice_oob.yx`,
-`tests/slice_oob_order.yx`, and compile errors `tests/e1001_*` .. `tests/e1019_*`.
+`tests/arr_basic.yx`, `tests/slice_basic.yx`, `tests/slice_for.yx`, `tests/slice_nested.yx`,
+`tests/arr_eq_show.yx`, `tests/arr_const.yx`, `tests/slice_chunks.yx`, `tests/comptime_arrays.yx`,
+`tests/arr_owned.yx`, `tests/arr_owned_drop.yx`, `tests/range_array_loops.yx` (goldens, C, native, ASan;
+aarch64 via `tests/a64_emu.py`; `tests/leakcheck.sh` now includes `arr_*`/`slice_*`), run-time panics
+`tests/arr_oob.yx`, `tests/slice_oob.yx`, `tests/slice_oob_order.yx`, `tests/slice_chunks_zero.yx`,
+`tests/slice_split_oob.yx`, and compile errors `tests/e1001_*` .. `tests/e1029_*`.
 
 ## Not yet
 
-- Owned elements (`[String; 4]`): needs drop glue for arrays and moving elements in and out; use `List`.
-- `==`, `<` and `print`/`Show` on arrays and slices.
-- Slices as local variables or fields (they would need lifetimes; by design they are parameter-only),
+- `Box`, closures, `dyn` values and recursive types as array elements (see above), `[v; N]` of owned values.
+- Slices as local variables or fields (by design they are parameter-only, plus `for` bindings),
   `x[a..b].len()` and other uses of a slice expression outside a call argument or a `for`.
-- Disjoint-borrow reasoning (`copy(a[0..2], a[2..4])` with a `mut` slice is rejected).
-- Lengths from `comptime`/`const` items or const generics (`fn f<const N: Int>(a: [Int; N])`).
-- `split_at_mut`/`chunks_mut` helpers for `parallel for` (docs/CONCURRENCY.md).
+- Indexing a temporary array (`f()[0]`), as for lists: store it first.
+- Disjoint-borrow reasoning in general (`copy(a[0..2], a[2..4])` with a `mut` slice is rejected; use
+  `split_at_mut`).
+- Consts computed by function calls, `pub const` across modules (a const is visible only in its own file and two modules cannot reuse a name), explicit const arguments (`f<3>()`), const
+  arithmetic in types (`[Int; N + 1]`).
+- `split_at_mut`/`chunks_mut` for `parallel for` (docs/CONCURRENCY.md) still need a parallel driver.

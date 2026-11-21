@@ -1,0 +1,31 @@
+// `for c in xs.chunks(k)` / `xs.windows(k)` (slice borrows, `for mut` to change them) and `split_at` / `split_at_mut`.
+fn sum(xs: view [Int]) -> Int {
+  var t = 0
+  for x in xs { t = t + x }
+  return t
+}
+
+fn main() {
+  let a = [1, 2, 3, 4, 5, 6, 7]
+  for c in a.chunks(3) { print(sum(c)) }
+  for w in a.windows(3) { print("{w}") }
+  var b = [1, 2, 3, 4, 5]
+  for mut c in b.chunks(2) {
+    c[0] = c[0] * 100
+  }
+  print(b)
+  var l = List<Int>.new()
+  for i in 0..5 { l.push(i) }
+  for w in l.windows(5) { print(w.len()) }
+  for w in l.windows(6) { print(999) }
+  var n = 0
+  for c in l.chunks(100) { n = n + c.len() }
+  print(n)
+  var arr = [5, 6, 7, 8]
+  arr.split_at_mut(1, |x, y| {
+    x[0] = y[0] + y[2]
+    y[0] = 0
+  })
+  print(arr)
+  a.split_at(2, |x, y| print(x.len() * 10 + y.len()))
+}

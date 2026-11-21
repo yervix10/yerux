@@ -513,6 +513,7 @@ struct Checker<'a> {
     ps: &'a mut Parser,
     in_generic: bool, // checking a generic body with abstract type parameters
     queue: Vec<(Func, String)>, // instantiations still to check (with a description for notes)
+    split_ok: bool,   // checking `std__split_at*`: its two halves of one slice may be lent together
     inst_fns: HashMap<(String, Vec<Ty>), (String, Sig)>,
     hint: Option<Ty>, // expected type of the next expression (to infer `Maybe.None`)
     rename: Option<String>, // set by a generic call: the instantiation to call instead
@@ -930,6 +931,20 @@ impl<'a> Checker<'a> {
 
     fn expr_checked(&mut self, e: &mut Expr) -> Ty {
         let pos = e.pos;
+        // a `const` (not shadowed by a local): its folded value
+        if let EK::Var(n, _) = &e.k {
+            if self.lookup(n).is_none() {
+                if let Some(&(v, t)) = self.types.consts.get(n) {
+                    e.k = match t {
+                        Ty::Bool => EK::Bool(v != 0),
+                        Ty::Char => EK::Char(v),
+                        _ => EK::Int(v),
+                    };
+                    e.ty = t;
+                    return t;
+                }
+            }
+        }
         let hint = self.hint.take();
         // `let x: T = e`
         if matches!(e.k, EK::Ascribe(_)) {
@@ -1169,6 +1184,8 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // arrays and slices: `==`, `<`, .., and `show()` go through the generic slice helpers of prelude_fmt.yx
+        self.seq_rewrite(e);
         // `x.m(..)` on a user type / built-in trait becomes a plain call `Trait__Type__m(x, ..)`
         if let EK::Method { recv, m, .. } = &e.k {
             if m != "at" && self.isp(recv) {
@@ -1284,7 +1301,12 @@ impl<'a> Checker<'a> {
                 None => Ty::Err,
                 Some(p) if self.types.owned(p.ty) => {
                     let n = place_str(e);
-                    let d = if is_at(e) {
+                    let in_array = matches!(&e.k, EK::Method { recv, .. } if recv.ty != Ty::Unit && self.types.array_of(recv.ty).is_some());
+                    let d = if is_at(e) && in_array {
+                        diag(format!("cannot move '{}' out of its array", n.replace(".at(..)", "[..]")), pos).note(
+                            "help: borrow the element instead (`a[i].len()`, or pass `a[i]` to a `view`/`mut` parameter), or replace it: `a[i] = x`",
+                        )
+                    } else if is_at(e) {
                         diag(format!("cannot move '{}' out of its List", n), pos).note(
                             "help: borrow the element instead (`l.at(i).len()`, or pass `l.at(i)` to a `view`/`mut` parameter); `l.pop()` moves the last element out",
                         )
@@ -2200,7 +2222,8 @@ impl<'a> Checker<'a> {
     /// Is `e` a place (a variable, a field, `l.at(i)`, or the cell of a Box)?
     fn isp(&self, e: &Expr) -> bool {
         match &e.k {
-            EK::Var(..) | EK::Field(..) => true,
+            EK::Var(n, _) => self.lookup(n).is_some() || !self.types.consts.contains_key(n),
+            EK::Field(..) => true,
             EK::Method { recv, m, .. } if m == "at" => {
                 !matches!(self.peek_ty(recv), Some(Ty::Dyn(_)) | Some(Ty::Box(_)))
             }
@@ -2390,6 +2413,19 @@ impl<'a> Checker<'a> {
             None if matches!(t, Ty::Range(..)) => Ty::Int,
             None => t,
         };
+        if self.types.owned(elem) {
+            let en = self.tn(elem);
+            self.err(
+                diag(
+                    format!("`[value; N]` copies its value, but {} owns memory", en),
+                    pos,
+                )
+                .note(
+                    "help: write the elements out (`[String.new(), String.new()]`), or use a List",
+                ),
+            );
+            return Ty::Err;
+        }
         self.make_array(elem, n, pos)
     }
     fn make_array(&mut self, elem: Ty, n: usize, pos: Pos) -> Ty {
@@ -2400,7 +2436,7 @@ impl<'a> Checker<'a> {
             self.err(diag("an array element must be a value", pos));
             return Ty::Err;
         }
-        if self.types.owned(elem) {
+        if !self.array_elem_ok(elem) {
             self.err(self.array_copy_error(elem, pos));
             return Ty::Err;
         }
@@ -2410,17 +2446,55 @@ impl<'a> Checker<'a> {
         }
         self.types.intern_array(elem, n, pos)
     }
+    /// Can `[elem; N]` exist? Copy values, and owned values whose drop needs no worklist: `String`, `List`,
+    /// structs, enums, tuples and arrays made of those. Not `Box`, closures, `dyn`, runtime handles, type
+    /// parameters without `Copy`, or anything recursive (see docs/ARRAYS.md).
+    fn array_elem_ok(&self, elem: Ty) -> bool {
+        fn plain(types: &Types, t: Ty, seen: &mut Vec<Ty>) -> bool {
+            if !types.owned(t) {
+                return true;
+            }
+            if seen.contains(&t) {
+                return false;
+            }
+            seen.push(t);
+            let ok = match t {
+                Ty::String => true,
+                Ty::List(i) => plain(types, types.lists[i], seen),
+                Ty::Struct(i) if types.arrays.contains_key(&i) => {
+                    plain(types, types.arrays[&i].0, seen)
+                }
+                Ty::Struct(i) => {
+                    !types.opaque_struct(i)
+                        && !types.structs[i].cname.starts_with("Env__")
+                        && types.structs[i]
+                            .fields
+                            .iter()
+                            .all(|(_, f)| plain(types, *f, seen))
+                }
+                Ty::Enum(i) => types.enums[i]
+                    .variants
+                    .iter()
+                    .all(|(_, ps)| ps.iter().all(|p| plain(types, *p, seen))),
+                _ => false,
+            };
+            seen.pop();
+            ok
+        }
+        plain(&self.types, elem, &mut vec![])
+    }
     fn array_copy_error(&self, elem: Ty, pos: Pos) -> Diag {
         let n = self.tn(elem);
-        let mut d = diag(
-            format!("the elements of an array must be Copy, but {} owns memory", n),
-            pos,
-        )
-        .note("fixed-size arrays hold plain values (numbers, Bool, Char, Text, Copy structs, other arrays)");
+        let mut d = diag(format!("an array cannot hold {} values", n), pos).note(
+            "array elements are Copy values or owned values without heap indirection: String, List<T>, and structs, enums and tuples of those",
+        );
         if matches!(elem, Ty::Param(_)) {
             d = d.note(format!("help: add the bound `{}: Copy`", n));
         } else {
-            d = d.note(format!("help: use `List<{}>` for owned elements", n));
+            d = d.note(format!(
+                "help: use `List<{}>` for Box, closures, dyn values or recursive types",
+                n
+            ));
         }
         d
     }
@@ -2487,6 +2561,14 @@ impl<'a> Checker<'a> {
         }
         if mutates {
             self.need_mut(p, recv, pos);
+        }
+        if m == "get" && self.types.owned(elem) {
+            let n = self.tn(p.ty);
+            self.err(
+                diag(format!("cannot copy an element out of a {}: its elements are owned, not copied", n), pos)
+                    .note("help: borrow it with `a[i]` (e.g. `a[i].len()`, or pass `a[i]` to a `view` parameter), or replace it with `a[i] = x`"),
+            );
+            return Ty::Err;
         }
         ret
     }
@@ -3115,6 +3197,11 @@ impl<'a> Checker<'a> {
                 return ret;
             }
             "print" => {
+                if args.len() == 1 && self.is_seq_expr(&args[0]) {
+                    let a = std::mem::replace(&mut args[0], sx(EK::Int(0), pos));
+                    let p = a.pos;
+                    args[0] = sx(EK::Call("std__seq_show".into(), vec![a]), p);
+                }
                 if args.len() != 1 {
                     self.err(diag("print expects exactly 1 argument", pos));
                 } else {
@@ -3123,6 +3210,21 @@ impl<'a> Checker<'a> {
                         self.place(&mut args[0]).map_or(Ty::Err, |p| p.ty)
                     } else {
                         self.expr(&mut args[0])
+                    };
+                    // an array value made by a call: kept in a hidden variable and shown element-wise
+                    let t = if !self.isp(&args[0]) && self.types.array_of(t).is_some() {
+                        let p = args[0].pos;
+                        let name = format!("tmp__{}", self.vars.len());
+                        let id = self.declare(&name, t, Mode::Own, false);
+                        let init = std::mem::replace(&mut args[0], sx(EK::Int(0), p));
+                        self.arg_temps.push(Stmt {
+                            k: SK::Let(name.clone(), false, init, id),
+                            pos: p,
+                        });
+                        args[0] = sx(EK::Call("std__seq_show".into(), vec![s_var(&name, p)]), p);
+                        self.expr(&mut args[0])
+                    } else {
+                        t
                     };
                     if t == Ty::String && !self.isp(&args[0]) {
                         // a temporary String: print it, then free it
@@ -3356,7 +3458,10 @@ impl<'a> Checker<'a> {
         }
         for a in 0..loans.len() {
             for b in a + 1..loans.len() {
-                if loans[a].0 == loans[b].0 && (loans[a].1 != 0 || loans[b].1 != 0) {
+                if loans[a].0 == loans[b].0
+                    && (loans[a].1 != 0 || loans[b].1 != 0)
+                    && !self.split_ok
+                {
                     // a move buried in an argument that was already reported as a use of a moved value
                     if (loans[a].1 == 3 || loans[b].1 == 3) && self.errs.len() > nerr_call {
                         continue;
@@ -3914,6 +4019,39 @@ impl<'a> Checker<'a> {
                 s.k = SK::Block(std::mem::take(b), self.st.dead);
             }
             SK::For(..) => unreachable!("`for` is rewritten before checking"),
+            SK::Bind(name, mode, place, id) if matches!(place.k, EK::SliceOf(..)) => {
+                // `for c in xs.chunks(k)`: `c` borrows `xs[lo..hi]` (a slice, second-class like every borrow)
+                let EK::SliceOf(b, lo, hi) = &mut place.k else {
+                    unreachable!()
+                };
+                for x in lo.iter_mut().chain(hi.iter_mut()) {
+                    let t = self.expr(x);
+                    self.expect(t, Ty::Int, x.pos);
+                }
+                let saved = std::mem::take(&mut self.frozen);
+                let p = self.place(b);
+                self.frozen = saved;
+                let ty = match p {
+                    Some(p) => match self.types.seq_elem(p.ty) {
+                        Some(e) => {
+                            if *mode == Mode::Mut && !p.mutable {
+                                let n = place_str(b);
+                                let why = self.immutable_reason(p.root_mode);
+                                self.err(diag(format!("cannot loop over '{}' with `mut`: {}", n, why), pos)
+                                    .note("help: declare the variable with `var` (or receive it as `mut`) to change its elements in place"));
+                            }
+                            if *mode == Mode::Mut {
+                                self.ev_escape.push(p.root);
+                            }
+                            self.types.intern_slice(e)
+                        }
+                        None => Ty::Err,
+                    },
+                    None => Ty::Err,
+                };
+                place.ty = ty;
+                *id = self.declare(name, ty, *mode, *mode == Mode::Mut);
+            }
             SK::Bind(name, mode, place, id) => {
                 // the borrowed element is created by the loop itself: its own place is exempt from the freeze
                 let saved = std::mem::take(&mut self.frozen);
@@ -5163,6 +5301,128 @@ impl<'a> Checker<'a> {
         let teach = |d: Diag| {
             d.note("you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`)")
         };
+        // ── `for c in xs.chunks(k)` / `xs.windows(k)`: each `c` is a slice borrow of xs ──
+        if let EK::Method { recv, m, args } = &e.k {
+            if matches!(m.as_str(), "chunks" | "windows") && args.len() == 1 {
+                let chunks = m == "chunks";
+                let mut place = (**recv).clone();
+                if !simple_place(&place) {
+                    self.err(
+                        diag(format!("`{}` needs a variable or a field here", m), ep)
+                            .note("help: store the array or List in a variable first"),
+                    );
+                    return;
+                }
+                let mut probe = place.clone();
+                let Some(p) = self.place(&mut probe) else {
+                    return;
+                };
+                if self.types.seq_elem(p.ty).is_none() {
+                    if p.ty != Ty::Err {
+                        let n = self.tn(p.ty);
+                        self.err(teach(diag(
+                            format!("`{}` works on arrays, Lists and slices, not on {}", m, n),
+                            ep,
+                        )));
+                    }
+                    return;
+                }
+                self.resolve_ids(&mut place);
+                let nk = format!("$k{id}");
+                let ne = format!("$e{id}");
+                let k = args[0].clone();
+                self.chk(out, s_let(&nk, false, k, ep));
+                let what = if chunks { "chunk" } else { "window" };
+                let panic = s_stmt(
+                    SK::ExprS(sx(
+                        EK::Call(
+                            "panic".into(),
+                            vec![sx(EK::Text(format!("{} size must be positive", what)), ep)],
+                        ),
+                        ep,
+                    )),
+                    ep,
+                );
+                self.chk(
+                    out,
+                    s_stmt(
+                        SK::If(
+                            s_bin("<=", s_var(&nk, ep), s_int(0, ep), ep),
+                            vec![panic],
+                            None,
+                        ),
+                        ep,
+                    ),
+                );
+                self.chk(
+                    out,
+                    s_let(&nn, false, s_meth(place.clone(), "len", vec![], ep), ep),
+                );
+                self.chk(out, s_let(&ni, true, s_int(0, ep), ep));
+                let rest = || s_bin("-", s_var(&nn, ep), s_var(&ni, ep), ep);
+                let (cond, mut body2, step) = if chunks {
+                    // end = min(i + k, n), without overflowing
+                    let end = vec![
+                        s_let(&ne, true, s_var(&nn, ep), ep),
+                        s_stmt(
+                            SK::If(
+                                s_bin("<", s_var(&nk, ep), rest(), ep),
+                                vec![s_stmt(
+                                    SK::Assign(
+                                        s_var(&ne, ep),
+                                        s_bin("+", s_var(&ni, ep), s_var(&nk, ep), ep),
+                                    ),
+                                    ep,
+                                )],
+                                None,
+                            ),
+                            ep,
+                        ),
+                    ];
+                    let step = vec![s_stmt(
+                        SK::If(
+                            s_bin("<", s_var(&nk, ep), rest(), ep),
+                            vec![s_inc(&ni, s_var(&nk, ep), ep)],
+                            Some(vec![s_stmt(SK::Assign(s_var(&ni, ep), s_var(&nn, ep)), ep)]),
+                        ),
+                        ep,
+                    )];
+                    (s_bin("<", s_var(&ni, ep), s_var(&nn, ep), ep), end, step)
+                } else {
+                    let end = vec![s_let(
+                        &ne,
+                        false,
+                        s_bin("+", s_var(&ni, ep), s_var(&nk, ep), ep),
+                        ep,
+                    )];
+                    let step = vec![s_inc(&ni, s_int(1, ep), ep)];
+                    (s_bin("<=", s_var(&nk, ep), rest(), ep), end, step)
+                };
+                let slice = sx(
+                    EK::SliceOf(
+                        Box::new(place.clone()),
+                        Some(Box::new(s_var(&ni, ep))),
+                        Some(Box::new(s_var(&ne, ep))),
+                    ),
+                    ep,
+                );
+                body2.push(s_stmt(
+                    SK::Bind(
+                        h.var.clone(),
+                        if h.mutable { Mode::Mut } else { Mode::View },
+                        slice,
+                        0,
+                    ),
+                    h.var_pos,
+                ));
+                body2.extend(body);
+                self.chk(
+                    out,
+                    s_while(cond, body2, step, label, Some((place, h.mutable)), pos),
+                );
+                return;
+            }
+        }
         // ── characters of a String ──
         if let EK::Method { recv, m, args } = &e.k {
             if m == "chars" && args.is_empty() {
@@ -5499,6 +5759,7 @@ impl<'a> Checker<'a> {
     }
 
     fn func(&mut self, f: &mut Func) {
+        self.split_ok = f.pos.line >= PRELUDE_LINE && f.name.starts_with("std__split_at");
         // The name-based scans (`scan_with_lazy`) decide which variables flow facts may be kept about. The
         // checker then records, by variable id, every variable it sees assigned, lent as `mut`, `match mut`ed
         // or captured for writing. A variable that the scans did not know about is a hole in them: the
@@ -5650,6 +5911,21 @@ fn unify(
         (Ty::Box(a), Ty::Box(b)) => unify(types, types.boxes[a], types.boxes[b], pids, bind),
         (Ty::Struct(_), Ty::Struct(_)) if types.array_of(pat).is_some() => {
             match (types.array_of(pat), types.array_of(conc)) {
+                (Some((e1, n1)), Some((e2, n2)))
+                    if n1 >= crate::syntax::CONST_LEN && n2 < crate::syntax::CONST_LEN =>
+                {
+                    // `[T; N]` with a const parameter N: bind N to the length (as the type `Int<n..n>`)
+                    let p = n1 - crate::syntax::CONST_LEN;
+                    let len = Ty::Range(n2 as i64, n2 as i64);
+                    if let Some(k) = pids.iter().position(|x| *x == p) {
+                        match bind[k] {
+                            None => bind[k] = Some(len),
+                            Some(b) if b == len => {}
+                            Some(b) => return Err(Some(b)),
+                        }
+                    }
+                    unify(types, e1, e2, pids, bind)
+                }
                 (Some((e1, n1)), Some((e2, n2))) if n1 == n2 => unify(types, e1, e2, pids, bind),
                 _ => Err(None),
             }
@@ -5724,6 +6000,17 @@ impl<'a> Checker<'a> {
         }
         if let Ty::Param(i) = ty {
             return self.types.params[i].bounds.iter().any(|b| b == tr);
+        }
+        // arrays and slices compare and show element-wise (see `seq_rewrite`)
+        if let Some(e) = self
+            .types
+            .array_of(ty)
+            .map(|(e, _)| e)
+            .or_else(|| self.types.slice_elem(ty))
+        {
+            if matches!(tr, "Show" | "Equal" | "Ordered") {
+                return self.implements(e, tr);
+            }
         }
         self.ps
             .impls
@@ -6276,6 +6563,87 @@ impl<'a> Checker<'a> {
     }
 
     /// `a == b` -> `Equal` call, `a < b` -> `Ordered` call compared with 0.
+    /// An array or slice value (a place of such a type, or an array literal).
+    fn is_seq_expr(&self, e: &Expr) -> bool {
+        if matches!(e.k, EK::ArrayLit(_) | EK::ArrayFill(..)) {
+            return true;
+        }
+        self.isp(e)
+            && self.peek_ty(e).is_some_and(|t| {
+                self.types.array_of(t).is_some() || self.types.slice_elem(t).is_some()
+            })
+    }
+    /// `a == b` / `a < b` / `a.show()` on arrays and slices (element-wise, through prelude_fmt.yx).
+    fn seq_rewrite(&mut self, e: &mut Expr) {
+        let pos = e.pos;
+        match &e.k {
+            EK::Bin(op, a, _)
+                if matches!(*op, "==" | "!=" | "<" | ">" | "<=" | ">=") && self.is_seq_expr(a) =>
+            {
+                let op = *op;
+                if let EK::Bin(_, a, b) = &e.k {
+                    let ta = self
+                        .peek_ty(a)
+                        .filter(|t| self.types.array_of(*t).is_some());
+                    let tb = self
+                        .peek_ty(b)
+                        .filter(|t| self.types.array_of(*t).is_some());
+                    if let (Some(ta), Some(tb)) = (ta, tb) {
+                        if ta != tb {
+                            let (na, nb) = (self.tn(ta), self.tn(tb));
+                            self.err(diag(format!("cannot compare {} with {}", na, nb), pos)
+                                .note("arrays are compared element by element and must have the same type; lend them as slices (`view [T]`) to compare different lengths"));
+                        }
+                    }
+                }
+                let EK::Bin(_, a, b) = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    unreachable!()
+                };
+                let f = if matches!(op, "==" | "!=") {
+                    "std__seq_eq"
+                } else {
+                    "std__seq_cmp"
+                };
+                let call = sx(EK::Call(f.into(), vec![*a, *b]), pos);
+                e.k = match op {
+                    "==" => call.k,
+                    "!=" => EK::Un("!", Box::new(call)),
+                    _ => EK::Bin(op, Box::new(call), Box::new(sx(EK::Int(0), pos))),
+                };
+            }
+            EK::Method { recv, m, args }
+                if matches!(m.as_str(), "split_at" | "split_at_mut")
+                    && args.len() == 2
+                    && self.is_seq_expr(recv) =>
+            {
+                let f = format!("std__{}", m);
+                let EK::Method { recv, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    unreachable!()
+                };
+                let mut all = vec![*recv];
+                all.extend(args);
+                e.k = EK::Call(f, all);
+            }
+            EK::Method { recv, m, args }
+                if ((m == "show" && args.is_empty())
+                    || (matches!(m.as_str(), "eq" | "cmp") && args.len() == 1))
+                    && self.is_seq_expr(recv) =>
+            {
+                let f = match m.as_str() {
+                    "show" => "std__seq_show",
+                    "eq" => "std__seq_eq",
+                    _ => "std__seq_cmp",
+                };
+                let EK::Method { recv, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    unreachable!()
+                };
+                let mut all = vec![*recv];
+                all.extend(args);
+                e.k = EK::Call(f.into(), all);
+            }
+            _ => {}
+        }
+    }
     fn rewrite_op(&mut self, e: &mut Expr, t: Ty) -> Result<(), ()> {
         let pos = e.pos;
         let op = match &e.k {
@@ -6757,6 +7125,11 @@ impl<'a> Checker<'a> {
         let mut pre: Vec<Option<Ty>> = vec![None; args.len()];
         // `"{expr}"` with an owned temporary (a String, a List): the formatter takes it instead of borrowing it
         let mut gi = gi;
+        if g.name == "std__fmt_val" && args.len() == 2 && self.is_seq_expr(&args[1]) {
+            let a = std::mem::replace(&mut args[1], sx(EK::Int(0), pos));
+            let p = a.pos;
+            args[1] = sx(EK::Call("std__seq_show".into(), vec![a]), p);
+        }
         if g.name == "std__fmt_val" && args.len() == 2 && !self.isp(&args[1]) {
             // the text built so far comes first: `"{r.is_err()} {r.err()}"` reads `r` before moving it
             self.hint = Some(Ty::String);
@@ -7196,6 +7569,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         ps,
         in_generic: false,
         queue: vec![],
+        split_ok: false,
         inst_fns: HashMap::new(),
         hint: None,
         rename: None,
@@ -7259,7 +7633,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
     let mut arrays: Vec<(usize, Ty)> = ck.types.arrays.iter().map(|(s, (e, _))| (*s, *e)).collect();
     arrays.sort_by_key(|a| a.0);
     for (sid, elem) in arrays {
-        if ck.types.owned(elem) {
+        if !ck.array_elem_ok(elem) {
             let pos = ck.types.structs[sid].pos;
             let d = ck.array_copy_error(elem, pos);
             ck.err(d);
@@ -7295,7 +7669,7 @@ impl<'a> Checker<'a> {
         for g in self.ps.gfns.clone() {
             for tp in &g.tparams {
                 for (b, bp) in &tp.bounds {
-                    if !tnames.contains(b) {
+                    if !tnames.contains(b) && b != crate::syntax::CONST_BOUND {
                         self.err(
                             diag(format!("unknown trait '{}' in the bound of {}", b, tp.name), *bp)
                                 .note(format!("known traits: {}", known()))
