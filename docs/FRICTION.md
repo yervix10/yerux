@@ -317,3 +317,12 @@ and a Copy receiver that is not a place (Int, Float, Bool, small structs and enu
 variable like an Option/Result receiver was. Char and `Ptr` receivers keep their built-in handling. Test:
 `tests/chain_temps.yx` (C, native, ASan, leakcheck).
 
+## Fixed: locals named like an imported module
+
+`let path = ..`, `fn f(path: String)` and `for path in ..` used to be rejected ("'path' is already the name of an
+imported module", or "module has no item called 'len'" for a parameter) when `std.path` was imported. The module
+loader now tracks such declarations by block: inside the scope the name is the variable, after it (and in the
+initializer of the declaring `let`) it is the module again. Closure parameters and tuple/match patterns that bind a
+module name are not tracked yet (rename them or import with `as`). Tests: `tests/mod_ok/shadow_module`,
+`tests/mod_err/shadow_hides_module` (the module is hidden inside the scope: the error is the ordinary "no method").
+

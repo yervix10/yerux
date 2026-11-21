@@ -2,5 +2,5 @@ import lib
 
 fn main() {
   let lib = 3
-  print(lib)
+  print(lib.twice(4))
 }
