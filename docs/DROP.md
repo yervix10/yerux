@@ -20,8 +20,10 @@ fn main() {
 
 This prints `2` and then `1`. Even though `Tag` holds only an `Int`, a
 `Tag` is owned and moves when passed by value. Aggregates containing it are
-also owned. Generic impls, built-in types, enums, tuples, and arrays cannot
-implement `Drop` directly.
+also owned. Generic structs can implement `Drop` with a generic impl, such as
+`impl<T> Drop for Boxed<T>`. The compiler instantiates the destructor for each
+concrete struct type that is used. Built-in types, enums, tuples, and arrays
+cannot implement `Drop` directly.
 
 ## Destruction order
 

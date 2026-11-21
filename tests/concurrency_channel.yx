@@ -1,3 +1,8 @@
+fn sender_without_receiver() -> Sender<Int> {
+  let (sender, receiver) = Sender<Int>.unbounded()
+  return sender
+}
+
 fn main() {
   let (tx, rx) = Sender<Int>.bounded(1)
   scope {
@@ -24,4 +29,29 @@ fn main() {
   }
   print(rx2.recv().unwrap())
   print(rx2.recv().is_none())
+
+  // The final sender closes automatically when its worker capture is dropped.
+  let (tx3, rx3) = Sender<Int>.unbounded()
+  scope {
+    let sender = spawn move {
+      tx3.send(99)
+      return 0
+    }
+    sender.join()
+  }
+  print(rx3.recv().unwrap())
+  print(rx3.recv().is_none())
+
+  let (tx4, rx4) = Sender<Int>.unbounded()
+  let (tx5, rx5) = Sender<Int>.unbounded()
+  print(rx4.recv_timeout(1).is_none())
+  tx5.send(55)
+  let selected = select2(rx4, rx5, 10).unwrap()
+  print(selected.0)
+  print(selected.1)
+  tx4.close()
+  tx5.close()
+
+  let orphan = sender_without_receiver()
+  print(orphan.send(1))
 }
