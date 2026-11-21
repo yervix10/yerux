@@ -126,6 +126,29 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
         } else if c == '"' {
             i += 1;
             while i < cs.len() && cs[i] != '"' && cs[i] != '\n' {
+                if cs[i] == '{' && cs.get(i + 1) != Some(&'{') {
+                    // an interpolation may hold string literals: skip to its closing `}`
+                    let mut j = i + 1;
+                    while j < cs.len() && cs[j] != '}' && cs[j] != '\n' {
+                        if cs[j] == '"' {
+                            j += 1;
+                            while j < cs.len() && cs[j] != '"' && cs[j] != '\n' {
+                                j += if cs[j] == '\\' { 2 } else { 1 };
+                            }
+                            if j >= cs.len() || cs[j] != '"' {
+                                break;
+                            }
+                        }
+                        j += 1;
+                    }
+                    if j < cs.len() && cs[j] == '}' {
+                        i = j + 1;
+                        continue;
+                    }
+                } else if cs[i] == '{' {
+                    i += 2;
+                    continue;
+                }
                 i += if cs[i] == '\\' { 2 } else { 1 };
             }
             if i >= cs.len() || cs[i] != '"' {

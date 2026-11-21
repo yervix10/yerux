@@ -1,0 +1,8 @@
+// an interpolation with a string literal inside still has to be closed on the same line
+fn tag(s: view String) -> String {
+  return s
+}
+
+fn main() {
+  print("{tag("x")")
+}

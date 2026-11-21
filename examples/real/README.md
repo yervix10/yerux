@@ -72,3 +72,11 @@ times). `minimake [-f Makefile] [target ...] [--then target ...]`; variables, `$
 (clean, build, rebuild-nothing, "up to date", clean); `tests/minimake_errors.sh` covers the failure exit codes.
 Friction notes: [../../docs/FRICTION.md](../../docs/FRICTION.md).
 
+## sumtool
+
+`sumtool.yx` computes SHA-256, CRC-32 and FNV-1a of files (`sha256`, `crc32`, `fnv`), verifies `sha256sum`-style
+lists (`check [-q]`), encodes files (`hex`, `base64 [--decode]`) and prints a size/crc table (`stat`). Options come
+from `std.args`, output is formatted with `std.fmt`, bytes are read with `std.fs.read_bytes`. `tests/sumtool.sh`
+compares it with `sha256sum`, Python's `zlib.crc32`, `base64` and `xxd` on 300 KB of random data and covers the
+error paths and exit codes (0 ok, 1 unreadable file / failed check, 2 usage), on the C and native backends.
+

@@ -1,0 +1,4 @@
+sha256
+tests/sumtool/hello.txt
+tests/sumtool/empty.txt
+tests/sumtool/blob.bin

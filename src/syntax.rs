@@ -272,13 +272,24 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                             "write `}}` for a literal brace, or `{name}` to insert a value",
                         ));
                     }
+                    // the expression may contain plain string literals: "{pad(\"x\", 3)}" is written
+                    // "{pad("x", 3)}"; they are skipped as a whole so a `}` or `"` inside is not the end
                     let mut j = i + 1;
-                    while j < cs.len() && cs[j] != '}' && cs[j] != '"' && cs[j] != '\n' {
+                    while j < cs.len() && cs[j] != '}' && cs[j] != '\n' {
+                        if cs[j] == '"' {
+                            j += 1;
+                            while j < cs.len() && cs[j] != '"' && cs[j] != '\n' {
+                                j += if cs[j] == '\\' { 2 } else { 1 };
+                            }
+                            if j >= cs.len() || cs[j] != '"' {
+                                break;
+                            }
+                        }
                         j += 1;
                     }
                     if j >= cs.len() || cs[j] != '}' {
                         return Err(diag("this `{` in a string is never closed", bpos)
-                            .note("string interpolation looks like \"x = {x}\"; the expression cannot contain a quote (store the value in a variable first)")
+                            .note("string interpolation looks like \"x = {x}\"; the expression may contain string literals but must end with `}` on the same line")
                             .note("write `{{` for a literal brace"));
                     }
                     let text: String = cs[i + 1..j].iter().collect();
