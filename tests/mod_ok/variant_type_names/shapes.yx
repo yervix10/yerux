@@ -1,0 +1,38 @@
+// a type and an enum variant with the same name, a method named like an imported function, and a
+// field access / method call whose name is also an item of this module
+import helpers
+
+pub struct File {
+  name: String,
+}
+
+pub enum Kind {
+  File,
+  Dir,
+  Pair(Int, File),
+}
+
+pub fn kind_of(f: view File) -> Kind {
+  if f.name.ends_with("/") { return Kind.Dir }
+  return Kind.File
+}
+
+pub fn label(k: view Kind) -> Text {
+  match k {
+    File => { return "file" }
+    Dir | Pair(_, _) => { return "dir or pair" }
+  }
+}
+
+pub fn shout(f: view File) -> String {
+  return f.shout()
+}
+
+impl File {
+  fn shout(view self) -> String {
+    return self.name.to_upper()
+  }
+  fn twice(view self) -> Int {
+    return helpers.twice(self.name.len())
+  }
+}

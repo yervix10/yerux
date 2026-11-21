@@ -1,0 +1,26 @@
+None
+set new: ok 0
+Some(one)
+1
+overwrite: ok 0
+Some(two=2)
+1
+overwrite inherited: ok 0
+Some()
+true
+None
+Some(value 0)
+Some(value 99)
+101
+remove: ok 1
+remove again: ok 0
+None
+remove inherited: ok 1
+None
+-1
+empty name: environment variable name is empty
+name with =: environment variable name contains '=' or a NUL byte
+value with NUL: environment variable value contains a NUL byte
+name with NUL: environment variable name contains '=' or a NUL byte
+remove bad name: environment variable name contains '=' or a NUL byte
+environment variable 'YX_IO_TEST' is not set

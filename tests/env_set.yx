@@ -1,0 +1,75 @@
+// std.env set/remove: a private copy of the environment, errors as values
+import std.env
+import std.io
+
+fn show_opt(o: Option<String>) {
+  match o {
+    Some(s) => { print("Some({s})") }
+    None => { print("None") }
+  }
+}
+
+fn report(what: Text, r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => { print("{what}: ok {n}") }
+    Err(e) => { print("{what}: {e}") }
+  }
+}
+
+fn count(name: Text) -> Int {
+  var c = 0
+  let vs = env.vars()
+  for kv in vs {
+    if kv.0 == name { c = c + 1 }
+  }
+  return c
+}
+
+fn main() {
+  let before = env.vars().len()
+  show_opt(env.get("YX_NEW_VAR"))
+  report("set new", env.set("YX_NEW_VAR", "one"))
+  show_opt(env.get("YX_NEW_VAR"))
+  print(env.vars().len() - before)
+  report("overwrite", env.set("YX_NEW_VAR", "two=2"))
+  show_opt(env.get("YX_NEW_VAR"))
+  print(count("YX_NEW_VAR"))
+  report("overwrite inherited", env.set("YX_IO_TEST", ""))
+  show_opt(env.get("YX_IO_TEST"))
+  print(env.has("YX_IO_TEST"))
+  show_opt(env.get("YX_NEW"))          // a prefix is not a match
+
+  // many variables (the table grows)
+  for i in 0..100 {
+    let n = "YX_MANY_{i}"
+    let v = "value {i}"
+    let r = env.set(n, v)
+  }
+  show_opt(env.get("YX_MANY_0"))
+  show_opt(env.get("YX_MANY_99"))
+  print(env.vars().len() - before)
+
+  report("remove", env.remove("YX_NEW_VAR"))
+  report("remove again", env.remove("YX_NEW_VAR"))
+  show_opt(env.get("YX_NEW_VAR"))
+  report("remove inherited", env.remove("YX_IO_TEST"))
+  show_opt(env.get("YX_IO_TEST"))
+  for i in 0..100 {
+    let n = "YX_MANY_{i}"
+    let r = env.remove(n)
+  }
+  print(env.vars().len() - before)
+
+  // errors
+  report("empty name", env.set("", "x"))
+  report("name with =", env.set("A=B", "x"))
+  var nul = String.from("V")
+  nul.push_byte(0)
+  report("value with NUL", env.set("YX_OK", nul))
+  report("name with NUL", env.set(nul, "x"))
+  report("remove bad name", env.remove("A=B"))
+  match env.require("YX_IO_TEST") {
+    Ok(v) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+}

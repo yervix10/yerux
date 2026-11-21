@@ -58,6 +58,8 @@ Rules worth knowing:
 
 ## `std.fs`: the file system
 
+File handles, binary I/O, buffered Reader/Writer, permissions and links, `env.set`/`remove` and `time.Duration` are in [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md).
+
 ```
 import std.fs
 
@@ -163,4 +165,4 @@ All arguments are plain `Int`s, so the checker needs nothing special beyond arit
 
 ## Not done yet
 
-Symbolic link creation/reading, permissions (`chmod`), file handles (open/read/write/seek/close as a value with a `drop`), binary data (`List<UInt8>` read/write: waiting for the byte-buffer type of M2), non-blocking I/O and `epoll`, sockets, threads and a lock around the stdin buffer, a `Duration` type (durations stay `Int` nanoseconds), time zones, setting environment variables, a Windows and an aarch64 implementation.
+Non-blocking I/O and `epoll`, sockets, threads and a lock around the stdin buffer, time zones, a Windows and an aarch64 implementation. (File handles, binary data, links, `chmod`, `env.set` and `Duration` are done: [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md).)

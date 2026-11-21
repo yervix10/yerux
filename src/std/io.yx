@@ -462,13 +462,52 @@ fn env_base() -> Int {
     return sp + 8 + 8 * (__load64(sp) + 1)
 }
 
-// "KEY=VALUE" entries of the environment.
-pub fn env_vars() -> List<String> {
+// The environment is the NUL-terminated `envp` block on the initial stack until the program changes it
+// (set_env_var / remove_env_var); from then on it is a heap table in global cells 8..10: 8 = address of
+// 16-byte entries (address of "KEY=VALUE\0", 1 when the bytes are a heap block of ours), 9 = count,
+// 10 = capacity.
+fn env_count() -> Int {
+    if __load64(__global(8)) != 0 {
+        return __load64(__global(9))
+    }
     let base = env_base()
-    var out = List<String>.new()
     var i = 0
     while __load64(base + 8 * i) != 0 {
-        out.push(cstr(__load64(base + 8 * i)))
+        i = i + 1
+    }
+    return i
+}
+
+fn env_entry(i: Int) -> Int {
+    let t = __load64(__global(8))
+    if t != 0 {
+        return __load64(t + 16 * i)
+    }
+    return __load64(env_base() + 8 * i)
+}
+
+// Is entry `p` ("KEY=VALUE") the variable `name`? Returns the offset of the value, or -1.
+fn env_match(p: Int, name: view String) -> Int {
+    var k = 0
+    while k < name.len() {
+        if __load8(p + k) != name.byte(k) {
+            return -1
+        }
+        k = k + 1
+    }
+    if __load8(p + k) == 61 {
+        return k + 1
+    }
+    return -1
+}
+
+// "KEY=VALUE" entries of the environment.
+pub fn env_vars() -> List<String> {
+    let n = env_count()
+    var out = List<String>.new()
+    var i = 0
+    while i < n {
+        out.push(cstr(env_entry(i)))
         i = i + 1
     }
     return out
@@ -476,26 +515,144 @@ pub fn env_vars() -> List<String> {
 
 // The value of environment variable `name`; None when it is not set.
 pub fn env_var(name: view String) -> Option<String> {
-    let base = env_base()
+    let n = env_count()
     var i = 0
-    while __load64(base + 8 * i) != 0 {
-        let p = __load64(base + 8 * i)
-        var k = 0
-        var same = true
-        while k < name.len() {
-            if __load8(p + k) != name.byte(k) {
-                same = false
-                break
-            }
-            k = k + 1
-        }
-        if same && __load8(p + k) == 61 {
-            let e = cstr(p + k + 1)
+    while i < n {
+        let p = env_entry(i)
+        let v = env_match(p, name)
+        if v >= 0 {
+            let e = cstr(p + v)
             return Some(move e)
         }
         i = i + 1
     }
     return None
+}
+
+// Switch to the heap table (once).
+fn env_own() {
+    if __load64(__global(8)) != 0 {
+        return
+    }
+    let base = env_base()
+    var n = 0
+    while __load64(base + 8 * n) != 0 {
+        n = n + 1
+    }
+    let cap = n + 8
+    let t = __alloc(16 * cap)
+    var i = 0
+    while i < n {
+        __store64(t + 16 * i, __load64(base + 8 * i))
+        __store64(t + 16 * i + 8, 0)
+        i = i + 1
+    }
+    __store64(__global(8), t)
+    __store64(__global(9), n)
+    __store64(__global(10), cap)
+}
+
+fn env_name_ok(name: view String) -> Result<Int, IoError> {
+    if name.len() == 0 {
+        return Err(custom_error(IoErrorKind.InvalidInput, "environment variable name is empty"))
+    }
+    var i = 0
+    while i < name.len() {
+        let b = name.byte(i)
+        if b == 61 || b == 0 {
+            return Err(custom_error(IoErrorKind.InvalidInput, "environment variable name contains '=' or a NUL byte"))
+        }
+        i = i + 1
+    }
+    return Ok(0)
+}
+
+// Set `name` to `value` for this process (later env_var/env_vars see it). `InvalidInput` for an empty
+// name, a name with '=' or NUL, or a value with NUL. Not thread-safe.
+pub fn set_env_var(name: view String, value: view String) -> Result<Int, IoError> {
+    let ok = env_name_ok(name)?
+    var i = 0
+    while i < value.len() {
+        if value.byte(i) == 0 {
+            return Err(custom_error(IoErrorKind.InvalidInput, "environment variable value contains a NUL byte"))
+        }
+        i = i + 1
+    }
+    env_own()
+    let size = name.len() + 1 + value.len() + 1
+    let p = __alloc(size)
+    var k = 0
+    while k < name.len() {
+        __store8(p + k, name.byte(k))
+        k = k + 1
+    }
+    __store8(p + k, 61)
+    var j = 0
+    while j < value.len() {
+        __store8(p + k + 1 + j, value.byte(j))
+        j = j + 1
+    }
+    __store8(p + size - 1, 0)
+    let t = __load64(__global(8))
+    let n = __load64(__global(9))
+    var e = 0
+    while e < n {
+        if env_match(__load64(t + 16 * e), name) >= 0 {
+            if __load64(t + 16 * e + 8) == 1 {
+                __free(__load64(t + 16 * e))
+            }
+            __store64(t + 16 * e, p)
+            __store64(t + 16 * e + 8, 1)
+            return Ok(0)
+        }
+        e = e + 1
+    }
+    var cap = __load64(__global(10))
+    var table = t
+    if n == cap {
+        cap = cap * 2
+        table = __alloc(16 * cap)
+        var c = 0
+        while c < n {
+            __store64(table + 16 * c, __load64(t + 16 * c))
+            __store64(table + 16 * c + 8, __load64(t + 16 * c + 8))
+            c = c + 1
+        }
+        __free(t)
+        __store64(__global(8), table)
+        __store64(__global(10), cap)
+    }
+    __store64(table + 16 * n, p)
+    __store64(table + 16 * n + 8, 1)
+    __store64(__global(9), n + 1)
+    return Ok(0)
+}
+
+// Remove `name` from this process's environment. Ok(1) when it was set, Ok(0) when it was not.
+pub fn remove_env_var(name: view String) -> Result<Int, IoError> {
+    let ok = env_name_ok(name)?
+    env_own()
+    let t = __load64(__global(8))
+    let n = __load64(__global(9))
+    var e = 0
+    while e < n {
+        if env_match(__load64(t + 16 * e), name) >= 0 {
+            if __load64(t + 16 * e + 8) == 1 {
+                __free(__load64(t + 16 * e))
+            }
+            // keep the order: shift the rest down
+            var c = e
+            while c + 1 < n {
+                __store64(t + 16 * c, __load64(t + 16 * (c + 1)))
+                __store64(t + 16 * c + 8, __load64(t + 16 * (c + 1) + 8))
+                c = c + 1
+            }
+            __store64(__global(9), n - 1)
+            return Ok(1)
+        }
+        e = e + 1
+    }
+    return Ok(0)
 }
 
 // Ends the process at once with `code` (0..255): deferred statements and drops do not run.

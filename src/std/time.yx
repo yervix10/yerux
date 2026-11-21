@@ -1,54 +1,197 @@
-// std.time: durations as plain Int nanoseconds, and a stopwatch, over the std.io clocks (docs/STDLIB.md).
+// std.time: a Duration type, clocks (monotonic Instant, wall clock), sleep and a stopwatch over the std.io
+// clocks, and a UTC calendar (docs/STDLIB.md, docs/STDLIB_SYSTEM.md).
 //
 //   import std.time        then      var w = time.stopwatch()   ...   print(time.format(w.elapsed()))
 //
-// A duration is an `Int` count of nanoseconds (about +-292 years); the helpers below build, convert and
-// print them. There is no calendar: `io.unix_secs()` is the only wall-clock source.
+// A Duration is a signed count of nanoseconds (about +-292 years) in a struct of its own, so it cannot be
+// mixed up with other Ints: `time.millis(5)`, `d.as_secs()`, `a.add(b)`, `a < b`, `"{d}"`.
 import std.io
 
-pub fn nanos(n: Int) -> Int {
-  return n
+/// A signed span of time with nanosecond resolution. Plain data (Copy). Arithmetic overflow panics like
+/// any Int arithmetic.
+pub struct Duration {
+  ns: Int,
 }
 
-pub fn micros(n: Int) -> Int {
-  return n * 1000
+impl Equal for Duration {
+  fn eq(view self, other: view Duration) -> Bool {
+    return self.ns == other.ns
+  }
 }
 
-pub fn millis(n: Int) -> Int {
-  return n * 1000000
+impl Ordered for Duration {
+  fn cmp(view self, other: view Duration) -> Int {
+    if self.ns < other.ns {
+      return -1
+    }
+    if self.ns > other.ns {
+      return 1
+    }
+    return 0
+  }
 }
 
-pub fn seconds(n: Int) -> Int {
-  return n * 1000000000
+impl Show for Duration {
+  fn show(view self) -> String {
+    return format(self)
+  }
 }
 
-pub fn minutes(n: Int) -> Int {
-  return n * 60000000000
+pub fn nanos(n: Int) -> Duration {
+  return Duration { ns: n }
 }
 
-pub fn hours(n: Int) -> Int {
-  return n * 3600000000000
+pub fn micros(n: Int) -> Duration {
+  return Duration { ns: n * 1000 }
 }
 
-/// Whole units (truncated towards zero).
-pub fn as_micros(d: Int) -> Int {
-  return d / 1000
+pub fn millis(n: Int) -> Duration {
+  return Duration { ns: n * 1000000 }
 }
 
-pub fn as_millis(d: Int) -> Int {
-  return d / 1000000
+pub fn seconds(n: Int) -> Duration {
+  return Duration { ns: n * 1000000000 }
 }
 
-pub fn as_secs(d: Int) -> Int {
-  return d / 1000000000
+pub fn minutes(n: Int) -> Duration {
+  return Duration { ns: n * 60000000000 }
 }
 
-pub fn as_secs_float(d: Int) -> Float {
-  return d.to_float() / 1000000000.0
+pub fn hours(n: Int) -> Duration {
+  return Duration { ns: n * 3600000000000 }
 }
 
-pub fn as_millis_float(d: Int) -> Float {
-  return d.to_float() / 1000000.0
+/// The zero duration.
+pub fn zero() -> Duration {
+  return Duration { ns: 0 }
+}
+
+/// `x` seconds, rounded to the nearest nanosecond; `InvalidInput` for NaN, infinity or out of range.
+pub fn from_secs_float(x: Float) -> Result<Duration, io.IoError> {
+  if x.is_nan() || x.is_inf() || x > 9.2e9 || x < -9.2e9 {
+    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "duration: seconds out of range"))
+  }
+  return Ok(Duration { ns: (x * 1000000000.0).round_int() })
+}
+
+impl Duration {
+  fn as_nanos(view self) -> Int {
+    return self.ns
+  }
+
+  /// Whole units (truncated towards zero).
+  fn as_micros(view self) -> Int {
+    return self.ns / 1000
+  }
+
+  fn as_millis(view self) -> Int {
+    return self.ns / 1000000
+  }
+
+  fn as_secs(view self) -> Int {
+    return self.ns / 1000000000
+  }
+
+  fn as_secs_float(view self) -> Float {
+    return self.ns.to_float() / 1000000000.0
+  }
+
+  fn as_millis_float(view self) -> Float {
+    return self.ns.to_float() / 1000000.0
+  }
+
+  /// The nanoseconds below the whole second (same sign as the duration).
+  fn subsec_nanos(view self) -> Int {
+    return self.ns % 1000000000
+  }
+
+  fn add(view self, other: view Duration) -> Duration {
+    return Duration { ns: self.ns + other.ns }
+  }
+
+  fn sub(view self, other: view Duration) -> Duration {
+    return Duration { ns: self.ns - other.ns }
+  }
+
+  fn mul(view self, k: Int) -> Duration {
+    return Duration { ns: self.ns * k }
+  }
+
+  /// Divided by `k` (truncated); `k == 0` panics like Int division.
+  fn div(view self, k: Int) -> Duration {
+    return Duration { ns: self.ns / k }
+  }
+
+  /// How many times `other` fits (truncated); panics when `other` is zero.
+  fn ratio(view self, other: view Duration) -> Int {
+    return self.ns / other.ns
+  }
+
+  fn neg(view self) -> Duration {
+    return Duration { ns: 0 - self.ns }
+  }
+
+  fn abs(view self) -> Duration {
+    if self.ns < 0 {
+      return Duration { ns: 0 - self.ns }
+    }
+    return Duration { ns: self.ns }
+  }
+
+  fn is_zero(view self) -> Bool {
+    return self.ns == 0
+  }
+
+  fn is_negative(view self) -> Bool {
+    return self.ns < 0
+  }
+
+  fn min(view self, other: view Duration) -> Duration {
+    if other.ns < self.ns {
+      return Duration { ns: other.ns }
+    }
+    return Duration { ns: self.ns }
+  }
+
+  fn max(view self, other: view Duration) -> Duration {
+    if other.ns > self.ns {
+      return Duration { ns: other.ns }
+    }
+    return Duration { ns: self.ns }
+  }
+}
+
+/// `a + b`, or None when the sum does not fit (instead of the overflow panic of `a.add(b)`).
+pub fn checked_add(a: Duration, b: Duration) -> Option<Duration> {
+  if (b.ns > 0 && a.ns > 9223372036854775807 - b.ns) || (b.ns < 0 && a.ns < -9223372036854775807 - 1 - b.ns) {
+    return None
+  }
+  return Some(Duration { ns: a.ns + b.ns })
+}
+
+/// Free-function forms of the conversions (also methods on Duration; these also take temporaries).
+pub fn as_nanos(d: Duration) -> Int {
+  return d.ns
+}
+
+pub fn as_micros(d: Duration) -> Int {
+  return d.ns / 1000
+}
+
+pub fn as_millis(d: Duration) -> Int {
+  return d.ns / 1000000
+}
+
+pub fn as_secs(d: Duration) -> Int {
+  return d.ns / 1000000000
+}
+
+pub fn as_secs_float(d: Duration) -> Float {
+  return d.ns.to_float() / 1000000000.0
+}
+
+pub fn as_millis_float(d: Duration) -> Float {
+  return d.ns.to_float() / 1000000.0
 }
 
 fn fixed1(x: Float) -> String {
@@ -62,9 +205,9 @@ fn fixed1(x: Float) -> String {
 }
 
 /// A short human-readable duration: `850 ns`, `12.5 us`, `3.2 ms`, `1.5 s`, `2m 05s`, `1h 02m 03s`.
-pub fn format(d: Int) -> String {
+pub fn format(d: Duration) -> String {
   var r = String.new()
-  var v = d
+  var v = d.ns
   if v < 0 {
     r.push_byte(45)
     v = -v
@@ -107,10 +250,10 @@ pub fn format(d: Int) -> String {
   return r
 }
 
-/// Pauses the thread for `d` nanoseconds (no-op for d <= 0).
-pub fn sleep(d: Int) {
-  if d > 0 {
-    io.sleep_ns(d)
+/// Pauses the thread for `d` (no-op for zero or negative durations).
+pub fn sleep(d: Duration) {
+  if d.ns > 0 {
+    io.sleep_ns(d.ns)
   }
 }
 
@@ -128,19 +271,19 @@ pub fn stopwatch() -> Stopwatch {
 }
 
 impl Stopwatch {
-  fn elapsed(view self) -> Int {
-    return io.monotonic_ns() - self.began
+  fn elapsed(view self) -> Duration {
+    return Duration { ns: io.monotonic_ns() - self.began }
   }
 
   fn elapsed_ms(view self) -> Int {
     return (io.monotonic_ns() - self.began) / 1000000
   }
 
-  fn lap(mut self) -> Int {
+  fn lap(mut self) -> Duration {
     let now = io.monotonic_ns()
     let d = now - self.lap_start
     self.lap_start = now
-    return d
+    return Duration { ns: d }
   }
 
   fn restart(mut self) {
@@ -151,10 +294,10 @@ impl Stopwatch {
 }
 
 /// Runs `f` and returns how long it took.
-pub fn measure(f: view fn()) -> Int {
+pub fn measure(f: view fn()) -> Duration {
   let t0 = io.monotonic_ns()
   f()
-  return io.monotonic_ns() - t0
+  return Duration { ns: io.monotonic_ns() - t0 }
 }
 
 // ───────────────────────── clocks ─────────────────────────
@@ -177,12 +320,17 @@ pub fn unix_secs() -> Int {
   return io.unix_secs()
 }
 
+/// The wall clock as a Duration since the Unix epoch.
+pub fn since_epoch() -> Duration {
+  return Duration { ns: io.unix_nanos() }
+}
+
 /// Pauses the thread for `ms` milliseconds (no-op for ms <= 0).
 pub fn sleep_ms(ms: Int) {
   io.sleep_ms(ms)
 }
 
-/// A point on the monotonic clock. Plain data (Copy): compare `ns` fields or subtract with `since`.
+/// A point on the monotonic clock. Plain data (Copy): compare with `is_before`, subtract with `since`.
 pub struct Instant {
   ns: Int,
 }
@@ -194,18 +342,18 @@ pub fn now() -> Instant {
 
 impl Instant {
   /// Time since this instant (negative if it lies in the future).
-  fn elapsed(view self) -> Int {
-    return io.monotonic_ns() - self.ns
+  fn elapsed(view self) -> Duration {
+    return Duration { ns: io.monotonic_ns() - self.ns }
   }
 
-  /// `self - earlier`, a duration.
-  fn since(view self, earlier: view Instant) -> Int {
-    return self.ns - earlier.ns
+  /// `self - earlier`.
+  fn since(view self, earlier: view Instant) -> Duration {
+    return Duration { ns: self.ns - earlier.ns }
   }
 
-  /// This instant moved by duration `d`.
-  fn add(view self, d: Int) -> Instant {
-    return Instant { ns: self.ns + d }
+  /// This instant moved by `d`.
+  fn add(view self, d: view Duration) -> Instant {
+    return Instant { ns: self.ns + d.ns }
   }
 
   fn is_before(view self, other: view Instant) -> Bool {
@@ -221,9 +369,9 @@ pub fn sleep_until(t: Instant) {
   }
 }
 
-/// The instant `d` nanoseconds from now (for `sleep_until` and timeouts).
-pub fn deadline_in(d: Int) -> Instant {
-  return Instant { ns: io.monotonic_ns() + d }
+/// The instant `d` from now (for `sleep_until` and timeouts).
+pub fn deadline_in(d: Duration) -> Instant {
+  return Instant { ns: io.monotonic_ns() + d.ns }
 }
 
 // ───────────────────────── calendar (UTC, proleptic Gregorian) ─────────────────────────

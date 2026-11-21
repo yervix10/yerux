@@ -1,0 +1,8 @@
+// std.time: Durations have no `+`; use a.add(b)
+import std.time
+
+fn main() {
+  let a = time.millis(1)
+  let b = time.millis(2)
+  let c = a + b
+}
