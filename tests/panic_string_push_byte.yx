@@ -1,0 +1,9 @@
+// push_byte takes 0..255; 256 panics.
+fn main() {
+  var s = String.new()
+  s.push_byte(0)
+  s.push_byte(255)
+  print(s.len())
+  s.push_byte(256)
+  print("unreachable")
+}

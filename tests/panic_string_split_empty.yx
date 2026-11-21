@@ -1,0 +1,8 @@
+// An empty separator would never advance: String.split rejects it.
+fn main() {
+  let s = String.from("a,b")
+  let parts = s.split(",")
+  print(parts.len())
+  let none = s.split("")
+  print(none.len())
+}

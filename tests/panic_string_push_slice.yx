@@ -1,0 +1,8 @@
+// push_slice past the end of the source panics.
+fn main() {
+  var s = String.new()
+  s.push_slice("abc", 0, 3)
+  print(s)
+  s.push_slice("abc", 2, 4)
+  print("unreachable")
+}

@@ -1,0 +1,6 @@
+// s.byte(len) is one past the end.
+fn main() {
+  let s = String.from("xyz")
+  print(s.byte(2))
+  print(s.byte(s.len()))
+}

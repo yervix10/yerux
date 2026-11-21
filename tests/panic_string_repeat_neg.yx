@@ -1,0 +1,7 @@
+// A negative count for String.repeat panics.
+fn main() {
+  let s = String.from("ab")
+  print(s.repeat(2))
+  let n = 0 - 1
+  print(s.repeat(n))
+}
