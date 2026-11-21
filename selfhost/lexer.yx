@@ -1,0 +1,316 @@
+// M7 bootstrap: a small source lexer whose output is compared to `yerux tokens`.
+// The token row format is documented in docs/SELFHOST.md.
+import std.env
+import std.fs
+
+struct Part { expr: Bool, text: String }
+
+fn hex(s: view String) -> String {
+  let digits = String.from("0123456789abcdef")
+  var out = String.new()
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    out.push_byte(digits.byte(b / 16))
+    out.push_byte(digits.byte(b % 16))
+  }
+  return out
+}
+
+fn emit(kind: Text, value: view String) {
+  print("{kind}{hex(value)}")
+}
+
+fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
+fn is_alpha(b: Int) -> Bool { return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 }
+fn is_alnum(b: Int) -> Bool { return is_alpha(b) || is_digit(b) }
+fn hex_value(b: Int) -> Int {
+  if b >= 48 && b <= 57 { return b - 48 }
+  if b >= 65 && b <= 70 { return b - 55 }
+  if b >= 97 && b <= 102 { return b - 87 }
+  return -1
+}
+
+fn emit_interp(parts: view List<Part>, count: Int) {
+  if count == 0 {
+    emit("Id:", String.from("String"))
+    emit("Sym:", String.from("."))
+    emit("Id:", String.from("new"))
+    print("Sym:28")
+    print("Sym:29")
+    return
+  }
+  if parts.at(count - 1).expr { emit("Id:", String.from("std__fmt_val")) }
+  else { emit("Id:", String.from("std__fmt_lit")) }
+  print("Sym:28")
+  emit_interp(parts, count - 1)
+  print("Sym:2c")
+  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false) }
+  else { emit("Str:", parts.at(count - 1).text) }
+  print("Sym:29")
+}
+
+fn line_at(src: view String, at: Int) -> Int {
+  var line = 1
+  var i = 0
+  while i < at {
+    if src.byte(i) == 10 { line = line + 1 }
+    i = i + src.char_size(i)
+  }
+  return line
+}
+
+fn col_at(src: view String, at: Int) -> Int {
+  var col = 1
+  var i = 0
+  while i < at {
+    if src.byte(i) == 10 { col = 1 }
+    else { col = col + 1 }
+    i = i + src.char_size(i)
+  }
+  return col
+}
+
+fn report_error(src: view String, message: view String, at: Int, len: Int, note1: Text, note2: Text) {
+  let m = String.from(message)
+  print("Error:{hex(m)}:{line_at(src, at)}:{col_at(src, at)}:{len}")
+  if note1 != "" { print("Note:{hex(String.from(note1))}") }
+  if note2 != "" { print("Note:{hex(String.from(note2))}") }
+  env.exit(1)
+}
+
+fn print_interp_arg(src: view String, end: Int) -> Bool {
+  var j = end
+  while j < src.len() && src.byte(j) == 32 { j = j + 1 }
+  if j >= src.len() || src.byte(j) != 40 { return false }
+  j = j + 1
+  while j < src.len() && src.byte(j) == 32 { j = j + 1 }
+  if j >= src.len() || src.byte(j) != 34 { return false }
+  j = j + 1
+  var interp = false
+  while j < src.len() && src.byte(j) != 34 && src.byte(j) != 10 {
+    if src.byte(j) == 92 { j = j + 2 }
+    else if src.byte(j) == 123 && j + 1 < src.len() {
+      if src.byte(j + 1) == 123 { j = j + 2 }
+      else { interp = true; j = j + 1 }
+    }
+    else { j = j + 1 }
+  }
+  if !interp || j >= src.len() || src.byte(j) != 34 { return false }
+  j = j + 1
+  while j < src.len() && src.byte(j) == 32 { j = j + 1 }
+  return j < src.len() && src.byte(j) == 41
+}
+
+fn main() {
+  let path = env.arg(1)
+  match path {
+    None => { print("usage: lexer.yx file.yx"); return }
+    Some(p) => {
+      match fs.read_to_string(p) {
+        Err(e) => { print("could not read {p}: {e.message}"); return }
+        Ok(src) => { lex(src, true) }
+      }
+    }
+  }
+}
+
+fn lex(src: view String, eof: Bool) {
+  let n = src.len()
+  var i = 0
+  while i < n {
+    let b = src.byte(i)
+    if b == 10 || b == 13 || b == 32 || b == 9 { i = i + 1 }
+    else if b == 47 && i + 1 < n && src.byte(i + 1) == 47 {
+      while i < n && src.byte(i) != 10 { i = i + 1 }
+    }
+    else if is_alpha(b) {
+      let start = i
+      i = i + 1
+      while i < n && is_alnum(src.byte(i)) { i = i + 1 }
+      let ident = src.slice(start, i)
+      if ident == "print" && print_interp_arg(src, i) {
+        emit("Id:", String.from("std__print_owned"))
+      } else { emit("Id:", src.slice(start, i)) }
+    }
+    else if is_digit(b) {
+      let start = i
+      var radix = 10
+      if b == 48 && i + 1 < n && (src.byte(i + 1) == 120 || src.byte(i + 1) == 88) {
+        radix = 16
+        i = i + 2
+      } else if b == 48 && i + 1 < n && (src.byte(i + 1) == 98 || src.byte(i + 1) == 66) {
+        radix = 2
+        i = i + 2
+      }
+      let digits_start = i
+      if radix == 10 {
+        while i < n && (is_digit(src.byte(i)) || src.byte(i) == 95) { i = i + 1 }
+      } else {
+        while i < n && (hex_value(src.byte(i)) >= 0 || src.byte(i) == 95) { i = i + 1 }
+      }
+      let integer_end = i
+      var is_float = false
+      if radix == 10 && i + 1 < n && src.byte(i) == 46 && is_digit(src.byte(i + 1)) {
+        is_float = true
+        i = i + 1
+        while i < n && (is_digit(src.byte(i)) || src.byte(i) == 95) { i = i + 1 }
+      }
+      if radix == 10 && i + 1 < n && (src.byte(i) == 101 || src.byte(i) == 69) {
+        var epos = i + 1
+        if src.byte(epos) == 43 || src.byte(epos) == 45 { epos = epos + 1 }
+        if epos < n && is_digit(src.byte(epos)) {
+          is_float = true
+          i = epos + 1
+          while i < n && is_digit(src.byte(i)) { i = i + 1 }
+        }
+      }
+      let core_end = i
+      while i < n && is_alnum(src.byte(i)) { i = i + 1 }
+      let raw = src.slice(start, i)
+      let core = src.slice(start, core_end).replace("_", "")
+      let suffix = raw.slice(core_end - start, raw.len())
+      if is_float || suffix == "f32" || suffix == "f64" {
+        print("Float:{hex(core)}:{suffix}")
+      } else if radix != 10 {
+        var value = 0
+        var j = digits_start
+        while j < integer_end {
+          let d = hex_value(src.byte(j))
+          if d >= 0 { value = value * radix + d }
+          j = j + 1
+        }
+        if value >= 0 {
+          if suffix.len() == 0 { print("Num:{value}") }
+          else { print("NumT:{value}:{suffix}") }
+        } else { emit("UnsupportedNumber:", raw) }
+      } else {
+        var value = 0
+        if core.parse_int(value) {
+          if suffix.len() == 0 { print("Num:{value}") }
+          else { print("NumT:{value}:{suffix}") }
+        } else {
+          let unsigned_max = String.from("18446744073709551615")
+          if core.len() < unsigned_max.len() || (core.len() == unsigned_max.len() && core <= unsigned_max) {
+            print("NumT:{core}:{suffix}")
+          } else { emit("UnsupportedNumber:", raw) }
+        }
+      }
+    }
+    else if b == 39 {
+      var j = i + 1
+      var value = 0
+      if src.byte(j) == 92 {
+        j = j + 1
+        let e = src.byte(j)
+        if e == 110 { value = 10; j = j + 1 }
+        else if e == 116 { value = 9; j = j + 1 }
+        else if e == 114 { value = 13; j = j + 1 }
+        else if e == 48 { value = 0; j = j + 1 }
+        else if e == 39 || e == 34 || e == 92 { value = e; j = j + 1 }
+        else if e == 117 && j + 1 < n && src.byte(j + 1) == 123 {
+          j = j + 2
+          var invalid_hex = false
+          while j < n && src.byte(j) != 125 {
+            let d = hex_value(src.byte(j))
+            if d >= 0 { value = value * 16 + d }
+            else { invalid_hex = true }
+            j = j + 1
+          }
+          if j < n { j = j + 1 }
+          if invalid_hex || value == 0 { report_error(src, "expected hexadecimal digits in \\u{{..}} escape", i, j - i, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+          if value > 1114111 || (value >= 55296 && value <= 57343) { report_error(src, "this is not a valid Unicode scalar value", i, j - i, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+        } else if e == 10 || e == 0 {
+          report_error(src, "unterminated character literal", i, 1, "", "")
+        } else {
+          report_error(src, "unknown escape in a character literal", i, (j + 1 - i).max(2), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "")
+        }
+      } else {
+        if src.byte(j) == 39 { report_error(src, "empty character literal", i, 2, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+        if src.byte(j) == 10 || src.byte(j) == 0 { report_error(src, "unterminated character literal", i, 1, "", "") }
+        value = src.char_at(j).to_int()
+        j = j + src.char_size(j)
+      }
+      if j < n && src.byte(j) == 39 { j = j + 1 }
+      else { report_error(src, "a character literal must contain exactly one character", i, (j - i).max(1), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+      print("Char:{value}")
+      i = j
+    }
+    else if b == 34 {
+      i = i + 1
+      var value = String.new()
+      var parts = List<Part>.new()
+      var interpolated = false
+      while i < n && src.byte(i) != 34 && src.byte(i) != 10 {
+        if src.byte(i) == 92 && i + 1 < n {
+          let e = src.byte(i + 1)
+          if e == 110 { value.push_byte(10) }
+          else if e == 116 { value.push_byte(9) }
+          else if e == 114 { value.push_byte(13) }
+          else if e == 34 || e == 92 { value.push_byte(e) }
+          else {
+            let escaped = src.slice(i, i + 2)
+            let prefix = String.from("unknown escape sequence ")
+            let first = String.concat(prefix, escaped)
+            let message = String.concat(first, " in a string")
+            report_error(src, message, i, 2, "escapes: \\n (newline), \\t (tab), \\r, \\\" (quote), \\\\ (backslash); write {{{{ and }}}} for literal braces", "")
+          }
+          i = i + 2
+        } else if (src.byte(i) == 123 || src.byte(i) == 125) && i + 1 < n && src.byte(i + 1) == src.byte(i) {
+          value.push_byte(src.byte(i))
+          i = i + 2
+        } else if src.byte(i) == 125 {
+          report_error(src, "a lone `}}` in a string", i, 1, "write `}}}}` for a literal brace, or `{{name}}` to insert a value", "")
+        } else if src.byte(i) == 123 {
+          var j = i + 1
+          while j < n && src.byte(j) != 125 && src.byte(j) != 34 && src.byte(j) != 10 { j = j + 1 }
+          if j < n && src.byte(j) == 125 {
+            let expression = src.slice(i + 1, j)
+            if expression.trim().len() == 0 { report_error(src, "empty `{{}}` in a string", i, 1, "write `{{}}` for literal braces, or put a value inside: \\\"x = {{x}}\\\"", "") }
+            if value.len() > 0 {
+              parts.push(Part { expr: false, text: move value })
+              value = String.new()
+            }
+            parts.push(Part { expr: true, text: move expression })
+            interpolated = true
+            i = j + 1
+          } else {
+            report_error(src, "this `{{` in a string is never closed", i, 1, "string interpolation looks like \"x = {{x}}\"; the expression cannot contain a quote (store the value in a variable first)", "write `{{{{` for a literal brace")
+          }
+        } else {
+          value.push_byte(src.byte(i))
+          i = i + 1
+        }
+      }
+      if i < n && src.byte(i) == 34 { i = i + 1 }
+      if interpolated {
+        if value.len() > 0 { parts.push(Part { expr: false, text: move value }) }
+        emit_interp(parts, parts.len())
+      } else { emit("Str:", value) }
+    }
+    else {
+      if b >= 128 {
+        print("UnsupportedCharacter:{i}")
+        i = i + src.char_size(i)
+      } else {
+      var three = String.new()
+      var two = String.new()
+      if i + 2 < n && src.byte(i + 1) < 128 && src.byte(i + 2) < 128 { three = src.slice(i, i + 3) }
+      if i + 1 < n && src.byte(i + 1) < 128 { two = src.slice(i, i + 2) }
+      if three == "..=" { emit("Sym:", three); i = i + 3 }
+      else if two == "==" || two == "!=" || two == "<=" || two == ">=" || two == "&&" || two == "||" || two == "->" || two == "=>" || two == ".." {
+        emit("Sym:", two); i = i + 2
+      }
+      else {
+        let one = src.slice(i, i + 1)
+        if one == "(" || one == ")" || one == "{{" || one == "}}" || one == "[" || one == "]" || one == "," || one == ":" || one == ";" || one == "=" || one == "<" || one == ">" || one == "+" || one == "-" || one == "*" || one == "/" || one == "%" || one == "!" || one == "." || one == "|" || one == "@" || one == "?" {
+          emit("Sym:", one); i = i + 1
+        } else {
+          print("UnsupportedCharacter:{i}")
+          i = i + src.char_size(i)
+        }
+      }
+      }
+    }
+  }
+  if eof { print("Eof") }
+}
