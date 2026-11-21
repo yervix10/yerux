@@ -35,6 +35,13 @@ while IFS= read -r -d '' file; do
     failures=$((failures + 1))
   elif [[ $self_rc == 1 ]]; then
     source_errors=$((source_errors + 1))
+    # The raw parser trace omits derive expansion. A build AST can still
+    # supply the module's exported names to the resolver.
+    if "$bins/parser" "$tmp/tokens" --build >"$tmp/self-ast"; then
+      dest="$tmp/asts/$file"
+      mkdir -p "$(dirname "$dest")"
+      cp "$tmp/self-ast" "$dest"
+    fi
   else
     dest="$tmp/asts/$file"
     mkdir -p "$(dirname "$dest")"

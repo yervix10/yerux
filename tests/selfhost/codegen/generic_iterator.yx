@@ -1,0 +1,22 @@
+struct Counter<T> { first: T, next_value: Int, stop: Int }
+
+impl<T> Counter<T> {
+  fn new(first: T, stop: Int) -> Counter<T> {
+    return Counter { first: move first, next_value: 0, stop: stop }
+  }
+
+  fn next(mut self) -> Option<Int> {
+    if self.next_value == self.stop { return None }
+    self.next_value = self.next_value + 1
+    return Some(self.next_value)
+  }
+}
+
+fn main() {
+  var counter = Counter<String>.new(String.from("count"), 3)
+  for i in counter {
+    if i == 2 { continue }
+    print("{counter.first}: {i}")
+  }
+  print(counter.next_value)
+}

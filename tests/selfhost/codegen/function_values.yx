@@ -1,0 +1,10 @@
+fn double(x: Int) -> Int { return x * 2 }
+
+fn apply(f: view fn(Int) -> Int, x: Int) -> Int { return f(x) }
+
+fn main() {
+  let add = |value: Int| value + 1
+  print(add(2))
+  print(apply(double, 4))
+  print(apply(|x| x * 3, 7))
+}
