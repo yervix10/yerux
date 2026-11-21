@@ -7,6 +7,7 @@ result collection, and shutdown. Each run checks the output against serial.
 """
 import argparse
 import os
+import resource
 import statistics
 import subprocess
 import tempfile
@@ -23,14 +24,21 @@ def build(source, output):
 
 def measure(binary, expected, runs):
     samples = []
+    user_samples = []
+    sys_samples = []
     for _ in range(runs + 1):
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
         start = time.perf_counter()
         result = subprocess.run([binary], capture_output=True, text=True, check=True)
         elapsed = time.perf_counter() - start
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
         if result.stdout != expected:
             raise SystemExit(f"output mismatch: {binary}: {result.stdout!r} != {expected!r}")
         samples.append(elapsed)
-    return statistics.median(samples[1:])
+        user_samples.append(after.ru_utime - before.ru_utime)
+        sys_samples.append(after.ru_stime - before.ru_stime)
+    return (statistics.median(samples[1:]), statistics.median(user_samples[1:]),
+            statistics.median(sys_samples[1:]))
 
 
 def main():
@@ -48,8 +56,9 @@ def main():
         serial_s = measure(serial, expected, args.runs)
         pool_s = measure(pooled, expected, args.runs)
         print(f"4 batches x 5000 items, 12000 rounds per item, pool workers: 4, runs: {args.runs}")
-        print(f"serial median: {serial_s:.6f}s")
-        print(f"pool map median: {pool_s:.6f}s ({pool_s / serial_s:.2f}x serial)")
+        print(f"serial median: wall {serial_s[0]:.6f}s, user {serial_s[1]:.6f}s, sys {serial_s[2]:.6f}s")
+        print(f"pool map median: wall {pool_s[0]:.6f}s, user {pool_s[1]:.6f}s, sys {pool_s[2]:.6f}s "
+              f"({pool_s[0] / serial_s[0]:.2f}x serial wall)")
 
 
 if __name__ == "__main__":
