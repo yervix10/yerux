@@ -22,6 +22,9 @@ pub fn source(key: &str) -> Option<&'static str> {
         "std.base64" => Some(include_str!("std/base64.yx")),
         "std.hash" => Some(include_str!("std/hash.yx")),
         "std.rand" => Some(include_str!("std/rand.yx")),
+        "std.regex" => Some(include_str!("std/regex.yx")),
+        "std.csv" => Some(include_str!("std/csv.yx")),
+        "std.toml" => Some(include_str!("std/toml.yx")),
         _ => None,
     }
 }

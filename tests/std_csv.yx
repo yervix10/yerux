@@ -1,0 +1,11 @@
+import std.csv
+
+fn main() {
+  let rows = csv.parse(String.from("a,\"b,c\"\r\nx,\"say \"\"hi\"\"\"\r\n"))
+  print(rows.len())
+  print(" ")
+  print(rows.at(0).at(1))
+  print(" ")
+  let encoded = csv.write(rows)
+  print(encoded.eq("a,\"b,c\"\r\nx,\"say \"\"hi\"\"\"\r\n"))
+}

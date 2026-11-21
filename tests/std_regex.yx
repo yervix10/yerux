@@ -1,0 +1,19 @@
+import std.regex
+
+fn main() {
+  print(regex.is_match(String.from("^[a-z]+$"), String.from("yerux")))
+  print(" ")
+  print(regex.is_match(String.from("."), String.from("é")))
+  print(" ")
+  print(regex.find(String.from("[0-9]+"), String.from("id42!")))
+  print(" ")
+  print(regex.replace(String.from("[0-9]+"), String.from("a12b"), String.from("#")))
+  print(" ")
+  let captured = regex.captures(String.from("(ab)"), String.from("zabx"))
+  print(captured.at(1).eq("ab"))
+  print(" ")
+  let matches = regex.find_all(String.from("[a-z]+"), String.from("a1bc"))
+  print(matches.len())
+  print(" ")
+  print(regex.split(String.from(","), String.from("a,b,c")).len())
+}

@@ -1,0 +1,70 @@
+// Minimal TOML reader for project manifests: tables, scalar strings, integers,
+// booleans, and flat arrays. Values are queried by dotted key.
+import std.text
+
+fn raw_value(input: view String, wanted: view String) -> String {
+  let lines = input.split(String.from("\n"))
+  var table = String.new()
+  var i = 0
+  while i < lines.len() {
+    let line = lines.at(i).trim()
+    if line.len() > 0 && line.char_at(0).to_int() == 91 {
+      table = line.slice(1, line.len() - 1)
+    } else {
+      let eq = line.find(String.from("="))
+      if eq >= 0 {
+        let key = line.slice(0, eq).trim()
+        var full = String.from(key)
+        if table.len() > 0 {
+          full = String.new()
+          full.push_slice(table, 0, table.len())
+          full.push_char(Char.from_int(46))
+          full.push_slice(key, 0, key.len())
+        }
+        if full.eq(wanted) {
+          return line.slice(eq + 1, line.len()).trim()
+        }
+      }
+    }
+    i = i + 1
+  }
+  return String.new()
+}
+
+pub fn get_string(input: view String, key: view String) -> String {
+  let raw = raw_value(input, key)
+  if raw.len() >= 2 && raw.char_at(0).to_int() == 34 {
+    return raw.slice(1, raw.len() - 1)
+  }
+  return String.new()
+}
+
+pub fn get_int(input: view String, key: view String) -> Int {
+  match text.parse_int(raw_value(input, key)) {
+    Ok(value) => { return value },
+    Err(_) => { return 0 }
+  }
+}
+
+pub fn get_bool(input: view String, key: view String) -> Bool {
+  return raw_value(input, key).eq("true")
+}
+
+pub fn get_array(input: view String, key: view String) -> List<String> {
+  let raw = raw_value(input, key).trim()
+  var out = List<String>.new()
+  if raw.len() < 2 || raw.char_at(0).to_int() != 91 { return out }
+  let body = raw.slice(1, raw.len() - 1)
+  let items = body.split(String.from(","))
+  var i = 0
+  while i < items.len() {
+    let item = items.at(i).trim()
+    if item.len() >= 2 && item.char_at(0).to_int() == 34 {
+      out.push(item.slice(1, item.len() - 1))
+    } else if item.len() > 0 {
+      out.push(move item)
+    }
+    i = i + 1
+  }
+  return out
+}
