@@ -191,6 +191,12 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                                 return Err(bad("unterminated \\u{..} escape", i - start));
                             }
                             i += 1;
+                            if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                                return Err(bad(
+                                    "expected hexadecimal digits in \\u{..} escape",
+                                    i - start,
+                                ));
+                            }
                             match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
                                 Some(c) => c,
                                 None => {

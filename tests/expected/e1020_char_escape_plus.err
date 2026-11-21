@@ -1,0 +1,8 @@
+error: expected hexadecimal digits in \u{..} escape
+ --> tests/e1020_char_escape_plus.yx:1:19
+  |
+1 | fn main() { print('\u{+41}') }
+  |                   ^^^^^^^^
+  = a Char literal holds exactly one Unicode character: 'a', 'é', '\n', '\u{1F600}'; use ".." for text
+
+1 error(s). Nothing was generated.
