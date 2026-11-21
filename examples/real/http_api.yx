@@ -1,0 +1,258 @@
+// http_api: a minimal HTTP/1.1 JSON API server.
+//
+// Routes:
+//   GET  /ping                       returns {"pong":true}
+//   GET  /items                      returns {"items":[...]}
+//   POST /items  body {"n":"name"}   adds an item, returns {"id":N,"n":"..."}
+//   GET  /items/<id>                 returns {"id":N,"n":"..."} or 404
+//
+// Usage: http_api [port]  (default: 8080)
+//
+// Single-threaded; one request at a time. For a concurrent variant see
+// the thread-pool example.
+import std.io
+import std.net
+
+// ───────────────────────── in-memory store ──────────────────────
+
+struct Item {
+  id: Int,
+  name: String,
+}
+
+struct Store {
+  items: List<Item>,
+  next_id: Int,
+}
+
+fn store_new() -> Store {
+  return Store { items: List<Item>.new(), next_id: 0 }
+}
+
+fn store_add(s: mut Store, name: String) -> Int {
+  let id = s.next_id
+  s.items.push(Item { id: id, name: move name })
+  s.next_id = id + 1
+  return id
+}
+
+fn store_find(s: view Store, id: Int) -> Int {
+  for i in 0..s.items.len() {
+    if s.items.at(i).id == id { return i }
+  }
+  return -1
+}
+
+fn item_json(item: view Item) -> String {
+  return "{{\"id\":{item.id},\"n\":\"{item.name}\"}}"
+}
+
+// ───────────────────────── minimal JSON parsing ─────────────────
+
+// Extract a plain string value for `key` from a flat JSON object body.
+fn json_field(body: view String, key: Text) -> Option<String> {
+  var needle = String.from("\"")
+  needle.push_str(key)
+  needle.push_str("\":\"")
+  let pos = body.find(needle)
+  if pos < 0 { return None }
+  let start = pos + needle.len()
+  var value = String.new()
+  var i = start
+  while i < body.len() {
+    let b = body.byte(i)
+    if b == '"'.to_int() { return Some(move value) }
+    value.push_byte(b)
+    i = i + 1
+  }
+  return None
+}
+
+// ───────────────────────── HTTP framing ─────────────────────────
+
+fn read_request(peer: view net.TcpStream) -> Result<(String, String, String), io.IoError> {
+  var buf = String.new()
+  // Read until we see double CRLF.
+  var scratch = [0u8; 4096]
+  var header_end = -1
+  while header_end < 0 {
+    let n = net.read_into(peer, scratch[..])?
+    if n == 0 { return Err(io.custom_error(io.IoErrorKind.Other, "connection closed")) }
+    for i in 0..n { buf.push_byte(scratch[i].to_int()) }
+    if buf.len() > 16384 {
+      return Err(io.custom_error(io.IoErrorKind.InvalidData, "headers too large"))
+    }
+    // Search for \r\n\r\n
+    var i = 0
+    while i + 3 < buf.len() {
+      if buf.byte(i) == 13 && buf.byte(i + 1) == 10 && buf.byte(i + 2) == 13 && buf.byte(i + 3) == 10 {
+        header_end = i
+      }
+      i = i + 1
+    }
+  }
+  let head = buf.slice(0, header_end)
+  let after_hdr = header_end + 4
+  let lines = head.split("\r\n")
+  if lines.is_empty() {
+    return Err(io.custom_error(io.IoErrorKind.InvalidData, "empty request"))
+  }
+  let start = String.from(lines.at(0))
+  let words = start.split(" ")
+  if words.len() < 2 {
+    return Err(io.custom_error(io.IoErrorKind.InvalidData, "bad request line"))
+  }
+  let method = String.from(words.at(0))
+  let path_full = String.from(words.at(1))
+  // Strip query string.
+  let q = path_full.find("?")
+  var path = String.new()
+  if q < 0 {
+    path = move path_full
+  } else {
+    path = path_full.slice(0, q)
+  }
+  // Find Content-Length.
+  var content_length = 0
+  for li in 1..lines.len() {
+    let colon = lines.at(li).find(":")
+    if colon > 0 {
+      let name = lines.at(li).slice(0, colon).to_lower().trim()
+      let val = lines.at(li).slice(colon + 1, lines.at(li).len()).trim()
+      if name.eq("content-length") {
+        var n = 0
+        if val.parse_int(n) && n >= 0 { content_length = n }
+      }
+    }
+  }
+  // Read body if present.
+  var body = buf.slice(after_hdr, buf.len())
+  while body.len() < content_length {
+    let want = (content_length - body.len()).min(4096)
+    let got = net.read_into(peer, scratch[..want])?
+    if got == 0 { return Err(io.custom_error(io.IoErrorKind.Other, "unexpected EOF in body")) }
+    for i in 0..got { body.push_byte(scratch[i].to_int()) }
+  }
+  return Ok((move method, move path, move body))
+}
+
+fn send_response(peer: view net.TcpStream, code: Int, json: view String) -> Result<Int, io.IoError> {
+  var status_text = "OK"
+  if code == 400 { status_text = "Bad Request" }
+  if code == 404 { status_text = "Not Found" }
+  let length = json.len()
+  let head = "HTTP/1.1 {code} {status_text}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+  let _ = net.write(peer, head)?
+  return net.write(peer, json)
+}
+
+// ───────────────────────── request dispatch ─────────────────────
+
+fn dispatch(store: mut Store, method: view String, path: view String, body: view String) -> (Int, String) {
+  if method.eq("GET") && path.eq("/ping") {
+    return (200, String.from("{{\"pong\":true}}"))
+  }
+
+  if method.eq("GET") && path.eq("/items") {
+    var resp = String.from("{{\"items\":[")
+    var first = true
+    for item in store.items {
+      if !first { resp.push_char(',') }
+      resp.push_str(item_json(item))
+      first = false
+    }
+    resp.push_str("]}}")
+    return (200, move resp)
+  }
+
+  if method.eq("POST") && path.eq("/items") {
+    match json_field(body, "n") {
+      Some(name) => {
+        let id = store_add(store, move name)
+        let idx = store_find(store, id)
+        if idx >= 0 {
+          let resp = item_json(store.items.at(idx))
+          return (200, move resp)
+        }
+      }
+      None => {}
+    }
+    return (400, String.from("{{\"error\":\"expected field n\"}}"))
+  }
+
+  if method.eq("GET") && path.starts_with("/items/") {
+    let items_prefix = String.from("/items/")
+    let prefix_len = items_prefix.len()
+    let id_str = path.slice(prefix_len, path.len())
+    var n = 0
+    if id_str.parse_int(n) {
+      let idx = store_find(store, n)
+      if idx >= 0 {
+        return (200, item_json(store.items.at(idx)))
+      }
+      return (404, String.from("{{\"error\":\"not found\"}}"))
+    }
+    return (400, String.from("{{\"error\":\"invalid id\"}}"))
+  }
+
+  return (404, String.from("{{\"error\":\"not found\"}}"))
+}
+
+fn handle(peer: view net.TcpStream, store: mut Store) {
+  match read_request(peer) {
+    Ok(req) => {
+      let (method, path, body) = move req
+      let (code, resp) = dispatch(store, method, path, body)
+      let _ = send_response(peer, code, resp)
+    }
+    Err(_) => {
+      let _ = send_response(peer, 400, String.from("{{\"error\":\"bad request\"}}"))
+    }
+  }
+}
+
+fn main() {
+  let argv = io.args()
+  var port = 8080
+  if argv.len() >= 2 {
+    var n = 0
+    if argv.at(1).parse_int(n) && n > 0 && n < 65536 {
+      port = n
+    } else {
+      io.eprintln("http_api: invalid port: {argv.at(1)}")
+      io.exit(2)
+    }
+  }
+
+  var listener = net.TcpListener { fd: -1 }
+  match net.address("0.0.0.0", port) {
+    Ok(addr) => {
+      match net.listen(addr) {
+        Ok(l) => { listener = move l }
+        Err(e) => {
+          io.eprintln("http_api: listen: {e}")
+          io.exit(1)
+        }
+      }
+    }
+    Err(e) => {
+      io.eprintln("http_api: address: {e}")
+      io.exit(1)
+    }
+  }
+
+  print("http_api listening on port {port}")
+  var store = store_new()
+
+  while true {
+    match net.accept(listener) {
+      Ok(peer) => {
+        handle(peer, store)
+        let _ = net.close_stream(move peer)
+      }
+      Err(e) => {
+        io.eprintln("http_api: accept: {e}")
+      }
+    }
+  }
+}
