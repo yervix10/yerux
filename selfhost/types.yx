@@ -28,6 +28,7 @@ struct Types {
   copy_params: List<String>,
   modes: List<String>,
   equal_types: List<String>,
+  aliases: List<String>,
   moved: List<Bool>,
   loops: List<LoopFlow>,
   frozen: List<ownership.Loan>,
@@ -135,19 +136,24 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
   if tree.at(index).tag == "Type" {
     let name = ast.name_at(tree, index, 0)
     let args = ast.child(tree, index, 1)
-    if name == "Int" && child_count(tree, args) == 1 && tree.at(args + 1).tag == "Range" {
-      var lo = String.from(tree.at(ast.child(tree, args + 1, 0)).tag)
-      var hi = String.from(tree.at(ast.child(tree, args + 1, 1)).tag)
-      if lo == "_" { lo = String.new() }
-      if hi == "_" { hi = String.new() }
-      return "Int<{lo}..{hi}>"
-    }
+    if name == "Int" { return ast.range_type(tree, args) }
     if name == "Int64" { return String.from("Int") }
     if name == "Float64" { return String.from("Float") }
     if integer(name) || floating(name) || name == "Bool" || name == "Char" ||
         name == "Text" || name == "String" || shape_index(types, name) >= 0 ||
         types.generics.contains(name) || name == "List" || name == "Box" || name == "Ptr" {
       return type_terms.apply(name, source_types(types, tree, ast.child(tree, index, 1)))
+    }
+    let target = ast.alias_target(tree, name)
+    if target >= 0 {
+      if types.aliases.contains(name) {
+        issue(types, "cyclic type alias {name}")
+        return unknown()
+      }
+      types.aliases.push(String.from(name))
+      let ty = source_type(types, tree, target)
+      let unused = types.aliases.pop()
+      return ty
     }
   }
   if tree.at(index).tag == "FnType" {
@@ -922,6 +928,24 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     }
     return unknown()
   }
+  if tag == "Cast" {
+    let expected = source_type(types, tree, ast.child(tree, index, 1))
+    if expected.starts_with("Int<") {
+      let actual = numeric_type(infer(types, tree, ast.child(tree, index, 0), unknown()))
+      if actual != "?" && !integer(actual) { issue(types, "expected an integer but this is {actual}") }
+      let otherwise = ast.child(tree, index, 2)
+      if tree.at(otherwise).tag != "_" {
+        let before = ownership.snapshot(types.moved)
+        let result = String.from(types.return_type)
+        var returns = Returns { expected: move result, inferred: unit() }
+        if !check_body(types, returns, tree, otherwise) {
+          issue(types, String.from("the else block of a checked conversion must exit"))
+        }
+        types.moved = move before
+      }
+      return expected
+    }
+  }
   if tag == "Ascribe" {
     let expected = source_type(types, tree, ast.child(tree, index, 0))
     let actual = infer(types, tree, ast.child(tree, index, 1), expected)
@@ -1020,8 +1044,21 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
   }
   if tag == "GenericMember" {
     let base = ast.name_at(tree, index, 0)
-    let owner = type_terms.apply(base, source_types(types, tree, ast.child(tree, index, 1)))
+    let params = ast.child(tree, index, 1)
     let name = ast.name_at(tree, index, 2)
+    if base == "Int" && (name == "from" || name == "try_from") {
+      let range = ast.range_type(tree, params)
+      let values = ast.child(tree, index, 3)
+      if child_count(tree, values) != 1 {
+        issue(types, "{range}.{name} expects one argument")
+        return unknown()
+      }
+      let actual = numeric_type(infer(types, tree, values + 1, unknown()))
+      if actual != "?" && !integer(actual) { issue(types, "expected an integer but this is {actual}") }
+      if name == "try_from" { return "Result<{range}, Int>" }
+      return range
+    }
+    let owner = type_terms.apply(base, source_types(types, tree, params))
     return member(types, tree, owner, name, ast.child(tree, index, 3), -1, hint)
   }
   if tag == "Bin" { return binary(types, tree, index, hint) }
@@ -1729,7 +1766,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     verify_ownership: verify_ownership, copy_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
     loops: List<LoopFlow>.new(), frozen: List<ownership.Loan>.new(),
-    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(),
+    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), aliases: List<String>.new(),
   }
   if !trace { for i in 0..tree.len() { types.expressions.push(unknown()) } }
   for id in bindings.identities { types.identities.push(id) }
