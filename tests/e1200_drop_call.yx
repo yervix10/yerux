@@ -1,0 +1,9 @@
+// impl Drop: drop runs automatically, it cannot be called by hand
+struct Tag { id: Int }
+impl Drop for Tag {
+  fn drop(mut self) { print("tag") }
+}
+fn main() {
+  var t = Tag { id: 1 }
+  t.drop()
+}

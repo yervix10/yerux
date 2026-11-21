@@ -1,0 +1,2 @@
+fn destroy<T: Drop>(value: mut T) { value.drop() }
+fn main() {}

@@ -522,3 +522,12 @@ Lexer → parser → type + ownership checker → C generator → `cc -O2`.
 ## Open decisions
 - ~~Concurrency~~ **Decided:** shared-memory threads with simple compile-time data-race rules; actors as a library (see docs/DESIGN.md and docs/CONCURRENCY.md).
 - Keyword for read-only borrow: `view` (current) vs `ref` / `read`.
+
+## User-defined destructors
+
+A concrete user-defined struct may implement `Drop` with `fn drop(mut self)`.
+Its values are owned even when all fields are Copy. The compiler calls the
+destructor before destroying its owned fields in reverse declaration order.
+Field moves and explicit calls to the destructor are rejected. A panic
+during a destructor is fatal, including in a recoverable worker.
+See [docs/DROP.md](docs/DROP.md) for cleanup order, worker behavior and support.

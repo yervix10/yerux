@@ -1,0 +1,29 @@
+struct Tag { id: Int, buffer: String }
+impl Drop for Tag {
+  fn drop(mut self) { print("{self.id} {self.buffer}") }
+}
+fn tag(id: Int) -> Tag { return Tag { id: id, buffer: String.from("drop") } }
+
+fn check_worker(should_move: Bool) {
+  let captured = tag(1)
+  scope {
+    let worker = spawn move {
+      let a = tag(2)
+      let b = tag(3)
+      print(captured.id)
+      if should_move { let destination = move b }
+      panic("worker body")
+    }
+    print(worker.join().is_err())
+  }
+}
+
+fn main() {
+  check_worker(false)
+  check_worker(true)
+  let captured = tag(4)
+  scope {
+    let worker = spawn move { print(captured.id) }
+    print(worker.join().is_ok())
+  }
+}

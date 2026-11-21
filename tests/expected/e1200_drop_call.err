@@ -1,0 +1,9 @@
+error: `drop` of Tag cannot be called directly
+ --> tests/e1200_drop_call.yx:8:3
+  |
+8 |   t.drop()
+  |   ^^^^^^^^
+  = the compiler runs it when the value is destroyed
+  = help: end its scope or move it into a function that takes it by value
+
+1 error(s). Nothing was generated.

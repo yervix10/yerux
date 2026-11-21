@@ -659,7 +659,7 @@ const D_DBG0: usize = D_MSG0 + PANIC_MSGS.len(); // "allocs: ", "frees: ", "live
 const D_RNG0: usize = D_DBG0 + 3; // ": ", " not in ", ".." (the message of a failed range conversion)
 const D_TEXT0: usize = D_DBG0 + 6; // user text literals start here
 
-const PANIC_MSGS: [&str; 16] = [
+const PANIC_MSGS: [&str; 17] = [
     "integer overflow in addition",
     "integer overflow in subtraction",
     "integer overflow in multiplication",
@@ -676,6 +676,7 @@ const PANIC_MSGS: [&str; 16] = [
     "float is NaN or out of range for the integer type",
     "could not start thread",
     "stack overflow",
+    "second panic during worker cleanup",
 ];
 const P_ADD: usize = 0;
 const P_SUB: usize = 1;
@@ -692,6 +693,7 @@ const P_ASSERT: usize = 11;
 const P_CONV: usize = 12;
 const P_F2I: usize = 13;
 const P_THREAD_START: usize = 14;
+const P_DOUBLE_PANIC: usize = 16;
 const P_STACK: usize = 15; // raised by the SIGSEGV handler when the fault address is at the stack pointer
 /// panic stub of each `NOp::Chk` message code (MSG_ADD .. MSG_F2I)
 const CHK_PANIC: [usize; 7] = [P_ADD, P_SUB, P_MUL, P_DIV, P_NEG, P_CONV, P_F2I];
@@ -1731,6 +1733,12 @@ impl<'a> G<'a> {
                         self.a.ld(RAX, RDI, 8);
                         emit_tls_store(self.a, RAX, THREAD_CLEANUP_HEAD);
                     }
+                    ThreadOp::DropEnter => {
+                        emit_tls_load(self.a, RAX, TLS_RECOVERY);
+                        self.a.mov_imm(RCX, RECOVERY_IN_DESTRUCTOR);
+                        emit_tls_store(self.a, RCX, TLS_RECOVERY);
+                    }
+                    ThreadOp::DropLeave => emit_tls_store(self.a, RDI, TLS_RECOVERY),
                     ThreadOp::Unlock => {
                         let normal = self.a.label();
                         let exchange = self.a.label();
@@ -2495,7 +2503,9 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
 
 // One mapping per task: control page, inaccessible guard page, then a downward-growing stack.
 const THREAD_TLS: i32 = 32;
-const THREAD_RECOVER: i32 = THREAD_TLS + 8;
+const TLS_RECOVERY: i32 = 8;
+const THREAD_RECOVER: i32 = THREAD_TLS + TLS_RECOVERY;
+const RECOVERY_IN_DESTRUCTOR: i64 = 2;
 const THREAD_UNWINDING: i32 = 16;
 const THREAD_CLEANUP_HEAD: i32 = 24;
 const THREAD_STACK_END: i32 = 2 * 4096 + 2 * 1024 * 1024;
@@ -2592,6 +2602,8 @@ fn emit_threads(
     a.ld(RAX, RCX, 0);
     a.test_rr(RAX);
     a.jcc(CC_E, cleanup);
+    a.mov_imm(RAX, 0);
+    a.st(RCX, 0, RAX);
     a.ld(RDI, RCX, 16);
     a.ld(RAX, RCX, 24);
     a.call_r(RAX);
@@ -2602,7 +2614,6 @@ fn emit_threads(
     a.bind(child_cleanup);
     a.mov_imm(RAX, 0);
     a.st(R12, THREAD_RECOVER, RAX);
-    emit_tls_store(a, RAX, THREAD_UNWINDING);
     a.ld(RDI, R12, ENV);
     a.test_rr(RDI);
     a.jcc(CC_E, child_exit);
@@ -2642,12 +2653,18 @@ fn emit_threads(
 }
 
 /// Redirect a recoverable worker panic before it writes to stderr.
-fn emit_worker_panic_probe(a: &mut Asm, recover: usize) {
-    a.raw(&[0x64, 0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0]); // mov rax, fs:[0]
+fn emit_worker_panic_probe(a: &mut Asm, recover: usize, double_panic: usize) {
+    emit_tls_load(a, RAX, THREAD_UNWINDING);
+    a.test_rax();
+    a.jcc(CC_NE, double_panic);
+
+    emit_tls_load(a, RAX, 0);
     a.lea(RAX, RAX, -THREAD_TLS);
     a.ld(R8, RAX, THREAD_RECOVER);
-    a.test_rr(R8);
-    a.jcc(CC_NE, recover);
+    // Only 1 denotes a recoverable worker. A user destructor may run while a
+    // replacement or an aggregate drop is in progress, so panic there is fatal.
+    a.cmp_imm(R8, 1);
+    a.jcc(CC_E, recover);
 }
 
 fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> Built {
@@ -2664,7 +2681,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
                                 | crate::ir::ThreadOp::Wait
                                 | crate::ir::ThreadOp::Unlock
                                 | crate::ir::ThreadOp::CleanupPush
-                                | crate::ir::ThreadOp::CleanupPop,
+                                | crate::ir::ThreadOp::CleanupPop
+                                | crate::ir::ThreadOp::DropEnter,
                             ..
                         )
                     )
@@ -2809,8 +2827,13 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     // panic stubs: "panic: <msg>\n" to stderr, exit(101)
     for (i, l) in l_panic.iter().enumerate() {
         a.bind(*l);
-        if has_workers && !matches!(i, P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_STACK) {
-            emit_worker_panic_probe(&mut a, l_thread_recover);
+        if has_workers
+            && !matches!(
+                i,
+                P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_STACK | P_DOUBLE_PANIC
+            )
+        {
+            emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
         }
         a.lea_data(RSI, D_PANIC);
         a.mov_imm(RDX, 7);
@@ -2859,7 +2882,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     // range_panic: rdi = value, rsi = lo, rdx = hi. "panic: integer conversion out of range: V not in LO..HI", exit(101).
     a.bind(l_range_panic);
     if has_workers {
-        emit_worker_panic_probe(&mut a, l_thread_recover); // clobbers only rax and r8
+        emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
+        // clobbers only rax and r8
     }
     a.push(RDX);
     a.push(RSI);
@@ -3016,7 +3040,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         let l_nl = a.label();
         a.bind(l_panic_bytes);
         if has_workers {
-            emit_worker_panic_probe(&mut a, l_thread_recover);
+            emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
         }
         a.raw(&[0x56, 0x52]); // push rsi; push rdx
         a.lea_data(RSI, D_PANIC);

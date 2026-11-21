@@ -1,0 +1,9 @@
+error: `drop` of T cannot be called directly
+ --> tests/e1207_drop_generic_call.yx:1:37
+  |
+1 | fn destroy<T: Drop>(value: mut T) { value.drop() }
+  |                                     ^^^^^^^^^^^^
+  = the compiler runs it when the value is destroyed
+  = help: end its scope or move it into a function that takes it by value
+
+1 error(s). Nothing was generated.

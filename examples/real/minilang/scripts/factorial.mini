@@ -1,0 +1,25 @@
+// Function declarations are collected before the first statement executes.
+let target = 6;
+print "factorial:";
+print factorial(target);
+
+fn factorial(n) {
+  if n <= 1 {
+    return 1;
+  }
+  return n * factorial(n - 1);
+}
+
+fn first_multiple(limit, divisor) {
+  let i = 1;
+  while i <= limit {
+    if i % divisor == 0 {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+print first_multiple(10, 7);
+print first_multiple(4, 7);

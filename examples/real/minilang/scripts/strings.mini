@@ -1,0 +1,36 @@
+let prefix = "¡Hola";
+let count = 0;
+
+fn greeting(who) {
+  return prefix + ", " + who + "!";
+}
+
+fn next() {
+  count = count + 1;
+  return count;
+}
+
+fn pair(a, b) {
+  return a * 10 + b;
+}
+
+print pair(next(), next());
+let i = 0;
+while i < 2 {
+  let prefix = "inside";
+  print prefix;
+  i = i + 1;
+}
+if !(prefix == "inside") {
+  print greeting("mundo");
+} else {
+  print "unreachable";
+}
+if 0 {
+  print "unreachable";
+} else {
+  print "tab:\tquote:\" slash:\\";
+}
+print "1" != 1;
+print -7 / 3;
+print 2 + 3 * 4 == 14;

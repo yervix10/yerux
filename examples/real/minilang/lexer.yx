@@ -1,0 +1,158 @@
+// Tokens keep byte spans into the source. The fixed keyword table is lent as a slice.
+pub enum Kind {
+  End, Name, Number, Str,
+  Let, Fn, If, Else, While, Return, Print,
+  LParen, RParen, LBrace, RBrace, Comma, Semi,
+  Plus, Minus, Star, Slash, Percent,
+  Assign, Eq, Ne, Lt, Le, Gt, Ge, Not,
+}
+
+pub struct Issue { offset: Int, message: Text }
+pub struct Token { kind: Kind, start: Int, end: Int }
+struct Keyword { spelling: Text, kind: Kind }
+
+fn keyword(word: view String, keywords: view [Keyword]) -> Kind {
+  for entry in keywords {
+    if word.eq(entry.spelling) { return entry.kind }
+  }
+  return Kind.Name
+}
+
+fn digit(b: Int) -> Bool {
+  return b >= '0'.to_int() && b <= '9'.to_int()
+}
+
+fn name_start(b: Int) -> Bool {
+  return (b >= 'a'.to_int() && b <= 'z'.to_int()) ||
+         (b >= 'A'.to_int() && b <= 'Z'.to_int()) || b == '_'.to_int()
+}
+
+fn peek(src: view String, pos: Int) -> Int {
+  if pos >= src.len() { return -1 }
+  return src.byte(pos)
+}
+
+fn token(kind: Kind, start: Int, end: Int) -> Token {
+  return Token { kind: kind, start: start, end: end }
+}
+
+fn scan_string(src: view String, start: Int) -> Result<Token, Issue> {
+  var pos = start + 1
+  while pos < src.len() {
+    let b = src.byte(pos)
+    if b == '"'.to_int() { return Ok(token(Kind.Str, start, pos + 1)) }
+    if b == '\n'.to_int() || b == '\r'.to_int() { break }
+    if b == '\\'.to_int() {
+      let escaped = peek(src, pos + 1)
+      if escaped != '"'.to_int() && escaped != '\\'.to_int() &&
+         escaped != 'n'.to_int() && escaped != 't'.to_int() && escaped != 'r'.to_int() {
+        return Err(Issue { offset: pos, message: "invalid string escape" })
+      }
+      pos = pos + 1
+    }
+    pos = pos + 1
+  }
+  return Err(Issue { offset: start, message: "unterminated string" })
+}
+
+fn punctuation(src: view String, pos: Int) -> Result<Token, Issue> {
+  let b = src.byte(pos)
+  let end = pos + 1
+  let equals = peek(src, end) == '='.to_int()
+  match Char.from_int(b) {
+    '(' => { return Ok(token(Kind.LParen, pos, end)) }
+    ')' => { return Ok(token(Kind.RParen, pos, end)) }
+    '{' => { return Ok(token(Kind.LBrace, pos, end)) }
+    '}' => { return Ok(token(Kind.RBrace, pos, end)) }
+    ',' => { return Ok(token(Kind.Comma, pos, end)) }
+    ';' => { return Ok(token(Kind.Semi, pos, end)) }
+    '+' => { return Ok(token(Kind.Plus, pos, end)) }
+    '-' => { return Ok(token(Kind.Minus, pos, end)) }
+    '*' => { return Ok(token(Kind.Star, pos, end)) }
+    '/' => { return Ok(token(Kind.Slash, pos, end)) }
+    '%' => { return Ok(token(Kind.Percent, pos, end)) }
+    '=' => {
+      if equals { return Ok(token(Kind.Eq, pos, end + 1)) }
+      return Ok(token(Kind.Assign, pos, end))
+    }
+    '!' => {
+      if equals { return Ok(token(Kind.Ne, pos, end + 1)) }
+      return Ok(token(Kind.Not, pos, end))
+    }
+    '<' => {
+      if equals { return Ok(token(Kind.Le, pos, end + 1)) }
+      return Ok(token(Kind.Lt, pos, end))
+    }
+    '>' => {
+      if equals { return Ok(token(Kind.Ge, pos, end + 1)) }
+      return Ok(token(Kind.Gt, pos, end))
+    }
+    _ => { return Err(Issue { offset: pos, message: "unexpected character" }) }
+  }
+}
+
+pub fn tokenize(src: view String) -> Result<List<Token>, Issue> {
+  let keywords = [
+    Keyword { spelling: "let", kind: Kind.Let },
+    Keyword { spelling: "fn", kind: Kind.Fn },
+    Keyword { spelling: "if", kind: Kind.If },
+    Keyword { spelling: "else", kind: Kind.Else },
+    Keyword { spelling: "while", kind: Kind.While },
+    Keyword { spelling: "return", kind: Kind.Return },
+    Keyword { spelling: "print", kind: Kind.Print },
+  ]
+  var result = List<Token>.new()
+  var pos = 0
+  while pos < src.len() {
+    let start = pos
+    let b = src.byte(pos)
+    match Char.from_int(b) {
+      ' ' | '\t' | '\n' | '\r' => {
+        pos = pos + 1
+        continue
+      }
+      '/' if peek(src, pos + 1) == '/'.to_int() => {
+        while pos < src.len() && src.byte(pos) != '\n'.to_int() { pos = pos + 1 }
+        continue
+      }
+      '"' => {
+        let t = scan_string(src, pos)?
+        result.push(t)
+        pos = t.end
+        continue
+      }
+      _ => {}
+    }
+    if name_start(b) {
+      pos = pos + 1
+      while name_start(peek(src, pos)) || digit(peek(src, pos)) { pos = pos + 1 }
+      let word = src.slice(start, pos)
+      result.push(token(keyword(word, keywords[..]), start, pos))
+    } else if digit(b) {
+      pos = pos + 1
+      while digit(peek(src, pos)) { pos = pos + 1 }
+      result.push(token(Kind.Number, start, pos))
+    } else {
+      let t = punctuation(src, pos)?
+      result.push(t)
+      pos = t.end
+    }
+  }
+  result.push(token(Kind.End, pos, pos))
+  return Ok(move result)
+}
+
+// The language does not derive equality for Copy enums.
+pub fn same(a: Kind, b: Kind) -> Bool {
+  match (a, b) {
+    (End, End) | (Name, Name) | (Number, Number) | (Str, Str) |
+    (Let, Let) | (Fn, Fn) | (If, If) | (Else, Else) | (While, While) |
+    (Return, Return) | (Print, Print) |
+    (LParen, LParen) | (RParen, RParen) | (LBrace, LBrace) | (RBrace, RBrace) |
+    (Comma, Comma) | (Semi, Semi) |
+    (Plus, Plus) | (Minus, Minus) | (Star, Star) | (Slash, Slash) | (Percent, Percent) |
+    (Assign, Assign) | (Eq, Eq) | (Ne, Ne) | (Lt, Lt) | (Le, Le) |
+    (Gt, Gt) | (Ge, Ge) | (Not, Not) => { return true }
+    _ => { return false }
+  }
+}

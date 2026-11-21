@@ -1,0 +1,33 @@
+// impl Drop: runs once per value, in reverse declaration order, before the fields are dropped
+struct Noisy { name: String, n: Int }
+impl Drop for Noisy {
+  fn drop(mut self) {
+    print("drop {self.name} {self.n}")
+  }
+}
+struct Tag { id: Int }
+impl Drop for Tag {
+  fn drop(mut self) { print("tag {self.id}") }
+}
+struct Holder { a: Tag, b: Noisy }
+impl Drop for Holder {
+  fn drop(mut self) { print("holder {self.a.id} {self.b.n}") }
+}
+fn consume(t: Tag) { print("consume") }
+fn make(i: Int) -> Tag { return Tag { id: i } }
+fn main() {
+  let a = Noisy { name: String.from("a"), n: 1 }
+  let t = Tag { id: 7 }
+  consume(move t)
+  var l = List<Tag>.new()
+  l.push(make(1))
+  l.push(make(2))
+  let h = Holder { a: make(3), b: Noisy { name: String.from("b"), n: 2 } }
+  if true {
+    let inner = make(4)
+    print("inner scope end")
+  }
+  let m = make(5)
+  let moved = move m
+  print("end of main")
+}

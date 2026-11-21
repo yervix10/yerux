@@ -1,0 +1,362 @@
+import lexer
+import parser
+
+enum Value { Integer(Int), Str(String) }
+struct Frame { scopes: List<Map<String, Value>> }
+struct Vm {
+  frames: List<Frame>,
+  functions: Map<String, Int>,
+  remaining: Int,
+}
+
+fn frame(bindings: Map<String, Value>) -> Frame {
+  var scopes = List<Map<String, Value>>.new()
+  scopes.push(move bindings)
+  return Frame { scopes: move scopes }
+}
+
+fn issue(offset: Int, message: Text) -> lexer.Issue {
+  return lexer.Issue { offset: offset, message: message }
+}
+
+fn charge(vm: mut Vm, offset: Int, depth: Int) -> Result<Bool, lexer.Issue> {
+  if depth >= 128 { return Err(issue(offset, "evaluation nested too deeply")) }
+  if vm.remaining == 0 { return Err(issue(offset, "execution step limit exceeded")) }
+  vm.remaining = vm.remaining - 1
+  return Ok(true)
+}
+
+fn integer(value: view Value, offset: Int) -> Result<Int, lexer.Issue> {
+  match value {
+    Integer(n) => { return Ok(n) }
+    Str(_) => { return Err(issue(offset, "expected an integer")) }
+  }
+}
+
+fn truth(value: view Value, offset: Int) -> Result<Bool, lexer.Issue> {
+  let n = integer(value, offset)?
+  return Ok(n != 0)
+}
+
+fn boolean(b: Bool) -> Value {
+  if b { return Value.Integer(1) }
+  return Value.Integer(0)
+}
+
+fn duplicate(value: view Value) -> Value {
+  match value {
+    Integer(n) => { return Value.Integer(n) }
+    Str(s) => { return Value.Str(String.from(s)) }
+  }
+}
+
+fn equal(lhs: view Value, rhs: view Value) -> Bool {
+  match lhs {
+    Integer(a) => {
+      match rhs {
+        Integer(b) => { return a == b }
+        Str(_) => { return false }
+      }
+    }
+    Str(a) => {
+      match rhs {
+        Integer(_) => { return false }
+        Str(b) => { return a.eq(b) }
+      }
+    }
+  }
+}
+
+// Search the current call's blocks, then the global root. A caller's locals are private.
+fn locate(vm: view Vm, name: view String) -> (Int, Int, Int) {
+  let f = vm.frames.len() - 1
+  var s = vm.frames.at(f).scopes.len() - 1
+  while s >= 0 {
+    let i = vm.frames.at(f).scopes.at(s).find(name)
+    if i >= 0 { return (f, s, i) }
+    s = s - 1
+  }
+  if f > 0 {
+    let i = vm.frames.at(0).scopes.at(0).find(name)
+    if i >= 0 { return (0, 0, i) }
+  }
+  return (-1, -1, -1)
+}
+
+fn decode(src: view String, lo: Int, hi: Int) -> String {
+  var out = String.new()
+  var start = lo
+  var i = lo
+  while i < hi {
+    if src.byte(i) == '\\'.to_int() {
+      out.push_slice(src, start, i)
+      i = i + 1
+      match Char.from_int(src.byte(i)) {
+        'n' => { out.push_char('\n') }
+        't' => { out.push_char('\t') }
+        'r' => { out.push_char('\r') }
+        '"' => { out.push_char('"') }
+        _ => { out.push_char('\\') }
+      }
+      start = i + 1
+    }
+    i = i + 1
+  }
+  out.push_slice(src, start, hi)
+  return out
+}
+
+fn arithmetic(op: lexer.Kind, a: Int, b: Int, offset: Int) -> Result<Value, lexer.Issue> {
+  var n = 0
+  match op {
+    Plus => { n = a + b }
+    Minus => { n = a - b }
+    Star => { n = a * b }
+    Slash => {
+      if b == 0 { return Err(issue(offset, "division by zero")) }
+      n = a / b
+    }
+    Percent => {
+      if b == 0 { return Err(issue(offset, "remainder by zero")) }
+      n = a % b
+    }
+    Lt => { return Ok(boolean(a < b)) }
+    Le => { return Ok(boolean(a <= b)) }
+    Gt => { return Ok(boolean(a > b)) }
+    Ge => { return Ok(boolean(a >= b)) }
+    _ => { return Err(issue(offset, "invalid binary operator")) }
+  }
+  if n < -1000000000 || n > 1000000000 {
+    return Err(issue(offset, "integer result out of range"))
+  }
+  return Ok(Value.Integer(n))
+}
+
+fn binary(op: lexer.Kind, lhs: view Value, rhs: view Value, offset: Int) -> Result<Value, lexer.Issue> {
+  match op {
+    Eq => { return Ok(boolean(equal(lhs, rhs))) }
+    Ne => { return Ok(boolean(!equal(lhs, rhs))) }
+    Plus => {
+      match lhs {
+        Str(a) => {
+          match rhs {
+            Str(b) => {
+              if a.len() + b.len() > 1048576 {
+                return Err(issue(offset, "string result exceeds 1 MiB"))
+              }
+              return Ok(Value.Str(String.concat(a, b)))
+            }
+            Integer(_) => { return Err(issue(offset, "'+' requires two integers or two strings")) }
+          }
+        }
+        Integer(_) => {}
+      }
+    }
+    _ => {}
+  }
+  let a = integer(lhs, offset)?
+  let b = integer(rhs, offset)?
+  return arithmetic(op, a, b, offset)
+}
+
+fn sequence_length(nodes: view [parser.Node], first: Int) -> Int {
+  var n = 0
+  var i = first
+  while i >= 0 {
+    n = n + 1
+    i = nodes[i].next
+  }
+  return n
+}
+
+fn invoke_body(nodes: view [parser.Node], src: view String, vm: mut Vm, first_param: Int, body: Int, first_arg: Int, offset: Int, depth: Int) -> Result<Value, lexer.Issue> {
+  if sequence_length(nodes, first_param) != sequence_length(nodes, first_arg) {
+    return Err(issue(offset, "wrong number of arguments"))
+  }
+  // Arguments are evaluated left to right before installing the callee frame.
+  var bindings = Map<String, Value>.new()
+  var param = first_param
+  var arg = first_arg
+  while param >= 0 {
+    match nodes[param].form {
+      Name(lo, hi) => {
+        let name = src.slice(lo, hi)
+        let value = eval(nodes, src, vm, arg, depth + 1)?
+        bindings.insert(move name, move value)
+      }
+      _ => { return Err(issue(offset, "invalid parameter node")) }
+    }
+    param = nodes[param].next
+    arg = nodes[arg].next
+  }
+  vm.frames.push(frame(move bindings))
+  let outcome = execute(nodes, src, vm, body, depth + 1)
+  let discarded = vm.frames.pop()
+  match move outcome {
+    Ok(ret) => {
+      match move ret {
+        Some(value) => { return Ok(move value) }
+        None => { return Err(issue(offset, "function ended without returning a value")) }
+      }
+    }
+    Err(err) => { return Err(err) }
+  }
+}
+
+fn eval(nodes: view [parser.Node], src: view String, vm: mut Vm, index: Int, depth: Int) -> Result<Value, lexer.Issue> {
+  let node = nodes[index]
+  let charged = charge(vm, node.offset, depth)?
+  match node.form {
+    Number(n) => { return Ok(Value.Integer(n)) }
+    Str(lo, hi) => { return Ok(Value.Str(decode(src, lo, hi))) }
+    Name(lo, hi) => {
+      let name = src.slice(lo, hi)
+      let (f, s, i) = locate(vm, name)
+      if i < 0 { return Err(issue(node.offset, "unknown variable")) }
+      return Ok(duplicate(vm.frames.at(f).scopes.at(s).vals.at(i)))
+    }
+    Unary(op, index) => {
+      let value = eval(nodes, src, vm, index, depth + 1)?
+      let n = integer(value, node.offset)?
+      if lexer.same(op, lexer.Kind.Not) { return Ok(boolean(n == 0)) }
+      return Ok(Value.Integer(-n))
+    }
+    Binary(op, a, b) => {
+      let lhs = eval(nodes, src, vm, a, depth + 1)?
+      let rhs = eval(nodes, src, vm, b, depth + 1)?
+      return binary(op, lhs, rhs, node.offset)
+    }
+    Call(lo, hi, args) => {
+      let name = src.slice(lo, hi)
+      let i = vm.functions.find(name)
+      if i < 0 { return Err(issue(node.offset, "unknown function")) }
+      let def = nodes[vm.functions.vals.get(i)]
+      match def.form {
+        Function(_, _, params, body) => {
+          return invoke_body(nodes, src, vm, params, body, args, node.offset, depth)
+        }
+        _ => { return Err(issue(node.offset, "invalid function node")) }
+      }
+    }
+    _ => { return Err(issue(node.offset, "invalid expression node")) }
+  }
+}
+
+fn scoped(nodes: view [parser.Node], src: view String, vm: mut Vm, first: Int, depth: Int) -> Result<Option<Value>, lexer.Issue> {
+  let f = vm.frames.len() - 1
+  vm.frames.at(f).scopes.push(Map<String, Value>.new())
+  let outcome = execute(nodes, src, vm, first, depth)
+  let discarded = vm.frames.at(f).scopes.pop()
+  return outcome
+}
+
+fn execute_stmt(nodes: view [parser.Node], src: view String, vm: mut Vm, node: parser.Node, depth: Int) -> Result<Option<Value>, lexer.Issue> {
+  let charged = charge(vm, node.offset, depth)?
+  match node.form {
+    Let(lo, hi, index) => {
+      let name = src.slice(lo, hi)
+      let f = vm.frames.len() - 1
+      let s = vm.frames.at(f).scopes.len() - 1
+      if vm.frames.at(f).scopes.at(s).contains(name) {
+        return Err(issue(lo, "variable already declared in this scope"))
+      }
+      let value = eval(nodes, src, vm, index, depth + 1)?
+      vm.frames.at(f).scopes.at(s).insert(move name, move value)
+    }
+    Assign(lo, hi, index) => {
+      let name = src.slice(lo, hi)
+      let (f, s, i) = locate(vm, name)
+      if i < 0 { return Err(issue(lo, "cannot assign to an unknown variable")) }
+      let value = eval(nodes, src, vm, index, depth + 1)?
+      vm.frames.at(f).scopes.at(s).vals.set(i, move value)
+    }
+    If(index, yes, no) => {
+      let value = eval(nodes, src, vm, index, depth + 1)?
+      let test = truth(value, node.offset)?
+      if test { return scoped(nodes, src, vm, yes, depth + 1) }
+      if no >= 0 { return scoped(nodes, src, vm, no, depth + 1) }
+    }
+    While(index, body) => {
+      while true {
+        let value = eval(nodes, src, vm, index, depth + 1)?
+        let test = truth(value, node.offset)?
+        if !test { break }
+        let ret = scoped(nodes, src, vm, body, depth + 1)?
+        if ret.is_some() { return Ok(move ret) }
+      }
+    }
+    Print(index) => {
+      let value = eval(nodes, src, vm, index, depth + 1)?
+      match value {
+        Integer(n) => { print(n) }
+        Str(s) => { print(s) }
+      }
+    }
+    Return(index) => {
+      let value = eval(nodes, src, vm, index, depth + 1)?
+      return Ok(Some(move value))
+    }
+    Discard(index) => { let value = eval(nodes, src, vm, index, depth + 1)? }
+    Function(_, _, _, _) => {}
+    _ => { return Err(issue(node.offset, "invalid statement node")) }
+  }
+  return Ok(None)
+}
+
+fn execute(nodes: view [parser.Node], src: view String, vm: mut Vm, first: Int, depth: Int) -> Result<Option<Value>, lexer.Issue> {
+  var i = first
+  while i >= 0 {
+    let node = nodes[i]
+    let ret = execute_stmt(nodes, src, vm, node, depth)?
+    if ret.is_some() { return Ok(move ret) }
+    i = node.next
+  }
+  return Ok(None)
+}
+
+fn unique_params(nodes: view [parser.Node], src: view String, first: Int) -> Result<Bool, lexer.Issue> {
+  var names = Set<String>.new()
+  var i = first
+  while i >= 0 {
+    let node = nodes[i]
+    match node.form {
+      Name(lo, hi) => {
+        let name = src.slice(lo, hi)
+        if !names.insert(move name) { return Err(issue(lo, "duplicate parameter name")) }
+      }
+      _ => { return Err(issue(node.offset, "invalid parameter node")) }
+    }
+    i = node.next
+  }
+  return Ok(true)
+}
+
+fn register(nodes: view [parser.Node], src: view String, vm: mut Vm, first: Int) -> Result<Bool, lexer.Issue> {
+  var i = first
+  while i >= 0 {
+    let node = nodes[i]
+    match node.form {
+      Function(lo, hi, params, _) => {
+        let name = src.slice(lo, hi)
+        if vm.functions.contains(name) { return Err(issue(lo, "duplicate function name")) }
+        let valid = unique_params(nodes, src, params)?
+        vm.functions.insert(move name, i)
+      }
+      _ => {}
+    }
+    i = node.next
+  }
+  return Ok(true)
+}
+
+pub fn run(nodes: view [parser.Node], src: view String, first: Int) -> Result<Bool, lexer.Issue> {
+  var vm = Vm {
+    frames: List<Frame>.new(),
+    functions: Map<String, Int>.new(),
+    remaining: 100000,
+  }
+  vm.frames.push(frame(Map<String, Value>.new()))
+  let registered = register(nodes, src, vm, first)?
+  let ignored = execute(nodes, src, vm, first, 0)?
+  return Ok(true)
+}

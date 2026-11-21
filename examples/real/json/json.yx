@@ -1,0 +1,109 @@
+import std.env
+import std.fs
+import std.io
+import codec
+
+enum Mode { Check, Pretty, Minify }
+struct Cli { mode: Mode, path: String }
+
+fn arguments(args: view List<String>) -> Result<Cli, Text> {
+  var mode = Mode.Pretty
+  var mode_given = false
+  var path: String = "-"
+  var path_given = false
+  var options = true
+  for i in 1..args.len() {
+    if options && args.at(i).eq("--") {
+      options = false
+    } else if options && args.at(i).starts_with("-") && !args.at(i).eq("-") {
+      if mode_given { return Err("choose only one mode") }
+      if args.at(i).eq("--check") {
+        mode = Mode.Check
+      } else if args.at(i).eq("--pretty") {
+        mode = Mode.Pretty
+      } else if args.at(i).eq("--minify") {
+        mode = Mode.Minify
+      } else {
+        return Err("unknown option")
+      }
+      mode_given = true
+    } else {
+      if path_given { return Err("expected at most one input file") }
+      path = String.from(args.at(i))
+      path_given = true
+    }
+  }
+  return Ok(Cli { mode: mode, path: move path })
+}
+
+fn read_input(path: view String) -> Result<String, io.IoError> {
+  if path.eq("-") { return io.read_all() }
+  return fs.read_to_string(path)
+}
+
+fn write_output(value: view codec.Value, pretty: Bool) -> Bool {
+  var out = codec.format(value, pretty)
+  out.push_char('\n')
+  match io.write_stdout(out) {
+    Ok(_) => { return true }
+    Err(err) => {
+      io.eprintln("stdout: {err}")
+      return false
+    }
+  }
+}
+
+fn process(src: view String, label: view String, mode: Mode) -> Bool {
+  match codec.parse(src) {
+    Ok(value) => {
+      match mode {
+        Check => { return true }
+        Pretty => { return write_output(value, true) }
+        Minify => { return write_output(value, false) }
+      }
+    }
+    Err(problem) => {
+      let (line, col) = codec.location(src, problem.offset)
+      io.eprintln("{label}:{line}:{col}: {problem.message}")
+      return false
+    }
+  }
+}
+
+fn usage() {
+  io.eprintln("usage: json [--pretty|--minify|--check] [FILE|-]")
+}
+
+fn run() -> Int {
+  let args = env.args()
+  if args.len() == 2 && args.at(1).eq("--help") {
+    print("usage: json [--pretty|--minify|--check] [FILE|-]")
+    return 0
+  }
+  match arguments(args) {
+    Ok(cli) => {
+      var label = String.from(cli.path)
+      if label.eq("-") { label = "<stdin>" }
+      match read_input(cli.path) {
+        Ok(src) => {
+          if process(src, label, cli.mode) { return 0 }
+          return 1
+        }
+        Err(err) => {
+          io.eprintln("{label}: {err}")
+          return 1
+        }
+      }
+    }
+    Err(err) => {
+      io.eprintln(err)
+      usage()
+      return 2
+    }
+  }
+}
+
+fn main() {
+  let status = run()
+  if status != 0 { io.exit(status) }
+}

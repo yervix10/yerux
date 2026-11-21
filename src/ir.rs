@@ -178,6 +178,8 @@ pub enum ThreadOp {
     Unlock,
     CleanupPush,
     CleanupPop,
+    DropEnter,
+    DropLeave,
     Wait,
     Park,
     Wake,
@@ -380,6 +382,7 @@ struct LoopL {
 struct L<'a> {
     scopes: Vec<Vec<Owned>>,
     recover_panics: bool,
+    guard_destructors: bool,
     cleanup_slots: HashMap<usize, V>,
     capture_flags: HashMap<usize, V>, // variable id -> address of its environment drop flag
     flags: HashMap<usize, V>,         // variable id -> drop flag vreg (1 = still owns its value)
@@ -1085,8 +1088,23 @@ impl<'a> L<'a> {
                     });
                     return;
                 }
+                if let Some(fname) = self.types.user_drop.get(&sid).cloned() {
+                    // `impl Drop`: the user's drop runs first, with the value still whole
+                    let a = self.at(base, off);
+                    let id = self.ids[&fname];
+                    let saved = self.guard_destructors.then(|| {
+                        let saved = self.v();
+                        self.emit(Inst::Thread(ThreadOp::DropEnter, saved, vec![]));
+                        saved
+                    });
+                    self.emit(Inst::Call(None, id, vec![a]));
+                    if let Some(saved) = saved {
+                        let unused = self.v();
+                        self.emit(Inst::Thread(ThreadOp::DropLeave, unused, vec![saved]));
+                    }
+                }
                 let fields = self.types.structs[sid].fields.clone();
-                for (n, f) in fields {
+                for (n, f) in fields.into_iter().rev() {
                     if self.types.owned(f) {
                         let (fo, _) = self.field_off(sid, &n);
                         if let Some(flag) = self.types.capture_live_field(sid, &n) {
@@ -1173,6 +1191,10 @@ impl<'a> L<'a> {
         let (yes, join) = (self.block(), self.block());
         self.term(Term::Br(o.flag, yes, join));
         self.switch(yes);
+        self.emit(Inst::Const(o.flag, 0));
+        if let Some(record) = o.cleanup {
+            self.emit(Inst::Store(record, 0, o.flag));
+        }
         self.drop_value(o.ty, o.addr, 0);
         self.term(Term::Jmp(join));
         self.switch(join);
@@ -1342,7 +1364,10 @@ impl<'a> L<'a> {
                                     flag: f,
                                     addr: base,
                                     ty: val.ty,
-                                    cleanup: None,
+                                    cleanup: match &target.k {
+                                        EK::Var(_, id) => self.cleanup_slots.get(id).copied(),
+                                        _ => None,
+                                    },
                                 };
                                 self.drop_if_live(&o);
                                 guard = Some(f);
@@ -2718,6 +2743,7 @@ impl<'a> L<'a> {
     /// A struct whose drop is the plain field-by-field drop (no guard, handle, shared cell or closure environment).
     fn plain_struct(&self, sid: usize) -> bool {
         !self.types.is_lock_guard(sid)
+            && !self.types.user_drop.contains_key(&sid)
             && self.types.join_payload(sid).is_none()
             && self.types.runtime_struct(sid, "Shared").is_none()
             && !self.types.structs[sid].cname.starts_with("Env__")
@@ -3589,6 +3615,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         let mut l = L {
             scopes: vec![vec![]],
             recover_panics,
+            guard_destructors: recover_panics,
             cleanup_slots: HashMap::new(),
             flags: HashMap::new(),
             capture_flags: HashMap::new(),
@@ -3723,6 +3750,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         let mut l = L {
             scopes: vec![vec![]],
             recover_panics: false,
+            guard_destructors: recover_panics,
             cleanup_slots: HashMap::new(),
             flags: HashMap::new(),
             capture_flags: HashMap::new(),

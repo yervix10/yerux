@@ -191,6 +191,12 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                                 return Err(bad("unterminated \\u{..} escape", i - start));
                             }
                             i += 1;
+                            if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                                return Err(bad(
+                                    "expected hexadecimal digits in \\u{..} escape",
+                                    i - start,
+                                ));
+                            }
                             match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
                                 Some(c) => c,
                                 None => {
@@ -657,6 +663,8 @@ pub struct Types {
     pub slices: HashSet<usize>,
     /// `const NAME: T = expr` items (Int, Bool or Char), folded by the parser: value (Bool 0/1, Char code), type.
     pub consts: HashMap<String, (i64, Ty)>,
+    /// Structs with a user `impl Drop`: struct id -> name of the `drop` function (run before the fields drop).
+    pub user_drop: HashMap<usize, String>,
 }
 
 /// The pseudo-bound that marks a `const N: Int` parameter of a generic function.
@@ -862,6 +870,7 @@ impl Types {
             Ty::List(_) | Ty::String | Ty::Box(_) | Ty::Fn(_) | Ty::Dyn(_) => true,
             Ty::Struct(i) => {
                 self.is_lock_guard(i)
+                    || self.user_drop.contains_key(&i)
                     || self.join_payload(i).is_some()
                     || self.structs[i].fields.iter().any(|(_, f)| self.owned(*f))
             }
@@ -1459,6 +1468,8 @@ pub const PRELUDE: &str = concat!(
 
 pub fn impl_fn_name(types: &Types, trait_name: Option<&str>, ty: Ty, m: &str) -> String {
     match trait_name {
+        // Keep compiler-only destructor functions out of the source identifier namespace.
+        Some("Drop") => format!("$Drop__{}__{}", types.mangle(ty), m),
         Some(t) => format!("{}__{}__{}", t, types.mangle(ty), m),
         None => format!("{}__{}", types.mangle(ty), m),
     }
