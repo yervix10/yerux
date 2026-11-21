@@ -1,0 +1,9 @@
+error: cannot use 's': it was already moved
+ --> tests/e985_net_use_after_close.yx:7:24
+  |
+7 |   let again = net.read(s, 1)?
+  |                        ^
+  = 's' was moved on line 6
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

@@ -5,10 +5,10 @@ import std.io
 pub struct SocketAddr { ip: String, port: Int }
 
 /// An owned TCP connection. Call `close` explicitly; Yerux currently has no user-defined Drop hook.
-pub struct TcpStream { fd: Int }
+pub struct TcpStream { fd: Int, _owned: String }
 
 /// An owned listening TCP socket. Call `close` explicitly.
-pub struct TcpListener { fd: Int }
+pub struct TcpListener { fd: Int, _owned: String }
 
 pub fn address(ip: Text, port: Int) -> Result<SocketAddr, io.IoError> {
   if port < 0 || port > 65535 {
@@ -45,11 +45,50 @@ fn sockaddr(a: view SocketAddr, out: Int) -> Int {
     __store8(out + 1, 0)
     __store8(out + 2, a.port / 256)
     __store8(out + 3, a.port % 256)
-    // IPv6 address literal parsing without libc: support ::1 and fully expanded 8-group hex forms.
+    // Parse IPv6 hex groups, including one compressed run of zero groups.
     var i = 0
     while i < 16 { __store8(out + 8 + i, 0); i = i + 1 }
-    if a.ip.eq("::1") { __store8(out + 23, 1); return 28 }
-    return -1
+    var groups = 0
+    var compress = -1
+    i = 0
+    while i < a.ip.len() {
+      if a.ip.byte(i) == 58 {
+        if i + 1 >= a.ip.len() || a.ip.byte(i + 1) != 58 || compress >= 0 { return -1 }
+        compress = groups
+        i = i + 2
+      } else {
+        var v = 0
+        var digits = 0
+        while i < a.ip.len() && a.ip.byte(i) != 58 {
+          let c = a.ip.byte(i)
+          var d = c - 48
+          if c >= 65 && c <= 70 { d = c - 55 }
+          if c >= 97 && c <= 102 { d = c - 87 }
+          if d < 0 || d > 15 { return -1 }
+          v = v * 16 + d
+          digits = digits + 1
+          i = i + 1
+        }
+        if digits == 0 || digits > 4 || groups >= 8 { return -1 }
+        __store8(out + 8 + groups * 2, v / 256)
+        __store8(out + 9 + groups * 2, v % 256)
+        groups = groups + 1
+        if i < a.ip.len() && a.ip.byte(i) == 58 && i + 1 < a.ip.len() && a.ip.byte(i + 1) != 58 { i = i + 1 }
+      }
+    }
+    if compress >= 0 {
+      if groups >= 8 { return -1 }
+      var shift = 8 - groups
+      var k = groups - 1
+      while k >= compress {
+        __store8(out + 8 + (k + shift) * 2, __load8(out + 8 + k * 2))
+        __store8(out + 9 + (k + shift) * 2, __load8(out + 9 + k * 2))
+        k = k - 1
+      }
+      k = compress
+      while k < compress + shift { __store8(out + 8 + k * 2, 0); __store8(out + 9 + k * 2, 0); k = k + 1 }
+    } else if groups != 8 { return -1 }
+    return 28
   }
   __store8(out, 2)
   __store8(out + 1, 0)
@@ -93,7 +132,7 @@ pub fn connect(a: view SocketAddr) -> Result<TcpStream, io.IoError> {
     let c = __syscall(3, fd, 0, 0, 0, 0, 0)
     return Err(io.os_error("connect", a.ip, 0 - r))
   }
-  return Ok(TcpStream { fd: fd })
+  return Ok(TcpStream { fd: fd, _owned: String.new() })
 }
 
 /// Bind and listen on an IPv4 or `::1` IPv6 literal.
@@ -119,14 +158,14 @@ pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
   }
   let r = __syscall(50, fd, 128, 0, 0, 0, 0)
   if r < 0 { let c = __syscall(3, fd, 0, 0, 0, 0, 0); return Err(io.os_error("listen", a.ip, 0 - r)) }
-  return Ok(TcpListener { fd: fd })
+  return Ok(TcpListener { fd: fd, _owned: String.new() })
 }
 
 /// Accept one incoming connection.
 pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
   let fd = __syscall(43, l.fd, 0, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("accept", "", 0 - fd)) }
-  return Ok(TcpStream { fd: fd })
+  return Ok(TcpStream { fd: fd, _owned: String.new() })
 }
 
 /// Read up to `limit` bytes; an empty String means orderly EOF.
@@ -148,14 +187,14 @@ pub fn write(s: view TcpStream, data: view String) -> Result<Int, io.IoError> {
   return Ok(n)
 }
 
-pub fn close_stream(s: mut TcpStream) -> Result<Int, io.IoError> {
+pub fn close_stream(s: TcpStream) -> Result<Int, io.IoError> {
   let r = __syscall(3, s.fd, 0, 0, 0, 0, 0)
   s.fd = -1
   if r < 0 { return Err(io.os_error("close", "socket", 0 - r)) }
   return Ok(0)
 }
 
-pub fn close_listener(l: mut TcpListener) -> Result<Int, io.IoError> {
+pub fn close_listener(l: TcpListener) -> Result<Int, io.IoError> {
   let r = __syscall(3, l.fd, 0, 0, 0, 0, 0)
   l.fd = -1
   if r < 0 { return Err(io.os_error("close", "socket", 0 - r)) }

@@ -17,3 +17,10 @@ has no user-defined `Drop` implementation. Call the matching close function
 explicitly; dropping a wrapper without closing leaks its descriptor. The first
 IPv6 implementation supports only `::1`; other IPv6 literal forms are rejected
 when converted to a sockaddr.
+
+The socket wrappers carry an owned field so the checker tracks them as non-Copy
+values. `close_stream(move stream)` and `close_listener(move listener)` consume
+the wrapper; later uses are rejected as use-after-move. Since user-defined
+`Drop` is not implemented, an unclosed wrapper still leaks its fd at scope exit.
+Tests cover loopback echo on C and native, invalid literals, refused connections,
+unhandled results, and using a closed stream.
