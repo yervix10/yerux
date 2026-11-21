@@ -1,0 +1,7 @@
+// std.process: a stream is configured with process.Stdio, not an Int
+import std.process
+
+fn main() {
+  var c = process.command("/bin/cat")
+  c.set_stdin(2)
+}

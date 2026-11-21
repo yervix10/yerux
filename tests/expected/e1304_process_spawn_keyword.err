@@ -1,0 +1,8 @@
+error: module 'std.process' has no item called 'spawn'
+ --> tests/e1304_process_spawn_keyword.yx:6:11
+  |
+6 |   let r = process.spawn(c)
+  |           ^^^^^^^^^^^^^
+  = public items of 'std.process': Stdio, Fd, ExitStatus, Output, Command, command, Child, start, run, run_command, id
+
+1 error(s). Nothing was generated.

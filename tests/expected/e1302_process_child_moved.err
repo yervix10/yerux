@@ -1,0 +1,16 @@
+error: cannot use 'child': it was already moved
+ --> tests/e1302_process_child_moved.yx:9:16
+  |
+9 |       let st = child.wait()
+  |                ^^^^^
+  = 'child' was moved on line 8
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+error: cannot lend 'child' as `mut`: it was declared with `let` (immutable)
+ --> tests/e1302_process_child_moved.yx:9:16
+  |
+9 |       let st = child.wait()
+  |                ^^^^^
+  = help: declare it with `var` (or receive it as `mut`)
+
+2 error(s). Nothing was generated.

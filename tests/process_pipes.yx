@@ -1,0 +1,101 @@
+// std.process: big data through pipes without deadlock, broken pipes, stderr + stdout at once
+import std.process
+import std.io
+
+fn kind_name(k: io.IoErrorKind) -> Text {
+  if k == io.IoErrorKind.BrokenPipe { return "BrokenPipe" }
+  return "other"
+}
+
+fn sh(script: Text) -> process.Command {
+  var c = process.command("/bin/sh")
+  c.arg("-c")
+  c.arg(script)
+  return c
+}
+
+fn main() {
+  // 3 MiB through cat: the child writes as fast as we write, a naive write-then-read would deadlock
+  var big = String.new()
+  for i in 0..3000000 { big.push_byte(97 + i % 26) }
+  var cat = process.command("/bin/cat")
+  cat.set_stdin(process.Stdio.Piped)
+  cat.set_stdout(process.Stdio.Piped)
+  match process.start(cat) {
+    Ok(c) => {
+      var ch = move c
+      match ch.communicate(big) {
+        Ok(o) => {
+          print(o.stdout.len())
+          print(o.stdout == big)
+          print(o.status.show())
+        }
+        Err(e) => { print("unexpected: {e}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // stdout and stderr both bigger than a pipe buffer, plus a big stdin that is ignored
+  var both = sh("head -c 1000000 /dev/zero; head -c 1500000 /dev/zero >&2; echo done")
+  both.set_stdin(process.Stdio.Piped)
+  both.set_stdout(process.Stdio.Piped)
+  both.set_stderr(process.Stdio.Piped)
+  match process.start(both) {
+    Ok(c) => {
+      var ch = move c
+      match ch.communicate(big) {
+        Ok(o) => { print("{o.stdout.len()} {o.stderr.len()} {o.status.show()}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // run captures big output of both streams
+  match process.run_command(sh("head -c 700000 /dev/zero; head -c 800000 /dev/zero >&2")) {
+    Ok(o) => { print("{o.stdout.len()} {o.stderr.len()}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // the child never reads: communicate stops feeding when the pipe breaks and still reports the status
+  var never = process.command("/bin/true")
+  never.set_stdin(process.Stdio.Piped)
+  match process.start(never) {
+    Ok(c) => {
+      var ch = move c
+      match ch.communicate(big) {
+        Ok(o) => { print("communicate with a child that ignores stdin: {o.status.show()}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // write_stdin on a pipe nobody reads: an error value (SIGPIPE is ignored), not a dead program
+  match process.start(never) {
+    Ok(c) => {
+      var ch = move c
+      let st = ch.wait()
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  var quick = process.command("/bin/true")
+  quick.set_stdin(process.Stdio.Piped)
+  match process.start(quick) {
+    Ok(c) => {
+      var ch = move c
+      var tries = 0
+      var failed = false
+      while !failed && tries < 100 {
+        match ch.write_stdin(big) {
+          Ok(n) => { tries = tries + 1 }
+          Err(e) => { failed = true print("write to a finished child: {kind_name(e.kind)}") }
+        }
+      }
+      print(failed)
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  print("still alive")
+}

@@ -1,0 +1,13 @@
+// std.process: a Child is owned (it reaps the process when dropped); using it after a move is an error
+import std.process
+
+fn main() {
+  var c = process.command("/bin/true")
+  match process.start(c) {
+    Ok(child) => {
+      let other = move child
+      let st = child.wait()
+    }
+    Err(e) => { print("{e}") }
+  }
+}

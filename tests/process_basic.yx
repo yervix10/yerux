@@ -1,0 +1,226 @@
+// std.process: run/spawn, arguments, exit codes, signals, stdin/stdout/stderr pipes, environment, cwd, errors
+import std.process
+import std.io
+
+fn kind_name(k: io.IoErrorKind) -> Text {
+  if k == io.IoErrorKind.NotFound { return "NotFound" }
+  if k == io.IoErrorKind.PermissionDenied { return "PermissionDenied" }
+  if k == io.IoErrorKind.InvalidInput { return "InvalidInput" }
+  if k == io.IoErrorKind.BrokenPipe { return "BrokenPipe" }
+  return "other"
+}
+
+fn args1(a: Text) -> List<String> {
+  var l = List<String>.new()
+  l.push(String.from(a))
+  return l
+}
+
+fn sh(script: Text) -> process.Command {
+  var c = process.command("/bin/sh")
+  c.arg("-c")
+  c.arg(script)
+  return c
+}
+
+fn show(r: Result<process.Output, io.IoError>) {
+  match r {
+    Ok(o) => { print("[{o.stdout}] [{o.stderr}] {o.status.show()} code={o.status.code} sig={o.status.signal}") }
+    Err(e) => { print("error {kind_name(e.kind)}: {e}") }
+  }
+}
+
+fn main() {
+  // run: echo, arguments with spaces, empty output
+  var a = List<String>.new()
+  a.push(String.from("hello"))
+  a.push(String.from("two  words"))
+  show(process.run("/bin/echo", a))
+  show(process.run("/bin/true", List<String>.new()))
+  // PATH lookup
+  show(process.run("echo", args1("via PATH")))
+
+  // exit codes and signals
+  show(process.run_command(sh("echo out; echo err >&2; exit 3")))
+  show(process.run_command(sh("kill -9 $$")))
+  show(process.run_command(sh("kill -15 $$")))
+  show(process.run("/bin/false", List<String>.new()))
+
+  // errors as values
+  show(process.run("/no/such/program", List<String>.new()))
+  show(process.run("no_such_program_anywhere", List<String>.new()))
+  let plain = "/tmp/yerux_process_plain_{io.process_id()}"
+  let w = io.write_file(plain, "not a program")
+  match process.run(plain, List<String>.new()) {
+    Ok(o) => { print("unexpected success") }
+    Err(e) => { print("not executable: {kind_name(e.kind)} {e.code}") }
+  }
+  let rm = io.remove_file(plain)
+  show(process.run("/tmp", List<String>.new()))
+  var nul = String.from("x")
+  nul.push_byte(0)
+  show(process.run("/bin/echo", args1("ok")))
+  var bad = List<String>.new()
+  bad.push(move nul)
+  show(process.run("/bin/echo", bad))
+  show(process.run("", List<String>.new()))
+  var c0 = process.command("/bin/echo")
+  c0.set_env("A=B", "x")
+  match process.start(c0) {
+    Ok(ch) => { print("unexpected success") }
+    Err(e) => { print("bad env: {kind_name(e.kind)}") }
+  }
+
+  // environment: inherited (std.env copy), overridden, removed, cleared
+  var c1 = sh("echo $YX_PROC_OTHER/$YX_PROC_NEW")
+  c1.set_env("YX_PROC_OTHER", "overridden")
+  c1.set_env("YX_PROC_NEW", "added")
+  show(process.run_command(c1))
+  var c2 = sh("echo [$YX_PROC_NEW]")
+  c2.unset_env("YX_PROC_NEW")
+  show(process.run_command(c2))
+  var c3 = process.command("/usr/bin/env")
+  c3.clear_env()
+  c3.set_env("ONLY", "this")
+  show(process.run_command(c3))
+
+  // working directory
+  var c4 = process.command("/bin/pwd")
+  c4.set_dir("/tmp")
+  show(process.run_command(c4))
+  var c5 = process.command("/bin/pwd")
+  c5.set_dir("/no/such/dir")
+  show(process.run_command(c5))
+
+  // cat with stdin through communicate and through explicit pipes
+  var cat = process.command("/bin/cat")
+  cat.set_stdin(process.Stdio.Piped)
+  cat.set_stdout(process.Stdio.Piped)
+  match process.start(cat) {
+    Ok(c) => {
+      var ch = move c
+      match ch.communicate("line one\nline two\n") {
+        Ok(o) => { print("cat: [{o.stdout}] {o.status.show()}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match process.start(cat) {
+    Ok(c) => {
+      var ch = move c
+      let n = ch.write_stdin("manual ")
+      var bytes = List<UInt8>.new()
+      bytes.push(98u8)
+      bytes.push(121u8)
+      bytes.push(116u8)
+      bytes.push(101u8)
+      bytes.push(115u8)
+      let m = ch.write_stdin_bytes(bytes)
+      ch.close_stdin()
+      match ch.read_stdout() {
+        Ok(t) => { print("read: {t}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      match ch.wait() {
+        Ok(st) => { print(st.show()) }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      match ch.wait() {
+        Ok(st) => { print("again: {st.show()}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      match ch.write_stdin("x") {
+        Ok(k) => { print("unexpected success") }
+        Err(e) => { print("write after close: {kind_name(e.kind)}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // bytes that are not UTF-8: exact through read_stdout_bytes, lossy through run
+  var raw = sh("printf 'a\\377b'")
+  raw.set_stdout(process.Stdio.Piped)
+  match process.start(raw) {
+    Ok(c) => {
+      var ch = move c
+      match ch.read_stdout_bytes() {
+        Ok(b) => { print("{b.len()} {b[1]}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      let st = ch.wait()
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  show(process.run_command(sh("printf 'a\\377b'")))
+
+  // kill, try_wait, signal numbers
+  var sl = process.command("/bin/sleep")
+  sl.arg("30")
+  match process.start(sl) {
+    Ok(c) => {
+      var ch = move c
+      print(ch.id() > 0)
+      match ch.try_wait() {
+        Ok(None) => { print("still running") }
+        Ok(Some(st)) => { print("unexpected: ended") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      let k = ch.kill()
+      match ch.wait() {
+        Ok(st) => { print("killed: {st.show()} success={st.success()}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      match ch.signal(0) {
+        Ok(k2) => { print("unexpected success") }
+        Err(e) => { print("signal 0: {kind_name(e.kind)}") }
+      }
+      match ch.signal(15) {
+        Ok(k2) => { print("signal after wait: ok") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  var sl2 = process.command("/bin/sleep")
+  sl2.arg("30")
+  match process.start(sl2) {
+    Ok(c) => {
+      var ch = move c
+      let k = ch.signal(15)
+      match ch.wait() {
+        Ok(st) => { print("terminated: {st.show()}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  var quick = sh("exit 0")
+  match process.start(quick) {
+    Ok(c) => {
+      var ch = move c
+      var done = false
+      var tries = 0
+      while !done && tries < 2000 {
+        match ch.try_wait() {
+          Ok(Some(st)) => { done = true print("try_wait: {st.show()}") }
+          Ok(None) => { tries = tries + 1 }
+          Err(e) => { done = true print("unexpected: {e}") }
+        }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // stdio modes: Null discards, Inherit shares our stdout
+  var nul_out = sh("echo discarded; echo kept >&2")
+  nul_out.set_stdout(process.Stdio.Null)
+  show(process.run_command(nul_out))
+  var inh = sh("echo from child")
+  inh.set_stdout(process.Stdio.Inherit)
+  match process.start(inh) {
+    Ok(c) => { var ch = move c  let st = ch.wait() }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  print("after inherit")
+}

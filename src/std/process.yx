@@ -1,0 +1,962 @@
+// std.process: run other programs (docs/STDLIB_PROCESS.md). Linux x86-64 native and C backend, raw syscalls
+// (pipe2, fork, execve, dup2, wait4, kill, poll). Every failure is an `io.IoError` value.
+//
+//   import std.process
+//   var a = List<String>.new()
+//   a.push(String.from("hello"))
+//   match process.run("/bin/echo", a) { Ok(o) => { print(o.stdout) } Err(e) => { print("{e}") } }
+import std.io
+
+/// Where a child's standard stream goes.
+pub enum Stdio {
+    Inherit,
+    Null,
+    Piped,
+}
+
+fn stdio_code(s: Stdio) -> Int {
+    match s {
+        Inherit => {
+            return 0
+        }
+        Null => {
+            return 1
+        }
+        Piped => {
+            return 2
+        }
+    }
+}
+
+/// An owned file descriptor (internal building block): dropping it closes it.
+pub struct Fd {
+    fd: Int,
+}
+
+impl Drop for Fd {
+    fn drop(mut self) {
+        retire(self.fd)
+    }
+}
+
+// close(2) a descriptor that is >= 0 and mark it closed (-1)
+fn retire(fd: mut Int) {
+    if fd >= 0 {
+        let old = fd
+        fd = -1
+        let r = __syscall(3, old, 0, 0, 0, 0, 0)
+    }
+}
+
+/// How a child ended: `code` is the exit status (0..255, -1 when killed by a signal), `signal` the signal
+/// number (0 when it exited normally).
+pub struct ExitStatus {
+    code: Int,
+    signal: Int,
+}
+
+impl ExitStatus {
+    fn success(view self) -> Bool {
+        return self.code == 0
+    }
+}
+
+impl Show for ExitStatus {
+    fn show(view self) -> String {
+        var s = String.new()
+        if self.signal != 0 {
+            s.push_str("signal ")
+            s.push_int(self.signal)
+        } else {
+            s.push_str("exit code ")
+            s.push_int(self.code)
+        }
+        return s
+    }
+}
+
+fn decode_status(st: Int) -> ExitStatus {
+    let low = st % 128
+    if low == 0 {
+        return ExitStatus { code: (st / 256) % 256, signal: 0 }
+    }
+    return ExitStatus { code: -1, signal: low }
+}
+
+/// What `run` / `communicate` collect. Output is converted lossily: every non-ASCII byte of an invalid
+/// UTF-8 stream becomes `?` (use `read_stdout_bytes` for exact bytes).
+pub struct Output {
+    status: ExitStatus,
+    stdout: String,
+    stderr: String,
+}
+
+/// A program to run. Build it with `process.command(program)` and the `set_*` / `arg` methods.
+pub struct Command {
+    program: String,
+    args: List<String>,
+    env_set: List<String>,
+    env_del: List<String>,
+    env_clear: Bool,
+    env_bad: Bool,
+    dir: String,
+    has_dir: Bool,
+    stdin_mode: Int,
+    stdout_mode: Int,
+    stderr_mode: Int,
+}
+
+/// A command for `program`: a path (when it contains `/`) or a name looked up in `PATH`. By default the child
+/// gets this process's environment (including `std.env` set/remove), inherits stdin/stdout/stderr and runs in
+/// the current directory.
+pub fn command(program: view String) -> Command {
+    return Command {
+        program: String.from(program),
+        args: List<String>.new(),
+        env_set: List<String>.new(),
+        env_del: List<String>.new(),
+        env_clear: false,
+        env_bad: false,
+        dir: String.new(),
+        has_dir: false,
+        stdin_mode: 0,
+        stdout_mode: 0,
+        stderr_mode: 0,
+    }
+}
+
+impl Command {
+    fn arg(mut self, a: view String) {
+        self.args.push(String.from(a))
+    }
+
+    fn add_args(mut self, l: view List<String>) {
+        var i = 0
+        while i < l.len() {
+            self.args.push(String.from(l.at(i)))
+            i = i + 1
+        }
+    }
+
+    /// Set (or override) `name=value` in the child's environment.
+    fn set_env(mut self, name: view String, value: view String) {
+        if name.len() == 0 || name.contains("=") || has_nul(name) || has_nul(value) {
+            self.env_bad = true
+        }
+        var kv = String.from(name)
+        kv.push_byte(61)
+        kv.push_str(value)
+        self.env_set.push(move kv)
+    }
+
+    /// Remove `name` from the child's environment.
+    fn unset_env(mut self, name: view String) {
+        self.env_del.push(String.from(name))
+    }
+
+    /// Start from an empty environment instead of this process's.
+    fn clear_env(mut self) {
+        self.env_clear = true
+    }
+
+    /// Run the child in directory `d`.
+    fn set_dir(mut self, d: view String) {
+        self.dir = String.from(d)
+        self.has_dir = true
+    }
+
+    fn set_stdin(mut self, s: Stdio) {
+        self.stdin_mode = stdio_code(s)
+    }
+
+    fn set_stdout(mut self, s: Stdio) {
+        self.stdout_mode = stdio_code(s)
+    }
+
+    fn set_stderr(mut self, s: Stdio) {
+        self.stderr_mode = stdio_code(s)
+    }
+}
+
+/// A running (or finished, not yet reaped) child. **Dropping it** closes its pipes and, if it was never waited
+/// for, waits for it (so there are no zombies): a child that keeps running and ignores its closed stdin makes
+/// the drop block; `kill()` it first if that is not what you want.
+pub struct Child {
+    pid: Int,
+    stdin: Fd,
+    stdout: Fd,
+    stderr: Fd,
+    waited: Bool,
+    status: ExitStatus,
+}
+
+impl Drop for Child {
+    fn drop(mut self) {
+        retire(self.stdin.fd)
+        retire(self.stdout.fd)
+        retire(self.stderr.fd)
+        if self.pid > 0 && !self.waited {
+            let w = reap(self.pid, 0)
+        }
+    }
+}
+
+// wait4(pid, &status, options): the raw status word (>= 0), -1 for "still running" (WNOHANG), or -errno - 1000
+fn reap(pid: Int, options: Int) -> Int {
+    let p = __alloc(8)
+    __store64(p, 0)
+    var r = 0
+    while true {
+        r = __syscall(61, pid, p, options, 0, 0, 0)
+        if r != -4 {
+            break
+        }
+    }
+    let st = __load8(p) + 256 * __load8(p + 1)
+    __free(p)
+    if r < 0 {
+        return -1000 + r
+    }
+    if r == 0 {
+        return -1
+    }
+    return st
+}
+
+// ───────────────────────── helpers ─────────────────────────
+
+fn has_nul(s: view String) -> Bool {
+    var i = 0
+    while i < s.len() {
+        if s.byte(i) == 0 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn bad(msg: Text) -> io.IoError {
+    return io.custom_error(io.IoErrorKind.InvalidInput, msg)
+}
+
+// Pack NUL-terminated copies of `l` into one block: a table of n pointers + a 0, then the bytes.
+fn pack(l: view List<String>) -> Int {
+    let n = l.len()
+    var total = 8 * (n + 1)
+    var i = 0
+    while i < n {
+        total = total + l.at(i).len() + 1
+        i = i + 1
+    }
+    let base = __alloc(total)
+    var data = base + 8 * (n + 1)
+    i = 0
+    while i < n {
+        __store64(base + 8 * i, data)
+        let len = l.at(i).len()
+        let src = l.at(i).raw_addr()
+        var k = 0
+        while k < len {
+            __store8(data + k, __load8(src + k))
+            k = k + 1
+        }
+        __store8(data + len, 0)
+        data = data + len + 1
+        i = i + 1
+    }
+    __store64(base + 8 * n, 0)
+    return base
+}
+
+// A descriptor >= 3 (so dup2 onto 0..2 never meets the same number); errno as a negative number on failure.
+fn high_fd(fd: Int) -> Int {
+    if fd < 0 || fd >= 3 {
+        return fd
+    }
+    let n = __syscall(72, fd, 1030, 3, 0, 0, 0)
+    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    return n
+}
+
+// pipe2(O_CLOEXEC) with both ends >= 3. Returns 0 or a positive errno.
+fn make_pipe(r: mut Fd, w: mut Fd) -> Int {
+    let p = __alloc(8)
+    let rc = __syscall(293, p, 524288, 0, 0, 0, 0)
+    if rc < 0 {
+        __free(p)
+        return 0 - rc
+    }
+    let word = __load64(p)
+    __free(p)
+    let a = word % 4294967296
+    let b = word / 4294967296
+    let ha = high_fd(a)
+    if ha < 0 {
+        let c = __syscall(3, b, 0, 0, 0, 0, 0)
+        return 0 - ha
+    }
+    r.fd = ha
+    let hb = high_fd(b)
+    if hb < 0 {
+        return 0 - hb
+    }
+    w.fd = hb
+    return 0
+}
+
+// open("/dev/null", O_RDWR | O_CLOEXEC) as a descriptor >= 3
+fn open_null(out: mut Fd) -> Int {
+    let path = "/dev/null"
+    var z = String.from(path)
+    z.push_byte(0)
+    let fd = __syscall(2, z.raw_addr(), 524290, 0, 0, 0, 0)
+    if fd < 0 {
+        return 0 - fd
+    }
+    let h = high_fd(fd)
+    if h < 0 {
+        return 0 - h
+    }
+    out.fd = h
+    return 0
+}
+
+// The environment the child gets, as "KEY=VALUE" entries.
+fn effective_env(c: view Command) -> List<String> {
+    var out = List<String>.new()
+    if !c.env_clear {
+        let all = io.env_vars()
+        var j = 0
+        while j < all.len() {
+            out.push(String.from(all.at(j)))
+            j = j + 1
+        }
+    }
+    var i = 0
+    while i < c.env_set.len() {
+        let kv = String.from(c.env_set.at(i))
+        let eq = kv.find("=")
+        let prefix = kv.slice(0, eq + 1)
+        var found = -1
+        var k = 0
+        while k < out.len() {
+            if out.at(k).starts_with(prefix) {
+                found = k
+                break
+            }
+            k = k + 1
+        }
+        if found >= 0 {
+            out.set(found, String.from(kv))
+        } else {
+            out.push(String.from(kv))
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < c.env_del.len() {
+        var name = String.from(c.env_del.at(i))
+        name.push_byte(61)
+        var k = 0
+        while k < out.len() {
+            if out.at(k).starts_with(name) {
+                let gone = out.remove(k)
+            } else {
+                k = k + 1
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Paths to try with execve: the program itself when it has a '/', else PATH entries (of the child's
+// environment, with a default when unset).
+fn candidates(prog: view String, envl: view List<String>) -> List<String> {
+    var out = List<String>.new()
+    if prog.contains("/") {
+        out.push(String.from(prog))
+        return out
+    }
+    var path = String.from("/usr/local/bin:/usr/bin:/bin")
+    var i = 0
+    while i < envl.len() {
+        if envl.at(i).starts_with("PATH=") {
+            path = envl.at(i).slice(5, envl.at(i).len())
+        }
+        i = i + 1
+    }
+    let dirs = path.split(":")
+    var d = 0
+    while d < dirs.len() {
+        var p = String.new()
+        if dirs.at(d).len() == 0 {
+            p.push_str(".")
+        } else {
+            p.push_str(dirs.at(d))
+        }
+        p.push_byte(47)
+        p.push_str(prog)
+        out.push(move p)
+        d = d + 1
+    }
+    return out
+}
+
+// ───────────────────────── spawn ─────────────────────────
+
+// Runs in the forked child: redirect, chdir, exec. Uses no allocation. Never returns to the caller's logic:
+// on any failure the errno goes down `errfd` and the child leaves with status 127.
+// `scratch` is 40 bytes of zeroed memory (8 for the errno, 32 for a sigaction).
+fn child_exec(srcs: Int, cwd: Int, cands: Int, argv: Int, envp: Int, errfd: Int, scratch: Int) {
+    var t = 0
+    while t < 3 {
+        let src = __load64(srcs + 8 * t)
+        if src >= 0 {
+            let r = __syscall(33, src, t, 0, 0, 0, 0)
+            if r < 0 {
+                child_fail(errfd, scratch, 0 - r)
+                return
+            }
+        }
+        t = t + 1
+    }
+    if cwd != 0 {
+        let r = __syscall(80, cwd, 0, 0, 0, 0, 0)
+        if r < 0 {
+            child_fail(errfd, scratch, 65536 + (0 - r))
+            return
+        }
+    }
+    // the parent ignores SIGPIPE while it writes to pipes; the child must see the default again
+    let sa = __syscall(13, 13, scratch + 8, 0, 8, 0, 0)
+    var best = 2
+    var i = 0
+    while __load64(cands + 8 * i) != 0 {
+        let r = __syscall(59, __load64(cands + 8 * i), argv, envp, 0, 0, 0)
+        if r != -2 && r != -20 && best == 2 {
+            best = 0 - r
+        }
+        i = i + 1
+    }
+    child_fail(errfd, scratch, best)
+}
+
+fn child_fail(errfd: Int, scratch: Int, e: Int) {
+    __store64(scratch, e)
+    let w = __syscall(1, errfd, scratch, 8, 0, 0, 0)
+    let x = __syscall(231, 127, 0, 0, 0, 0, 0)
+}
+
+/// Start the program described by `c`. `Err` when it cannot be started: `NotFound` (no such program),
+/// `PermissionDenied`, `InvalidInput` (a NUL byte in the program, an argument, the directory or an
+/// environment entry), or a failure of pipe/fork. Not safe to call while other threads run (it forks).
+pub fn start(c: view Command) -> Result<Child, io.IoError> {
+    if c.program.len() == 0 {
+        return Err(bad("spawn: empty program name"))
+    }
+    if has_nul(c.program) || (c.has_dir && has_nul(c.dir)) {
+        return Err(bad("spawn: program or directory contains a NUL byte"))
+    }
+    var i = 0
+    while i < c.args.len() {
+        if has_nul(c.args.at(i)) {
+            return Err(bad("spawn: an argument contains a NUL byte"))
+        }
+        i = i + 1
+    }
+    if c.env_bad {
+        return Err(bad("spawn: bad environment entry (empty name, '=' in the name or a NUL byte)"))
+    }
+    i = 0
+    while i < c.env_del.len() {
+        if c.env_del.at(i).len() == 0 || has_nul(c.env_del.at(i)) || c.env_del.at(i).contains("=") {
+            return Err(bad("spawn: bad environment variable name"))
+        }
+        i = i + 1
+    }
+
+    // the three parent ends (-1 = none) and the three child-side sources
+    var ch = Child {
+        pid: -1,
+        stdin: Fd { fd: -1 },
+        stdout: Fd { fd: -1 },
+        stderr: Fd { fd: -1 },
+        waited: false,
+        status: ExitStatus { code: 0, signal: 0 },
+    }
+    var s0 = Fd { fd: -1 }
+    var s1 = Fd { fd: -1 }
+    var s2 = Fd { fd: -1 }
+    var e = 0
+    if c.stdin_mode == 2 {
+        e = make_pipe(s0, ch.stdin)
+    } else if c.stdin_mode == 1 {
+        e = open_null(s0)
+    }
+    if e == 0 {
+        if c.stdout_mode == 2 {
+            e = make_pipe(ch.stdout, s1)
+        } else if c.stdout_mode == 1 {
+            e = open_null(s1)
+        }
+    }
+    if e == 0 {
+        if c.stderr_mode == 2 {
+            e = make_pipe(ch.stderr, s2)
+        } else if c.stderr_mode == 1 {
+            e = open_null(s2)
+        }
+    }
+    var ep_r = Fd { fd: -1 }
+    var ep_w = Fd { fd: -1 }
+    if e == 0 {
+        e = make_pipe(ep_r, ep_w)
+    }
+    if e != 0 {
+        return Err(io.os_error("spawn", c.program, e))
+    }
+    if c.stdin_mode == 2 {
+        // writing to a pipe whose reader has gone must be an error value, not a fatal SIGPIPE
+        let ign = __alloc(32)
+        var z = 0
+        while z < 4 {
+            __store64(ign + 8 * z, 0)
+            z = z + 1
+        }
+        __store64(ign, 1)
+        let sa = __syscall(13, 13, ign, 0, 8, 0, 0)
+        __free(ign)
+    }
+
+    let envl = effective_env(c)
+    var argl = List<String>.new()
+    argl.push(String.from(c.program))
+    i = 0
+    while i < c.args.len() {
+        argl.push(String.from(c.args.at(i)))
+        i = i + 1
+    }
+    let cands = candidates(c.program, envl)
+    let argv = pack(argl)
+    let envp = pack(envl)
+    let candp = pack(cands)
+    let srcs = __alloc(24)
+    __store64(srcs, s0.fd)
+    __store64(srcs + 8, s1.fd)
+    __store64(srcs + 16, s2.fd)
+    let scratch = __alloc(40)
+    var z2 = 0
+    while z2 < 5 {
+        __store64(scratch + 8 * z2, 0)
+        z2 = z2 + 1
+    }
+    var cwd = String.new()
+    var cwdp = 0
+    if c.has_dir {
+        cwd = String.from(c.dir)
+        cwd.push_byte(0)
+        cwdp = cwd.raw_addr()
+    }
+    let pid = __syscall(57, 0, 0, 0, 0, 0, 0)
+    if pid == 0 {
+        child_exec(srcs, cwdp, candp, argv, envp, ep_w.fd, scratch)
+        let x = __syscall(231, 127, 0, 0, 0, 0, 0)
+    }
+    __free(argv)
+    __free(envp)
+    __free(candp)
+    __free(srcs)
+    if pid < 0 {
+        __free(scratch)
+        return Err(io.os_error("fork", c.program, 0 - pid))
+    }
+    ch.pid = pid
+    // the child's ends and the error pipe's write end are no longer ours
+    retire(s0.fd)
+    retire(s1.fd)
+    retire(s2.fd)
+    retire(ep_w.fd)
+    // EOF on the error pipe = exec worked; 8 bytes = errno of the failed exec
+    var got = 0
+    while true {
+        got = __syscall(0, ep_r.fd, scratch, 8, 0, 0, 0)
+        if got != -4 {
+            break
+        }
+    }
+    var err = 0
+    if got == 8 {
+        err = __load64(scratch)
+    }
+    __free(scratch)
+    if err != 0 {
+        // dropping `ch` reaps the child (it is already on its way out with status 127)
+        if err >= 65536 {
+            return Err(io.os_error("change directory", c.dir, err - 65536))
+        }
+        return Err(io.os_error("spawn", c.program, err))
+    }
+    return Ok(move ch)
+}
+
+// ───────────────────────── talking to the child ─────────────────────────
+
+fn lossy(s: String) -> String {
+    if io.valid_utf8(s) {
+        return s
+    }
+    var t = String.new()
+    var i = 0
+    while i < s.len() {
+        let b = s.byte(i)
+        if b < 128 {
+            t.push_byte(b)
+        } else {
+            t.push_byte(63)
+        }
+        i = i + 1
+    }
+    return t
+}
+
+fn nonblocking(fd: Int) {
+    let r = __syscall(72, fd, 4, 2048, 0, 0, 0)
+}
+
+fn bit(x: Int, k: Int) -> Bool {
+    return (x / k) % 2 == 1
+}
+
+// Feed `input` to stdin while draining stdout and stderr with poll(2), so none of the three pipes can fill up
+// and block the others. Returns 0 or a positive errno. Closes every descriptor it finishes with.
+fn pump(ch: mut Child, input: view String, so: mut String, se: mut String) -> Int {
+    nonblocking(ch.stdin.fd)
+    nonblocking(ch.stdout.fd)
+    nonblocking(ch.stderr.fd)
+    var off = 0
+    if input.len() == 0 {
+        retire(ch.stdin.fd)
+    }
+    let pfd = __alloc(24)
+    let tmp = __alloc(65536)
+    var rc = 0
+    while (ch.stdin.fd >= 0 || ch.stdout.fd >= 0 || ch.stderr.fd >= 0) && rc == 0 {
+        var k = 0
+        while k < 3 {
+            var fd = ch.stdin.fd
+            var ev = 4
+            if k == 1 {
+                fd = ch.stdout.fd
+                ev = 1
+            }
+            if k == 2 {
+                fd = ch.stderr.fd
+                ev = 1
+            }
+            var lo = fd
+            if fd < 0 {
+                lo = 4294967295
+            }
+            __store64(pfd + 8 * k, lo + ev * 4294967296)
+            k = k + 1
+        }
+        let n = __syscall(7, pfd, 3, -1, 0, 0, 0)
+        if n == -4 {
+            continue
+        }
+        if n < 0 {
+            rc = 0 - n
+            break
+        }
+        // stdin
+        var rev = __load8(pfd + 6) + 256 * __load8(pfd + 7)
+        if ch.stdin.fd >= 0 && rev != 0 {
+            if bit(rev, 8) || bit(rev, 16) {
+                retire(ch.stdin.fd)
+            } else {
+                var want = input.len() - off
+                if want > 65536 {
+                    want = 65536
+                }
+                let w = __syscall(1, ch.stdin.fd, input.raw_addr() + off, want, 0, 0, 0)
+                if w == -32 {
+                    retire(ch.stdin.fd)
+                } else if w < 0 && w != -11 && w != -4 {
+                    rc = 0 - w
+                } else if w > 0 {
+                    off = off + w
+                    if off >= input.len() {
+                        retire(ch.stdin.fd)
+                    }
+                }
+            }
+        }
+        // stdout, stderr
+        var which = 1
+        while which < 3 && rc == 0 {
+            rev = __load8(pfd + 8 * which + 6) + 256 * __load8(pfd + 8 * which + 7)
+            var fd = ch.stdout.fd
+            if which == 2 {
+                fd = ch.stderr.fd
+            }
+            if fd >= 0 && rev != 0 {
+                let r = __syscall(0, fd, tmp, 65536, 0, 0, 0)
+                if r == 0 {
+                    if which == 1 {
+                        retire(ch.stdout.fd)
+                    } else {
+                        retire(ch.stderr.fd)
+                    }
+                } else if r > 0 {
+                    if which == 1 {
+                        so.push_raw(tmp, r)
+                    } else {
+                        se.push_raw(tmp, r)
+                    }
+                } else if r != -11 && r != -4 {
+                    rc = 0 - r
+                }
+            }
+            which = which + 1
+        }
+    }
+    __free(pfd)
+    __free(tmp)
+    return rc
+}
+
+// Read a descriptor to the end (blocking) into `out`; closes it. 0 or a positive errno.
+fn drain(fd: mut Int, out: mut String) -> Int {
+    let tmp = __alloc(65536)
+    var rc = 0
+    while true {
+        let r = __syscall(0, fd, tmp, 65536, 0, 0, 0)
+        if r == -4 {
+            continue
+        }
+        if r < 0 {
+            rc = 0 - r
+            break
+        }
+        if r == 0 {
+            break
+        }
+        out.push_raw(tmp, r)
+    }
+    __free(tmp)
+    retire(fd)
+    return rc
+}
+
+// Block until the child ends; the stored status afterwards.
+fn wait_child(ch: mut Child) -> Result<ExitStatus, io.IoError> {
+    retire(ch.stdin.fd)
+    if ch.waited {
+        return Ok(ExitStatus { code: ch.status.code, signal: ch.status.signal })
+    }
+    let st = reap(ch.pid, 0)
+    if st < -1 {
+        return Err(io.os_error("wait", "", -1000 - st))
+    }
+    ch.waited = true
+    ch.status = decode_status(st)
+    return Ok(ExitStatus { code: ch.status.code, signal: ch.status.signal })
+}
+
+impl Child {
+    /// The process id.
+    fn id(view self) -> Int {
+        return self.pid
+    }
+
+    /// Close the child's stdin (it sees end of input). Ok even when it was not piped or already closed.
+    fn close_stdin(mut self) {
+        retire(self.stdin.fd)
+    }
+
+    /// Write all of `data` to the child's stdin (blocks while the pipe is full: use `communicate` when the
+    /// child also produces a lot of output). `BrokenPipe` when the child no longer reads.
+    fn write_stdin(mut self, data: view String) -> Result<Int, io.IoError> {
+        if self.stdin.fd < 0 {
+            return Err(bad("write stdin: the child's stdin is not piped or already closed"))
+        }
+        var off = 0
+        while off < data.len() {
+            let w = __syscall(1, self.stdin.fd, data.raw_addr() + off, data.len() - off, 0, 0, 0)
+            if w == -4 {
+                continue
+            }
+            if w < 0 {
+                return Err(io.os_error("write stdin", "", 0 - w))
+            }
+            off = off + w
+        }
+        return Ok(data.len())
+    }
+
+    /// Like `write_stdin` for bytes (a `List<UInt8>`, array or slice).
+    fn write_stdin_bytes(mut self, data: view [UInt8]) -> Result<Int, io.IoError> {
+        var s = String.new()
+        var i = 0
+        while i < data.len() {
+            s.push_byte(data[i].to_int())
+            i = i + 1
+        }
+        return self.write_stdin(s)
+    }
+
+    /// Everything the child writes to stdout until it closes it (blocks). `InvalidData` when it is not UTF-8.
+    fn read_stdout(mut self) -> Result<String, io.IoError> {
+        if self.stdout.fd < 0 {
+            return Err(bad("read stdout: the child's stdout is not piped or already read"))
+        }
+        var s = String.new()
+        let e = drain(self.stdout.fd, s)
+        if e != 0 {
+            return Err(io.os_error("read stdout", "", e))
+        }
+        return io.checked_text(move s)
+    }
+
+    fn read_stderr(mut self) -> Result<String, io.IoError> {
+        if self.stderr.fd < 0 {
+            return Err(bad("read stderr: the child's stderr is not piped or already read"))
+        }
+        var s = String.new()
+        let e = drain(self.stderr.fd, s)
+        if e != 0 {
+            return Err(io.os_error("read stderr", "", e))
+        }
+        return io.checked_text(move s)
+    }
+
+    /// Exact bytes of stdout (any content).
+    fn read_stdout_bytes(mut self) -> Result<List<UInt8>, io.IoError> {
+        if self.stdout.fd < 0 {
+            return Err(bad("read stdout: the child's stdout is not piped or already read"))
+        }
+        var s = String.new()
+        let e = drain(self.stdout.fd, s)
+        if e != 0 {
+            return Err(io.os_error("read stdout", "", e))
+        }
+        var out = List<UInt8>.new()
+        var i = 0
+        while i < s.len() {
+            out.push(s.byte(i).to_uint8())
+            i = i + 1
+        }
+        return Ok(move out)
+    }
+
+    /// Wait for the child to end (closing its stdin first) and return how it ended. Calling it again returns
+    /// the same status.
+    fn wait(mut self) -> Result<ExitStatus, io.IoError> {
+        return wait_child(self)
+    }
+
+    /// Has it ended? `Ok(None)` while it is still running.
+    fn try_wait(mut self) -> Result<Option<ExitStatus>, io.IoError> {
+        if self.waited {
+            return Ok(Some(ExitStatus { code: self.status.code, signal: self.status.signal }))
+        }
+        let st = reap(self.pid, 1)
+        if st == -1 {
+            return Ok(None)
+        }
+        if st < -1 {
+            return Err(io.os_error("wait", "", -1000 - st))
+        }
+        self.waited = true
+        self.status = decode_status(st)
+        return Ok(Some(ExitStatus { code: self.status.code, signal: self.status.signal }))
+    }
+
+    /// Send signal `n` (1..64; 9 = SIGKILL, 15 = SIGTERM). Ok(0) without effect once the child was waited for.
+    fn signal(mut self, n: Int) -> Result<Int, io.IoError> {
+        if n < 1 || n > 64 {
+            return Err(bad("signal: number must be in 1..=64"))
+        }
+        if self.waited {
+            return Ok(0)
+        }
+        let r = __syscall(62, self.pid, n, 0, 0, 0, 0)
+        if r < 0 {
+            return Err(io.os_error("kill", "", 0 - r))
+        }
+        return Ok(0)
+    }
+
+    /// SIGKILL. Still `wait()` (or drop the Child) afterwards to reap it.
+    fn kill(mut self) -> Result<Int, io.IoError> {
+        return self.signal(9)
+    }
+
+    /// Send `input` to stdin (when piped), collect stdout and stderr (when piped) without deadlocking on
+    /// big data, wait for the child and return everything. The pipes are closed afterwards.
+    fn communicate(mut self, input: view String) -> Result<Output, io.IoError> {
+        if input.len() > 0 && self.stdin.fd < 0 {
+            return Err(bad("communicate: input given but the child's stdin is not piped"))
+        }
+        var so = String.new()
+        var se = String.new()
+        let e = pump(self, input, so, se)
+        retire(self.stdin.fd)
+        retire(self.stdout.fd)
+        retire(self.stderr.fd)
+        if e != 0 {
+            return Err(io.os_error("communicate", "", e))
+        }
+        let st = wait_child(self)?
+        return Ok(Output { status: st, stdout: lossy(move so), stderr: lossy(move se) })
+    }
+}
+
+/// Run `program` with `args`, stdin empty, and collect its stdout and stderr: `run("/bin/echo", args)`.
+pub fn run(program: view String, args: view List<String>) -> Result<Output, io.IoError> {
+    var c = command(program)
+    c.add_args(args)
+    return run_command(c)
+}
+
+/// Like `run` for a prepared Command: unset stdin is empty (`Null`) and unset stdout/stderr are captured;
+/// the modes you set explicitly win (stdin `Piped` cannot be fed here: use `start` + `communicate`).
+pub fn run_command(c: view Command) -> Result<Output, io.IoError> {
+    var d = command(c.program)
+    d.add_args(c.args)
+    var i = 0
+    while i < c.env_set.len() {
+        d.env_set.push(String.from(c.env_set.at(i)))
+        i = i + 1
+    }
+    i = 0
+    while i < c.env_del.len() {
+        d.env_del.push(String.from(c.env_del.at(i)))
+        i = i + 1
+    }
+    d.env_clear = c.env_clear
+    d.env_bad = c.env_bad
+    d.dir = String.from(c.dir)
+    d.has_dir = c.has_dir
+    d.stdin_mode = c.stdin_mode
+    d.stdout_mode = c.stdout_mode
+    d.stderr_mode = c.stderr_mode
+    if d.stdin_mode == 0 {
+        d.stdin_mode = 1
+    }
+    if d.stdout_mode == 0 {
+        d.stdout_mode = 2
+    }
+    if d.stderr_mode == 0 {
+        d.stderr_mode = 2
+    }
+    var child = start(d)?
+    return child.communicate("")
+}
+
+/// The process id of this program.
+pub fn id() -> Int {
+    return io.process_id()
+}

@@ -1,0 +1,44 @@
+// std.process: the child gets the environment as changed with std.env (set/remove), plus per-command changes
+import std.process
+import std.env
+import std.io
+
+fn sh(script: Text) -> process.Command {
+  var c = process.command("/bin/sh")
+  c.arg("-c")
+  c.arg(script)
+  return c
+}
+
+fn show(r: Result<process.Output, io.IoError>) {
+  match r {
+    Ok(o) => { print("[{o.stdout.trim()}] {o.status.show()}") }
+    Err(e) => { print("error: {e}") }
+  }
+}
+
+fn main() {
+  let s1 = env.set("YX_PROC_INHERIT", "from-parent")
+  show(process.run_command(sh("echo $YX_PROC_INHERIT")))
+  let r1 = env.remove("YX_PROC_INHERIT")
+  show(process.run_command(sh("echo [$YX_PROC_INHERIT]")))
+  var c6 = sh("echo $YX_PROC_INHERIT")
+  c6.set_env("YX_PROC_INHERIT", "per-command")
+  let s2 = env.set("YX_PROC_INHERIT", "from-parent")
+  show(process.run_command(c6))
+  show(process.run_command(sh("echo $YX_PROC_INHERIT")))
+  let r2 = env.remove("YX_PROC_INHERIT")
+  // PATH comes from the child's environment (a default when it has none)
+  var c7 = process.command("echo")
+  c7.clear_env()
+  show(process.run_command(c7))
+  var c9 = process.command("echo")
+  c9.clear_env()
+  c9.set_env("PATH", "/nonexistent:/also/missing")
+  show(process.run_command(c9))
+  var c8 = process.command("echo")
+  c8.clear_env()
+  c8.set_env("PATH", "/bin")
+  c8.arg("found via /bin")
+  show(process.run_command(c8))
+}

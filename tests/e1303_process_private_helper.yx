@@ -1,0 +1,6 @@
+// std.process: the fork/exec helpers are private to the module
+import std.process
+
+fn main() {
+  let n = process.child_fail(0, 0, 1)
+}

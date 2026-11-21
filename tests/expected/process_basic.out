@@ -1,0 +1,49 @@
+[hello two  words
+] [] exit code 0 code=0 sig=0
+[] [] exit code 0 code=0 sig=0
+[via PATH
+] [] exit code 0 code=0 sig=0
+[out
+] [err
+] exit code 3 code=3 sig=0
+[] [] signal 9 code=-1 sig=9
+[] [] signal 15 code=-1 sig=15
+[] [] exit code 1 code=1 sig=0
+error NotFound: spawn '/no/such/program': No such file or directory (os error 2)
+error NotFound: spawn 'no_such_program_anywhere': No such file or directory (os error 2)
+not executable: PermissionDenied 13
+error PermissionDenied: spawn '/tmp': Permission denied (os error 13)
+[ok
+] [] exit code 0 code=0 sig=0
+error InvalidInput: spawn: an argument contains a NUL byte
+error InvalidInput: spawn: empty program name
+bad env: InvalidInput
+[overridden/added
+] [] exit code 0 code=0 sig=0
+[[]
+] [] exit code 0 code=0 sig=0
+[ONLY=this
+] [] exit code 0 code=0 sig=0
+[/tmp
+] [] exit code 0 code=0 sig=0
+error NotFound: change directory '/no/such/dir': No such file or directory (os error 2)
+cat: [line one
+line two
+] exit code 0
+read: manual bytes
+exit code 0
+again: exit code 0
+write after close: InvalidInput
+3 255
+[a?b] [] exit code 0 code=0 sig=0
+true
+still running
+killed: signal 9 success=false
+signal 0: InvalidInput
+signal after wait: ok
+terminated: signal 15
+try_wait: exit code 0
+[] [kept
+] exit code 0 code=0 sig=0
+from child
+after inherit

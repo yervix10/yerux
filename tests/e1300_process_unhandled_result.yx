@@ -1,0 +1,7 @@
+// std.process: run returns a Result; its Output is not available until it is matched
+import std.process
+
+fn main() {
+  let o = process.run("/bin/echo", List<String>.new())
+  print(o.stdout)
+}
