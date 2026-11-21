@@ -15,6 +15,7 @@ pub fn source(key: &str) -> Option<&'static str> {
         "std.fs" => Some(include_str!("std/fs.yx")),
         "std.env" => Some(include_str!("std/env.yx")),
         "std.net" => Some(include_str!("std/net.yx")),
+        "std.process" => Some(include_str!("std/process.yx")),
         _ => None,
     }
 }

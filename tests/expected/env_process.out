@@ -1,0 +1,7 @@
+[from-parent] exit code 0
+[[]] exit code 0
+[per-command] exit code 0
+[from-parent] exit code 0
+[] exit code 0
+error: spawn 'echo': No such file or directory (os error 2)
+[found via /bin] exit code 0

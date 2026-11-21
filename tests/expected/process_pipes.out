@@ -1,0 +1,9 @@
+3000000
+true
+exit code 0
+1000005 1500000 exit code 0
+700000 800000
+communicate with a child that ignores stdin: exit code 0
+write to a finished child: BrokenPipe
+true
+still alive

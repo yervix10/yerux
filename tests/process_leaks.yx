@@ -1,0 +1,102 @@
+// std.process: 500+ spawns (waited, dropped without wait, failed exec, piped) leave no descriptors and no zombies
+import std.process
+import std.fs
+import std.io
+
+fn open_fds() -> Int {
+  match fs.read_dir("/proc/self/fd") {
+    Ok(l) => { return l.len() }
+    Err(e) => { return -1 }
+  }
+}
+
+// -10 (ECHILD) means: no child left, running or zombie
+fn children_left() -> Int {
+  return __syscall(61, -1, 0, 1, 0, 0, 0)
+}
+
+fn drop_unwaited() {
+  var c = process.command("/bin/true")
+  c.set_stdin(process.Stdio.Piped)
+  c.set_stdout(process.Stdio.Piped)
+  c.set_stderr(process.Stdio.Piped)
+  match process.start(c) {
+    Ok(ch) => { print("started") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+}
+
+fn main() {
+  let before = open_fds()
+  var ok = 0
+  var bad = 0
+  for i in 0..200 {
+    var a = List<String>.new()
+    a.push(String.from("x"))
+    match process.run("/bin/echo", a) {
+      Ok(o) => { if o.stdout == "x\n" { ok = ok + 1 } }
+      Err(e) => { bad = bad + 1 }
+    }
+  }
+  print("run: {ok} ok, {bad} bad")
+  print(open_fds() - before)
+  print(children_left())
+
+  // failed exec 150 times: the half-started child is reaped, the pipes closed
+  var nf = 0
+  for i in 0..150 {
+    match process.run("/no/such/program", List<String>.new()) {
+      Ok(o) => { print("unexpected") }
+      Err(e) => { nf = nf + 1 }
+    }
+  }
+  print("failed execs: {nf}")
+  print(open_fds() - before)
+  print(children_left())
+
+  // dropped without wait (with all three pipes open): Drop closes them and reaps the child
+  for i in 0..150 {
+    var c = process.command("/bin/sh")
+    c.arg("-c")
+    c.arg("exit 0")
+    c.set_stdin(process.Stdio.Piped)
+    c.set_stdout(process.Stdio.Piped)
+    c.set_stderr(process.Stdio.Piped)
+    match process.start(c) {
+      Ok(ch) => { if i < 0 { print("never") } }
+      Err(e) => { print("unexpected: {e}") }
+    }
+  }
+  drop_unwaited()
+  print(open_fds() - before)
+  print(children_left())
+
+  // a child blocked on stdin is released by the Drop (stdin closes, then it is reaped)
+  var cat = process.command("/bin/cat")
+  cat.set_stdin(process.Stdio.Piped)
+  cat.set_stdout(process.Stdio.Null)
+  for i in 0..100 {
+    match process.start(cat) {
+      Ok(ch) => { if i < 0 { print("never") } }
+      Err(e) => { print("unexpected: {e}") }
+    }
+  }
+  print(open_fds() - before)
+  print(children_left())
+
+  // waited explicitly, killed, try_wait loops
+  for i in 0..50 {
+    var s = process.command("/bin/sleep")
+    s.arg("5")
+    match process.start(s) {
+      Ok(c) => {
+        var ch = move c
+        let k = ch.kill()
+        let w = ch.wait()
+      }
+      Err(e) => { print("unexpected: {e}") }
+    }
+  }
+  print(open_fds() - before)
+  print(children_left())
+}

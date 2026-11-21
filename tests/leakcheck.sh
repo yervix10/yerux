@@ -2,7 +2,7 @@
 # Leak / double-free check for the native allocator: allocations minus frees must be 0 at exit.
 # usage: tests/leakcheck.sh [files...] (default: ownership, Drop, worker and stdlib fixtures)
 Y=./target/release/yerux
-[ $# -eq 0 ] && set -- examples/01_lists.yx examples/03_conditional_move.yx examples/05_owned_struct.yx tests/agg_*.yx tests/gen_*.yx tests/own_*.yx tests/dyn_*.yx tests/conc_*.yx tests/drop_*.yx tests/net_drop.yx tests/std_*.yx tests/generic_recursion.yx tests/io_basic.yx tests/io_args.yx tests/io_stdin_*.yx tests/arr_*.yx tests/slice_*.yx
+[ $# -eq 0 ] && set -- examples/01_lists.yx examples/03_conditional_move.yx examples/05_owned_struct.yx tests/agg_*.yx tests/gen_*.yx tests/own_*.yx tests/dyn_*.yx tests/conc_*.yx tests/drop_*.yx tests/net_drop.yx tests/std_*.yx tests/generic_recursion.yx tests/process_*.yx tests/io_basic.yx tests/io_args.yx tests/io_stdin_*.yx tests/arr_*.yx tests/slice_*.yx
 TMP="$(mktemp -d /tmp/yerux_leak.XXXXXX)" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 fail=0

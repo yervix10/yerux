@@ -1,0 +1,7 @@
+// `spawn` is a language keyword (threads), so the process starter is called `start`
+import std.process
+
+fn main() {
+  var c = process.command("/bin/true")
+  let r = process.spawn(c)
+}
