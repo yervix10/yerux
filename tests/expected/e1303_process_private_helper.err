@@ -1,0 +1,8 @@
+error: 'child_fail' is private in module 'std.process'
+ --> tests/e1303_process_private_helper.yx:5:11
+  |
+5 |   let n = process.child_fail(0, 0, 1)
+  |           ^^^^^^^^^^^^^^^^^^
+  = help: add `pub` before the function in std/process.yx to share it: `pub fn child_fail`
+
+1 error(s). Nothing was generated.

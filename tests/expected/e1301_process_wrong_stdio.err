@@ -1,0 +1,7 @@
+error: expected process.Stdio but this is Int
+ --> tests/e1301_process_wrong_stdio.yx:6:15
+  |
+6 |   c.set_stdin(2)
+  |               ^
+
+1 error(s). Nothing was generated.
