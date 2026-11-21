@@ -1,0 +1,6 @@
+// std.fs: private helpers of the module are not visible
+import std.fs
+
+fn main() {
+  print(fs.cmp_bytes("a", "b"))
+}

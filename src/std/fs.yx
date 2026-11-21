@@ -1,0 +1,456 @@
+// std.fs: the file system (docs/STDLIB_IO.md, section "std.fs").
+//
+//   import std.fs          then      fs.read_to_string("a.txt")?   fs.read_dir(".")?   fs.create_dir_all("out/x")?
+//
+// Raw Linux x86-64 system calls over the std.io intrinsics, like std.io itself. Every failure is an
+// `io.IoError` value (the same error type as std.io), nothing aborts.
+import std.io
+import std.sort
+
+// ───────────────────────── metadata ─────────────────────────
+
+pub enum FileKind {
+    File,
+    Dir,
+    Symlink,
+    Other,
+}
+
+fn file_kind_code(k: FileKind) -> Int {
+    match k {
+        File => {
+            return 1
+        }
+        Dir => {
+            return 2
+        }
+        Symlink => {
+            return 3
+        }
+        Other => {
+            return 4
+        }
+    }
+}
+
+impl Equal for FileKind {
+    fn eq(view self, other: view FileKind) -> Bool {
+        return file_kind_code(self) == file_kind_code(other)
+    }
+}
+
+impl Show for FileKind {
+    fn show(view self) -> String {
+        match self {
+            File => {
+                return String.from("file")
+            }
+            Dir => {
+                return String.from("dir")
+            }
+            Symlink => {
+                return String.from("symlink")
+            }
+            Other => {
+                return String.from("other")
+            }
+        }
+    }
+}
+
+/// What stat(2) says about a path. `mode` is the permission bits (0o777 and the setuid/setgid/sticky bits),
+/// `modified_ns` the last modification time in nanoseconds since 1970-01-01 UTC.
+pub struct Metadata {
+    kind: FileKind,
+    size: Int,
+    mode: Int,
+    modified_ns: Int,
+}
+
+fn kind_from_mode(m: Int) -> FileKind {
+    let t = (m / 4096) % 16
+    if t == 8 {
+        return FileKind.File
+    }
+    if t == 4 {
+        return FileKind.Dir
+    }
+    if t == 10 {
+        return FileKind.Symlink
+    }
+    return FileKind.Other
+}
+
+// stat (nr 4) or lstat (nr 6) of `path`
+fn stat_with(nr: Int, op: Text, path: view String) -> Result<Metadata, io.IoError> {
+    let cp = io.cpath(path)?
+    let st = __alloc(144)
+    let r = __syscall(nr, cp.raw_addr(), st, 0, 0, 0, 0)
+    if r < 0 {
+        __free(st)
+        return Err(io.os_error(op, path, 0 - r))
+    }
+    // st_mode is a 32-bit field at offset 24; only its low 16 bits matter
+    let m = __load8(st + 24) + 256 * __load8(st + 25)
+    let size = __load64(st + 48)
+    let mns = __load64(st + 88) * 1000000000 + __load64(st + 96)
+    __free(st)
+    return Ok(Metadata { kind: kind_from_mode(m), size: size, mode: m % 4096, modified_ns: mns })
+}
+
+/// Metadata of `path`, following symbolic links.
+pub fn metadata(path: view String) -> Result<Metadata, io.IoError> {
+    return stat_with(4, "stat", path)
+}
+
+/// Metadata of `path` itself (a symbolic link is reported as `FileKind.Symlink`).
+pub fn symlink_metadata(path: view String) -> Result<Metadata, io.IoError> {
+    return stat_with(6, "lstat", path)
+}
+
+/// Does `path` exist (following symbolic links)?
+pub fn exists(path: view String) -> Bool {
+    match metadata(path) {
+        Ok(m) => {
+            return true
+        }
+        Err(e) => {
+            return false
+        }
+    }
+}
+
+/// Is `path` a regular file (following symbolic links)? false when it does not exist.
+pub fn is_file(path: view String) -> Bool {
+    match metadata(path) {
+        Ok(m) => {
+            return m.kind == FileKind.File
+        }
+        Err(e) => {
+            return false
+        }
+    }
+}
+
+/// Is `path` a directory (following symbolic links)? false when it does not exist.
+pub fn is_dir(path: view String) -> Bool {
+    match metadata(path) {
+        Ok(m) => {
+            return m.kind == FileKind.Dir
+        }
+        Err(e) => {
+            return false
+        }
+    }
+}
+
+/// Size of the file in bytes.
+pub fn file_size(path: view String) -> Result<Int, io.IoError> {
+    let m = metadata(path)?
+    return Ok(m.size)
+}
+
+// ───────────────────────── whole files ─────────────────────────
+
+/// The whole file as a String; `InvalidData` when it is not valid UTF-8.
+pub fn read_to_string(path: view String) -> Result<String, io.IoError> {
+    return io.read_file(path)
+}
+
+/// The lines of a file without their line endings (`\n` or `\r\n`); a final line ending adds no empty line.
+pub fn read_lines(path: view String) -> Result<List<String>, io.IoError> {
+    let text = io.read_file(path)?
+    var out = List<String>.new()
+    let n = text.len()
+    var start = 0
+    var i = 0
+    while i < n {
+        if text.byte(i) == 10 {
+            var end = i
+            if end > start && text.byte(end - 1) == 13 {
+                end = end - 1
+            }
+            out.push(text.slice(start, end))
+            start = i + 1
+        }
+        i = i + 1
+    }
+    if start < n {
+        var end = n
+        if text.byte(end - 1) == 13 {
+            end = end - 1
+        }
+        out.push(text.slice(start, end))
+    }
+    return Ok(move out)
+}
+
+/// Create or truncate `path` (mode 0644) and write `data`. Returns the number of bytes written.
+pub fn write(path: view String, data: view String) -> Result<Int, io.IoError> {
+    return io.write_file(path, data)
+}
+
+/// Append `data` to `path`, creating it when missing. Returns the number of bytes written.
+pub fn append(path: view String, data: view String) -> Result<Int, io.IoError> {
+    return io.append_file(path, data)
+}
+
+/// Copy the bytes of `from` to `to` (created or truncated, with the permission bits of `from`). Works for
+/// any content, not only UTF-8. Returns the number of bytes copied.
+pub fn copy(from: view String, to: view String) -> Result<Int, io.IoError> {
+    let info = metadata(from)?
+    if info.kind == FileKind.Dir {
+        return Err(io.os_error("copy", from, 21))
+    }
+    let src_p = io.cpath(from)?
+    let dst_p = io.cpath(to)?
+    let src = __syscall(2, src_p.raw_addr(), 524288, 0, 0, 0, 0)
+    if src < 0 {
+        return Err(io.os_error("open", from, 0 - src))
+    }
+    let dst = __syscall(2, dst_p.raw_addr(), 524865, info.mode, 0, 0, 0)
+    if dst < 0 {
+        let c = __syscall(3, src, 0, 0, 0, 0, 0)
+        return Err(io.os_error("open", to, 0 - dst))
+    }
+    let buf = __alloc(65536)
+    var total = 0
+    var err = 0
+    var err_on_read = true
+    while err == 0 {
+        let n = __syscall(0, src, buf, 65536, 0, 0, 0)
+        if n == -4 {
+            continue
+        }
+        if n < 0 {
+            err = 0 - n
+            break
+        }
+        if n == 0 {
+            break
+        }
+        var off = 0
+        while off < n {
+            let w = __syscall(1, dst, buf + off, n - off, 0, 0, 0)
+            if w == -4 {
+                continue
+            }
+            if w < 0 {
+                err = 0 - w
+                err_on_read = false
+                break
+            }
+            off = off + w
+        }
+        total = total + off
+    }
+    __free(buf)
+    let c1 = __syscall(3, src, 0, 0, 0, 0, 0)
+    let c2 = __syscall(3, dst, 0, 0, 0, 0, 0)
+    if err == 0 && c2 < 0 {
+        err = 0 - c2
+        err_on_read = false
+    }
+    if err != 0 {
+        if err_on_read {
+            return Err(io.os_error("read", from, err))
+        }
+        return Err(io.os_error("write", to, err))
+    }
+    return Ok(total)
+}
+
+// ───────────────────────── names ─────────────────────────
+
+/// Delete a file (not a directory: that is `IsDirectory`, use `remove_dir`).
+pub fn remove_file(path: view String) -> Result<Int, io.IoError> {
+    return io.remove_file(path)
+}
+
+/// Rename (move) `from` to `to`, replacing `to` when it is a file. Both must be on the same file system.
+pub fn rename(from: view String, to: view String) -> Result<Int, io.IoError> {
+    let a = io.cpath(from)?
+    let b = io.cpath(to)?
+    let r = __syscall(82, a.raw_addr(), b.raw_addr(), 0, 0, 0, 0)
+    if r < 0 {
+        return Err(io.os_error("rename", from, 0 - r))
+    }
+    return Ok(0)
+}
+
+// ───────────────────────── directories ─────────────────────────
+
+/// Create one directory (mode 0755). `AlreadyExists` when the name is taken, `NotFound` when the parent is
+/// missing.
+pub fn create_dir(path: view String) -> Result<Int, io.IoError> {
+    let cp = io.cpath(path)?
+    let r = __syscall(83, cp.raw_addr(), 493, 0, 0, 0, 0)
+    if r < 0 {
+        return Err(io.os_error("create directory", path, 0 - r))
+    }
+    return Ok(0)
+}
+
+/// Create a directory and every missing parent. An existing directory is fine (Ok(0)); an existing file on
+/// the way is `AlreadyExists` / `NotDirectory`.
+pub fn create_dir_all(path: view String) -> Result<Int, io.IoError> {
+    if path.len() == 0 {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "create directory: empty path"))
+    }
+    let cp = io.cpath(path)?
+    var i = 1
+    let n = path.len()
+    while i <= n {
+        if i == n || path.byte(i) == 47 {
+            if path.byte(i - 1) != 47 {
+                let part = path.slice(0, i)
+                let cpart = io.cpath(part)?
+                let r = __syscall(83, cpart.raw_addr(), 493, 0, 0, 0, 0)
+                if r < 0 && r != -17 {
+                    return Err(io.os_error("create directory", part, 0 - r))
+                }
+            }
+        }
+        i = i + 1
+    }
+    if !is_dir(path) {
+        return Err(io.os_error("create directory", path, 17))
+    }
+    return Ok(0)
+}
+
+/// Remove an empty directory (`NotEmpty` otherwise).
+pub fn remove_dir(path: view String) -> Result<Int, io.IoError> {
+    let cp = io.cpath(path)?
+    let r = __syscall(84, cp.raw_addr(), 0, 0, 0, 0, 0)
+    if r < 0 {
+        return Err(io.os_error("remove directory", path, 0 - r))
+    }
+    return Ok(0)
+}
+
+/// One entry of a directory listing: its name (not the full path) and its kind (a symbolic link is
+/// `Symlink`, it is not followed).
+pub struct DirEntry {
+    name: String,
+    kind: FileKind,
+}
+
+fn cmp_bytes(a: view String, b: view String) -> Int {
+    let n = a.len()
+    let m = b.len()
+    var i = 0
+    while i < n && i < m {
+        let x = a.byte(i)
+        let y = b.byte(i)
+        if x != y {
+            return x - y
+        }
+        i = i + 1
+    }
+    return n - m
+}
+
+fn join_name(dir: view String, name: view String) -> String {
+    var p = String.from(dir)
+    if p.len() > 0 && p.byte(p.len() - 1) != 47 {
+        p.push_byte(47)
+    }
+    p.push_str(name)
+    return p
+}
+
+/// The entries of directory `path` without `.` and `..`, sorted by name (byte order). A name that is not
+/// valid UTF-8 is converted lossily (each non-ASCII byte becomes `?`).
+pub fn read_dir_entries(path: view String) -> Result<List<DirEntry>, io.IoError> {
+    let cp = io.cpath(path)?
+    // O_RDONLY | O_DIRECTORY | O_CLOEXEC
+    let fd = __syscall(2, cp.raw_addr(), 589824, 0, 0, 0, 0)
+    if fd < 0 {
+        return Err(io.os_error("open directory", path, 0 - fd))
+    }
+    var out = List<DirEntry>.new()
+    let buf = __alloc(32768)
+    var err = 0
+    while true {
+        let n = __syscall(217, fd, buf, 32768, 0, 0, 0)
+        if n == -4 {
+            continue
+        }
+        if n < 0 {
+            err = 0 - n
+            break
+        }
+        if n == 0 {
+            break
+        }
+        var off = 0
+        while off < n {
+            let rec = buf + off
+            let reclen = __load8(rec + 16) + 256 * __load8(rec + 17)
+            let dtype = __load8(rec + 18)
+            let name = io.cstr(rec + 19)
+            let dot = name.len() == 1 && name.byte(0) == 46
+            let dotdot = name.len() == 2 && name.byte(0) == 46 && name.byte(1) == 46
+            if !dot && !dotdot {
+                var kind = FileKind.Other
+                if dtype == 8 {
+                    kind = FileKind.File
+                } else if dtype == 4 {
+                    kind = FileKind.Dir
+                } else if dtype == 10 {
+                    kind = FileKind.Symlink
+                } else if dtype == 0 {
+                    // DT_UNKNOWN: some file systems do not fill d_type
+                    let full = join_name(path, name)
+                    match symlink_metadata(full) {
+                        Ok(m) => {
+                            kind = m.kind
+                        }
+                        Err(e) => {
+                            kind = FileKind.Other
+                        }
+                    }
+                }
+                out.push(DirEntry { name: move name, kind: kind })
+            }
+            off = off + reclen
+        }
+    }
+    __free(buf)
+    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    if err != 0 {
+        return Err(io.os_error("read directory", path, err))
+    }
+    sort.unstable_by(out, |a: view DirEntry, b: view DirEntry| -> Int { return cmp_bytes(a.name, b.name) })
+    return Ok(move out)
+}
+
+/// The names in directory `path` (without `.` and `..`), sorted.
+pub fn read_dir(path: view String) -> Result<List<String>, io.IoError> {
+    let entries = read_dir_entries(path)?
+    var out = List<String>.new()
+    for e in entries {
+        out.push(String.from(e.name))
+    }
+    return Ok(move out)
+}
+
+/// Remove a directory and everything in it. Symbolic links are removed, never followed. A path that is not
+/// a directory is `NotDirectory`.
+pub fn remove_dir_all(path: view String) -> Result<Int, io.IoError> {
+    let info = symlink_metadata(path)?
+    if info.kind != FileKind.Dir {
+        return Err(io.os_error("remove directory", path, 20))
+    }
+    let entries = read_dir_entries(path)?
+    for e in entries {
+        let full = join_name(path, e.name)
+        if e.kind == FileKind.Dir {
+            let r = remove_dir_all(full)?
+        } else {
+            let r = io.remove_file(full)?
+        }
+    }
+    return remove_dir(path)
+}
