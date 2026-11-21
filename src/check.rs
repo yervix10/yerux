@@ -6030,7 +6030,7 @@ impl<'a> Checker<'a> {
             .map(|(e, _)| e)
             .or_else(|| self.types.slice_elem(ty))
         {
-            if matches!(tr, "Show" | "Equal" | "Ordered") {
+            if matches!(tr, "Show" | "Equal" | "Ordered" | "Clone") {
                 return self.implements(e, tr);
             }
         }
@@ -6687,6 +6687,46 @@ impl<'a> Checker<'a> {
                 let mut all = vec![*recv];
                 all.extend(args);
                 e.k = EK::Call(f.into(), all);
+            }
+            EK::Method { recv, m, args }
+                if m == "clone"
+                    && args.is_empty()
+                    && self.isp(recv)
+                    && self.peek_ty(recv).is_some_and(|t| self.types.array_of(t).is_some()) =>
+            {
+                let t = self.peek_ty(recv).unwrap_or(Ty::Err);
+                let (el, n) = self.types.array_of(t).unwrap_or((Ty::Err, 0));
+                if !self.implements(el, "Clone") {
+                    let en = self.tn(el);
+                    self.err(diag(format!("cannot clone {}: {} does not implement Clone", self.tn(t), en), pos)
+                        .note(format!("help: add `impl Clone for {} {{ .. }}`", en)));
+                    e.k = EK::Int(0);
+                    return;
+                }
+                let EK::Method { recv, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    unreachable!()
+                };
+                if !self.types.owned(el) {
+                    // an array of Copy values is copied by value
+                    e.k = recv.k;
+                } else if n > 64 {
+                    self.err(diag(format!("cannot clone {}: arrays of owned values are cloned element by element, up to 64 elements", self.tn(t)), pos));
+                } else {
+                    let items = (0..n)
+                        .map(|i| {
+                            let at = sx(
+                                EK::Method {
+                                    recv: recv.clone(),
+                                    m: "at".into(),
+                                    args: vec![sx(EK::Int(i as i64), pos)],
+                                },
+                                pos,
+                            );
+                            sx(EK::Method { recv: Box::new(at), m: "clone".into(), args: vec![] }, pos)
+                        })
+                        .collect();
+                    e.k = EK::ArrayLit(items);
+                }
             }
             _ => {}
         }

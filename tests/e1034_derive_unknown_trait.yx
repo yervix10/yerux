@@ -1,0 +1,6 @@
+struct Plain { n: Int }
+
+derive Debug for Plain
+
+fn main() {
+}

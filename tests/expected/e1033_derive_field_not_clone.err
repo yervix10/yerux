@@ -1,0 +1,8 @@
+error: type Plain has no method 'clone'
+ --> tests/e1033_derive_field_not_clone.yx:5:1
+  |
+5 | derive Clone for Wrap
+  | ^^^^^^
+  = help: `clone` is a method of trait Clone: write `impl Clone for Plain { .. }`
+
+1 error(s). Nothing was generated.

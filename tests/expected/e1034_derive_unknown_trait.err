@@ -1,0 +1,9 @@
+error: unknown trait 'Debug'
+ --> tests/e1034_derive_unknown_trait.yx:3:1
+  |
+3 | derive Debug for Plain
+  | ^^^^^^
+  = known traits: Copy, Equal, Ordered, Show, Drop, Clone, Hash
+  = help: declare it first: `trait Debug { fn method(view self) -> Int }`
+
+1 error(s). Nothing was generated.
