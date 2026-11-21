@@ -3,6 +3,7 @@
 mod a64;
 mod cgen;
 mod check;
+mod check_trace;
 mod comptime;
 mod dropscc;
 mod elfdyn;
@@ -25,15 +26,23 @@ use std::process::{exit, Command};
 use std::{env, fs};
 use syntax::Parser;
 
-fn frontend(
+fn checked_frontend(
     file: &str,
     mode: modules::Mode,
-) -> Result<(syntax::Program, check::Sigs), Vec<String>> {
+) -> Result<(syntax::Program, check::Sigs, modules::Loaded), Vec<String>> {
     let loaded = modules::load(file, mode)?;
     let mut ps = Parser::new(loaded.toks.clone());
     let mut prog = ps.program().map_err(|d| vec![loaded.render(&d)])?;
     let sigs = check::check_program(&mut prog, &mut ps)
         .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
+    Ok((prog, sigs, loaded))
+}
+
+fn frontend(
+    file: &str,
+    mode: modules::Mode,
+) -> Result<(syntax::Program, check::Sigs), Vec<String>> {
+    let (mut prog, sigs, loaded) = checked_frontend(file, mode)?;
     comptime::run(&mut prog)
         .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
     Ok((prog, sigs))
@@ -129,7 +138,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
 
@@ -227,6 +236,18 @@ fn real_main() {
                 }
                 return;
             }
+            "types-file" => {
+                match checked_frontend(&args[2], modules::Mode::Normal) {
+                    Ok((program, _, loaded)) => {
+                        for row in check_trace::binding_types(&program, &loaded.files[0].src) {
+                            println!("{row}");
+                        }
+                    }
+                    Err(errors) => report_errors(&errors),
+                }
+                return;
+            }
+            "locals-file" => return dump_ast(&args[2], syntax::dump_locals),
             "ast-file" => return dump_ast(&args[2], syntax::dump_file_source),
             "ast-expr" => return dump_ast(&args[2], syntax::dump_expr_source),
             "ast-stmt" => return dump_ast(&args[2], syntax::dump_stmt_source),
