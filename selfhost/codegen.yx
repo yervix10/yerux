@@ -36,6 +36,10 @@ struct Generator {
   result: String,
   // deferred statements of the open scopes: a statement node, or -1 - loop_depth marking a scope's start
   defers: List<Int>,
+  // labeled loops that are open: name, unique id (for the C labels) and the loop depth of their body
+  label_names: List<String>,
+  label_ids: List<Int>,
+  label_depths: List<Int>,
 }
 
 fn unsupported(message: view String) {
@@ -553,12 +557,12 @@ fn propagate_result(gen: mut Generator, tree: view List<ast.AstNode>, operand: v
     gen.indent = gen.indent + 1
     if base == "Option" {
       let failure = temp(gen, tree, result, "({dest}){{ .tag = 2 }}")
-      emit_defers(gen, tree, false)
+      emit_defers(gen, tree, -1)
       line(gen, "return {transfer(gen, tree, failure)};")
     } else {
       let error = enum_payload(gen, owned, 2, 0)
       let failure = temp(gen, tree, result, "({dest}){{ .tag = 2, .v2.p0 = {transfer(gen, tree, error)} }}")
-      emit_defers(gen, tree, false)
+      emit_defers(gen, tree, -1)
       line(gen, "return {transfer(gen, tree, failure)};")
     }
     gen.indent = gen.indent - 1
@@ -1343,7 +1347,7 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
 }
 
 fn emit_iterator(gen: mut Generator, tree: view List<ast.AstNode>, id: Int,
-    iterator: view Value, body: Int) {
+    iterator: view Value, body: Int, labeled: Bool) {
   let method = match_method(gen, tree, iterator.ty, String.from("next"), true)
   if method < 0 { unsupported("iteration over {iterator.ty}") }
   let params = ast.child(tree, method, 2)
@@ -1368,16 +1372,36 @@ fn emit_iterator(gen: mut Generator, tree: view List<ast.AstNode>, id: Int,
     line(gen, "{c} v{id} __attribute__((cleanup({drop}))) = {transfer(gen, tree, value)};")
   } else { line(gen, "{c} v{id} = {value.code};") }
   gen.references.set(id, false)
+  if labeled { gen.label_depths.set(gen.label_depths.len() - 1, gen.loop_depth) }
   statement(gen, tree, body)
+  if labeled { line(gen, "cont_{gen.label_ids.at(gen.label_ids.len() - 1)}: ;") }
   gen.loop_depth = gen.loop_depth - 1
   gen.indent = gen.indent - 1
   line(gen, String.from("}}"))
 }
 
+fn open_label(gen: mut Generator, name: view String) -> Int {
+  let id = gen.temp
+  gen.temp = id + 1
+  gen.label_names.push(String.from(name))
+  gen.label_ids.push(id)
+  gen.label_depths.push(gen.loop_depth + 1)
+  return id
+}
+
+fn close_label(gen: mut Generator, id: Int) {
+  line(gen, "brk_{id}: ;")
+  let dropped_name = gen.label_names.pop()
+  gen.label_ids.pop()
+  gen.label_depths.pop()
+}
+
 fn emit_for(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
-  if tree.at(ast.child(tree, node, 0)).tag != "_" || tree.at(ast.child(tree, node, 4)).tag != "_" {
-    unsupported("labeled for or explicit range step")
-  }
+  let label = ast.child(tree, node, 0)
+  let labeled = tree.at(label).tag != "_"
+  let stepped = tree.at(ast.child(tree, node, 4)).tag != "_"
+  var label_id = 0
+  if labeled { label_id = open_label(gen, ast.decoded_name(tree, label)) }
   let id = id_at(gen, node)
   let iter = ast.child(tree, node, 3)
   let mutable = tree.at(ast.child(tree, node, 2)).tag == "true"
@@ -1390,14 +1414,24 @@ fn emit_for(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     if lo.ty != "Int" || hi.ty != "Int" { unsupported("non-Int range loop") }
     var compare = String.from("<")
     if tree.at(ast.child(tree, iter, 2)).tag == "true" { compare = String.from("<=") }
+    var advance = "++i{id}"
+    if stepped {
+      let amount = expression(gen, tree, ast.child(tree, node, 4))
+      if amount.ty != "Int" { unsupported("non-Int range step") }
+      let step = temp(gen, tree, String.from("Int"), amount.code)
+      line(gen, "nx_assert({step.code} > 0);")
+      advance = "i{id} += {step.code}"
+    }
     // A widened iterator can step past INT64_MAX in an inclusive range.
-    line(gen, "for (__int128 i{id} = {lo.code}; i{id} {compare} {hi.code}; ++i{id}) {{")
+    line(gen, "for (__int128 i{id} = {lo.code}; i{id} {compare} {hi.code}; {advance}) {{")
     binding = "int64_t v{id} = (int64_t)i{id};"
   } else {
     let seq = expression(gen, tree, iter)
     let element = type_terms.element(seq.ty)
+    if stepped { unsupported("explicit range step on a sequence") }
     if element == "?" {
-      emit_iterator(gen, tree, id, seq, ast.child(tree, node, 5))
+      emit_iterator(gen, tree, id, seq, ast.child(tree, node, 5), labeled)
+      if labeled { close_label(gen, label_id) }
       return
     }
     prepare_type(gen, tree, seq.ty)
@@ -1412,10 +1446,13 @@ fn emit_for(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   gen.indent = gen.indent + 1
   gen.loop_depth = gen.loop_depth + 1
   line(gen, binding)
+  if labeled { gen.label_depths.set(gen.label_depths.len() - 1, gen.loop_depth) }
   statement(gen, tree, ast.child(tree, node, 5))
+  if labeled { line(gen, "cont_{label_id}: ;") }
   gen.loop_depth = gen.loop_depth - 1
   gen.indent = gen.indent - 1
   line(gen, String.from("}}"))
+  if labeled { close_label(gen, label_id) }
 }
 
 fn pattern_bound(digits: view String) -> String {
@@ -1558,18 +1595,18 @@ fn has_defers(gen: view Generator) -> Bool {
 }
 
 // Emit the deferred statements of the open scopes, innermost first. `stop_at_loop` limits them to the scopes
-// opened inside the current loop (break/continue). The stack itself is left alone.
-fn emit_defers(gen: mut Generator, tree: view List<ast.AstNode>, stop_at_loop: Bool) {
+// opened at loop depth >= `stop_below` (break/continue); -1 runs all of them. The stack itself is left alone.
+fn emit_defers(gen: mut Generator, tree: view List<ast.AstNode>, stop_below: Int) {
   let saved = gen.defers.clone()
   var i = saved.len() - 1
   while i >= 0 {
     let entry = saved.at(i)
     if entry >= 0 {
-      if stop_at_loop {
+      if stop_below >= 0 {
         // the scope of this statement is the nearest marker below it
         var m = i - 1
         while m >= 0 && saved.at(m) >= 0 { m = m - 1 }
-        if m >= 0 && (-1 - saved.at(m)) < gen.loop_depth { break }
+        if m >= 0 && (-1 - saved.at(m)) < stop_below { break }
       }
       // a deferred statement only sees the defers registered before it
       var below = List<Int>.new()
@@ -1654,7 +1691,7 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   } else if tag == "Return" {
     let arg = ast.child(tree, node, 0)
     if tree.at(arg).tag == "_" {
-      if has_defers(gen) { emit_defers(gen, tree, false) }
+      if has_defers(gen) { emit_defers(gen, tree, -1) }
       line(gen, String.from("return;"))
     } else {
       let expected = String.from(gen.result)
@@ -1664,7 +1701,7 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
       if has_defers(gen) {
         // the result is computed before the deferred statements run
         let saved = temp(gen, tree, expected, transfer(gen, tree, result))
-        emit_defers(gen, tree, false)
+        emit_defers(gen, tree, -1)
         line(gen, "return {transfer(gen, tree, saved)};")
       } else {
         line(gen, "return {transfer(gen, tree, result)};")
@@ -1692,24 +1729,44 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   } else if tag == "For" {
     emit_for(gen, tree, node)
   } else if tag == "While" {
-    if tree.at(ast.child(tree, node, 0)).tag != "_" { unsupported("labeled while") }
+    let label = ast.child(tree, node, 0)
+    let labeled = tree.at(label).tag != "_"
+    var id = 0
+    if labeled { id = open_label(gen, ast.decoded_name(tree, label)) }
     line(gen, String.from("for (;;) {{"))
     gen.indent = gen.indent + 1
     let condition = expression(gen, tree, ast.child(tree, node, 1))
     if condition.ty != "Bool" { unsupported("while condition type") }
     line(gen, "if (!({condition.code})) break;")
     gen.loop_depth = gen.loop_depth + 1
+    if labeled { gen.label_depths.set(gen.label_depths.len() - 1, gen.loop_depth) }
     statement(gen, tree, ast.child(tree, node, 2))
+    if labeled { line(gen, "cont_{id}: ;") }
     gen.loop_depth = gen.loop_depth - 1
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
+    if labeled { close_label(gen, id) }
   } else if tag == "Break" || tag == "Continue" {
-    if gen.loop_depth == 0 || tree.at(ast.child(tree, node, 0)).tag != "_" {
-      unsupported("loop exit with invalid or unsupported target")
+    let target = ast.child(tree, node, 0)
+    if gen.loop_depth == 0 { unsupported("loop exit with invalid or unsupported target") }
+    if tree.at(target).tag == "_" {
+      if has_defers(gen) { emit_defers(gen, tree, gen.loop_depth) }
+      if tag == "Break" { line(gen, String.from("break;")) }
+      else { line(gen, String.from("continue;")) }
+    } else {
+      let name = ast.decoded_name(tree, target)
+      var found = -1
+      var k = gen.label_names.len() - 1
+      while k >= 0 && found < 0 {
+        if gen.label_names.at(k) == name { found = k }
+        k = k - 1
+      }
+      if found < 0 { unsupported("loop exit with invalid or unsupported target") }
+      if has_defers(gen) { emit_defers(gen, tree, gen.label_depths.at(found)) }
+      let id = gen.label_ids.at(found)
+      if tag == "Break" { line(gen, "goto brk_{id};") }
+      else { line(gen, "goto cont_{id};") }
     }
-    if has_defers(gen) { emit_defers(gen, tree, true) }
-    if tag == "Break" { line(gen, String.from("break;")) }
-    else { line(gen, String.from("continue;")) }
   } else if tag != "_" { unsupported("statement {tag}") }
 }
 
@@ -2005,6 +2062,7 @@ fn main() {
         instances: List<Instance>.new(), sub: type_terms.empty(), prototypes: String.new(),
         references: List<Bool>.new(), out: String.new(),
         indent: 0, temp: 0, loop_depth: 0, result: String.new(), defers: List<Int>.new(),
+        label_names: List<String>.new(), label_ids: List<Int>.new(), label_depths: List<Int>.new(),
       }
       for i in 0..gen.locals.bindings.len() { gen.references.push(false) }
       generate(gen, file.nodes)
