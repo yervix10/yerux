@@ -46,3 +46,9 @@ requests, and path handling. They also verify native allocations are
 released after requests and server shutdown. The programs lend fixed-size
 buffers as slices to the socket and file helpers. Owned sockets and files
 close when they leave scope.
+
+## Blocking client (`std.http`)
+
+`http.get(addr, host, path, headers)` and `http.post_json(addr, host, path, headers, json)` provide a minimal HTTP/1.1 client over numeric `std.net.SocketAddr`. Responses include status, header pairs and body. The client sends `Connection: close`, reads up to 10 MiB, and expects the server to close the connection. TLS, DNS, redirects and chunked transfer decoding are not implemented. Test: `tests/http_loopback.yx`.
+
+The module is embedded as `std.http` and its loopback client test runs against both C and native backends.

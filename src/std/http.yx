@@ -1,0 +1,89 @@
+// std.http: small blocking HTTP/1.1 client for plain TCP, over std.net.
+import std.io
+import std.net
+import std.text
+
+pub struct Response {
+  status: Int,
+  headers: List<(String, String)>,
+  body: String,
+}
+
+/// GET a path. `host` is used in the Host header and `addr` is a numeric socket address.
+pub fn get(addr: view net.SocketAddr, host: view String, path: view String, headers: view List<(String, String)>) -> Result<Response, io.IoError> {
+  return request(addr, host, "GET", path, headers, "")
+}
+
+/// POST a JSON document, adding application/json unless a content-type header is supplied.
+pub fn post_json(addr: view net.SocketAddr, host: view String, path: view String, headers: view List<(String, String)>, json: view String) -> Result<Response, io.IoError> {
+  var all = List<(String, String)>.new()
+  var has_type = false
+  var i = 0
+  while i < headers.len() {
+    if text.to_lower(headers.at(i).0).eq("content-type") { has_type = true }
+    all.push((String.from(headers.at(i).0), String.from(headers.at(i).1)))
+    i = i + 1
+  }
+  if !has_type { all.push((String.from("Content-Type"), String.from("application/json"))) }
+  return request(addr, host, "POST", path, all, json)
+}
+
+fn request(addr: view net.SocketAddr, host: view String, method: Text, path: view String, headers: view List<(String, String)>, body: view String) -> Result<Response, io.IoError> {
+  if path.len() == 0 || path.byte(0) != 47 || path.contains("\r") || path.contains("\n") || host.contains("\r") || host.contains("\n") {
+    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "http: invalid host or request path"))
+  }
+  var req = String.new()
+  req.push_str(method)
+  req.push_byte(32)
+  req.push_str(path)
+  req.push_str(" HTTP/1.1\r\nHost: ")
+  req.push_str(host)
+  req.push_str("\r\nConnection: close\r\n")
+  var i = 0
+  while i < headers.len() {
+    if headers.at(i).0.len() == 0 || headers.at(i).0.contains(":") || headers.at(i).0.contains("\r") || headers.at(i).0.contains("\n") || headers.at(i).1.contains("\r") || headers.at(i).1.contains("\n") {
+      return Err(io.custom_error(io.IoErrorKind.InvalidInput, "http: invalid header"))
+    }
+    req.push_str(headers.at(i).0)
+    req.push_str(": ")
+    req.push_str(headers.at(i).1)
+    req.push_str("\r\n")
+    i = i + 1
+  }
+  if method == "POST" {
+    req.push_str("Content-Length: ")
+    req.push_int(body.len())
+    req.push_str("\r\n")
+  }
+  req.push_str("\r\n")
+  req.push_str(body)
+  var stream = net.connect(addr)?
+  let sent = net.write(stream, req)?
+  var raw = String.new()
+  while raw.len() < 10485760 {
+    let chunk = net.read(stream, 65536)?
+    if chunk.len() == 0 { break }
+    raw.push_str(chunk)
+  }
+  let split = raw.find("\r\n\r\n")
+  if split < 0 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "http: malformed response")) }
+  let head = raw.slice(0, split)
+  let lines = head.split("\r\n")
+  if lines.len() == 0 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "http: missing status line")) }
+  let status_line = String.from(lines.at(0))
+  let space = status_line.find(" ")
+  if space < 0 || space + 4 > status_line.len() { return Err(io.custom_error(io.IoErrorKind.InvalidData, "http: malformed status line")) }
+  let status_text = status_line.slice(space + 1, space + 4)
+  let status_result = text.parse_int(status_text)
+  var status = 0
+  match status_result { Ok(n) => { status = n }, Err(_) => { return Err(io.custom_error(io.IoErrorKind.InvalidData, "http: invalid status code")) } }
+  var parsed = List<(String, String)>.new()
+  i = 1
+  while i < lines.len() {
+    let line = String.from(lines.at(i))
+    let colon = line.find(":")
+    if colon > 0 { parsed.push((line.slice(0, colon), line.slice(colon + 1, line.len()).trim())) }
+    i = i + 1
+  }
+  return Ok(Response { status: status, headers: move parsed, body: raw.slice(split + 4, raw.len()) })
+}

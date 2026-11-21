@@ -2,7 +2,7 @@
 // file has to exist next to the program. Everything else about a std module is an ordinary module (modules.rs).
 
 /// Every embedded standard-library module.
-pub const MODULES: &[&str] = &["std.io", "std.text", "std.sort", "std.iter", "std.fmt", "std.args", "std.collections", "std.time", "std.path", "std.math", "std.fs", "std.env", "std.net", "std.process", "std.hex", "std.hash", "std.rand", "std.log"];
+pub const MODULES: &[&str] = &["std.io", "std.text", "std.sort", "std.iter", "std.fmt", "std.args", "std.collections", "std.time", "std.path", "std.math", "std.fs", "std.env", "std.net", "std.process", "std.hex", "std.hash", "std.rand", "std.log", "std.http"];
 
 /// Source text of the standard-library module `key` (`std.io`), if there is one.
 pub fn source(key: &str) -> Option<&'static str> {
@@ -26,6 +26,7 @@ pub fn source(key: &str) -> Option<&'static str> {
         "std.hash" => Some(include_str!("std/hash.yx")),
         "std.rand" => Some(include_str!("std/rand.yx")),
         "std.log" => Some(include_str!("std/log.yx")),
+        "std.http" => Some(include_str!("std/http.yx")),
         "std.regex" => Some(include_str!("std/regex.yx")),
         "std.csv" => Some(include_str!("std/csv.yx")),
         "std.toml" => Some(include_str!("std/toml.yx")),
