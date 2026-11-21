@@ -88,8 +88,7 @@ module and global symbol lookup.
 
 `yerux locals-file file.yx` walks the Rust parser's native source AST and
 exports binding, use, and capture rows. `tests/selfhost_types.sh` compares
-these rows for every tracked source. It covers **703 files**, with 688
-matching lexical snapshots and 15 rejections at the lexer or parser stage.
+these rows for every tracked source, including lexer and parser rejections.
 The Rust checker now also computes free uses in lexical scope order, so a
 local declaration inside a closure no longer hides a capture used in that
 declaration's initializer or outside its block.
@@ -132,16 +131,24 @@ locals and expression types for operations. It emits C against
 `src/c_runtime.h`, which the Rust C backend also embeds. Both emitters use
 the same checked integer operations, panic messages, and string primitives.
 
-The supported subset includes file-local, non-generic functions and
-structs, direct calls, `let` and `var`, assignment, returns, `if`,
-short-circuit boolean operators, and unlabeled `while`, `break` and
-`continue`. It supports `Bool`, `Char`, `Int`, sized integers, checked
-`+`, `-`, `*`, `/`, `%` and negation, numeric comparisons, and scalar
-`print` and `assert` calls. Structs can nest and contain owned strings.
-The emitter handles moves, `view` and `mut` parameters, scoped cleanup, and
-field replacement. It supports `Text` literals, `String.new`,
-`String.from`, `String.concat`, and the String methods `len`, `byte`,
-`eq`, `clear`, `push_str`, and `push_int`.
+The emitter specializes reachable generic functions, structs, enums, and
+lists by their concrete type arguments. It supports direct calls, concrete
+inherent methods, concrete `Drop` and `Equal` implementations, enums with
+payloads, nested patterns and guards, `Option`, `Result`, and `?` with
+matching error types. Arrays with fixed literal lengths and copyable
+elements, borrowed slices, and `List<T>` support indexing and iteration.
+Supported flow includes `if`, short-circuit booleans, `while`, unlabeled
+integer and sequence `for` loops, `break`, and `continue`. The emitter also
+handles sized integer arithmetic and comparisons, string interpolation
+of scalar and text values, moves, `view` and `mut` parameters, field
+replacement, and scope cleanup.
+
+`resolve --link AST_ROOT ENTRY.yx` combines cached source ASTs, validates
+imports and visibility, and gives declarations unique module names before
+type checking. The linked compiler builds `std.path` from source. Bootstrap
+bindings in the C runtime provide the command-line, whole-file, and
+standard-stream operations used by the stages from `std.env`, `std.fs`,
+and `std.io`.
 
 Build the stages from the repository root and feed the positioned tokens
 to the parser. Compile the emitted C with GCC or Clang on Linux.
@@ -159,14 +166,21 @@ cc -std=gnu11 -O2 -I src /tmp/source.c -o /tmp/program -pthread -lm
 ```
 
 `codegen` exits 0 after emitting C, 1 for checker diagnostics, 2 for an
-artifact or invocation error, and 3 for an unsupported construct. Run
-`bash tests/selfhost_codegen.sh` to compare stdout, stderr, and exit status
-against programs built by the Rust C backend. The test scans the
-top-level examples and tests and requires representative programs and
-panic cases to run through both backends. The current corpus has 62
-identical executions out of 318 candidates, including 33 runtime panics.
-The remaining candidates include 254 outside the subset and two
-fixtures for checker and emitter rejections.
+artifact or invocation error, and 3 for an unsupported construct.
+
+Run `bash tests/selfhost_codegen.sh` to bootstrap the compiler. It first
+uses the Rust compiler to build seed binaries, then feeds the source for
+all six executables in `selfhost/` through the seed lexer, parser, linker
+and checker/emitter. It compiles their C with `cc` and uses those binaries to
+build the same executables again. The two generations must emit
+byte-identical C. The rebuilt stages run the lexer, parser, resolver and
+type parity suites. The harness also compares formatter output against
+the seed and checks that rebuilt codegen emits the same C and diagnostics
+as the seed on its corpus. It compares the resulting programs' stdout,
+stderr, and exit statuses against runs from the Rust C backend.
+The bootstrap rebuilds 6 of 6 executables with identical C. At this
+milestone the program comparison matches 126 of 327 candidates, including
+61 runtime panics, with two expected rejections and zero discrepancies.
 
 ## Remaining work
 
@@ -177,18 +191,14 @@ import alias and an uppercase type name, because the definition is in another
 file. The dumps omit AST spans, and parser diagnostic messages and notes have
 yet to be ported.
 
-The type and ownership passes are file-local. Unsupported expressions
-and types can carry an unknown type so checking can continue. Module
-signatures, trait resolution, general generic bounds, flow narrowing,
-constant evaluation, and diagnostic spans and notes still require the
-Rust front end. Pattern exhaustiveness outside the covered enum and Bool
-cases, closure capture modes, defer lifetimes, and precise loans for
-indexed places and nested call arguments also remain in the Rust front
-end. Bootstrapping the compiler needs a staged build. At present
-`comptime` evaluates scalars, while the lexer and parser run as ordinary
-Yerux programs. The next code generation features include module linkage,
-methods outside the String primitives, generics, pattern matching, and
-collection and range lowering.
+The self-hosted compiler covers the sources required to rebuild its
+stages. Full language and standard-library parity still requires general
+trait and bound resolution, closure lowering and capture modes, defer
+lifetimes, precise loans for nested calls and projections, owned arrays,
+recursive heap types, and richer pattern matching and range flow.
+Compile-time evaluation, full diagnostic spans and notes, and replacing
+the bootstrap C bindings with compiled standard-library implementations
+also remain open.
 
 These constraints do not prevent writing the parser and checker as runtime
 Yerux programs, but they make a feature-for-feature port a separate milestone.

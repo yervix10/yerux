@@ -95,3 +95,22 @@ pub fn compatible(expected: view String, actual: view String) -> Bool {
   }
   return true
 }
+
+pub fn element(ty: view String) -> String {
+  let name = base(ty)
+  if name != "List" && name != "Array" && name != "Slice" { return String.from("?") }
+  let args = arguments(ty)
+  if ty == "List" { return String.from("Int") }
+  if args.len() == 0 { return String.from("?") }
+  return String.from(args.at(0))
+}
+
+pub fn bracket(item: view String, size: view String) -> String {
+  if size == "_" { return "Slice<{item}>" }
+  return "Array<{item}, {size}>"
+}
+
+pub fn last_name(name: view String) -> String {
+  let components = name.split(".")
+  return String.from(components.at(components.len() - 1))
+}

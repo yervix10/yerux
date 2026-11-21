@@ -7,9 +7,12 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cargo build -q
 rust=target/debug/yerux
-for stage in lexer parser resolve; do
-  "$rust" build "selfhost/$stage.yx" -o "$tmp/$stage" >/dev/null
-done
+bins=${SELFHOST_BIN_DIR:-$tmp}
+if [[ -z ${SELFHOST_BIN_DIR:-} ]]; then
+  for stage in lexer parser resolve; do
+    "$rust" build "selfhost/$stage.yx" -o "$tmp/$stage" >/dev/null
+  done
+fi
 
 total=0
 resolved=0
@@ -23,9 +26,9 @@ while IFS= read -r -d '' file; do
   rust_rc=0
   self_rc=0
   "$rust" ast-file "$file" >"$tmp/rust-ast" || rust_rc=$?
-  "$tmp/lexer" "$file" --positioned >"$tmp/tokens" || self_rc=$?
+  "$bins/lexer" "$file" --positioned >"$tmp/tokens" || self_rc=$?
   if [[ $self_rc == 0 ]]; then
-    "$tmp/parser" "$tmp/tokens" >"$tmp/self-ast" || self_rc=$?
+    "$bins/parser" "$tmp/tokens" >"$tmp/self-ast" || self_rc=$?
   fi
   if [[ $rust_rc != "$self_rc" || $self_rc -gt 1 ]]; then
     printf 'selfhost resolver: AST stage mismatch in %s (Rust %s, Yerux %s)\n' "$file" "$rust_rc" "$self_rc" >&2
@@ -44,7 +47,7 @@ while IFS= read -r -d '' file; do
   rust_rc=0
   self_rc=0
   "$rust" resolve-file "$file" >"$tmp/rust" || rust_rc=$?
-  "$tmp/resolve" "$tmp/asts" "$file" >"$tmp/self" || self_rc=$?
+  "$bins/resolve" "$tmp/asts" "$file" >"$tmp/self" || self_rc=$?
   sort "$tmp/self" >"$tmp/sorted"
   if [[ $rust_rc != "$self_rc" || $self_rc -gt 1 ]] || ! cmp -s "$tmp/rust" "$tmp/sorted"; then
     printf 'selfhost resolver: resolution mismatch in %s (Rust %s, Yerux %s)\n' "$file" "$rust_rc" "$self_rc" >&2

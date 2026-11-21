@@ -2,13 +2,18 @@
 import std.env
 import std.fs
 import std.path
+import std.io
 import ast
+import locals
 
 struct Symbol { name: String, is_function: Bool, public: Bool }
 struct Module { key: String, owner: String, loading: Bool, symbols: List<Symbol> }
 struct Alias { name: String, module_id: Int }
 struct FileContext { module_id: Int, aliases: List<Alias>, shadowed: List<String> }
-struct Resolver { cache: String, root: String, modules: List<Module>, errors: Int }
+struct Resolver {
+  cache: String, root: String, modules: List<Module>, errors: Int,
+  link: Bool, output: String,
+}
 
 fn module_index(resolver: view Resolver, key: view String) -> Int {
   for i in 0..resolver.modules.len() {
@@ -49,7 +54,9 @@ fn mangle(owner: view String, name: view String) -> String {
 
 fn issue(resolver: mut Resolver, module_id: Int, message: view String) {
   let owner = String.from(resolver.modules.at(module_id).owner)
-  print("error:{owner}:{message}")
+  let row = "error:{owner}:{message}"
+  if resolver.link { io.eprintln(row) }
+  else { print(row) }
   resolver.errors = resolver.errors + 1
 }
 
@@ -63,6 +70,21 @@ fn dependency_file(resolver: view Resolver, dep: view String) -> String {
   }
   let source = path.join(resolver.root, file)
   return path.join(resolver.cache, source)
+}
+
+fn native_module(resolver: mut Resolver, dep: view String) -> Int {
+  var names = List<String>.new()
+  if dep == "std.env" { names = String.from("arg,args,arg_count,exit").split(",") }
+  else if dep == "std.fs" { names = String.from("read_to_string,is_file").split(",") }
+  else if dep == "std.io" { names = String.from("eprintln,write_stdout,write_stderr").split(",") }
+  else { return -1 }
+  let id = resolver.modules.len()
+  var symbols = List<Symbol>.new()
+  for name in names { symbols.push(Symbol { name: String.from(name), is_function: true, public: true }) }
+  resolver.modules.push(Module {
+    key: String.from(dep), owner: String.from(dep), loading: false, symbols: move symbols,
+  })
+  return id
 }
 
 fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>, decl: Int) {
@@ -83,6 +105,7 @@ fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<a
     issue(resolver, ctx.module_id, "cycle:{dep}")
     return
   }
+  if id < 0 && resolver.link { id = native_module(resolver, dep) }
   if id < 0 {
     let file = dependency_file(resolver, dep)
     if !fs.is_file(file) {
@@ -92,7 +115,7 @@ fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<a
     id = load_module(resolver, dep, dep, file)
   }
   let owner = String.from(resolver.modules.at(ctx.module_id).owner)
-  print("import:{owner}:{alias}:{dep}")
+  if !resolver.link { print("import:{owner}:{alias}:{dep}") }
   ctx.aliases.push(Alias { name: move alias, module_id: id })
 }
 
@@ -120,7 +143,7 @@ fn resolve_qualified(resolver: mut Resolver, ctx: view FileContext, alias: view 
     let owner = String.from(resolver.modules.at(ctx.module_id).owner)
     let kind = symbol_kind(resolver.modules.at(id).symbols.at(index).is_function)
     let target = mangle(dep, name)
-    print("qualified:{owner}:{alias}:{dep}:{name}:{kind}:{target}")
+    if !resolver.link { print("qualified:{owner}:{alias}:{dep}:{name}:{kind}:{target}") }
   }
   return true
 }
@@ -139,7 +162,7 @@ fn resolve_name(resolver: mut Resolver, ctx: view FileContext, name: view String
     if use_kind == "function" && resolver.modules.at(ctx.module_id).symbols.at(own).is_function {
       let owner = String.from(resolver.modules.at(ctx.module_id).owner)
       let target = mangle(owner, name)
-      print("call:{owner}:{name}:{target}")
+      if !resolver.link { print("call:{owner}:{name}:{target}") }
     }
     return
   }
@@ -251,7 +274,7 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
     let kind = symbol_kind(symbol.is_function)
     let access = visibility(symbol.public)
     let target = mangle(owner, symbol.name)
-    print("symbol:{owner}:{symbol.name}:{kind}:{access}:{target}")
+    if !resolver.link { print("symbol:{owner}:{symbol.name}:{kind}:{access}:{target}") }
   }
   resolver.modules.at(ctx.module_id).symbols = move symbols
 
@@ -264,6 +287,20 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
     }
     i = tree.at(i).end
   }
+  if resolver.link {
+    let bindings = locals.resolve(tree)
+    i = start
+    while i < end {
+      let decl = ast.child(tree, i, 2)
+      if tree.at(decl).tag != "Test" && tree.at(decl).tag != "Import" {
+        if resolver.output.len() != 0 { resolver.output.push_str(",") }
+        resolver.output.push_str("Item(false,_,")
+        linked_node(resolver, ctx, tree, bindings, decl, true)
+        resolver.output.push_str(")")
+      }
+      i = tree.at(i).end
+    }
+  }
 }
 
 fn load_module(resolver: mut Resolver, key: view String, owner: view String, file: view String) -> Int {
@@ -271,9 +308,9 @@ fn load_module(resolver: mut Resolver, key: view String, owner: view String, fil
   resolver.modules.push(Module {
     key: String.from(key), owner: String.from(owner), loading: true, symbols: List<Symbol>.new(),
   })
-  print("module:{owner}")
+  if !resolver.link { print("module:{owner}") }
   match fs.read_to_string(file) {
-    Err(e) => { print("could not read {file}: {e.message}"); env.exit(2) }
+    Err(e) => { io.eprintln("could not read {file}: {e.message}"); env.exit(2) }
     Ok(source) => {
       let tree = ast.decode(move source)
       var ctx = FileContext { module_id: module_id, aliases: List<Alias>.new(), shadowed: List<String>.new() }
@@ -284,23 +321,111 @@ fn load_module(resolver: mut Resolver, key: view String, owner: view String, fil
   return module_id
 }
 
-fn main() {
-  let args = env.args()
-  if args.len() != 3 {
-    ast.artifact_error("usage: resolve AST_ROOT ENTRY.yx")
+fn encoded(name: view String) -> String {
+  let digits = String.from("0123456789abcdef")
+  var result = String.new()
+  for i in 0..name.len() {
+    let b = name.byte(i)
+    result.push_byte(digits.byte(b / 16))
+    result.push_byte(digits.byte(b % 16))
+  }
+  return result
+}
+
+fn linked_name(resolver: view Resolver, ctx: view FileContext, name: view String) -> String {
+  let pieces = name.split(".")
+  if pieces.len() == 1 {
+    if symbol_index(resolver.modules.at(ctx.module_id).symbols, name) >= 0 {
+      return mangle(resolver.modules.at(ctx.module_id).owner, name)
+    }
+  } else if pieces.len() == 2 {
+    let id = alias_module(ctx, pieces.at(0))
+    if id >= 0 { return mangle(resolver.modules.at(id).owner, pieces.at(1)) }
+  }
+  return String.from(name)
+}
+
+fn linked_node(resolver: mut Resolver, ctx: view FileContext, tree: view List<ast.AstNode>,
+    bindings: view locals.Locals, node: Int, declaration: Bool) {
+  let tag = String.from(tree.at(node).tag)
+  let finish = tree.at(node).end
+  if tag == "Method" || tag == "Field" {
+    let receiver = ast.child(tree, node, 0)
+    if tree.at(receiver).tag == "Var" && bindings.identities.at(receiver) < 0 {
+      let alias = ast.name_at(tree, receiver, 0)
+      let id = alias_module(ctx, alias)
+      if id >= 0 {
+        let member = ast.name_at(tree, node, 1)
+        let name = encoded(mangle(resolver.modules.at(id).owner, member))
+        if tag == "Method" {
+          resolver.output.push_str("Call(")
+          resolver.output.push_str(name)
+          resolver.output.push_str(",")
+          linked_node(resolver, ctx, tree, bindings, ast.child(tree, node, 2), false)
+        } else {
+          resolver.output.push_str("Var(")
+          resolver.output.push_str(name)
+        }
+        resolver.output.push_str(")")
+        return
+      }
+    }
+  }
+  resolver.output.push_str(tag)
+  if finish == node + 1 {
+    if tag == "[" { resolver.output.push_str("]") }
     return
   }
-  let entry = String.from(args.at(2))
+  if tag != "[" { resolver.output.push_str("(") }
+  var at = node + 1
+  let symbol_decl = declaration && (tag == "Fn" || tag == "Struct" || tag == "Enum" || tag == "Trait")
+  let identifier = tag == "Type" || tag == "StructLit" || tag == "GenericMember" || tag == "DynType"
+  let global_use = (tag == "Call" || tag == "Var") && bindings.identities.at(node) < 0
+  if symbol_decl || identifier || global_use {
+    let raw = ast.decoded_name(tree, at)
+    let renamed = encoded(linked_name(resolver, ctx, raw))
+    resolver.output.push_str(renamed)
+    at = tree.at(at).end
+  }
+  while at < finish {
+    if at != node + 1 { resolver.output.push_str(",") }
+    linked_node(resolver, ctx, tree, bindings, at, false)
+    at = tree.at(at).end
+  }
+  if tag == "[" { resolver.output.push_str("]") }
+  else { resolver.output.push_str(")") }
+}
+
+fn main() {
+  let args = env.args()
+  let link = args.len() == 4 && args.at(1) == "--link"
+  if args.len() != 3 && !link {
+    ast.artifact_error("usage: resolve [--link] AST_ROOT ENTRY.yx")
+    return
+  }
+  var index = 1
+  if link { index = 2 }
+  let entry = String.from(args.at(index + 1))
   if path.is_absolute(entry) {
     ast.artifact_error("ENTRY.yx must be relative to AST_ROOT")
     return
   }
-  let cache = String.from(args.at(1))
+  let cache = String.from(args.at(index))
   let input = path.join(cache, entry)
   let key = path.stem(entry)
   var resolver = Resolver {
     cache: move cache, root: path.parent(entry), modules: List<Module>.new(), errors: 0,
+    link: link, output: String.new(),
   }
   let id = load_module(resolver, key, String.from("@"), input)
   if resolver.errors > 0 { env.exit(1) }
+  else if link {
+    if module_index(resolver, String.from("std.fs")) >= 0 || module_index(resolver, String.from("std.io")) >= 0 {
+      let ty = encoded(String.from("std__io__IoError"))
+      if resolver.output.len() != 0 { resolver.output.push_str(",") }
+      let decl = "Item(false,_,Struct({ty},[],[FieldDef(6d657373616765,Type(537472696e67,[]))]))"
+      resolver.output.push_str(decl)
+    }
+    print("File([{resolver.output}])")
+  }
 }

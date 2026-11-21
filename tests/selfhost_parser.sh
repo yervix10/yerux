@@ -6,15 +6,18 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cargo build -q
 rust=target/debug/yerux
-"$rust" build selfhost/lexer.yx -o "$tmp/lexer" >/dev/null
-"$rust" build selfhost/parser.yx -o "$tmp/parser" >/dev/null
+bins=${SELFHOST_BIN_DIR:-$tmp}
+if [[ -z ${SELFHOST_BIN_DIR:-} ]]; then
+  "$rust" build selfhost/lexer.yx -o "$bins/lexer" >/dev/null
+  "$rust" build selfhost/parser.yx -o "$bins/parser" >/dev/null
+fi
 
 fragments=0
 for file in tests/selfhost/parser/*.expr tests/selfhost/parser/*.stmt; do
   "$rust" tokens "$file" >"$tmp/rust-tokens"
-  "$tmp/lexer" "$file" >"$tmp/tokens"
+  "$bins/lexer" "$file" >"$tmp/tokens"
   diff -u "$tmp/rust-tokens" "$tmp/tokens"
-  "$tmp/parser" "$tmp/tokens" >"$tmp/ast"
+  "$bins/parser" "$tmp/tokens" >"$tmp/ast"
   case "$file" in
     *.stmt) "$rust" ast-stmt "$file" >"$tmp/rust-ast" ;;
     *) "$rust" ast-expr "$file" >"$tmp/rust-ast" ;;
@@ -41,7 +44,7 @@ while IFS= read -r -d '' file; do
   rust_rc=0
   self_rc=0
   "$rust" tokens-positioned "$file" >"$tmp/rust-tokens" || rust_rc=$?
-  "$tmp/lexer" "$file" --positioned >"$tmp/tokens" || self_rc=$?
+  "$bins/lexer" "$file" --positioned >"$tmp/tokens" || self_rc=$?
   if [[ $self_rc == 1 ]]; then
     # The streaming lexer may have emitted token rows before the error.
     sed -n '/^Error:/,$p' "$tmp/tokens" >"$tmp/lex-error"
@@ -57,7 +60,7 @@ while IFS= read -r -d '' file; do
   fi
 
   "$rust" ast-file "$file" >"$tmp/rust-ast" || rust_rc=$?
-  "$tmp/parser" "$tmp/tokens" >"$tmp/ast" || self_rc=$?
+  "$bins/parser" "$tmp/tokens" >"$tmp/ast" || self_rc=$?
   if [[ $rust_rc == 1 && $self_rc == 1 ]]; then
     # The independent parser reports the line of its first syntax rejection.
     IFS=: read -r tag message line col length <"$tmp/rust-ast"
