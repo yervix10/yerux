@@ -283,6 +283,15 @@ fn formatting_returns_one_edit_and_nothing_for_formatted_code() {
 }
 
 #[test]
+fn garbage_message_does_not_end_the_session() {
+    let mut c = Client::start();
+    c.send("{ this is not json");
+    let r = c.request("initialize", "{}");
+    assert!(r.contains("capabilities"), "{r}");
+    c.finish();
+}
+
+#[test]
 fn exit_without_shutdown_is_a_failure_code() {
     let mut c = Client::start();
     c.request("initialize", "{}");

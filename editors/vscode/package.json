@@ -1,0 +1,77 @@
+{
+  "name": "yerux",
+  "displayName": "Yerux",
+  "description": "Yerux language support: syntax highlighting and the `yerux lsp` language server (diagnostics, outline, go to definition, hover types, formatting).",
+  "version": "0.1.0",
+  "publisher": "yerux",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onLanguage:yerux"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "yerux",
+        "aliases": [
+          "Yerux",
+          "yerux"
+        ],
+        "extensions": [
+          ".yx"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "yerux",
+        "scopeName": "source.yerux",
+        "path": "./syntaxes/yerux.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Yerux",
+      "properties": {
+        "yerux.serverPath": {
+          "type": "string",
+          "default": "yerux",
+          "description": "Path of the `yerux` executable that is started as `yerux lsp`."
+        },
+        "yerux.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the JSON-RPC traffic between VS Code and `yerux lsp`."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "yerux.restartServer",
+        "title": "Yerux: Restart language server"
+      }
+    ]
+  },
+  "scripts": {
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.0.0"
+  }
+}

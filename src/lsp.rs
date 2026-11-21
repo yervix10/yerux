@@ -677,7 +677,8 @@ fn read_message(inp: &mut impl BufRead) -> Option<Json> {
     }
     let mut buf = vec![0u8; len?];
     inp.read_exact(&mut buf).ok()?;
-    json::parse(&String::from_utf8_lossy(&buf)).ok()
+    // an unparsable body is skipped (Null has no method and no id), it does not end the session
+    Some(json::parse(&String::from_utf8_lossy(&buf)).unwrap_or(Json::Null))
 }
 
 fn kind_code(k: SymKind) -> usize {
