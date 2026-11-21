@@ -52,3 +52,9 @@ programs report stdin read errors on stderr and exit with status 1.
 The [MiniLang interpreter](../../docs/MINILANG.md) tokenizes, parses and
 evaluates script files with integers, strings, lexical scopes and recursive
 functions. Runnable scripts are in [minilang/scripts](minilang/scripts).
+
+## JSON
+
+The [JSON parser and formatter](../../docs/JSON.md) validates or formats
+a file or stdin, preserves number precision and member order, and handles
+Unicode escapes. See [the sample document](json/example.json).

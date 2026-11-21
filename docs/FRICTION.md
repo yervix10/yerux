@@ -151,3 +151,40 @@ fn main() {
 The compiler reports that `read_to_string` takes one argument. The
 interpreter can reject oversized source only after reading it. A bounded
 read would let callers enforce a byte limit during I/O.
+
+## JSON
+
+See [JSON](JSON.md) for the parser, serializer and CLI.
+
+### Fixed: signed Yerux Char escapes were accepted as hexadecimal
+
+```yx
+fn main() { print('\u{+41}') }
+```
+
+The compiler printed `A` because the integer parser accepts a leading
+plus sign. Character escapes now require hexadecimal digits. The
+regression checks the diagnostic for this malformed escape.
+
+### Open: JSON fixtures in Yerux literals require brace doubling
+
+```yx
+fn main() { print("{\"key\": 1}") }
+```
+
+The lexer treats the opening brace as interpolation, even though the quotes
+inside the literal are escaped. The lookup regression doubles both braces.
+The CLI's sample document is stored as a separate JSON file.
+
+### Open: Unicode escapes are available for Char, with a narrower escape set for Text
+
+```yx
+fn main() { print("\u{1F600}") }
+```
+
+The lexer rejects this as an unknown string escape. The JSON codec uses
+`Char.from_int` with `String.push_char` to append decoded scalars, and keeps
+the JSON escape rules in the parser.
+
+The bounded-read gap from MiniLang also applies to JSON. Both
+`std.fs.read_to_string` and `std.io.read_all` return entire strings.
