@@ -15,6 +15,13 @@ static inline String sc_str_slice(String *s, int64_t start, int64_t end) {
   return nx_str_from((Str){s->d + start, end - start});
 }
 
+static inline void sc_str_push_slice(String *dst, Str src, int64_t start, int64_t end) {
+  String view = {(char *)src.p, src.n, src.n};
+  String part = sc_str_slice(&view, start, end);
+  nx_str_push_str(dst, nx_str_view(&part));
+  nx_str_free(&part);
+}
+
 static inline bool sc_space(unsigned char b) { return b == 32 || (b >= 9 && b <= 13); }
 
 static inline String sc_str_trim(String *s) {
@@ -162,9 +169,13 @@ static inline bool sc_is_file(String *path) {
   return found;
 }
 
-static inline void sc_eprintln(Str s) {
+static inline void sc_eprint(Str s) {
   fflush(stdout);
   if (s.n) fwrite(s.p, 1, (size_t)s.n, stderr);
+}
+
+static inline void sc_eprintln(Str s) {
+  sc_eprint(s);
   putc('\n', stderr);
 }
 
@@ -184,4 +195,75 @@ static inline int64_t sc_write_fd(int fd, Str text, String *error) {
     done += count;
   }
   return done;
+}
+
+static inline bool sc_write_file(Str path, Str data, String *error) {
+  String name = nx_str_from(path);
+  if (path.n && memchr(path.p, 0, (size_t)path.n)) {
+    nx_str_free(&name);
+    *error = nx_str_from(nx_str_text("path contains a NUL byte"));
+    return false;
+  }
+  nx_str_push_byte(&name, 0);
+  FILE *file = fopen(name.d, "wb");
+  int failure = file ? 0 : errno;
+  --name.len;
+  if (file) {
+    if (data.n && fwrite(data.p, 1, (size_t)data.n, file) != (size_t)data.n)
+      failure = errno ? errno : EIO;
+    if (fclose(file) != 0 && !failure) failure = errno;
+  }
+  if (failure) *error = sc_read_error("write", &name, failure);
+  nx_str_free(&name);
+  return failure == 0;
+}
+
+static inline bool sc_current_exe(String *output, String *error) {
+  String path = nx_str_from(nx_str_text("/proc/self/exe"));
+  nx_str_push_byte(&path, 0);
+  --path.len;
+  size_t capacity = 256;
+  for (;;) {
+    char *buffer = malloc(capacity);
+    if (!buffer) nx_panic("out of memory");
+    ssize_t length = readlink(path.d, buffer, capacity);
+    int failure = errno;
+    if (length >= 0 && (size_t)length < capacity)
+      *output = nx_str_from((Str){buffer, length});
+    free(buffer);
+    if (length < 0) {
+      *error = sc_read_error("readlink", &path, failure);
+      nx_str_free(&path);
+      return false;
+    }
+    if ((size_t)length < capacity) {
+      nx_str_free(&path);
+      return true;
+    }
+    capacity *= 2;
+  }
+}
+
+/* Return EOF, a value, or an error using the Option/Result tag order. */
+static inline int sc_read_stdin(bool line, String *data, String *error) {
+  fflush(stdout);
+  int character;
+  while ((character = fgetc(stdin)) != EOF) {
+    if (line && character == '\n') {
+      if (data->len && data->d[data->len - 1] == '\r') --data->len;
+      break;
+    }
+    nx_str_push_byte(data, character);
+  }
+  if (ferror(stdin) || !sc_utf8(nx_str_view(data))) {
+    if (ferror(stdin)) {
+      String empty = nx_str_new();
+      *error = sc_read_error("read stdin", &empty, errno);
+    } else {
+      *error = nx_str_from(nx_str_text("stream did not contain valid UTF-8"));
+    }
+    nx_str_free(data);
+    return -1;
+  }
+  return line && character == EOF && data->len == 0 ? 0 : 1;
 }

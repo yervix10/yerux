@@ -1,4 +1,5 @@
 fn main() {
-    let add = |value: Int| value + 1
-    print(add(2))
+  let offset = 1
+  let add = |value: Int| value + offset
+  print(add(2))
 }

@@ -19,6 +19,10 @@ static inline E sc_pop_##C(C *l) { \
   if (l->len == 0) nx_panic("pop from an empty list"); \
   return l->d[--l->len]; \
 } \
+static inline void sc_truncate_##C(C *l, int64_t n) { \
+  if (n < 0) nx_panic("List.truncate length is negative"); \
+  while (l->len > n) { --l->len; DROP(&l->d[l->len]); } \
+} \
 static inline void sc_clear_##C(C *l) { \
   for (int64_t i = 0; i < l->len; ++i) DROP(&l->d[i]); \
   l->len = 0; \
