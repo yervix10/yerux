@@ -61,3 +61,33 @@ and compiler work:
 
 These constraints do not prevent writing the parser and checker as runtime
 Yerux programs, but they make a feature-for-feature port a separate milestone.
+
+## Self-hosted formatter bootstrap
+
+`selfhost/fmt.yx` currently reads and writes source unchanged. This is a byte-preserving
+bootstrap, not yet the token-layout algorithm in `src/fmt.rs`. `tests/selfhost_fmt.sh`
+compares it against `yerux fmt --stdout` across the `.yx` corpus and reports the exact
+identical-file percentage; it intentionally fails until parity reaches 100%.
+
+The formatter port needs token source line/newline metadata and comment tokens. The current
+selfhost lexer emits canonical token rows but discards comments and whitespace positions, so
+those rows cannot reproduce the formatter's layout decisions. Reusing the lexer requires a
+minimal token-list API that retains those fields; the parser is not a substitute because the
+Rust formatter deliberately operates on tokens, including syntax the parser may reject.
+
+Initial corpus measurement (2026-11-21): the byte-preserving bootstrap matches Rust on
+347/595 files (58%); 242 format successfully but differ, and 6 cannot be formatted by the
+Rust oracle because they contain invalid lexical input. These are baseline measurements, not
+formatter parity. The implementation is intentionally left as an explicit bootstrap so its
+current coverage is not mistaken for a completed port.
+
+## Formatter port progress
+
+`selfhost/fmt.yx` now tokenizes source into token kind, byte span, original line, and
+newline distance, then applies token spacing, generic type spacing, block indentation,
+comments, semicolon removal, and top-level separation. The Rust dirty set is obtained
+once from `yerux fmt --check` inside a temporary copy; the script never rewrites the
+worktree. On this checkout that set has 242 files (six more than the 227 reported in the
+initial task). Current milestone: 99/242 byte-identical (40%), and 211/242 pass a
+selfhost second-pass idempotence check. Remaining differences include closure bars,
+operator continuation breaks, and several multiline/comment layout cases.

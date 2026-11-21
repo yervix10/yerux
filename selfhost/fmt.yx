@@ -1,0 +1,211 @@
+// Token based Yerux formatter. Source positions and comments are kept because layout
+// decisions depend on line breaks, not on a parsed syntax tree.
+import std.env
+import std.fs
+import std.io
+
+enum K { Word, Num, Str, Sym, Comment }
+impl Equal for K { fn eq(view self, other: view K) -> Bool { return kcode(self) == kcode(other) } }
+fn kcode(k: view K) -> Int { match k { K.Word => { return 0 } K.Num => { return 1 } K.Str => { return 2 } K.Sym => { return 3 } K.Comment => { return 4 } } }
+struct T { k: K, start: Int, end: Int, nl: Int, line: Int }
+struct Open { multi: Bool, decl: Bool, lit: Bool }
+
+fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
+fn is_alpha(b: Int) -> Bool { return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 }
+fn is_alnum(b: Int) -> Bool { return is_alpha(b) || is_digit(b) }
+fn tok(out: mut List<T>, k: K, src: view String, start: Int, end: Int, nl: Int, line: Int) {
+  out.push(T { k: k, start: start, end: end, nl: nl, line: line })
+}
+fn tokenize(src: view String) -> List<T> {
+  var out = List<T>.new()
+  var i = 0
+  var line = 1
+  var nl = 0
+  while i < src.len() {
+    let b = src.byte(i)
+    if b == 10 { i = i + 1; line = line + 1; nl = nl + 1 }
+    else if b == 32 || b == 9 || b == 13 { i = i + 1 }
+    else {
+      let start = i
+      let start_line = line
+      let before_nl = nl
+      nl = 0
+      if b == 47 && i + 1 < src.len() && src.byte(i + 1) == 47 {
+        i = i + 2
+        while i < src.len() && src.byte(i) != 10 { i = i + 1 }
+        tok(out, K.Comment, src, start, i, before_nl, start_line)
+      } else if is_alpha(b) {
+        i = i + 1
+        while i < src.len() && is_alnum(src.byte(i)) { i = i + 1 }
+        tok(out, K.Word, src, start, i, before_nl, start_line)
+      } else if is_digit(b) {
+        i = i + 1
+        while i < src.len() && is_alnum(src.byte(i)) { i = i + 1 }
+        if i + 1 < src.len() && src.byte(i) == 46 && is_digit(src.byte(i + 1)) {
+          i = i + 1
+          while i < src.len() && is_alnum(src.byte(i)) { i = i + 1 }
+        }
+        tok(out, K.Num, src, start, i, before_nl, start_line)
+      } else if b == 34 || b == 39 {
+        i = i + 1
+        while i < src.len() && src.byte(i) != b && src.byte(i) != 10 {
+          if src.byte(i) == 92 && i + 1 < src.len() { i = i + 2 } else { i = i + src.char_size(i) }
+        }
+        if i < src.len() && src.byte(i) == b { i = i + 1 }
+        tok(out, K.Str, src, start, i, before_nl, start_line)
+      } else {
+        var n = 1
+        var three = String.new()
+        if i + 2 < src.len() { three = src.slice(i, i + 3) }
+        if i + 2 < src.len() && same(three, "..=") { n = 3 }
+        else if i + 1 < src.len() {
+          let two = src.slice(i, i + 2)
+          if same(two, "==") || same(two, "!=") || same(two, "<=") || same(two, ">=") || same(two, "&&") || same(two, "||") || same(two, "->") || same(two, "=>") || same(two, "..") { n = 2 }
+        }
+        i = i + n
+        tok(out, K.Sym, src, start, i, before_nl, start_line)
+      }
+    }
+  }
+  return out
+}
+fn val(src: view String, t: T) -> String { return src.slice(t.start, t.end) }
+fn same(a: view String, b: Text) -> Bool { let other = String.from(b); return a.eq(other) }
+fn sym(src: view String, t: T, s: Text) -> Bool { return t.k == K.Sym && same(val(src, t), s) }
+fn kw(s: view String) -> Bool {
+  return s == "fn" || s == "let" || s == "var" || s == "if" || s == "else" || s == "while" || s == "return" || s == "move" || s == "view" || s == "mut" || s == "struct" || s == "enum" || s == "match" || s == "defer" || s == "import" || s == "pub" || s == "test" || s == "as" || s == "impl" || s == "trait" || s == "dyn" || s == "for" || s == "in" || s == "break" || s == "continue"
+}
+fn binop(s: view String) -> Bool { return s == "+" || s == "-" || s == "*" || s == "/" || s == "%" || s == "==" || s == "!=" || s == "<" || s == ">" || s == "<=" || s == ">=" || s == "&&" || s == "||" || s == "=" }
+fn is_gen_token(src: view String, ts: view List<T>, at: Int) -> Bool {
+  var i = 1
+  while i < ts.len() {
+    if sym(src, ts.at(i), "<") && ts.at(i - 1).k == K.Word {
+      let name = val(src, ts.at(i - 1))
+      let first = name.byte(0)
+      if first >= 65 && first <= 90 {
+        var depth = 0
+        var j = i
+        while j < ts.len() {
+          if sym(src, ts.at(j), "<") { depth = depth + 1 }
+          else if sym(src, ts.at(j), ">") { depth = depth - 1; if depth == 0 { if at >= i && at <= j { return true } break } }
+          j = j + 1
+        }
+      }
+    }
+    i = i + 1
+  }
+  return false
+}
+fn unary_at(src: view String, ts: view List<T>, i: Int) -> Bool {
+  if i == 0 { return true }
+  let p = ts.at(i - 1)
+  if p.k == K.Sym { return !(sym(src, p, ")") || sym(src, p, "]") || sym(src, p, "}}") || (sym(src, p, ">") && is_gen_token(src, ts, i - 1))) }
+  if p.k == K.Word { let v = val(src, p); return kw(v) && !same(v, "as") }
+  return false
+}
+fn space(src: view String, ts: view List<T>, pi: Int, ti: Int, p: T, t: T) -> Bool {
+  let ps = val(src, p)
+  let tstr = val(src, t)
+  let pgen = is_gen_token(src, ts, pi)
+  let tgen = is_gen_token(src, ts, ti)
+  if sym(src, p, "|") || sym(src, t, "|") { return false }
+  if sym(src, p, "(") || sym(src, p, ".") || sym(src, p, "[") || sym(src, p, "!") { return false }
+  if (sym(src, p, "<") && pgen) || (sym(src, p, ">") && pgen) || (sym(src, t, "<") && tgen) || (sym(src, t, ">") && tgen) { return false }
+  if sym(src, t, ",") || sym(src, t, ")") || sym(src, t, ";") || sym(src, t, ".") || sym(src, t, ":") || sym(src, t, "?") || sym(src, t, "]") { return false }
+  if sym(src, t, "(") { return p.k == K.Word && kw(ps) && !same(ps, "fn") }
+  if sym(src, t, "[") { return p.k == K.Word && kw(ps) }
+  if sym(src, p, "{{") { return !sym(src, t, "}}") }
+  if sym(src, t, "}}") { return !sym(src, p, "{{") }
+  if sym(src, p, "-") && unary_at(src, ts, pi) { return false }
+  if binop(ps) || binop(tstr) { return true }
+  if sym(src, p, ",") || sym(src, p, ":") { return true }
+  return true
+}
+fn bool_int(b: Bool) -> Int { if b { return 1 } return 0 }
+fn indent(depth: Int, out: mut String) { var j = 0; while j < depth { out.push_str("  "); j = j + 1 } }
+fn format_tokens(src: view String, ts: view List<T>) -> String {
+  var out = String.new()
+  var stack = List<Open>.new()
+  var depth = 0
+  var line_start = true
+  var prev = -1
+  var pending_semi = false
+  var prev_comment = false
+  var in_import = false
+  var top_end = false
+  var just_open = false
+  var cont = false
+  var pd = 0
+  var i = 0
+  while i < ts.len() {
+    let t = ts.at(i)
+    let value = val(src, t)
+    if t.k == K.Comment {
+      if t.nl == 0 && !line_start { out.push_byte(32); out.push_str(value) }
+      else {
+        if top_end || in_import { while out.len() > 0 && out.byte(out.len()-1) == 10 { out = out.slice(0, out.len() - 1) } out.push_byte(10); out.push_byte(10) }
+        else if !line_start { out.push_byte(10); line_start = true }
+        if line_start { indent(depth + bool_int(cont), out) }
+        out.push_str(value); line_start = false
+      }
+      prev_comment = true; pending_semi = false; just_open = false; in_import = false; i = i + 1; continue
+    }
+    if sym(src, t, ";") && pd == 0 { pending_semi = true; i = i + 1; continue }
+    let close = sym(src, t, "}}")
+    let multi_close = close && stack.len() > 0 && stack.at(stack.len()-1).multi
+    var hard = false
+    var blank = false
+    if in_import && (same(value, "import") || same(value, "type")) { hard = true; in_import = false }
+    else if in_import && t.nl > 0 { hard = true; blank = true; in_import = false }
+    if !hard && (multi_close || just_open || pending_semi || top_end || (prev_comment && pd == 0) || (stack.len() > 0 && stack.at(stack.len()-1).multi && prev >= 0 && sym(src, ts.at(prev), ",") && pd == 0)) { hard = true; blank = top_end || (prev_comment && t.nl >= 2) || (stack.len() > 0 && stack.at(stack.len()-1).multi && prev >= 0 && sym(src, ts.at(prev), ",") && t.nl >= 2) }
+    if !hard && t.nl > 0 && out.len() > 0 && pd == 0 {
+      if sym(src, t, ".") || (prev >= 0 && binop(val(src, ts.at(prev)))) || (t.k == K.Word && same(val(src, t), "else")) || sym(src, t, "{{") { }
+      else { hard = true; blank = t.nl >= 2 }
+    }
+    if close && stack.len() > 0 && stack.at(stack.len()-1).multi { hard = true }
+    if close && stack.len() > 0 { let o = stack.pop(); if o.multi { depth = depth - 1 } }
+    if hard { cont = false }
+    if hard {
+      while out.len() > 0 && out.byte(out.len()-1) == 32 { out = out.slice(0, out.len() - 1) }
+      if out.len() > 0 && out.byte(out.len()-1) != 10 { out.push_byte(10); if blank { out.push_byte(10) } }
+      line_start = true
+    } else if !line_start && prev >= 0 && space(src, ts, prev, i, ts.at(prev), t) {
+      if pending_semi && !close { out.push_byte(59) }
+      out.push_byte(32)
+    }
+    if line_start { indent(depth + bool_int(cont), out); line_start = false }
+    out.push_str(value)
+    prev_comment = false; pending_semi = false; just_open = false; top_end = false
+    if t.k == K.Word && (same(val(src, t), "import") || same(val(src, t), "type")) && stack.len() == 0 { in_import = true }
+    if sym(src, t, "(") || sym(src, t, "[") { pd = pd + 1 }
+    if sym(src, t, ")") || sym(src, t, "]") { pd = pd - 1 }
+    if sym(src, t, "{{") {
+      let next_index = i + 1
+      var multi = false
+      var j = next_index
+      while j < ts.len() && !sym(src, ts.at(j), "}}") { if ts.at(j).nl > 0 || ts.at(j).k == K.Comment { multi = true } j = j + 1 }
+      let decl = prev >= 0 && (same(val(src, ts.at(prev)), "struct") || same(val(src, ts.at(prev)), "enum"))
+      let lit = false
+      stack.push(Open { multi: multi, decl: decl, lit: lit })
+      if multi { depth = depth + 1 }
+      just_open = multi; pd = 0
+    }
+    if close && stack.len() == 0 { top_end = true }
+    prev = i; i = i + 1
+  }
+  while out.len() > 0 && (out.byte(out.len()-1) == 10 || out.byte(out.len()-1) == 32) { out = out.slice(0, out.len() - 1) }
+  if out.len() > 0 { out.push_byte(10) }
+  return out
+}
+fn format_source(src: view String) -> String { let ts = tokenize(src); return format_tokens(src, ts) }
+fn main() {
+  match env.arg(1) {
+    None => { let ignored = io.write_stderr("usage: fmt.yx FILE\n") }
+    Some(path) => {
+      match fs.read_to_string(path) {
+        Err(error) => { let ignored = io.write_stderr(error.message) }
+        Ok(source) => { let formatted = format_source(source); let ignored = io.write_stdout(formatted) }
+      }
+    }
+  }
+}
