@@ -1,0 +1,26 @@
+error: `?` cannot turn the error Opaque into the String this function returns
+ --> tests/e1039_question_no_conversion.yx:8:11
+  |
+8 |   let v = a()?
+  |           ^^^^
+  = the function returns Result<Int, String>, but this value fails with Opaque
+  = help: write the conversion: `fn string_from_opaque(e: Opaque) -> String { .. }` and `?` will call it
+  = or implement Show for Opaque: a Show-able error becomes the String message automatically
+
+error: `?` cannot turn the error Opaque into the Other this function returns
+  --> tests/e1039_question_no_conversion.yx:13:11
+   |
+13 |   let v = a()?
+   |           ^^^^
+   = the function returns Result<Int, Other>, but this value fails with Opaque
+   = help: write the conversion: `fn other_from_opaque(e: Opaque) -> Other { .. }` and `?` will call it
+
+error: type Result<Int, Opaque> has no method 'context'
+  --> tests/e1039_question_no_conversion.yx:18:11
+   |
+18 |   let v = a().context("x")?
+   |           ^^^^^^^^^^^^^^^^
+   = 'context' needs E: Show, but Opaque does not implement Show
+   = help: add `impl Show for Opaque { .. }`
+
+3 error(s). Nothing was generated.

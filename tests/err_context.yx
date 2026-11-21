@@ -1,0 +1,64 @@
+enum ParseErr { Empty, Bad(Int) }
+
+impl Show for ParseErr {
+  fn show(view self) -> String {
+    match self {
+      Empty => { return String.from("empty input") }
+      Bad(n) => { return "bad digit {n}" }
+    }
+  }
+}
+
+struct Config { port: Int }
+
+fn parse(n: Int) -> Result<Int, ParseErr> {
+  if n == 0 { return Err(ParseErr.Empty) }
+  if n < 0 { return Err(ParseErr.Bad(n)) }
+  return Ok(n * 2)
+}
+
+// `?` turns any Show-able error into the String error of the caller
+fn run(n: Int) -> Result<Int, String> {
+  let v = parse(n)?
+  return Ok(v + 1)
+}
+
+// context chains causes: outer message first
+fn load(n: Int) -> Result<Config, String> {
+  let p = parse(n).context("reading port")?
+  return Ok(Config { port: p })
+}
+
+fn start(n: Int) -> Result<Int, String> {
+  let c = load(n).context("starting server")?
+  return Ok(c.port)
+}
+
+fn lookup(l: view List<Int>, i: Int) -> Result<Int, String> {
+  var found: Option<Int> = None
+  if i < l.len() { found = Some(l.get(i)) }
+  let v = found.context("no such index")?
+  return Ok(v)
+}
+
+fn lazy(n: Int) -> Result<Int, String> {
+  let k = n
+  let v = parse(n).with_context(move || "parsing {k}")?
+  return Ok(v)
+}
+
+fn main() {
+  match run(4) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  match run(0) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  match run(-3) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  match start(5) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  match start(-1) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  match start(0) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  var l = List<Int>.new()
+  l.push(7)
+  match lookup(l, 0) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  match lookup(l, 3) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  match lazy(-9) { Ok(v) => { print(v) } Err(e) => { print(e) } }
+  let w = parse(0).wrap("while wrapping")
+  print(w.show())
+}

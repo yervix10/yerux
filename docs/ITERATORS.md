@@ -29,13 +29,13 @@
 
 | Adapter (lazy) | |
 |---|---|
-| `map(f)`, `filter(f)`, `take(n)`, `skip(n)`, `chain(other)`, `enumerate()` -> `Iter<(Int, T)>`, `zip(other)` -> `Iter<(T, U)>` | |
+| `map(f)`, `filter(f)`, `filter_map(f)`, `flat_map(f)`, `take(n)`, `skip(n)`, `step_by(n)`, `chain(other)`, `enumerate()` -> `Iter<(Int, T)>`, `zip(other)` -> `Iter<(T, U)>` | |
 | `rev()` | buffers the remaining items, then yields them from the back (not lazy) |
 
 | Consumer | |
 |---|---|
 | `to_list()`, `to_set()` (`T: Hash + Equal`), `to_map()` (`Iter<(K, V)>`), `count()`, `fold(init, f)`, `any(f)`, `all(f)`, `find(f)`, `last()`, `nth(n)`, `next()` | |
-| `min()`, `max()` (`T: Ordered`), `sum()`, `product()` (`Iter<Int>`) | |
+| `min()`, `max()` (`T: Ordered`), `min_by(cmp)`, `max_by(cmp)` (`cmp` returns negative/0/positive), `sum()`, `product()` (`Iter<Int>`) | |
 
 Predicates take the item by view: `.filter(|x| x % 2 == 0)`, `.any(|x| x == 3)` (no `*`).
 
@@ -49,13 +49,20 @@ impl Counter { fn next(mut self) -> Option<Int> { .. } }
 for x in counter { .. }
 ```
 
+## User iterators get the adapters
+
+For a concrete `impl Name { fn next(mut self) -> Option<T> { .. } }` the compiler also generates
+`fn into_iter(self) -> Iter<T>` (token-level, next to `derive`; skipped when you write your own `into_iter`).
+A method that `Name` lacks is then looked up on its `into_iter()`: `counter.map(f).filter(g).to_list()`,
+`make(4).sum()`. A variable needs `move` (`move c.into_iter()`), a call result does not.
+
 ## Not yet
 
-- Wrapping a user iterator type into an `Iter<T>` to use adapters on it (write
-  `Iter { nxt: move || c.next() }` by hand).
-- `filter_map`, `flat_map`, `windows`/`step_by`, `sum` for floats, `min_by`/`max_by`, `collect` chosen by the
-  expected type (use `to_list`/`to_set`/`to_map`).
-- Borrowing `list.iter()` (needs stored borrows); `rev()` on a lazy source is O(n) memory.
-- Closure return types are not inferred through `Option<U>`, hence no `filter_map`.
+- `collect()` chosen by the expected type (`let l: List<Int> = it.collect()`): the compiler has no
+  return-type-directed generics; use `to_list`/`to_set`/`to_map`.
+- Generic user iterators (`impl<T> Stack<T> { fn next .. }`) get no generated `into_iter` (write it by hand).
+- `windows`/`min_by_key`, `sum` for floats; borrowing `list.iter()` (needs stored borrows); `rev()` is O(n) memory.
+- A closure return type is now inferred through `Option<U>`/`Iter<U>`/tuples (`mentions_free` looks at type
+  arguments), which is what made `filter_map` and `flat_map` possible.
 
-Tests: `tests/iter_basic.yx` (C, native, ASan, native debug-alloc), `tests/e1038_iter_errors.yx`.
+Tests: `tests/iter_basic.yx`, `tests/iter_more.yx` (C, native, ASan, native debug-alloc), `tests/e1038_iter_errors.yx`.
