@@ -1,0 +1,106 @@
+// Slices `view [T]` / `mut [T]`: borrowed runs of elements of an array, a List or another slice.
+struct Item { w: Int, v: Int }
+
+fn sum(xs: view [Int]) -> Int {
+  var t = 0
+  for x in xs { t = t + x }
+  return t
+}
+
+fn sort(xs: mut [Int]) {
+  // insertion sort, in place
+  for i in 1..xs.len() {
+    var j = i
+    while j > 0 && xs[j - 1] > xs[j] {
+      xs.swap(j - 1, j)
+      j = j - 1
+    }
+  }
+}
+
+fn find(xs: view [Int], x: Int) -> Int {
+  // binary search in a sorted slice: index or -1
+  var lo = 0
+  var hi = xs.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if xs[mid] == x { return mid }
+    if xs[mid] < x { lo = mid + 1 } else { hi = mid }
+  }
+  return -1
+}
+
+// a slice of a slice
+fn tail_sum(xs: view [Int]) -> Int {
+  if xs.len() == 0 { return 0 }
+  return xs[0] + tail_sum(xs[1..])
+}
+
+fn count<T: Equal + Copy>(xs: view [T], x: T) -> Int {
+  var n = 0
+  for y in xs { if y == x { n = n + 1 } }
+  return n
+}
+
+fn weight(items: view [Item]) -> Int {
+  var t = 0
+  for it in items { t = t + it.w * it.v }
+  return t
+}
+
+fn double_all(xs: mut [Int]) {
+  for mut x in xs { x = x * 2 }
+}
+
+fn flip(bs: mut [Bool]) {
+  for i in 0..bs.len() { bs[i] = !bs[i] }
+}
+
+fn apply(f: view fn(view [Int]) -> Int, xs: view [Int]) -> Int { return f(xs) }
+
+fn main() {
+  var a = [5, 3, 9, 1, 7, 2]
+  print(sum(a))
+  print(sum(a[2..4]))
+  print(sum(a[..2]))
+  print(sum(a[4..]))
+  print(sum(a[..]))
+  print(sum(a[3..3]))
+  sort(a)
+  print(a[0] * 100000 + a[1] * 10000 + a[2] * 1000 + a[3] * 100 + a[4] * 10 + a[5])
+  print(find(a, 7))
+  print(find(a, 4))
+  print(tail_sum(a))
+  // part of an array, then the same through a List
+  var b = [9, 8, 7, 6, 5, 4, 3]
+  sort(b[1..5])
+  print(b[0] * 1000000 + b[1] * 100000 + b[2] * 10000 + b[3] * 1000 + b[4] * 100 + b[5] * 10 + b[6])
+  var l = List<Int>.new()
+  for i in 0..10 { l.push(10 - i) }
+  sort(l)
+  print(l.at(0) + l.at(9) * 100)
+  print(sum(l[5..]))
+  double_all(l[..3])
+  print(l.at(0) + l.at(1) + l.at(2) + l.at(3))
+  l.push(1)
+  print(l.len())
+  // generic slice functions over arrays, lists and slices
+  print(count(["a", "b", "a"], "a"))
+  print(count(l, 1))
+  print(count(b[0..2], 9))
+  // struct elements and Bool elements
+  let items = [Item { w: 2, v: 3 }, Item { w: 4, v: 5 }]
+  print(weight(items))
+  var bs = [true, false, false, true]
+  flip(bs[1..])
+  print(bs[0] && bs[1] && bs[2] && !bs[3])
+  var bl = List<Bool>.new()
+  bl.push(true)
+  bl.push(false)
+  flip(bl)
+  print(!bl.at(0) && bl.at(1))
+  // a function value that takes a slice; a temporary array
+  print(apply(sum, a))
+  print(apply(|xs| xs.len(), l[2..4]))
+  print(sum([100, 200]))
+}

@@ -1,0 +1,22 @@
+error: cannot lend 'a' as `mut`: it was declared with `let` (immutable)
+ --> tests/e1012_slice_mut_of_let.yx:5:9
+  |
+5 |   clear(a)
+  |         ^
+  = help: declare it with `var` (or receive it as `mut`)
+
+error: cannot lend 'a' as `mut`: it was declared with `let` (immutable)
+ --> tests/e1012_slice_mut_of_let.yx:6:9
+  |
+6 |   clear(a[1..])
+  |         ^^^^^^
+  = help: declare it with `var` (or receive it as `mut`)
+
+error: pass a variable here (the function borrows it)
+ --> tests/e1012_slice_mut_of_let.yx:7:9
+  |
+7 |   clear([4, 5])
+  |         ^^^^^^
+  = a temporary would be modified and thrown away
+
+3 error(s). Nothing was generated.

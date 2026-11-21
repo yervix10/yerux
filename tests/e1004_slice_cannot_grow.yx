@@ -1,0 +1,9 @@
+fn add(xs: mut [Int]) {
+  xs.push(1)
+  xs.sort()
+}
+
+fn main() {
+  var l = List<Int>.new()
+  add(l)
+}

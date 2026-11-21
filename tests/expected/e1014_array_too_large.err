@@ -1,0 +1,9 @@
+error: this array is too large: 1000000 elements of Int take more than 1048576 bytes
+ --> tests/e1014_array_too_large.yx:2:13
+  |
+2 |   let big = [0; 1000000]
+  |             ^^^^^^^^^^^^
+  = arrays live on the stack (or inline in their owner); big buffers belong on the heap
+  = help: use `List<T>` for large buffers
+
+1 error(s). Nothing was generated.

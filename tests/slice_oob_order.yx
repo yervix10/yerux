@@ -1,0 +1,12 @@
+// `lo > hi` is out of range too, and so is a slice index past the end of a slice.
+fn second(xs: view [Int]) -> Int { return xs[1] }
+
+fn main() {
+  var l = List<Int>.new()
+  l.push(1)
+  l.push(2)
+  l.push(3)
+  print(second(l))
+  print(second(l[1..]))
+  print(second(l[2..]))
+}

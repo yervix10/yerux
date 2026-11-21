@@ -1,0 +1,9 @@
+error: the elements of an array must be Copy, but String owns memory
+ --> tests/e1001_array_owned_elem.yx:2:11
+  |
+2 |   let a = [String.from("a"), String.from("b")]
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = fixed-size arrays hold plain values (numbers, Bool, Char, Text, Copy structs, other arrays)
+  = help: use `List<String>` for owned elements
+
+1 error(s). Nothing was generated.

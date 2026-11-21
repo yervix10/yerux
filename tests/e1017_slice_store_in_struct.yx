@@ -1,0 +1,3 @@
+struct View { xs: [Int] }
+
+fn main() {}

@@ -1,0 +1,8 @@
+error: cannot modify 'xs': it is only borrowed for reading (`view`)
+ --> tests/e1005_slice_view_readonly.yx:2:3
+  |
+2 |   xs[0] = 0
+  |   ^^^^^
+  = help: declare the parameter as `mut` to be able to modify it
+
+1 error(s). Nothing was generated.

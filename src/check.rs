@@ -5259,6 +5259,13 @@ impl<'a> Checker<'a> {
         // ── consume a list: `move l` or any list value ──
         self.chk(out, s_let(&nl, true, e, ep));
         let lt = self.lookup(&nl).map(|i| self.vars[i].ty).unwrap_or(Ty::Err);
+        if self.types.array_of(lt).is_some() {
+            // an array value (`for x in [1, 2, 3]`): kept in the hidden variable and read in place
+            let mut h2 = h.clone();
+            h2.step = None;
+            self.for_each(out, &h2, s_var(&nl, ep), body, id, pos);
+            return;
+        }
         let Ty::List(_) = lt else {
             if lt != Ty::Err {
                 let n = self.tn(lt);
@@ -5579,6 +5586,12 @@ fn unify(
             unify(types, fa.ret, fb.ret, pids, bind)
         }
         (Ty::Box(a), Ty::Box(b)) => unify(types, types.boxes[a], types.boxes[b], pids, bind),
+        (Ty::Struct(_), Ty::Struct(_)) if types.array_of(pat).is_some() => {
+            match (types.array_of(pat), types.array_of(conc)) {
+                (Some((e1, n1)), Some((e2, n2))) if n1 == n2 => unify(types, e1, e2, pids, bind),
+                _ => Err(None),
+            }
+        }
         (Ty::Struct(a), Ty::Struct(b)) => {
             match (&types.structs[a].origin, &types.structs[b].origin) {
                 (Some((n1, a1)), Some((n2, a2))) if n1 == n2 => {

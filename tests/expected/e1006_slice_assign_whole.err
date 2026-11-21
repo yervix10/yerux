@@ -1,0 +1,16 @@
+error: cannot assign to the slice 'xs' itself
+ --> tests/e1006_slice_assign_whole.yx:2:3
+  |
+2 |   xs = ys
+  |   ^^
+  = a slice parameter is a borrow of someone else's elements
+  = help: replace elements one by one: `xs[i] = x`
+
+error: 'ys' is a [Int] and is not copied
+ --> tests/e1006_slice_assign_whole.yx:2:8
+  |
+2 |   xs = ys
+  |        ^^
+  = 'ys' only borrows its value (a `view`/`mut` parameter or a `for` loop variable), so it cannot be copied or moved out
+
+2 error(s). Nothing was generated.

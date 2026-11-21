@@ -1,0 +1,8 @@
+error: expected [Bool] but this is [Int; 3]
+ --> tests/e1008_slice_elem_mismatch.yx:5:15
+  |
+5 |   print(count(a))
+  |               ^
+  = a slice parameter accepts an array, a List or a slice of the same element type
+
+1 error(s). Nothing was generated.

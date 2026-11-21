@@ -1,0 +1,14 @@
+// A slice range outside the array panics (exit 101).
+fn sum(xs: view [Int]) -> Int {
+  var t = 0
+  for x in xs { t = t + x }
+  return t
+}
+
+fn main() {
+  let a = [1, 2, 3, 4]
+  var hi = 4
+  print(sum(a[1..hi]))
+  hi = 5
+  print(sum(a[1..hi]))
+}

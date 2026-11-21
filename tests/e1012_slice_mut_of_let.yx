@@ -1,0 +1,8 @@
+fn clear(xs: mut [Int]) { for i in 0..xs.len() { xs[i] = 0 } }
+
+fn main() {
+  let a = [1, 2, 3]
+  clear(a)
+  clear(a[1..])
+  clear([4, 5])
+}

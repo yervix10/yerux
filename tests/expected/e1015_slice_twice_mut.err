@@ -1,0 +1,8 @@
+error: 'a' appears twice in the same call and one use modifies or moves it
+ --> tests/e1015_slice_twice_mut.yx:7:17
+  |
+7 |   copy(a[0..2], a[2..4])
+  |                 ^^^^^^^
+  = help: split the call in two steps, or pass a copy
+
+1 error(s). Nothing was generated.

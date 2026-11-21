@@ -1,0 +1,5 @@
+fn head(xs: view [Int]) -> [Int] {
+  return xs
+}
+
+fn main() {}

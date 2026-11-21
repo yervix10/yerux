@@ -1,0 +1,5 @@
+fn keep(xs: view [Int]) -> fn() -> Int {
+  return move || xs.len()
+}
+
+fn main() {}

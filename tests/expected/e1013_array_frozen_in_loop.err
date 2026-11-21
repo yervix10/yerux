@@ -1,0 +1,9 @@
+error: cannot change 'a' while a loop is reading it
+ --> tests/e1013_array_frozen_in_loop.yx:4:5
+  |
+4 |     a[0] = x
+  |     ^^^^
+  = the `for` loop on line 3 borrows 'a' until the loop ends
+  = help: collect what you want to change and apply it after the loop, or loop over indexes: `for i in 0..n { .. l.at(i) .. }`
+
+1 error(s). Nothing was generated.

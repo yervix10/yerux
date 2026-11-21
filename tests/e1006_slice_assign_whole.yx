@@ -1,0 +1,9 @@
+fn swap_all(xs: mut [Int], ys: mut [Int]) {
+  xs = ys
+}
+
+fn main() {
+  var a = [1, 2]
+  var b = [3, 4]
+  swap_all(a, b)
+}

@@ -1,0 +1,17 @@
+error: [Int] has no method 'push'
+ --> tests/e1004_slice_cannot_grow.yx:2:3
+  |
+2 |   xs.push(1)
+  |   ^^^^^^^^^^
+  = a slice borrows elements of an array or a List: it can read and replace them, but never add, remove or reorder through library methods
+  = methods: len(), get(i), set(i, x), swap(i, j), `s[i]`, `s[i] = x`, `s[from..to]`, `for x in s`
+
+error: [Int] has no method 'sort'
+ --> tests/e1004_slice_cannot_grow.yx:3:3
+  |
+3 |   xs.sort()
+  |   ^^^^^^^^^
+  = a slice borrows elements of an array or a List: it can read and replace them, but never add, remove or reorder through library methods
+  = methods: len(), get(i), set(i, x), swap(i, j), `s[i]`, `s[i] = x`, `s[from..to]`, `for x in s`
+
+2 error(s). Nothing was generated.

@@ -1,0 +1,9 @@
+error: the slice type `[Int]` can only be the type of a `view` or `mut` parameter
+ --> tests/e1003_slice_variable.yx:2:11
+  |
+2 |   let xs: [Int] = [1, 2, 3]
+  |           ^^^^^
+  = a slice borrows elements that belong to an array or a List, so it only lives during a call
+  = help: write `[Int; N]` for an array of N elements, or `List<Int>` for a growable list
+
+1 error(s). Nothing was generated.

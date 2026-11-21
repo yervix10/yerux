@@ -1,0 +1,9 @@
+error: the slice type `[Int]` can only be the type of a `view` or `mut` parameter
+ --> tests/e1017_slice_store_in_struct.yx:1:19
+  |
+1 | struct View { xs: [Int] }
+  |                   ^^^^^
+  = a slice borrows elements that belong to an array or a List, so it only lives during a call
+  = help: write `[Int; N]` for an array of N elements, or `List<Int>` for a growable list
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,4 @@
+fn main() {
+  let a = [String.from("a"), String.from("b")]
+  print(a.len())
+}
