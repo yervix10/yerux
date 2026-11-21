@@ -1992,7 +1992,10 @@ impl Parser {
                     return Err(diag("a const parameter must be an Int: `const N: Int`", tp));
                 }
                 if v.iter().any(|p| p.name == name) {
-                    return Err(diag(format!("type parameter '{}' is declared twice", name), np));
+                    return Err(diag(
+                        format!("type parameter '{}' is declared twice", name),
+                        np,
+                    ));
                 }
                 v.push(TParam {
                     name,
@@ -2060,7 +2063,11 @@ impl Parser {
             Some(Ty::Range(lo, hi)) if t == Ty::Int => {
                 if v < lo || v > hi {
                     return Err(diag(
-                        format!("{} does not fit in {}", v, self.types.name(Ty::Range(lo, hi))),
+                        format!(
+                            "{} does not fit in {}",
+                            v,
+                            self.types.name(Ty::Range(lo, hi))
+                        ),
                         e.pos,
                     ));
                 }
@@ -2078,7 +2085,10 @@ impl Parser {
             }
             Some(want) => {
                 return Err(diag(
-                    format!("a const of type {} is not supported yet", self.types.name(want)),
+                    format!(
+                        "a const of type {} is not supported yet",
+                        self.types.name(want)
+                    ),
                     npos,
                 )
                 .note("consts are Int (also `Int<lo..hi>`), Bool or Char for now"))
@@ -2163,7 +2173,12 @@ impl Parser {
     fn const_param(&self, n: &str) -> Option<i64> {
         match self.tparams.get(n)? {
             Ty::Range(v, w) if v == w => Some(*v),
-            Ty::Param(p) if self.types.params[*p].bounds.iter().any(|b| b == CONST_BOUND) => {
+            Ty::Param(p)
+                if self.types.params[*p]
+                    .bounds
+                    .iter()
+                    .any(|b| b == CONST_BOUND) =>
+            {
                 Some((CONST_LEN + *p) as i64)
             }
             Ty::Err if self.const_names.contains(n) => Some(1),

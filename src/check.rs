@@ -513,7 +513,7 @@ struct Checker<'a> {
     ps: &'a mut Parser,
     in_generic: bool, // checking a generic body with abstract type parameters
     queue: Vec<(Func, String)>, // instantiations still to check (with a description for notes)
-    split_ok: bool, // checking `std__split_at*`: its two halves of one slice may be lent together
+    split_ok: bool,   // checking `std__split_at*`: its two halves of one slice may be lent together
     inst_fns: HashMap<(String, Vec<Ty>), (String, Sig)>,
     hint: Option<Ty>, // expected type of the next expression (to infer `Maybe.None`)
     rename: Option<String>, // set by a generic call: the instantiation to call instead
@@ -2416,8 +2416,13 @@ impl<'a> Checker<'a> {
         if self.types.owned(elem) {
             let en = self.tn(elem);
             self.err(
-                diag(format!("`[value; N]` copies its value, but {} owns memory", en), pos)
-                    .note("help: write the elements out (`[String.new(), String.new()]`), or use a List"),
+                diag(
+                    format!("`[value; N]` copies its value, but {} owns memory", en),
+                    pos,
+                )
+                .note(
+                    "help: write the elements out (`[String.new(), String.new()]`), or use a List",
+                ),
             );
             return Ty::Err;
         }
@@ -2443,7 +2448,7 @@ impl<'a> Checker<'a> {
     }
     /// Can `[elem; N]` exist? Copy values, and owned values whose drop needs no worklist: `String`, `List`,
     /// structs, enums, tuples and arrays made of those. Not `Box`, closures, `dyn`, runtime handles, type
-    /// parameters without `Copy`, or anything recursive (see docs/ARRAYS2.md).
+    /// parameters without `Copy`, or anything recursive (see docs/ARRAYS.md).
     fn array_elem_ok(&self, elem: Ty) -> bool {
         fn plain(types: &Types, t: Ty, seen: &mut Vec<Ty>) -> bool {
             if !types.owned(t) {
@@ -2456,11 +2461,16 @@ impl<'a> Checker<'a> {
             let ok = match t {
                 Ty::String => true,
                 Ty::List(i) => plain(types, types.lists[i], seen),
-                Ty::Struct(i) if types.arrays.contains_key(&i) => plain(types, types.arrays[&i].0, seen),
+                Ty::Struct(i) if types.arrays.contains_key(&i) => {
+                    plain(types, types.arrays[&i].0, seen)
+                }
                 Ty::Struct(i) => {
                     !types.opaque_struct(i)
                         && !types.structs[i].cname.starts_with("Env__")
-                        && types.structs[i].fields.iter().all(|(_, f)| plain(types, *f, seen))
+                        && types.structs[i]
+                            .fields
+                            .iter()
+                            .all(|(_, f)| plain(types, *f, seen))
                 }
                 Ty::Enum(i) => types.enums[i]
                     .variants
@@ -5297,8 +5307,10 @@ impl<'a> Checker<'a> {
                 let chunks = m == "chunks";
                 let mut place = (**recv).clone();
                 if !simple_place(&place) {
-                    self.err(diag(format!("`{}` needs a variable or a field here", m), ep)
-                        .note("help: store the array or List in a variable first"));
+                    self.err(
+                        diag(format!("`{}` needs a variable or a field here", m), ep)
+                            .note("help: store the array or List in a variable first"),
+                    );
                     return;
                 }
                 let mut probe = place.clone();
@@ -5308,7 +5320,10 @@ impl<'a> Checker<'a> {
                 if self.types.seq_elem(p.ty).is_none() {
                     if p.ty != Ty::Err {
                         let n = self.tn(p.ty);
-                        self.err(teach(diag(format!("`{}` works on arrays, Lists and slices, not on {}", m, n), ep)));
+                        self.err(teach(diag(
+                            format!("`{}` works on arrays, Lists and slices, not on {}", m, n),
+                            ep,
+                        )));
                     }
                     return;
                 }
@@ -5331,7 +5346,11 @@ impl<'a> Checker<'a> {
                 self.chk(
                     out,
                     s_stmt(
-                        SK::If(s_bin("<=", s_var(&nk, ep), s_int(0, ep), ep), vec![panic], None),
+                        SK::If(
+                            s_bin("<=", s_var(&nk, ep), s_int(0, ep), ep),
+                            vec![panic],
+                            None,
+                        ),
                         ep,
                     ),
                 );
@@ -5892,7 +5911,9 @@ fn unify(
         (Ty::Box(a), Ty::Box(b)) => unify(types, types.boxes[a], types.boxes[b], pids, bind),
         (Ty::Struct(_), Ty::Struct(_)) if types.array_of(pat).is_some() => {
             match (types.array_of(pat), types.array_of(conc)) {
-                (Some((e1, n1)), Some((e2, n2))) if n1 >= crate::syntax::CONST_LEN && n2 < crate::syntax::CONST_LEN => {
+                (Some((e1, n1)), Some((e2, n2)))
+                    if n1 >= crate::syntax::CONST_LEN && n2 < crate::syntax::CONST_LEN =>
+                {
                     // `[T; N]` with a const parameter N: bind N to the length (as the type `Int<n..n>`)
                     let p = n1 - crate::syntax::CONST_LEN;
                     let len = Ty::Range(n2 as i64, n2 as i64);
@@ -6561,8 +6582,12 @@ impl<'a> Checker<'a> {
             {
                 let op = *op;
                 if let EK::Bin(_, a, b) = &e.k {
-                    let ta = self.peek_ty(a).filter(|t| self.types.array_of(*t).is_some());
-                    let tb = self.peek_ty(b).filter(|t| self.types.array_of(*t).is_some());
+                    let ta = self
+                        .peek_ty(a)
+                        .filter(|t| self.types.array_of(*t).is_some());
+                    let tb = self
+                        .peek_ty(b)
+                        .filter(|t| self.types.array_of(*t).is_some());
                     if let (Some(ta), Some(tb)) = (ta, tb) {
                         if ta != tb {
                             let (na, nb) = (self.tn(ta), self.tn(tb));
