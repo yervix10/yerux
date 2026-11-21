@@ -326,3 +326,10 @@ initializer of the declaring `let`) it is the module again. Closure parameters a
 module name are not tracked yet (rename them or import with `as`). Tests: `tests/mod_ok/shadow_module`,
 `tests/mod_err/shadow_hides_module` (the module is hidden inside the scope: the error is the ordinary "no method").
 
+## Fixed: moving a tuple element named the internal field
+
+`let first = p.0` on an owned tuple reported `cannot move 'p._0' out of its struct` with generic advice. Tuple
+elements are now printed as `p.0` in every place diagnostic, and the note suggests the fix that works:
+`let (a, b) = move p`. Test: `tests/e1401_move_tuple_element.yx`. (The goldens of `e33` and `e35` were refreshed:
+`Clone`, added to the known traits list by the derive work, was missing from them.)
+

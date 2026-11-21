@@ -208,7 +208,13 @@ fn can_propagate(e: &Expr) -> bool {
 fn place_str(e: &Expr) -> String {
     match &e.k {
         EK::Var(n, _) => n.clone(),
-        EK::Field(b, f) => format!("{}.{}", place_str(b), f),
+        // tuple elements are stored as `_0`, `_1`, ..; they are written `.0`, `.1`
+        EK::Field(b, f) => match f.strip_prefix('_') {
+            Some(d) if !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit()) => {
+                format!("{}.{}", place_str(b), d)
+            }
+            _ => format!("{}.{}", place_str(b), f),
+        },
         EK::Method { recv, m, .. } if m == "at" => format!("{}.at(..)", place_str(recv)),
         EK::Method { recv, m, args } if m == "get" && args.is_empty() => {
             format!("*{}", place_str(recv))
@@ -1330,7 +1336,17 @@ impl<'a> Checker<'a> {
                         if let Some(w) = why {
                             d = d.note(w).note("a struct with a destructor must be dropped whole, so none of its fields can be taken out");
                         }
-                        d.note("help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct")
+                        let tuple = match &e.k {
+                            EK::Field(_, f) => {
+                                f.strip_prefix('_').is_some_and(|d| !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit()))
+                            }
+                            _ => false,
+                        };
+                        if tuple {
+                            d.note("help: take the whole tuple apart instead: `let (a, b) = move t` (each name then owns its element), or borrow the element (call a method on it, or pass it to a `view`/`mut` parameter)")
+                        } else {
+                            d.note("help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct")
+                        }
                     } else {
                         let mut d = diag(
                             format!("'{}' is a {} and is not copied", n, self.tn(p.ty)),
