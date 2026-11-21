@@ -1169,6 +1169,8 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // arrays and slices: `==`, `<`, .., and `show()` go through the generic slice helpers of prelude_fmt.yx
+        self.seq_rewrite(e);
         // `x.m(..)` on a user type / built-in trait becomes a plain call `Trait__Type__m(x, ..)`
         if let EK::Method { recv, m, .. } = &e.k {
             if m != "at" && self.isp(recv) {
@@ -3115,6 +3117,11 @@ impl<'a> Checker<'a> {
                 return ret;
             }
             "print" => {
+                if args.len() == 1 && self.is_seq_expr(&args[0]) {
+                    let a = std::mem::replace(&mut args[0], sx(EK::Int(0), pos));
+                    let p = a.pos;
+                    args[0] = sx(EK::Call("std__seq_show".into(), vec![a]), p);
+                }
                 if args.len() != 1 {
                     self.err(diag("print expects exactly 1 argument", pos));
                 } else {
@@ -5725,6 +5732,17 @@ impl<'a> Checker<'a> {
         if let Ty::Param(i) = ty {
             return self.types.params[i].bounds.iter().any(|b| b == tr);
         }
+        // arrays and slices compare and show element-wise (see `seq_rewrite`)
+        if let Some(e) = self
+            .types
+            .array_of(ty)
+            .map(|(e, _)| e)
+            .or_else(|| self.types.slice_elem(ty))
+        {
+            if matches!(tr, "Show" | "Equal" | "Ordered") {
+                return self.implements(e, tr);
+            }
+        }
         self.ps
             .impls
             .iter()
@@ -6276,6 +6294,70 @@ impl<'a> Checker<'a> {
     }
 
     /// `a == b` -> `Equal` call, `a < b` -> `Ordered` call compared with 0.
+    /// An array or slice value (a place of such a type, or an array literal).
+    fn is_seq_expr(&self, e: &Expr) -> bool {
+        if matches!(e.k, EK::ArrayLit(_) | EK::ArrayFill(..)) {
+            return true;
+        }
+        self.isp(e)
+            && self.peek_ty(e).is_some_and(|t| {
+                self.types.array_of(t).is_some() || self.types.slice_elem(t).is_some()
+            })
+    }
+    /// `a == b` / `a < b` / `a.show()` on arrays and slices (element-wise, through prelude_fmt.yx).
+    fn seq_rewrite(&mut self, e: &mut Expr) {
+        let pos = e.pos;
+        match &e.k {
+            EK::Bin(op, a, _)
+                if matches!(*op, "==" | "!=" | "<" | ">" | "<=" | ">=") && self.is_seq_expr(a) =>
+            {
+                let op = *op;
+                if let EK::Bin(_, a, b) = &e.k {
+                    let ta = self.peek_ty(a).filter(|t| self.types.array_of(*t).is_some());
+                    let tb = self.peek_ty(b).filter(|t| self.types.array_of(*t).is_some());
+                    if let (Some(ta), Some(tb)) = (ta, tb) {
+                        if ta != tb {
+                            let (na, nb) = (self.tn(ta), self.tn(tb));
+                            self.err(diag(format!("cannot compare {} with {}", na, nb), pos)
+                                .note("arrays are compared element by element and must have the same type; lend them as slices (`view [T]`) to compare different lengths"));
+                        }
+                    }
+                }
+                let EK::Bin(_, a, b) = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    unreachable!()
+                };
+                let f = if matches!(op, "==" | "!=") {
+                    "std__seq_eq"
+                } else {
+                    "std__seq_cmp"
+                };
+                let call = sx(EK::Call(f.into(), vec![*a, *b]), pos);
+                e.k = match op {
+                    "==" => call.k,
+                    "!=" => EK::Un("!", Box::new(call)),
+                    _ => EK::Bin(op, Box::new(call), Box::new(sx(EK::Int(0), pos))),
+                };
+            }
+            EK::Method { recv, m, args }
+                if ((m == "show" && args.is_empty())
+                    || (matches!(m.as_str(), "eq" | "cmp") && args.len() == 1))
+                    && self.is_seq_expr(recv) =>
+            {
+                let f = match m.as_str() {
+                    "show" => "std__seq_show",
+                    "eq" => "std__seq_eq",
+                    _ => "std__seq_cmp",
+                };
+                let EK::Method { recv, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    unreachable!()
+                };
+                let mut all = vec![*recv];
+                all.extend(args);
+                e.k = EK::Call(f.into(), all);
+            }
+            _ => {}
+        }
+    }
     fn rewrite_op(&mut self, e: &mut Expr, t: Ty) -> Result<(), ()> {
         let pos = e.pos;
         let op = match &e.k {
@@ -6757,6 +6839,11 @@ impl<'a> Checker<'a> {
         let mut pre: Vec<Option<Ty>> = vec![None; args.len()];
         // `"{expr}"` with an owned temporary (a String, a List): the formatter takes it instead of borrowing it
         let mut gi = gi;
+        if g.name == "std__fmt_val" && args.len() == 2 && self.is_seq_expr(&args[1]) {
+            let a = std::mem::replace(&mut args[1], sx(EK::Int(0), pos));
+            let p = a.pos;
+            args[1] = sx(EK::Call("std__seq_show".into(), vec![a]), p);
+        }
         if g.name == "std__fmt_val" && args.len() == 2 && !self.isp(&args[1]) {
             // the text built so far comes first: `"{r.is_err()} {r.err()}"` reads `r` before moving it
             self.hint = Some(Ty::String);
