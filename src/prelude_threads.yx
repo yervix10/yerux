@@ -175,6 +175,30 @@ fn __locked_with_view<T, R>(lock: view Locked<T>, body: view fn(view T) -> R) ->
     return body(lock.locked_value())
 }
 
+// Named mutex facade for code that prefers the standard synchronization term.
+struct Mutex<T> { inner: Locked<T> }
+
+impl<T> Mutex<T> {
+    fn new(value: T) -> Mutex<T> {
+        return Mutex<T> { inner: Locked.new(move value) }
+    }
+}
+
+fn mutex_with<T, R>(lock: view Mutex<T>, body: view fn(mut T) -> R) -> R {
+    return lock.inner.with(body)
+}
+
+fn mutex_update<T>(lock: view Mutex<T>, body: view fn(mut T)) {
+    lock.inner.with(|value| {
+        body(value)
+        return 0
+    })
+}
+
+fn mutex_with_view<T, R>(lock: view Mutex<T>, body: view fn(view T) -> R) -> R {
+    return lock.inner.with_view(body)
+}
+
 fn __parallel_lane(first: Int, end: Int, inclusive: Bool, body: Int) {
     var index = first
     while index < end || (inclusive && index == end) {

@@ -60,6 +60,18 @@ Each iteration can read ordinary data and mutate shared state through
 `Atomic` or `Locked`. Work stealing, pooled workers, explicit steps and
 disjoint mutable slicing remain planned.
 
+The prelude also exposes `Mutex<T>` as a named facade over `Locked<T>`.
+`mutex_update(lock, f)` runs a mutating callback; `mutex_with(lock, f)` and
+`mutex_with_view(lock, f)` can return owned callback results. These use the
+same exclusive futex mutex and scoped-borrow restrictions as `Locked`.
+
+The current library does **not** yet expose channels, a reader-writer lock, or
+a persistent thread pool. `Locked` is an exclusive mutex; `with_view` is also
+exclusive. `scope` and `spawn` provide structured worker lifetimes, and each
+`parallel for` creates and joins its own workers rather than reusing a pool.
+The actor/channel examples below specify intended APIs and are not compilable
+against this release.
+
 The sections below retain the broader design. The implementation status above
 and SPEC.md define the available syntax and behavior where those differ.
 
@@ -151,7 +163,7 @@ print(counter.with(n => n))
 ```
 - `Locked<T>` pairs a mutex with an owned `T`. The *only* access is the scoped method `l.with(f)`, where `f` is a **second-class closure that receives the content as a parameter** (`view T` or `mut T`). The lock is released when `f` returns. Because borrows are second-class, the content reference cannot leak out of `f`, so no guard objects, no `MutexGuard<'a>`, no forgetting to unlock, no lock held across `.await`-like points by accident.
 - `with` returns whatever `f` returns (it must be an owned value: `Int`, `String`, a moved value). Returning the borrowed parameter is already an error by the existing "cannot return a borrow" rule.
-- `l.with_view(f)` = shared lock for readers (reader-writer lock); `l.with(f)` = exclusive. Fairness: writers are not starved (queue ordered by arrival, readers batched).
+- `l.with_view(f)` currently also takes the exclusive lock. A reader-writer lock and fairness guarantee are future work.
 - Inside `f` the closure may not call `with` on the same `Locked` (self-deadlock; detected statically in the simple case, see section 11) and may not `spawn`/`join`/block on a channel (error E-C6, "do not wait while holding a lock").
 - `Locked.take(move self) -> T` consumes the lock when you hold the only handle (after the scope).
 - Lock poisoning does not exist: if a task panics while holding a lock the process ends (exit 101). Panics are not recoverable, so no state can be observed half-updated.
@@ -174,7 +186,7 @@ scope {
 - `Sender<T>` and `Receiver<T>` are owned, non-Copy values; `send(move x)` transfers ownership of `x` across threads (hence `T` must be thread-safe, section 6). `Sender` is `clone()`-able (multi-producer); `Receiver` is single consumer unless wrapped (`rx.share()` gives a multi-consumer handle).
 - `recv() -> Option<T>`: `None` when closed and drained. `try_recv`, `recv_timeout(ms)`. `send` returns `Result<(), Closed<T>>` giving the value back when the receiver is gone.
 - Bounded by default to give back-pressure. Unbounded: `Channel<T>.unbounded()` (explicit, because it hides memory growth).
-- Implemented in the library with `Locked<Queue<T>>` + futex-backed condition (section 12), not in the compiler.
+- Planned for the library on top of `Locked<Queue<T>>` + a futex-backed condition (section 12); it is not implemented yet.
 
 ### 5.5 Moving values across threads: what is allowed
 
