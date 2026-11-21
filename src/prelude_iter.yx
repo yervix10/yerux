@@ -50,6 +50,66 @@ impl<T> Iter<T> {
         } }
     }
 
+    fn step_by(self, n: Int) -> Iter<T> {
+        if n <= 0 { panic("step_by: the step must be positive") }
+        var src = move self
+        var first = true
+        return Iter<T> { nxt: move || {
+            if first {
+                first = false
+                return src.nxt()
+            }
+            var k = 1
+            while k < n {
+                k = k + 1
+                match src.nxt() {
+                    Some(x) => { }
+                    None => { return Option<T>.None }
+                }
+            }
+            return src.nxt()
+        } }
+    }
+
+    // the item for which `better(a, b)` is true against every other (first wins ties)
+    fn min_by(self, cmp: fn(view T, view T) -> Int) -> Option<T> {
+        var src = move self
+        var best: Option<T> = None
+        while true {
+            match src.nxt() {
+                Some(x) => {
+                    var swap = false
+                    match best {
+                        Some(b) => { swap = cmp(x, b) < 0 }
+                        None => { swap = true }
+                    }
+                    if swap { best = Some(move x) }
+                }
+                None => { break }
+            }
+        }
+        return best
+    }
+
+    fn max_by(self, cmp: fn(view T, view T) -> Int) -> Option<T> {
+        var src = move self
+        var best: Option<T> = None
+        while true {
+            match src.nxt() {
+                Some(x) => {
+                    var swap = false
+                    match best {
+                        Some(b) => { swap = cmp(x, b) > 0 }
+                        None => { swap = true }
+                    }
+                    if swap { best = Some(move x) }
+                }
+                None => { break }
+            }
+        }
+        return best
+    }
+
     fn enumerate(self) -> Iter<(Int, T)> {
         var src = move self
         var i = 0
@@ -346,4 +406,47 @@ impl<T: Clone> List<T> {
     fn cloned(view self) -> Iter<T> {
         return self.clone().into_iter()
     }
+}
+
+fn std__iter_filter_map<T, U>(it: Iter<T>, f: fn(T) -> Option<U>) -> Iter<U> {
+    var src = move it
+    return Iter<U> { nxt: move || {
+        while true {
+            match src.nxt() {
+                Some(x) => {
+                    match f(move x) {
+                        Some(y) => { return Some(move y) }
+                        None => { }
+                    }
+                }
+                None => { return Option<U>.None }
+            }
+        }
+        return Option<U>.None
+    } }
+}
+
+fn std__iter_flat_map<T, U>(it: Iter<T>, f: fn(T) -> Iter<U>) -> Iter<U> {
+    var src = move it
+    var cur = Iter<U> { nxt: move || { return Option<U>.None } }
+    var has = false
+    return Iter<U> { nxt: move || {
+        while true {
+            if has {
+                match cur.nxt() {
+                    Some(y) => { return Some(move y) }
+                    None => { has = false }
+                }
+            } else {
+                match src.nxt() {
+                    Some(x) => {
+                        cur = f(move x)
+                        has = true
+                    }
+                    None => { return Option<U>.None }
+                }
+            }
+        }
+        return Option<U>.None
+    } }
 }

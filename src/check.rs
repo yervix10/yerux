@@ -1139,6 +1139,13 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        if let EK::Method { recv, .. } = &e.k {
+            if self.isp(recv) {
+                if let Some(rt) = self.peek_ty(recv) {
+                    self.adapt_user_iter(e, rt, false);
+                }
+            }
+        }
         if let EK::Method { recv, m, .. } = &e.k {
             if m != "at" && !self.isp(recv) {
                 return self.temporary_method(e, hint);
@@ -1771,6 +1778,32 @@ impl<'a> Checker<'a> {
         ret
     }
 
+    /// `it.map(f)` on a user iterator (a type with `next` and a generated `into_iter`) that has no `map`:
+    /// becomes `it.into_iter().map(f)`. `moved` hands a hoisted temporary over.
+    fn adapt_user_iter(&mut self, e: &mut Expr, rt: Ty, moved: bool) -> bool {
+        let EK::Method { m, .. } = &e.k else { return false };
+        let m = m.clone();
+        if m == "next" || m == "into_iter" || self.iter_next(rt).is_none() {
+            return false;
+        }
+        if self.method_target(rt, None, &m).is_some() || self.method_target(rt, None, "into_iter").is_none() {
+            return false;
+        }
+        let pos = e.pos;
+        let EK::Method { recv, m, args } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+            return false;
+        };
+        let mut recv = *recv;
+        if moved {
+            if let EK::Var(n, _) = &recv.k {
+                recv.k = EK::Move(n.clone(), 0);
+            }
+        }
+        let inner = sx(EK::Method { recv: Box::new(recv), m: "into_iter".into(), args: vec![] }, pos);
+        e.k = EK::Method { recv: Box::new(inner), m, args };
+        true
+    }
+
     /// Give a temporary Option/Result receiver a scope so methods can borrow or consume it.
     fn temporary_method(&mut self, e: &mut Expr, hint: Option<Ty>) -> Ty {
         let EK::Method { recv, m, args } = &mut e.k else {
@@ -1817,6 +1850,7 @@ impl<'a> Checker<'a> {
         );
         self.pre.push(s_stmt(SK::Let(name, false, init, id), pos));
         self.hint = hint;
+        self.adapt_user_iter(e, t, true);
         let ty = self.expr(e);
         self.scopes.pop();
         let pre = std::mem::replace(&mut self.pre, outer_pre);
