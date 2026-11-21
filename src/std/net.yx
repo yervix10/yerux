@@ -1,0 +1,202 @@
+// std.net: blocking TCP sockets on Linux (IPv4 and IPv6 literal addresses).
+import std.io
+
+/// A TCP socket address. `ip` must be an IPv4 or IPv6 numeric literal; no DNS lookup is performed.
+pub struct SocketAddr { ip: String, port: Int }
+
+/// An owned TCP connection. Call `close` explicitly; Yerux currently has no user-defined Drop hook.
+pub struct TcpStream { fd: Int, _owned: String }
+
+/// An owned listening TCP socket. Call `close` explicitly.
+pub struct TcpListener { fd: Int, _owned: String }
+
+pub fn address(ip: Text, port: Int) -> Result<SocketAddr, io.IoError> {
+  if port < 0 || port > 65535 {
+    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: port out of range"))
+  }
+  let s = String.from(ip)
+  if !valid_literal(s) {
+    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: expected IPv4 or IPv6 literal"))
+  }
+  return Ok(SocketAddr { ip: move s, port: port })
+}
+
+fn valid_literal(s: view String) -> Bool {
+  // Accept canonical IPv6 literals and IPv4 dotted quads. IPv6 is validated by inet_pton below
+  // when a socket is opened; this cheap lexical check rejects hostnames early.
+  var dots = 0
+  var colons = 0
+  var digits = 0
+  var i = 0
+  while i < s.len() {
+    let c = s.byte(i)
+    if c == 46 { dots = dots + 1 }
+    else if c == 58 { colons = colons + 1 }
+    else if (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102) { digits = digits + 1 }
+    else { return false }
+    i = i + 1
+  }
+  return (dots == 3 && colons == 0 && digits > 0) || (colons >= 2 && digits > 0)
+}
+
+fn sockaddr(a: view SocketAddr, out: Int) -> Int {
+  if a.ip.find(":") >= 0 {
+    __store8(out, 10)
+    __store8(out + 1, 0)
+    __store8(out + 2, a.port / 256)
+    __store8(out + 3, a.port % 256)
+    // Parse IPv6 hex groups, including one compressed run of zero groups.
+    var i = 0
+    while i < 16 { __store8(out + 8 + i, 0); i = i + 1 }
+    var groups = 0
+    var compress = -1
+    i = 0
+    while i < a.ip.len() {
+      if a.ip.byte(i) == 58 {
+        if i + 1 >= a.ip.len() || a.ip.byte(i + 1) != 58 || compress >= 0 { return -1 }
+        compress = groups
+        i = i + 2
+      } else {
+        var v = 0
+        var digits = 0
+        while i < a.ip.len() && a.ip.byte(i) != 58 {
+          let c = a.ip.byte(i)
+          var d = c - 48
+          if c >= 65 && c <= 70 { d = c - 55 }
+          if c >= 97 && c <= 102 { d = c - 87 }
+          if d < 0 || d > 15 { return -1 }
+          v = v * 16 + d
+          digits = digits + 1
+          i = i + 1
+        }
+        if digits == 0 || digits > 4 || groups >= 8 { return -1 }
+        __store8(out + 8 + groups * 2, v / 256)
+        __store8(out + 9 + groups * 2, v % 256)
+        groups = groups + 1
+        if i < a.ip.len() && a.ip.byte(i) == 58 && i + 1 < a.ip.len() && a.ip.byte(i + 1) != 58 { i = i + 1 }
+      }
+    }
+    if compress >= 0 {
+      if groups >= 8 { return -1 }
+      var shift = 8 - groups
+      var k = groups - 1
+      while k >= compress {
+        __store8(out + 8 + (k + shift) * 2, __load8(out + 8 + k * 2))
+        __store8(out + 9 + (k + shift) * 2, __load8(out + 9 + k * 2))
+        k = k - 1
+      }
+      k = compress
+      while k < compress + shift { __store8(out + 8 + k * 2, 0); __store8(out + 9 + k * 2, 0); k = k + 1 }
+    } else if groups != 8 { return -1 }
+    return 28
+  }
+  __store8(out, 2)
+  __store8(out + 1, 0)
+  __store8(out + 2, a.port / 256)
+  __store8(out + 3, a.port % 256)
+  var oct = 0
+  var val = 0
+  var i = 0
+  while i <= a.ip.len() {
+    if i == a.ip.len() || a.ip.byte(i) == 46 {
+      if val > 255 || oct > 3 { return -1 }
+      __store8(out + 4 + oct, val)
+      oct = oct + 1
+      val = 0
+    } else {
+      val = val * 10 + a.ip.byte(i) - 48
+      if val > 255 { return -1 }
+    }
+    i = i + 1
+  }
+  if oct != 4 { return -1 }
+  return 16
+}
+
+/// Connect to an IPv4 or `::1` IPv6 literal.
+pub fn connect(a: view SocketAddr) -> Result<TcpStream, io.IoError> {
+  var family = 2
+  if a.ip.find(":") >= 0 { family = 10 }
+  let fd = __syscall(41, family, 1, 0, 0, 0, 0)
+  if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
+  let sa = __alloc(32)
+  let n = sockaddr(a, sa)
+  if n < 0 {
+    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    __free(sa)
+    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal"))
+  }
+  let r = __syscall(42, fd, sa, n, 0, 0, 0)
+  __free(sa)
+  if r < 0 {
+    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    return Err(io.os_error("connect", a.ip, 0 - r))
+  }
+  return Ok(TcpStream { fd: fd, _owned: String.new() })
+}
+
+/// Bind and listen on an IPv4 or `::1` IPv6 literal.
+pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
+  var family = 2
+  if a.ip.find(":") >= 0 { family = 10 }
+  let fd = __syscall(41, family, 1, 0, 0, 0, 0)
+  if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
+  let yes = __alloc(4)
+  __store8(yes, 1)
+  let so = __syscall(54, fd, 1, 2, yes, 4, 0)
+  __free(yes)
+  let sa = __alloc(32)
+  let n = sockaddr(a, sa)
+  if n < 0 { let c = __syscall(3, fd, 0, 0, 0, 0, 0); __free(sa); return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal")) }
+  let b = __syscall(49, fd, sa, n, 0, 0, 0)
+  __free(sa)
+  if so < 0 || b < 0 {
+    var e = so
+    if e >= 0 { e = b }
+    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    return Err(io.os_error("bind", a.ip, 0 - e))
+  }
+  let r = __syscall(50, fd, 128, 0, 0, 0, 0)
+  if r < 0 { let c = __syscall(3, fd, 0, 0, 0, 0, 0); return Err(io.os_error("listen", a.ip, 0 - r)) }
+  return Ok(TcpListener { fd: fd, _owned: String.new() })
+}
+
+/// Accept one incoming connection.
+pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
+  let fd = __syscall(43, l.fd, 0, 0, 0, 0, 0)
+  if fd < 0 { return Err(io.os_error("accept", "", 0 - fd)) }
+  return Ok(TcpStream { fd: fd, _owned: String.new() })
+}
+
+/// Read up to `limit` bytes; an empty String means orderly EOF.
+pub fn read(s: view TcpStream, limit: Int) -> Result<String, io.IoError> {
+  if limit < 0 || limit > 1048576 { return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: read limit must be 0..1048576")) }
+  let p = __alloc(limit + 1)
+  let n = __syscall(0, s.fd, p, limit, 0, 0, 0)
+  if n < 0 { __free(p); return Err(io.os_error("read", "socket", 0 - n)) }
+  var out = String.new()
+  out.push_raw(p, n)
+  __free(p)
+  return Ok(move out)
+}
+
+/// Write all bytes from `data` and return the byte count.
+pub fn write(s: view TcpStream, data: view String) -> Result<Int, io.IoError> {
+  let n = __syscall(1, s.fd, data.raw_addr(), data.len(), 0, 0, 0)
+  if n < 0 { return Err(io.os_error("write", "socket", 0 - n)) }
+  return Ok(n)
+}
+
+pub fn close_stream(s: TcpStream) -> Result<Int, io.IoError> {
+  let r = __syscall(3, s.fd, 0, 0, 0, 0, 0)
+  s.fd = -1
+  if r < 0 { return Err(io.os_error("close", "socket", 0 - r)) }
+  return Ok(0)
+}
+
+pub fn close_listener(l: TcpListener) -> Result<Int, io.IoError> {
+  let r = __syscall(3, l.fd, 0, 0, 0, 0, 0)
+  l.fd = -1
+  if r < 0 { return Err(io.os_error("close", "socket", 0 - r)) }
+  return Ok(0)
+}

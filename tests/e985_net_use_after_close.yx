@@ -1,0 +1,12 @@
+import std.net
+import std.io
+fn misuse() -> Result<Int, io.IoError> {
+  let addr = net.address("127.0.0.1", 80)?
+  let s = net.connect(addr)?
+  let closed = net.close_stream(move s)?
+  let again = net.read(s, 1)?
+  return Ok(again.len())
+}
+fn main() {
+  let result = misuse()
+}

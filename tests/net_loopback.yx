@@ -1,0 +1,40 @@
+import std.net
+import std.io
+
+fn serve(listener: net.TcpListener) -> Result<Int, io.IoError> {
+  let peer = net.accept(listener)?
+  let closed = net.close_listener(move listener)?
+  let msg = net.read(peer, 64)?
+  let sent = net.write(peer, msg)?
+  let done = net.close_stream(move peer)?
+  return Ok(sent)
+}
+
+fn client(addr: view net.SocketAddr) -> Result<String, io.IoError> {
+  let stream = net.connect(addr)?
+  let sent = net.write(stream, "loopback")?
+  let echoed = net.read(stream, 64)?
+  let closed = net.close_stream(move stream)?
+  return Ok(move echoed)
+}
+
+fn run() -> Result<Int, io.IoError> {
+  let addr = net.address("127.0.0.1", 43997)?
+  let listener = net.listen(addr)?
+  scope {
+    let worker = spawn move || serve(move listener)
+    match client(addr) {
+      Ok(echoed) => { print(echoed) }
+      Err(e) => { print(e.message) }
+    }
+    print(worker.join().is_ok())
+  }
+  return Ok(0)
+}
+
+fn main() {
+  match run() {
+    Ok(code) => {}
+    Err(e) => { print(e.message) }
+  }
+}

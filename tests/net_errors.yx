@@ -1,0 +1,18 @@
+import std.net
+import std.io
+
+fn main() {
+  match net.address("not-an-ip", 80) {
+    Ok(a) => { print("unexpected address") }
+    Err(e) => { print(e.message) }
+  }
+  match net.address("127.0.0.1", 43998) {
+    Ok(a) => {
+      match net.connect(a) {
+        Ok(s) => { let c = net.close_stream(move s); print("unexpected connect") }
+        Err(e) => { print(e.code) }
+      }
+    }
+    Err(e) => { print(e.message) }
+  }
+}

@@ -1,0 +1,7 @@
+error: expected net.SocketAddr but this is Result<net.SocketAddr, io.IoError>
+ --> tests/e984_net_unhandled_result.yx:3:30
+  |
+3 |   let addr: net.SocketAddr = net.address("127.0.0.1", 80)
+  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.
