@@ -5316,8 +5316,17 @@ impl<'a> Checker<'a> {
             );
         }
         let teach = |d: Diag| {
-            d.note("you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`)")
+            d.note("you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`); a type with `fn next(mut self) -> Option<T>` is an iterator and works too")
         };
+        // ── an iterator variable (a struct/enum with `next(mut self) -> Option<T>`): iterated in place ──
+        if simple_place(&e) {
+            if let Some(t) = self.peek_ty(&e) {
+                if self.iter_next(t).is_some() {
+                    self.iter_loop(out, h, e, body, pos);
+                    return;
+                }
+            }
+        }
         // ── `for c in xs.chunks(k)` / `xs.windows(k)`: each `c` is a slice borrow of xs ──
         if let EK::Method { recv, m, args } = &e.k {
             if matches!(m.as_str(), "chunks" | "windows") && args.len() == 1 {
@@ -5598,6 +5607,11 @@ impl<'a> Checker<'a> {
         // ── consume a list: `move l` or any list value ──
         self.chk(out, s_let(&nl, true, e, ep));
         let lt = self.lookup(&nl).map(|i| self.vars[i].ty).unwrap_or(Ty::Err);
+        if self.iter_next(lt).is_some() {
+            // an iterator value (`for x in make_iter()`, `for x in move it`): kept in the hidden variable
+            self.iter_loop(out, h, s_var(&nl, ep), body, pos);
+            return;
+        }
         if self.types.array_of(lt).is_some() {
             // an array value (`for x in [1, 2, 3]`): kept in the hidden variable and read in place
             let mut h2 = h.clone();
@@ -5654,6 +5668,57 @@ impl<'a> Checker<'a> {
             ep,
         );
         self.chk(out, s_while(c2, body2, vec![], label, None, pos));
+    }
+
+    /// Is `t` an iterator: a struct or enum with a method `next(mut self) -> Option<T>`? The item type T.
+    fn iter_next(&mut self, t: Ty) -> Option<Ty> {
+        if !matches!(t, Ty::Struct(_) | Ty::Enum(_)) {
+            return None;
+        }
+        let (_, sig) = self.method_target(t, None, "next")?;
+        if sig.params.len() != 1 || sig.params[0].0 != Mode::Mut {
+            return None;
+        }
+        match sig.ret {
+            Ty::Enum(i) => {
+                let d = &self.types.enums[i];
+                match &d.origin {
+                    Some((n, args)) if n == "Option" && args.len() == 1 => Some(args[0]),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// `for x in it { body }` over an iterator place: `while true { match it.next() { Some(x) => body, _ => break } }`.
+    fn iter_loop(&mut self, out: &mut Vec<Stmt>, h: &ForHead, it: Expr, body: Vec<Stmt>, pos: Pos) {
+        let ep = it.pos;
+        if let Some(sp) = &h.step {
+            self.err(diag("`step` only works with ranges", sp.pos));
+        }
+        let next = s_meth(it, "next", vec![], ep);
+        let some = Arm {
+            vname: "Some".into(),
+            variant: None,
+            binds: vec![(h.var.clone(), 0)],
+            body,
+            pos: h.var_pos,
+            pat: None,
+            guard: None,
+        };
+        let stop = Arm {
+            vname: "_".into(),
+            variant: None,
+            binds: vec![],
+            body: vec![s_stmt(SK::Break(None, 0), ep)],
+            pos: ep,
+            pat: None,
+            guard: None,
+        };
+        let m = s_stmt(SK::Match(next, vec![some, stop]), ep);
+        let t = sx(EK::Bool(true), ep);
+        self.chk(out, s_while(t, vec![m], vec![], h.label.clone(), None, pos));
     }
 
     /// Element types of a tuple type (`(Int, Text)`), or None for any other type.
@@ -6508,6 +6573,16 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// For an `Iter<T>` receiver, the prelude function that implements method `m` (`std__iter_<m>`).
+    fn iter_free_fn(&self, rt: Ty, m: &str) -> Option<String> {
+        let Ty::Struct(i) = rt else { return None };
+        if !matches!(&self.types.structs[i].origin, Some((n, _)) if n == "Iter") {
+            return None;
+        }
+        let f = format!("std__iter_{}", m);
+        self.ps.gfns.iter().any(|g| g.name == f).then_some(f)
+    }
+
     /// `x.m(args)` -> `Trait__Type__m(x, args)`.
     fn rewrite_method(&mut self, e: &mut Expr, rt: Ty) -> Result<(), ()> {
         let pos = e.pos;
@@ -6537,6 +6612,24 @@ impl<'a> Checker<'a> {
                     return Err(());
                 }
                 return Ok(()); // the built-in path explains
+            }
+            None if self.iter_free_fn(rt, &m).is_some() => {
+                // `it.map(f)` -> `std__iter_map(it, f)`: adapters with an extra type parameter are free functions
+                let f = self.iter_free_fn(rt, &m).unwrap_or_default();
+                let EK::Method { recv, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    return Err(());
+                };
+                let mut recv = *recv;
+                if let EK::Var(n, _) = &recv.k {
+                    if n.starts_with('$') {
+                        // a hoisted temporary is handed over to the adapter
+                        recv.k = EK::Move(n.clone(), 0);
+                    }
+                }
+                let mut all = vec![recv];
+                all.extend(args);
+                e.k = EK::Call(f, all);
+                return Ok(());
             }
             None => {
                 let mut d = diag(format!("type {} has no method '{}'", tyn, m), pos);

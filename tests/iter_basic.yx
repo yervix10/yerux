@@ -1,0 +1,65 @@
+struct Counter { n: Int, max: Int }
+
+impl Counter {
+  fn next(mut self) -> Option<Int> {
+    if self.n >= self.max { return None }
+    self.n = self.n + 1
+    return Some(self.n)
+  }
+}
+
+fn make(m: Int) -> Counter { return Counter { n: 0, max: m } }
+
+fn main() {
+  // user iterator in `for`
+  var c = Counter { n: 0, max: 3 }
+  for x in c { print(x) }
+  print(c.n)
+  for x in make(4) {
+    if x == 2 { continue }
+    if x == 4 { break }
+    print(x * 100)
+  }
+
+  // adapters and consumers
+  let a = Iter<Int>.range(1, 6).map(|x| x * x).to_list()
+  print(a.show())
+  print(Iter<Int>.range(0, 100).filter(|x| x % 7 == 0).take(4).to_list().show())
+  print(Iter<Int>.range(0, 10).skip(7).to_list().show())
+  print(Iter<Int>.range(0, 3).chain(Iter<Int>.range(10, 12)).to_list().show())
+  print(Iter<Int>.range(5, 8).rev().to_list().show())
+  print(Iter<Int>.range(1, 5).sum())
+  print(Iter<Int>.range(1, 6).product())
+  print(Iter<Int>.range(0, 50).count())
+  print(Iter<Int>.range(1, 5).fold(100, |acc, x| acc - x))
+  print(Iter<Int>.range(1, 5).any(|x| x == 3))
+  print(Iter<Int>.range(1, 5).all(|x| x < 4))
+  print(Iter<Int>.range(1, 9).find(|x| x * x > 20).show())
+  print(Iter<Int>.range(1, 3).last().show())
+  print(Iter<Int>.range(1, 9).nth(3).show())
+  print(Iter<Int>.range(3, 3).max().show())
+  let names = [String.from("b"), String.from("c"), String.from("a")]
+  var l = List<String>.new()
+  for s in names { l.push(String.from(s)) }
+  print(l.cloned().min().show())
+  print(l.cloned().max().show())
+  for p in l.cloned().enumerate() {
+    print("{p.0}:{p.1}")
+  }
+  let z = Iter<Int>.range(0, 5).zip(l.into_iter()).to_list()
+  print(z.len())
+  print(z.at(1).0)
+  print(z.at(1).1)
+  var m = Iter<Int>.range(0, 3).map(|i| (i, i * 10)).to_map()
+  print(m.len())
+  print(m.get_or(2, -1))
+  let s = Iter<Int>.range(0, 10).map(|i| i % 3).to_set()
+  print(s.len())
+  let strs = Iter<Int>.range(0, 3).map(|i| "n{i}").to_list()
+  print(strs.show())
+  // laziness: nothing runs until pulled
+  var it = Iter<Int>.range(0, 1000000000).map(|x| x + 1)
+  print(it.next().show())
+  print(it.next().show())
+  for v in Iter<Int>.range(0, 3).map(|x| x + 7) { print(v) }
+}

@@ -1,0 +1,17 @@
+struct NoNext { n: Int }
+
+struct ViewNext { n: Int }
+
+impl ViewNext {
+  fn next(view self) -> Option<Int> { return None }
+}
+
+fn main() {
+  let a = NoNext { n: 1 }
+  for x in a { print(x) }
+  let b = ViewNext { n: 1 }
+  for x in b { print(x) }
+  let it = Iter<Int>.range(0, 3)
+  let m = it.map(|x| x + 1)
+  let u = Iter<Int>.range(0, 3).unknown_adapter()
+}
