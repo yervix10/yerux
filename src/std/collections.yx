@@ -1,0 +1,11 @@
+// Iteration helpers for Yerux's built-in generic Map<K, V> and Set<T>.
+
+/// Visits map entries by borrowed key/value in the map's current storage order.
+pub fn map_for_each<K: Hash + Equal, V>(m: view Map<K, V>, f: view fn(view K, view V)) {
+  var i = 0
+  while i < m.keys.len() {
+    f(m.keys.at(i), m.vals.at(i))
+    i = i + 1
+  }
+}
+

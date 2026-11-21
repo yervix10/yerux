@@ -10,6 +10,7 @@ pub fn source(key: &str) -> Option<&'static str> {
         "std.iter" => Some(include_str!("std/iter.yx")),
         "std.fmt" => Some(include_str!("std/fmt.yx")),
         "std.args" => Some(include_str!("std/args.yx")),
+        "std.collections" => Some(include_str!("std/collections.yx")),
         "std.time" => Some(include_str!("std/time.yx")),
         "std.path" => Some(include_str!("std/path.yx")),
         "std.math" => Some(include_str!("std/math.yx")),
