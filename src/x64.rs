@@ -48,8 +48,14 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 6] =
-    ["GetStdHandle", "WriteFile", "ExitProcess", "VirtualAlloc", "VirtualFree", "SetConsoleOutputCP"];
+const IMPORTS: [&str; 6] = [
+    "GetStdHandle",
+    "WriteFile",
+    "ExitProcess",
+    "VirtualAlloc",
+    "VirtualFree",
+    "SetConsoleOutputCP",
+];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
 const IMP_EXITPROCESS: usize = 2;
@@ -76,7 +82,19 @@ struct Asm {
 
 impl Asm {
     fn new(os: Os) -> Asm {
-        Asm { code: vec![], labels: vec![], fix: vec![], dfix: vec![], pool: vec![], pool_base: 0, ifix: vec![], xfix: vec![], os, l_oswrite: 0, l_osexit: 0 }
+        Asm {
+            code: vec![],
+            labels: vec![],
+            fix: vec![],
+            dfix: vec![],
+            pool: vec![],
+            pool_base: 0,
+            ifix: vec![],
+            xfix: vec![],
+            os,
+            l_oswrite: 0,
+            l_osexit: 0,
+        }
     }
     /// call qword [rip+disp32] through the import address table slot `imp`
     fn call_iat(&mut self, imp: usize) {
@@ -165,7 +183,13 @@ impl Asm {
     }
     fn modrm_mem(&mut self, reg: u8, base: u8, disp: i32) {
         let (r, b) = (reg & 7, base & 7);
-        let mode = if disp == 0 && b != 5 { 0x00 } else if i8::try_from(disp).is_ok() { 0x40 } else { 0x80 };
+        let mode = if disp == 0 && b != 5 {
+            0x00
+        } else if i8::try_from(disp).is_ok() {
+            0x40
+        } else {
+            0x80
+        };
         self.code.push(mode | r << 3 | b);
         if b == 4 {
             self.code.push(0x24); // SIB: base only (rsp / r12)
@@ -185,7 +209,13 @@ impl Asm {
             _ => 3,
         };
         let (r, b) = (reg & 7, base & 7);
-        let mode = if disp == 0 && b != 5 { 0x00 } else if i8::try_from(disp).is_ok() { 0x40 } else { 0x80 };
+        let mode = if disp == 0 && b != 5 {
+            0x00
+        } else if i8::try_from(disp).is_ok() {
+            0x40
+        } else {
+            0x80
+        };
         self.code.push(mode | r << 3 | 4);
         self.code.push(ss << 6 | (index & 7) << 3 | b);
         match mode {
@@ -203,7 +233,8 @@ impl Asm {
     }
     /// movzx r32, byte [base + index] / mov byte [base + index], r8 (always REX, so sil/dil are addressable)
     fn byte_sib(&mut self, load: bool, reg: u8, base: u8, index: u8, disp: i32) {
-        self.code.push(0x40 | (reg >> 3) << 2 | (index >> 3) << 1 | (base >> 3));
+        self.code
+            .push(0x40 | (reg >> 3) << 2 | (index >> 3) << 1 | (base >> 3));
         if load {
             self.raw(&[0x0F, 0xB6]);
         } else {
@@ -824,9 +855,9 @@ struct G<'a> {
     a: &'a mut Asm,
     rt: &'a Rt,
     al: Alloc,
-    spill_base: i32,       // rbp displacement of spill slot 0 is -(spill_base + 8)
-    slot_off: Vec<i32>,    // rbp displacement of every aggregate slot
-    cur: (usize, usize),   // block / instruction being generated
+    spill_base: i32,     // rbp displacement of spill slot 0 is -(spill_base + 8)
+    slot_off: Vec<i32>,  // rbp displacement of every aggregate slot
+    cur: (usize, usize), // block / instruction being generated
     /// out-of-line failure paths of `Chk(Iv)`: (label, register holding the value, lo, hi)
     stubs: Vec<(usize, u8, i64, i64)>,
 }
@@ -1029,7 +1060,11 @@ impl<'a> G<'a> {
             Op::Sub => rt.panic[P_SUB],
             _ => rt.panic[P_MUL],
         };
-        let work = if !comm && self.in_reg(y, dr) && !self.in_reg(x, dr) { RAX } else { dr };
+        let work = if !comm && self.in_reg(y, dr) && !self.in_reg(x, dr) {
+            RAX
+        } else {
+            dr
+        };
         // unchecked add / multiply by a small constant: lea / shl (no flags needed)
         if !chk && matches!(op, Op::Add | Op::Sub | Op::Mul) {
             if let Some(c) = self.imm(y) {
@@ -1212,7 +1247,11 @@ impl<'a> G<'a> {
                 if comm && in_dx(self, b) && !in_dx(self, a) {
                     std::mem::swap(&mut a, &mut b);
                 }
-                let work = if in_dx(self, b) && !in_dx(self, a) { 0 } else { dx };
+                let work = if in_dx(self, b) && !in_dx(self, a) {
+                    0
+                } else {
+                    dx
+                };
                 self.fmov_to(work, a);
                 self.fop(0xF2, code, work, b);
                 if let Loc::Xmm(y) = self.loc(d) {
@@ -1348,10 +1387,15 @@ impl<'a> G<'a> {
             NOp::UAdd | NOp::USub => {
                 // unsigned carry / borrow
                 let dr = self.dreg(d, RAX);
-                let work = if self.in_reg(b, dr) && !self.in_reg(a, dr) { RAX } else { dr };
+                let work = if self.in_reg(b, dr) && !self.in_reg(a, dr) {
+                    RAX
+                } else {
+                    dr
+                };
                 self.mov_to(work, a);
                 let br = self.reg(b, RCX);
-                self.a.alu(if op == NOp::UAdd { 0x01 } else { 0x29 }, work, br);
+                self.a
+                    .alu(if op == NOp::UAdd { 0x01 } else { 0x29 }, work, br);
                 let l = self.rt.panic[if op == NOp::UAdd { P_ADD } else { P_SUB }];
                 self.a.jcc(CC_B, l);
                 self.a.mov_rr(dr, work);
@@ -1384,7 +1428,8 @@ impl<'a> G<'a> {
                 let br = self.reg(b, RCX);
                 self.a.alu(0x39, ar, br);
                 let dr = self.dreg(d, RAX);
-                self.a.setcc_to(if op == NOp::ULt { CC_B } else { CC_BE }, dr);
+                self.a
+                    .setcc_to(if op == NOp::ULt { CC_B } else { CC_BE }, dr);
                 self.fin(d, dr);
             }
         }
@@ -1442,7 +1487,9 @@ impl<'a> G<'a> {
                     self.fin(*d, dr);
                 }
             }
-            Inst::Mov(d, s) if matches!(self.loc(*d), Loc::Xmm(_)) || matches!(self.loc(*s), Loc::Xmm(_)) => {
+            Inst::Mov(d, s)
+                if matches!(self.loc(*d), Loc::Xmm(_)) || matches!(self.loc(*s), Loc::Xmm(_)) =>
+            {
                 match (self.loc(*d), self.loc(*s)) {
                     (Loc::Xmm(x), _) => self.fmov_to(x, *s),
                     (_, Loc::Xmm(x)) => self.ffin(*d, x),
@@ -1469,7 +1516,9 @@ impl<'a> G<'a> {
                 self.fin(*d, dr);
             }
             Inst::Bin(d, op, x, y) => match op {
-                Op::Add | Op::Sub | Op::Mul | Op::AddU | Op::SubU | Op::MulU => self.arith(*d, *op, *x, *y),
+                Op::Add | Op::Sub | Op::Mul | Op::AddU | Op::SubU | Op::MulU => {
+                    self.arith(*d, *op, *x, *y)
+                }
                 Op::Div | Op::Mod | Op::DivU | Op::ModU => self.divmod(*d, *op, *x, *y),
                 _ => {
                     let cc = self.cmp_flags(*op, *x, *y);
@@ -1491,7 +1540,9 @@ impl<'a> G<'a> {
                 self.a.lea_label(dr, l);
                 self.fin(*d, dr);
             }
-            Inst::ExternCall(dst, id, args, float_args, ret_float) => self.extern_call(*dst, *id, args, float_args, *ret_float),
+            Inst::ExternCall(dst, id, args, float_args, ret_float) => {
+                self.extern_call(*dst, *id, args, float_args, *ret_float)
+            }
             Inst::Call(dst, _, args) | Inst::CallInd(dst, _, args) => {
                 let nreg = args.len().min(ARG_REGS.len());
                 for arg in args[nreg..].iter().rev() {
@@ -1522,7 +1573,9 @@ impl<'a> G<'a> {
                     self.fin(*d, dr);
                 }
             }
-            Inst::Load(d, ad, off) | Inst::LoadH(d, ad, off) if matches!(self.loc(*d), Loc::Xmm(_)) => {
+            Inst::Load(d, ad, off) | Inst::LoadH(d, ad, off)
+                if matches!(self.loc(*d), Loc::Xmm(_)) =>
+            {
                 let (b, e) = self.addr(*ad, RAX);
                 let x = self.fdreg(*d);
                 self.a.sse_rm(0xF2, 0x10, x, b, off + e);
@@ -1700,7 +1753,8 @@ impl<'a> G<'a> {
                     }
                     ThreadOp::Start | ThreadOp::StartRecover => {
                         self.mov_to(RSI, args[1]);
-                        self.a.mov_imm(RDX, matches!(op, ThreadOp::StartRecover) as i64);
+                        self.a
+                            .mov_imm(RDX, matches!(op, ThreadOp::StartRecover) as i64);
                         self.a.call(self.rt.thread_start);
                     }
                     ThreadOp::Wait => self.a.call(self.rt.thread_wait),
@@ -1847,19 +1901,40 @@ impl<'a> G<'a> {
         }
     }
 
-    fn extern_call(&mut self, dst: Option<V>, id: usize, args: &[V], floats: &[bool], ret_float: bool) {
+    fn extern_call(
+        &mut self,
+        dst: Option<V>,
+        id: usize,
+        args: &[V],
+        floats: &[bool],
+        ret_float: bool,
+    ) {
         // Every function that calls extern code has a frame (`push rbp` + a 16-byte multiple), so rsp is
         // 16-byte aligned between instructions; reserve the stack arguments rounded up to 16 so it is still
         // aligned immediately before CALL, with the first stack argument at [rsp].
         // SysV allocates integer and SSE argument registers independently. An
         // argument goes to memory only after its own register class is full.
-        let nstack = args.iter().zip(floats).scan((0usize, 0usize), |(gi, xi), (_, is_float)| {
-            let stack = if *is_float { let s = *xi >= 8; *xi += 1; s }
-                else { let s = *gi >= SYSV_ARG_REGS.len(); *gi += 1; s };
-            Some(stack)
-        }).filter(|stack| *stack).count();
+        let nstack = args
+            .iter()
+            .zip(floats)
+            .scan((0usize, 0usize), |(gi, xi), (_, is_float)| {
+                let stack = if *is_float {
+                    let s = *xi >= 8;
+                    *xi += 1;
+                    s
+                } else {
+                    let s = *gi >= SYSV_ARG_REGS.len();
+                    *gi += 1;
+                    s
+                };
+                Some(stack)
+            })
+            .filter(|stack| *stack)
+            .count();
         let reserve = (nstack * 8 + 15) & !15;
-        if reserve != 0 { self.a.sub_imm(RSP, reserve as i32); }
+        if reserve != 0 {
+            self.a.sub_imm(RSP, reserve as i32);
+        }
         let mut gi = 0usize;
         let mut xi = 0usize;
         let mut si = 0usize;
@@ -1886,10 +1961,15 @@ impl<'a> G<'a> {
         let mut xi = 0usize;
         for (arg, is_float) in args.iter().zip(floats) {
             if *is_float {
-                if xi < 8 { self.fmov_to(xi as u8, *arg); }
+                if xi < 8 {
+                    self.fmov_to(xi as u8, *arg);
+                }
                 xi += 1;
             } else {
-                if gi >= SYSV_ARG_REGS.len() { gi += 1; continue; }
+                if gi >= SYSV_ARG_REGS.len() {
+                    gi += 1;
+                    continue;
+                }
                 self.mov_to(SYSV_ARG_REGS[gi], *arg);
                 // Yerux Text values point at a length-prefixed literal. C string
                 // parameters point at the first byte. Literal payloads are NUL
@@ -1906,10 +1986,17 @@ impl<'a> G<'a> {
         let nxmm = floats.iter().filter(|f| **f).count().min(8);
         self.a.mov_imm(RAX, nxmm as i64);
         self.a.call_elf_got(id);
-        if reserve != 0 { self.a.add_imm(RSP, reserve as i32); }
+        if reserve != 0 {
+            self.a.add_imm(RSP, reserve as i32);
+        }
         if let Some(d) = dst {
-            if ret_float { self.ffin(d, 0); }
-            else { let dr = self.dreg(d, RAX); self.a.mov_rr(dr, RAX); self.fin(d, dr); }
+            if ret_float {
+                self.ffin(d, 0);
+            } else {
+                let dr = self.dreg(d, RAX);
+                self.a.mov_rr(dr, RAX);
+                self.fin(d, dr);
+            }
         }
     }
 }
@@ -1922,12 +2009,20 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         (Some(l), c)
     };
     let f = laid.as_ref().unwrap_or(f);
-    let rotated = if std::env::var_os("YERUX_NO_ROTATE").is_some() { None } else { Some(crate::layout::rotate_loops(f)) };
+    let rotated = if std::env::var_os("YERUX_NO_ROTATE").is_some() {
+        None
+    } else {
+        Some(crate::layout::rotate_loops(f))
+    };
     let f = rotated.as_ref().unwrap_or(f);
     let al = regalloc::allocate(f, &cold);
     if std::env::var_os("YERUX_RA_STATS").is_some() {
         let regs = al.loc.iter().filter(|l| matches!(l, Loc::Reg(_))).count();
-        let remat = al.loc.iter().filter(|l| matches!(l, Loc::Const(_) | Loc::Slot(_) | Loc::Text(_))).count();
+        let remat = al
+            .loc
+            .iter()
+            .filter(|l| matches!(l, Loc::Const(_) | Loc::Slot(_) | Loc::Text(_)))
+            .count();
         eprintln!("regalloc {}: {} vregs, {} in registers, {} spilled, {} rematerialised, callee-saved used {:?}", f.name, f.nvregs, regs, al.nspill, remat, al.callee_used);
     }
     // frame: [callee-saved save area][spill slots][aggregate slots] below rbp
@@ -1943,12 +2038,27 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
     // a function that needs no frame at all (nothing spilled, no slots, no callee-saved registers, all
     // parameters in registers) skips `push rbp; mov rbp, rsp` and returns with a plain `ret`
     // (an extern call needs the frame too: it relies on the `push rbp` to make rsp 16-byte aligned)
-    let has_extern = f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::ExternCall(..))));
+    let has_extern = f
+        .blocks
+        .iter()
+        .any(|b| b.insts.iter().any(|i| matches!(i, Inst::ExternCall(..))));
     let frameless = frame == 0 && f.nparams <= ARG_REGS.len() && !has_extern;
     let callee: Vec<u8> = al.callee_used.clone();
     let nb = f.blocks.len();
-    let early = if frameless || std::env::var_os("YERUX_NO_SHRINKWRAP").is_some() { vec![false; nb] } else { early_blocks(f, &al) };
-    let mut g = G { a, rt, al, spill_base, slot_off, cur: (0, 0), stubs: vec![] };
+    let early = if frameless || std::env::var_os("YERUX_NO_SHRINKWRAP").is_some() {
+        vec![false; nb]
+    } else {
+        early_blocks(f, &al)
+    };
+    let mut g = G {
+        a,
+        rt,
+        al,
+        spill_base,
+        slot_off,
+        cur: (0, 0),
+        stubs: vec![],
+    };
     // frame setup, callee-saved saves and parameter moves (the "prologue"); when `early` blocks exist it is
     // emitted out of line, after the early-exit region
     let prologue = |g: &mut G, tb: usize| {
@@ -1971,7 +2081,9 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
                 (Loc::Reg(r), true) => g.a.mov_rr(r, ARG_REGS[i]),
                 (Loc::Reg(r), false) => g.a.load(r, 16 + 8 * (i - ARG_REGS.len()) as i32),
                 (Loc::Xmm(x), true) => g.a.movq_xr(x, ARG_REGS[i]),
-                (Loc::Xmm(x), false) => g.a.sse_rm(0xF2, 0x10, x, RBP, 16 + 8 * (i - ARG_REGS.len()) as i32),
+                (Loc::Xmm(x), false) => {
+                    g.a.sse_rm(0xF2, 0x10, x, RBP, 16 + 8 * (i - ARG_REGS.len()) as i32)
+                }
                 (Loc::Spill(s), true) => {
                     let d = g.spill_disp(s);
                     g.a.store(d, ARG_REGS[i]);
@@ -2011,12 +2123,22 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             if bi == 0 || early[bi] || std::env::var_os("YERUX_NO_THREAD").is_some() {
                 return None;
             }
-            let Term::Jmp(t) = f.blocks[bi].term else { return None };
+            let Term::Jmp(t) = f.blocks[bi].term else {
+                return None;
+            };
             let noop = f.blocks[bi].insts.iter().all(|i| match i {
-                Inst::Mov(d, s) => d == s || (g.al.loc[*d] == g.al.loc[*s] && matches!(g.al.loc[*d], Loc::Reg(_) | Loc::Xmm(_))),
+                Inst::Mov(d, s) => {
+                    d == s
+                        || (g.al.loc[*d] == g.al.loc[*s]
+                            && matches!(g.al.loc[*d], Loc::Reg(_) | Loc::Xmm(_)))
+                }
                 _ => false,
             });
-            if noop && !early[t] { Some(t) } else { None }
+            if noop && !early[t] {
+                Some(t)
+            } else {
+                None
+            }
         })
         .collect();
     let thread = |mut t: usize| {
@@ -2046,7 +2168,10 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         }
     }
     // innermost loop headers (targets of back edges between hot blocks): aligned to 16 bytes when that costs few NOPs
-    let align_max: usize = std::env::var("YERUX_ALIGN").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
+    let align_max: usize = std::env::var("YERUX_ALIGN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9);
     let mut hot_header = vec![false; nb];
     if align_max > 0 {
         let mut last = vec![0usize; nb]; // furthest back-edge source per header
@@ -2077,7 +2202,11 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         }
         g.a.bind(bl[bi]);
         // early blocks run before the prologue: parameters are still in their argument registers
-        let saved: Vec<Loc> = if early[bi] { (0..f.nparams).map(|p| g.al.loc[p]).collect() } else { vec![] };
+        let saved: Vec<Loc> = if early[bi] {
+            (0..f.nparams).map(|p| g.al.loc[p]).collect()
+        } else {
+            vec![]
+        };
         if early[bi] {
             for p in 0..f.nparams {
                 g.al.loc[p] = Loc::Reg(ARG_REGS[p]);
@@ -2088,7 +2217,11 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         let th = |t: usize| if early[bi] { t } else { thread(t) };
         let lab = |t: usize| {
             let t = th(t);
-            if early[bi] && !early[t] { tramp[t].unwrap() } else { bl[t] }
+            if early[bi] && !early[t] {
+                tramp[t].unwrap()
+            } else {
+                bl[t]
+            }
         };
         let next = |t: usize| th(t) == nxt && early[bi] == early.get(nxt).copied().unwrap_or(false);
         let fused = g.al.fused[bi];
@@ -2182,7 +2315,9 @@ fn succs_of(t: &Term) -> Vec<usize> {
 /// with a plain `ret`. Every edge leaving that region goes through a trampoline holding the prologue.
 fn early_blocks(f: &IrFunc, al: &Alloc) -> Vec<bool> {
     let nb = f.blocks.len();
-    if f.nparams > ARG_REGS.len() || (al.callee_used.is_empty() && al.nspill == 0 && f.slots.is_empty()) {
+    if f.nparams > ARG_REGS.len()
+        || (al.callee_used.is_empty() && al.nspill == 0 && f.slots.is_empty())
+    {
         return vec![false; nb];
     }
     // a vreg that an early block may read or write: a parameter (it sits in its argument register), a constant
@@ -2205,7 +2340,21 @@ fn early_blocks(f: &IrFunc, al: &Alloc) -> Vec<bool> {
                 Inst::Const(d, _) => ok(*d),
                 Inst::Mov(d, s) => ok(*d) && ok(*s),
                 Inst::Bin(d, op, x, y) => {
-                    matches!(op, Op::Add | Op::Sub | Op::AddU | Op::SubU | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Eq | Op::Ne) && ok(*d) && ok(*x) && ok(*y)
+                    matches!(
+                        op,
+                        Op::Add
+                            | Op::Sub
+                            | Op::AddU
+                            | Op::SubU
+                            | Op::Lt
+                            | Op::Le
+                            | Op::Gt
+                            | Op::Ge
+                            | Op::Eq
+                            | Op::Ne
+                    ) && ok(*d)
+                        && ok(*x)
+                        && ok(*y)
                 }
                 _ => false,
             };
@@ -2261,11 +2410,15 @@ fn early_blocks(f: &IrFunc, al: &Alloc) -> Vec<bool> {
     }
     for (bi, b) in f.blocks.iter().enumerate() {
         if !early[bi] {
-            let uses = b.insts.iter().flat_map(regalloc::inst_uses).chain(match &b.term {
-                Term::Br(c, ..) => vec![*c],
-                Term::Ret(Some(v)) => vec![*v],
-                _ => vec![],
-            });
+            let uses = b
+                .insts
+                .iter()
+                .flat_map(regalloc::inst_uses)
+                .chain(match &b.term {
+                    Term::Br(c, ..) => vec![*c],
+                    Term::Ret(Some(v)) => vec![*v],
+                    _ => vec![],
+                });
             if uses.into_iter().any(|v| early_defs[v]) {
                 return vec![false; nb];
             }
@@ -2313,16 +2466,29 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
             // The heap state lives in .data at a fixed address (no relocations: the image is linked
             // at a fixed base). Its address is an imm64 in the code, so the code size does not depend
             // on it: build once to learn the size, lay the sections out, build again for real.
-            let probe = build(ir, debug_alloc, os, PE_BASE as i64 + 0x100000, WinLayout::default());
+            let probe = build(
+                ir,
+                debug_alloc,
+                os,
+                PE_BASE as i64 + 0x100000,
+                WinLayout::default(),
+            );
             let lay = pe_layout(probe.code.len(), probe.blob.len());
             let b = build(
                 ir,
                 debug_alloc,
                 os,
                 (PE_BASE + lay.data_rva) as i64,
-                WinLayout { rdata_rel: (lay.rdata_rva - lay.text_rva) as usize, iat_rel: (lay.iat_rva() - lay.text_rva) as usize },
+                WinLayout {
+                    rdata_rel: (lay.rdata_rva - lay.text_rva) as usize,
+                    iat_rel: (lay.iat_rva() - lay.text_rva) as usize,
+                },
             );
-            assert_eq!(b.code.len(), probe.code.len(), "code size must not depend on the data address");
+            assert_eq!(
+                b.code.len(),
+                probe.code.len(),
+                "code size must not depend on the data address"
+            );
             pe64(&b.code, &b.blob, b.entry, &lay)
         }
     }
@@ -2347,7 +2513,14 @@ fn emit_tls_store(a: &mut Asm, reg: u8, offset: i32) {
     a.imm32(offset);
 }
 
-fn emit_threads(a: &mut Asm, start: usize, join: usize, mmap: usize, failure: usize, recover: usize) {
+fn emit_threads(
+    a: &mut Asm,
+    start: usize,
+    join: usize,
+    mmap: usize,
+    failure: usize,
+    recover: usize,
+) {
     const PAGE: i32 = 4096;
     const MAPPING: i32 = THREAD_STACK_END;
     const TID: i32 = 0;
@@ -2480,11 +2653,32 @@ fn emit_worker_panic_probe(a: &mut Asm, recover: usize) {
 
 fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> Built {
     let mut a = Asm::new(os);
-    let has_workers = os == Os::Linux && ir.funcs.iter().any(|f| {
-        f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Thread(crate::ir::ThreadOp::Start | crate::ir::ThreadOp::StartRecover | crate::ir::ThreadOp::Wait | crate::ir::ThreadOp::Unlock | crate::ir::ThreadOp::CleanupPush | crate::ir::ThreadOp::CleanupPop, ..))))
-    });
+    let has_workers = os == Os::Linux
+        && ir.funcs.iter().any(|f| {
+            f.blocks.iter().any(|b| {
+                b.insts.iter().any(|i| {
+                    matches!(
+                        i,
+                        Inst::Thread(
+                            crate::ir::ThreadOp::Start
+                                | crate::ir::ThreadOp::StartRecover
+                                | crate::ir::ThreadOp::Wait
+                                | crate::ir::ThreadOp::Unlock
+                                | crate::ir::ThreadOp::CleanupPush
+                                | crate::ir::ThreadOp::CleanupPop,
+                            ..
+                        )
+                    )
+                })
+            })
+        });
 
-    let mut data: Vec<Vec<u8>> = vec![b"panic: ".to_vec(), b"\n".to_vec(), b"true\n".to_vec(), b"false\n".to_vec()];
+    let mut data: Vec<Vec<u8>> = vec![
+        b"panic: ".to_vec(),
+        b"\n".to_vec(),
+        b"true\n".to_vec(),
+        b"false\n".to_vec(),
+    ];
     for m in PANIC_MSGS {
         data.push(m.as_bytes().to_vec());
     }
@@ -2514,7 +2708,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     let l_write2 = a.label();
     let l_panic: Vec<usize> = (0..PANIC_MSGS.len()).map(|_| a.label()).collect();
     let (l_segv, l_restorer) = (a.label(), a.label());
-    let (l_mmap, l_alloc, l_free, l_push, l_get) = (a.label(), a.label(), a.label(), a.label(), a.label());
+    let (l_mmap, l_alloc, l_free, l_push, l_get) =
+        (a.label(), a.label(), a.label(), a.label(), a.label());
     let (l_realloc, l_memcpy) = (a.label(), a.label());
     let (l_thread_start, l_thread_wait, l_thread_recover) = (a.label(), a.label(), a.label());
     let l_funcs: Vec<usize> = ir.funcs.iter().map(|_| a.label()).collect();
@@ -2564,7 +2759,13 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.syscall();
         a.alu_imm(0, RSP, 64); // add rsp, 64
     }
-    if os == Os::Linux && ir.funcs.iter().any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Global(..))))) {
+    if os == Os::Linux
+        && ir.funcs.iter().any(|f| {
+            f.blocks
+                .iter()
+                .any(|b| b.insts.iter().any(|i| matches!(i, Inst::Global(..))))
+        })
+    {
         // global cell 0: the initial stack pointer (argc, argv.., 0, envp.., 0), read by std.io
         a.mov_imm(RBX, g);
         a.st(RBX, G_USER as i32, RSP);
@@ -2716,7 +2917,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
 
     // print_int: value in rax, fd in rbx. Prints decimal + newline.
     a.bind(l_print_int);
-    if has_workers { acquire_print_lock(&mut a, g); }
+    if has_workers {
+        acquire_print_lock(&mut a, g);
+    }
     a.raw(&[0x48, 0x83, 0xEC, 0x20]); // sub rsp, 32
     a.raw(&[0x48, 0x89, 0xC7]); // mov rdi, rax  (remember the sign)
     a.test_rax();
@@ -2747,12 +2950,16 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     a.mov_rr(RDI, RBX); // fd (rbx) is chosen by the caller
     a.write_rdi();
     a.raw(&[0x48, 0x83, 0xC4, 0x20]); // add rsp, 32
-    if has_workers { release_runtime_lock(&mut a, g, G_PRINT_LOCK); }
+    if has_workers {
+        release_runtime_lock(&mut a, g, G_PRINT_LOCK);
+    }
     a.ret();
 
     // print_bool: value in rax
     a.bind(l_print_bool);
-    if has_workers { acquire_print_lock(&mut a, g); }
+    if has_workers {
+        acquire_print_lock(&mut a, g);
+    }
     let (l_false, l_wr) = (a.label(), a.label());
     a.test_rax();
     a.jcc(CC_E, l_false);
@@ -2764,26 +2971,34 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     a.mov_imm(RDX, 6);
     a.bind(l_wr);
     a.sys_write(1);
-    if has_workers { release_runtime_lock(&mut a, g, G_PRINT_LOCK); }
+    if has_workers {
+        release_runtime_lock(&mut a, g, G_PRINT_LOCK);
+    }
     a.ret();
 
     // print_text: rax = pointer to [len][bytes]
     a.bind(l_print_text);
-    if has_workers { acquire_print_lock(&mut a, g); }
+    if has_workers {
+        acquire_print_lock(&mut a, g);
+    }
     a.raw(&[0x48, 0x8B, 0x10]); // mov rdx, [rax]
     a.raw(&[0x48, 0x8D, 0x70, 0x08]); // lea rsi, [rax+8]
     a.sys_write(1);
     a.lea_data(RSI, D_NL);
     a.mov_imm(RDX, 1);
     a.sys_write(1);
-    if has_workers { release_runtime_lock(&mut a, g, G_PRINT_LOCK); }
+    if has_workers {
+        release_runtime_lock(&mut a, g, G_PRINT_LOCK);
+    }
     a.ret();
 
     // print_bytes: rsi = pointer, rdx = length. Writes the bytes (if any) and a newline.
     {
         let l_nl = a.label();
         a.bind(l_print_bytes);
-        if has_workers { acquire_print_lock(&mut a, g); }
+        if has_workers {
+            acquire_print_lock(&mut a, g);
+        }
         a.raw(&[0x48, 0x85, 0xD2]); // test rdx, rdx
         a.jcc(CC_E, l_nl);
         a.sys_write(1);
@@ -2791,7 +3006,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.lea_data(RSI, D_NL);
         a.mov_imm(RDX, 1);
         a.sys_write(1);
-        if has_workers { release_runtime_lock(&mut a, g, G_PRINT_LOCK); }
+        if has_workers {
+            release_runtime_lock(&mut a, g, G_PRINT_LOCK);
+        }
         a.ret();
     }
 
@@ -3023,8 +3240,15 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     // rt_memcpy: rdi = dst, rsi = src, rcx = n (regions do not overlap). Clobbers rax, rcx, rdx, rsi, rdi only.
     // n <= 16: overlapping head/tail moves; n <= 256: 8-byte words plus an overlapping tail; else rep movsb.
     {
-        let (l_lt8, l_lt4, l_byte, l_big, l_words, l_rep, l_ret) =
-            (a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+        let (l_lt8, l_lt4, l_byte, l_big, l_words, l_rep, l_ret) = (
+            a.label(),
+            a.label(),
+            a.label(),
+            a.label(),
+            a.label(),
+            a.label(),
+            a.label(),
+        );
         a.bind(l_memcpy);
         a.cmp_imm(RCX, 16);
         a.jcc(CC_A, l_big);
@@ -3148,7 +3372,14 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     }
 
     if has_workers {
-        emit_threads(&mut a, l_thread_start, l_thread_wait, l_mmap, l_panic[P_THREAD_START], l_thread_recover);
+        emit_threads(
+            &mut a,
+            l_thread_start,
+            l_thread_wait,
+            l_mmap,
+            l_panic[P_THREAD_START],
+            l_thread_recover,
+        );
     }
 
     // user functions
@@ -3269,7 +3500,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             // assembler fixup is relative to the RX code base, so encode that
             // virtual-address difference here; the static path never imports.
             let got_base = (G - (0x400000 + ((64 + 56 * 5 + 15) & !15) as i64)) as usize;
-            let got: Vec<usize> = (0..ir.externs.len()).map(|i| got_base + blob.len() + 64 + 8 * i).collect();
+            let got: Vec<usize> = (0..ir.externs.len())
+                .map(|i| got_base + blob.len() + 64 + 8 * i)
+                .collect();
             a.finalize(data_start, &offs, &[], &got);
         }
         Os::Windows => {
@@ -3278,7 +3511,12 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
     }
     let entry = a.labels[l_start].unwrap();
-    Built { code: a.code, blob, entry, imports }
+    Built {
+        code: a.code,
+        blob,
+        entry,
+        imports,
+    }
 }
 
 // ───────────────────────── ELF64 writer ─────────────────────────
@@ -3304,7 +3542,7 @@ fn elf64(blob: &[u8], entry_off: usize) -> Vec<u8> {
     o.extend_from_slice(&64u16.to_le_bytes()); // shentsize
     o.extend_from_slice(&0u16.to_le_bytes()); // shnum
     o.extend_from_slice(&0u16.to_le_bytes()); // shstrndx
-    // program header
+                                              // program header
     o.extend_from_slice(&1u32.to_le_bytes()); // PT_LOAD
     o.extend_from_slice(&5u32.to_le_bytes()); // R + X
     o.extend_from_slice(&0u64.to_le_bytes()); // offset
@@ -3313,7 +3551,7 @@ fn elf64(blob: &[u8], entry_off: usize) -> Vec<u8> {
     o.extend_from_slice(&total.to_le_bytes()); // filesz
     o.extend_from_slice(&total.to_le_bytes()); // memsz
     o.extend_from_slice(&0x1000u64.to_le_bytes()); // align
-    // writable zero-filled segment for the runtime state (heap free lists, counters)
+                                                   // writable zero-filled segment for the runtime state (heap free lists, counters)
     o.extend_from_slice(&1u32.to_le_bytes()); // PT_LOAD
     o.extend_from_slice(&6u32.to_le_bytes()); // R + W
     o.extend_from_slice(&0u64.to_le_bytes()); // offset
@@ -3380,7 +3618,15 @@ fn pe_layout(code_len: usize, blob_len: usize) -> PeLayout {
     let rdata_size = blob_len as u64;
     let data_rva = rdata_rva + align_up(rdata_size.max(1), PE_SECT_ALIGN);
     let idata_rva = data_rva + PE_SECT_ALIGN; // .data is one page (G_SIZE)
-    PeLayout { text_rva, rdata_rva, data_rva, idata_rva, text_size, rdata_size, idata_size: idata_len() }
+    PeLayout {
+        text_rva,
+        rdata_rva,
+        data_rva,
+        idata_rva,
+        text_size,
+        rdata_size,
+        idata_size: idata_len(),
+    }
 }
 
 fn put16(o: &mut Vec<u8>, v: u16) {
@@ -3455,7 +3701,8 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     put32(&mut o, 0x80);
     // DOS stub: prints a message and exits when run under DOS
     o.extend_from_slice(&[
-        0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x01, 0x4C, 0xCD, 0x21, // push cs; pop ds; mov dx,0xE; mov ah,9; int 21h; mov ax,4C01h; int 21h
+        0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x01, 0x4C, 0xCD,
+        0x21, // push cs; pop ds; mov dx,0xE; mov ah,9; int 21h; mov ax,4C01h; int 21h
     ]);
     o.extend_from_slice(b"This program cannot be run in DOS mode.\r\r\n$");
     o.resize(0x80, 0);
@@ -3468,7 +3715,7 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     put32(&mut o, 0); // NumberOfSymbols
     put16(&mut o, 240); // SizeOfOptionalHeader
     put16(&mut o, 0x0022); // EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
-    // optional header (PE32+)
+                           // optional header (PE32+)
     put16(&mut o, 0x20B); // magic
     o.push(14); // linker version (informational)
     o.push(0);
@@ -3500,7 +3747,7 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     put32(&mut o, 16); // NumberOfRvaAndSizes
     for i in 0..16 {
         let (rva, size) = match i {
-            1 => (l.idata_rva, l.idata_size),                 // import table
+            1 => (l.idata_rva, l.idata_size),                    // import table
             12 => (l.iat_rva(), 8 * (IMPORTS.len() as u64 + 1)), // IAT
             _ => (0, 0),
         };
@@ -3520,10 +3767,38 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
         put16(&mut o, 0);
         put32(&mut o, flags);
     };
-    sect(b".text\0\0\0", l.text_size, l.text_rva, raw_text, ptr_text, 0x6000_0020); // code | exec | read
-    sect(b".rdata\0\0", l.rdata_size.max(1), l.rdata_rva, raw_rdata, ptr_rdata, 0x4000_0040); // initialized | read
-    sect(b".data\0\0\0", G_SIZE, l.data_rva, raw_data, ptr_data, 0xC000_0040); // initialized | read | write
-    sect(b".idata\0\0", l.idata_size, l.idata_rva, raw_idata, ptr_idata, 0xC000_0040);
+    sect(
+        b".text\0\0\0",
+        l.text_size,
+        l.text_rva,
+        raw_text,
+        ptr_text,
+        0x6000_0020,
+    ); // code | exec | read
+    sect(
+        b".rdata\0\0",
+        l.rdata_size.max(1),
+        l.rdata_rva,
+        raw_rdata,
+        ptr_rdata,
+        0x4000_0040,
+    ); // initialized | read
+    sect(
+        b".data\0\0\0",
+        G_SIZE,
+        l.data_rva,
+        raw_data,
+        ptr_data,
+        0xC000_0040,
+    ); // initialized | read | write
+    sect(
+        b".idata\0\0",
+        l.idata_size,
+        l.idata_rva,
+        raw_idata,
+        ptr_idata,
+        0xC000_0040,
+    );
     assert!(o.len() as u64 <= PE_HDR_SIZE);
     o.resize(PE_HDR_SIZE as usize, 0);
     let put_sect = |o: &mut Vec<u8>, bytes: &[u8], raw: u64| {
@@ -3563,11 +3838,29 @@ mod tests {
             x ^= x << 17;
             x
         };
-        let mut ds: Vec<i64> = (2..300).chain([1000003, 65536, 2147483647, 2147483648]).collect();
+        let mut ds: Vec<i64> = (2..300)
+            .chain([1000003, 65536, 2147483647, 2147483648])
+            .collect();
         ds.extend((0..300).map(|_| (rnd() >> (rnd() % 40 + 22)) as i64 | 2));
-        let ds: Vec<i64> = ds.iter().flat_map(|&d| [d, -d]).filter(|d| d.unsigned_abs() >= 2 && *d >= i32::MIN as i64 && *d <= i32::MAX as i64).collect();
+        let ds: Vec<i64> = ds
+            .iter()
+            .flat_map(|&d| [d, -d])
+            .filter(|d| d.unsigned_abs() >= 2 && *d >= i32::MIN as i64 && *d <= i32::MAX as i64)
+            .collect();
         for d in ds {
-            let mut ns = vec![0, 1, -1, d, -d, d - 1, d + 1, i64::MAX, i64::MIN, i64::MIN + 1, i64::MAX - 1];
+            let mut ns = vec![
+                0,
+                1,
+                -1,
+                d,
+                -d,
+                d - 1,
+                d + 1,
+                i64::MAX,
+                i64::MIN,
+                i64::MIN + 1,
+                i64::MAX - 1,
+            ];
             ns.extend((0..400).map(|_| (rnd() as i64) >> (rnd() % 64)));
             for n in ns {
                 assert_eq!(div_by_magic(n, d), n.wrapping_div(d), "{} / {}", n, d);

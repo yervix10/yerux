@@ -98,7 +98,11 @@ pub fn find_loops(f: &IrFunc) -> Vec<Loop> {
                 None => {
                     let mut body = vec![false; n];
                     body[h] = true;
-                    loops.push(Loop { header: h, body, latches: vec![] });
+                    loops.push(Loop {
+                        header: h,
+                        body,
+                        latches: vec![],
+                    });
                     loops.len() - 1
                 }
             };
@@ -127,12 +131,19 @@ pub fn make_preheader(f: &mut IrFunc, l: &Loop) -> Option<usize> {
     }
     let order = rpo(f);
     let preds = preds_of(f, &order);
-    let outside: Vec<usize> = preds[h].iter().cloned().filter(|&p| !l.body.get(p).copied().unwrap_or(false)).collect();
+    let outside: Vec<usize> = preds[h]
+        .iter()
+        .cloned()
+        .filter(|&p| !l.body.get(p).copied().unwrap_or(false))
+        .collect();
     if outside.is_empty() {
         return None;
     }
     let np = f.blocks.len();
-    f.blocks.push(Block { insts: vec![], term: Term::Jmp(h) });
+    f.blocks.push(Block {
+        insts: vec![],
+        term: Term::Jmp(h),
+    });
     for p in outside {
         match &mut f.blocks[p].term {
             Term::Jmp(x) => {
@@ -197,7 +208,13 @@ pub fn strength(f: &mut IrFunc) -> bool {
             }
             for (ix, i) in f.blocks[b].insts.iter().enumerate() {
                 if let Inst::Bin(d, Op::Add | Op::AddU, x, y) = i {
-                    let (v, step) = if d == x { (*d, *y) } else if d == y { (*d, *x) } else { continue };
+                    let (v, step) = if d == x {
+                        (*d, *y)
+                    } else if d == y {
+                        (*d, *x)
+                    } else {
+                        continue;
+                    };
                     if ndefs[v] == 1 && ndefs[step] == 0 && step != v {
                         ivs.push((v, b, ix, step));
                     }
@@ -227,7 +244,9 @@ pub fn strength(f: &mut IrFunc) -> bool {
         if cands.is_empty() {
             continue;
         }
-        let Some(np) = make_preheader(f, l) else { continue };
+        let Some(np) = make_preheader(f, l) else {
+            continue;
+        };
         let mut pre: Vec<Inst> = vec![];
         let mut made: Vec<((V, V), V)> = vec![]; // (iv, k) -> s
         let mut bumps: Vec<(usize, usize, Vec<Inst>)> = vec![]; // after (block, index): instructions
@@ -282,7 +301,8 @@ const VERSION_MAX_FUNC: usize = 6000;
 /// original loop with all its checks (so a panic still fires at exactly the same point, after the same side
 /// effects). The guard is a pure comparison on loop-invariant values, evaluated before the first iteration.
 pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
-    if cands.is_empty() || f.blocks.iter().map(|b| b.insts.len()).sum::<usize>() > VERSION_MAX_FUNC {
+    if cands.is_empty() || f.blocks.iter().map(|b| b.insts.len()).sum::<usize>() > VERSION_MAX_FUNC
+    {
         return false;
     }
     let loops = find_loops(f);
@@ -290,10 +310,16 @@ pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
     let mut changed = false;
     for l in &loops {
         // innermost only
-        if loops.iter().any(|o| o.header != l.header && l.body[o.header]) {
+        if loops
+            .iter()
+            .any(|o| o.header != l.header && l.body[o.header])
+        {
             continue;
         }
-        let size: usize = (0..nb0).filter(|&b| l.body[b]).map(|b| f.blocks[b].insts.len() + 1).sum();
+        let size: usize = (0..nb0)
+            .filter(|&b| l.body[b])
+            .map(|b| f.blocks[b].insts.len() + 1)
+            .sum();
         if size > VERSION_MAX_BODY {
             continue;
         }
@@ -307,7 +333,10 @@ pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
                 }
             }
         }
-        let mine: Vec<&CheckInfo> = cands.iter().filter(|c| c.block < nb0 && l.body[c.block] && !defd[c.len]).collect();
+        let mine: Vec<&CheckInfo> = cands
+            .iter()
+            .filter(|c| c.block < nb0 && l.body[c.block] && !defd[c.len])
+            .collect();
         if mine.is_empty() {
             continue;
         }
@@ -318,7 +347,9 @@ pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
                 None => guards.push((c.len, c.hi)),
             }
         }
-        let Some(np) = make_preheader(f, l) else { continue };
+        let Some(np) = make_preheader(f, l) else {
+            continue;
+        };
         // clone the body
         let mut map = vec![usize::MAX; nb0];
         let mut order: Vec<usize> = vec![];
@@ -329,9 +360,19 @@ pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
             }
         }
         for &b in &order {
-            let mut nbk = Block { insts: f.blocks[b].insts.clone(), term: f.blocks[b].term.clone() };
-            remap_blocks(&mut nbk.term, &|x| if x < nb0 && map[x] != usize::MAX { map[x] } else { x });
-            let mut drops: Vec<usize> = mine.iter().filter(|c| c.block == b).map(|c| c.at).collect();
+            let mut nbk = Block {
+                insts: f.blocks[b].insts.clone(),
+                term: f.blocks[b].term.clone(),
+            };
+            remap_blocks(&mut nbk.term, &|x| {
+                if x < nb0 && map[x] != usize::MAX {
+                    map[x]
+                } else {
+                    x
+                }
+            });
+            let mut drops: Vec<usize> =
+                mine.iter().filter(|c| c.block == b).map(|c| c.at).collect();
             drops.sort();
             for &at in drops.iter().rev() {
                 nbk.insts.remove(at);
@@ -349,7 +390,10 @@ pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
             let target = if gi + 1 == guards.len() {
                 fast
             } else {
-                f.blocks.push(Block { insts: vec![], term: Term::Jmp(slow) });
+                f.blocks.push(Block {
+                    insts: vec![],
+                    term: Term::Jmp(slow),
+                });
                 f.blocks.len() - 1
             };
             f.blocks[cur].insts = vec![Inst::Const(c, hi), Inst::Bin(g, Op::Lt, c, len)];

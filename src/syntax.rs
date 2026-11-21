@@ -13,7 +13,11 @@ pub struct Pos {
 
 pub fn span(a: Pos, b: Pos) -> Pos {
     if a.line == b.line && b.col + b.len >= a.col {
-        Pos { line: a.line, col: a.col, len: b.col + b.len - a.col }
+        Pos {
+            line: a.line,
+            col: a.col,
+            len: b.col + b.len - a.col,
+        }
     } else {
         a
     }
@@ -29,7 +33,11 @@ const MAX_NEST: usize = 2000;
 const MAX_CHAIN: usize = 50000;
 
 pub fn diag(msg: impl Into<String>, pos: Pos) -> Diag {
-    Diag { msg: msg.into(), pos, notes: vec![] }
+    Diag {
+        msg: msg.into(),
+        pos,
+        notes: vec![],
+    }
 }
 
 impl Diag {
@@ -42,7 +50,15 @@ impl Diag {
 pub fn render(d: &Diag, file: &str, src: &str) -> String {
     let line = src.lines().nth(d.pos.line.saturating_sub(1)).unwrap_or("");
     let w = d.pos.line.to_string().len();
-    let mut s = format!("error: {}\n{:w$}--> {}:{}:{}\n", d.msg, "", file, d.pos.line, d.pos.col, w = w);
+    let mut s = format!(
+        "error: {}\n{:w$}--> {}:{}:{}\n",
+        d.msg,
+        "",
+        file,
+        d.pos.line,
+        d.pos.col,
+        w = w
+    );
     s += &format!("{:w$} |\n", "", w = w);
     s += &format!("{} | {}\n", d.pos.line, line);
     s += &format!(
@@ -83,10 +99,14 @@ pub struct Token {
 
 const SYMS3: &[&str] = &["..="];
 const SYMS2: &[&str] = &["==", "!=", "<=", ">=", "&&", "||", "->", "=>", ".."];
-const SYMS1: &[&str] = &["(", ")", "{", "}", ",", ":", ";", "=", "<", ">", "+", "-", "*", "/", "%", "!", ".", "|", "@", "?"];
+const SYMS1: &[&str] = &[
+    "(", ")", "{", "}", ",", ":", ";", "=", "<", ">", "+", "-", "*", "/", "%", "!", ".", "|", "@",
+    "?",
+];
 pub const KW: &[&str] = &[
-    "fn", "let", "var", "if", "else", "while", "return", "move", "view", "mut", "true", "false", "struct", "enum",
-    "match", "defer", "trait", "dyn", "impl", "for", "in", "break", "continue", "unsafe", "spawn", "parallel", "scope",
+    "fn", "let", "var", "if", "else", "while", "return", "move", "view", "mut", "true", "false",
+    "struct", "enum", "match", "defer", "trait", "dyn", "impl", "for", "in", "break", "continue",
+    "unsafe", "spawn", "parallel", "scope",
 ];
 
 pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
@@ -116,8 +136,23 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
         let scol = col;
         let tok;
         if c.is_ascii_digit() {
-            let after_dot = matches!(out.last(), Some(Token { t: Tok::Sym("."), .. }));
-            let (t, ni) = lex_number(&cs, i, after_dot, Pos { line, col: scol, len: 0 })?;
+            let after_dot = matches!(
+                out.last(),
+                Some(Token {
+                    t: Tok::Sym("."),
+                    ..
+                })
+            );
+            let (t, ni) = lex_number(
+                &cs,
+                i,
+                after_dot,
+                Pos {
+                    line,
+                    col: scol,
+                    len: 0,
+                },
+            )?;
             tok = t;
             i = ni;
         } else if c.is_ascii_alphabetic() || c == '_' {
@@ -127,7 +162,9 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
             tok = Tok::Id(cs[start..i].iter().collect());
         } else if c == '\'' {
             i += 1;
-            let bad = |msg: &str, len: usize| diag(msg, Pos { line, col: scol, len }).note("a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{1F600}'; use \"..\" for text");
+            let bad = |msg: &str, len: usize| {
+                diag(msg, Pos { line, col: scol, len }).note("a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{1F600}'; use \"..\" for text")
+            };
             let ch: char = match cs.get(i) {
                 None | Some('\n') => return Err(bad("unterminated character literal", 1)),
                 Some('\'') => return Err(bad("empty character literal", 2)),
@@ -156,10 +193,20 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                             i += 1;
                             match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
                                 Some(c) => c,
-                                None => return Err(bad("this is not a valid Unicode scalar value", i - start)),
+                                None => {
+                                    return Err(bad(
+                                        "this is not a valid Unicode scalar value",
+                                        i - start,
+                                    ))
+                                }
                             }
                         }
-                        _ => return Err(bad("unknown escape in a character literal", (i - start).max(2))),
+                        _ => {
+                            return Err(bad(
+                                "unknown escape in a character literal",
+                                (i - start).max(2),
+                            ))
+                        }
                     }
                 }
                 Some(c) => {
@@ -168,7 +215,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                 }
             };
             if cs.get(i) != Some(&'\'') {
-                return Err(bad("a character literal must contain exactly one character", (i - start).max(1)));
+                return Err(bad(
+                    "a character literal must contain exactly one character",
+                    (i - start).max(1),
+                ));
             }
             i += 1;
             tok = Tok::Char(ch as i64);
@@ -186,7 +236,8 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                         Some('"') => '"',
                         Some('\\') => '\\',
                         other => {
-                            let shown = other.map_or(String::from("end of line"), |c| format!("\\{}", c));
+                            let shown =
+                                other.map_or(String::from("end of line"), |c| format!("\\{}", c));
                             return Err(diag(format!("unknown escape sequence {} in a string", shown), Pos { line, col: scol + (i - start), len: 2 })
                                 .note("escapes: \\n (newline), \\t (tab), \\r, \\\" (quote), \\\\ (backslash); write {{ and }} for literal braces"));
                         }
@@ -201,9 +252,15 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                         i += 2;
                         continue;
                     }
-                    let bpos = Pos { line, col: scol + (i - start), len: 1 };
+                    let bpos = Pos {
+                        line,
+                        col: scol + (i - start),
+                        len: 1,
+                    };
                     if cs[i] == '}' {
-                        return Err(diag("a lone `}` in a string", bpos).note("write `}}` for a literal brace, or `{name}` to insert a value"));
+                        return Err(diag("a lone `}` in a string", bpos).note(
+                            "write `}}` for a literal brace, or `{name}` to insert a value",
+                        ));
                     }
                     let mut j = i + 1;
                     while j < cs.len() && cs[j] != '}' && cs[j] != '"' && cs[j] != '\n' {
@@ -216,7 +273,9 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                     }
                     let text: String = cs[i + 1..j].iter().collect();
                     if text.trim().is_empty() {
-                        return Err(diag("empty `{}` in a string", bpos).note("write `{{}}` for literal braces, or put a value inside: \"x = {x}\""));
+                        return Err(diag("empty `{}` in a string", bpos).note(
+                            "write `{{}}` for literal braces, or put a value inside: \"x = {x}\"",
+                        ));
                     }
                     if !s.is_empty() {
                         parts.push((false, std::mem::take(&mut s), 0));
@@ -229,7 +288,14 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                 i += 1;
             }
             if i >= cs.len() || cs[i] != '"' {
-                return Err(diag("unterminated string", Pos { line, col: scol, len: 1 }));
+                return Err(diag(
+                    "unterminated string",
+                    Pos {
+                        line,
+                        col: scol,
+                        len: 1,
+                    },
+                ));
             }
             i += 1;
             if !parts.iter().any(|p| p.0) {
@@ -241,7 +307,11 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                 if !s.is_empty() {
                     parts.push((false, std::mem::take(&mut s), 0));
                 }
-                let lit_pos = Pos { line, col: scol, len: i - start };
+                let lit_pos = Pos {
+                    line,
+                    col: scol,
+                    len: i - start,
+                };
                 let mk = |t: Tok| Token { t, pos: lit_pos };
                 let mut acc: Vec<Token> = vec![
                     mk(Tok::Id("String".into())),
@@ -251,12 +321,26 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                     mk(Tok::Sym(")")),
                 ];
                 for (is_expr, text, off) in parts {
-                    let mut next = vec![mk(Tok::Id(if is_expr { "std__fmt_val" } else { "std__fmt_lit" }.into())), mk(Tok::Sym("("))];
+                    let mut next = vec![
+                        mk(Tok::Id(
+                            if is_expr {
+                                "std__fmt_val"
+                            } else {
+                                "std__fmt_lit"
+                            }
+                            .into(),
+                        )),
+                        mk(Tok::Sym("(")),
+                    ];
                     next.append(&mut acc);
                     next.push(mk(Tok::Sym(",")));
                     if is_expr {
                         let mut sub = lex(&text).map_err(|mut d| {
-                            d.pos = Pos { line, col: scol + off + d.pos.col - 1, len: d.pos.len };
+                            d.pos = Pos {
+                                line,
+                                col: scol + off + d.pos.col - 1,
+                                len: d.pos.len,
+                            };
                             d
                         })?;
                         sub.pop(); // Eof
@@ -266,12 +350,23 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                                 Tok::Sym("(") => depth += 1,
                                 Tok::Sym(")") => depth -= 1,
                                 Tok::Sym(",") if depth == 0 => {
-                                    return Err(diag("a `{}` in a string holds one expression", Pos { line, col: scol + off + t.pos.col - 1, len: 1 })
-                                        .note("write `{{` for a literal brace"));
+                                    return Err(diag(
+                                        "a `{}` in a string holds one expression",
+                                        Pos {
+                                            line,
+                                            col: scol + off + t.pos.col - 1,
+                                            len: 1,
+                                        },
+                                    )
+                                    .note("write `{{` for a literal brace"));
                                 }
                                 _ => {}
                             }
-                            t.pos = Pos { line, col: scol + off + t.pos.col - 1, len: t.pos.len };
+                            t.pos = Pos {
+                                line,
+                                col: scol + off + t.pos.col - 1,
+                                len: t.pos.len,
+                            };
                         }
                         next.append(&mut sub);
                     } else {
@@ -286,7 +381,11 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                     k += 1;
                 }
                 let n = out.len();
-                if n >= 2 && cs.get(k) == Some(&')') && out[n - 1].t == Tok::Sym("(") && out[n - 2].t == Tok::Id("print".into()) {
+                if n >= 2
+                    && cs.get(k) == Some(&')')
+                    && out[n - 1].t == Tok::Sym("(")
+                    && out[n - 2].t == Tok::Id("print".into())
+                {
                     out[n - 2].t = Tok::Id("std__print_owned".into());
                 }
                 out.extend(acc);
@@ -308,15 +407,32 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                     i += 1;
                     tok = Tok::Sym(s);
                 } else {
-                    return Err(diag(format!("unexpected character '{}'", c), Pos { line, col: scol, len: 1 }));
+                    return Err(diag(
+                        format!("unexpected character '{}'", c),
+                        Pos {
+                            line,
+                            col: scol,
+                            len: 1,
+                        },
+                    ));
                 }
             }
         }
         let len = i - start;
         col += len;
-        out.push(Token { t: tok, pos: Pos { line, col: scol, len } });
+        out.push(Token {
+            t: tok,
+            pos: Pos {
+                line,
+                col: scol,
+                len,
+            },
+        });
     }
-    out.push(Token { t: Tok::Eof, pos: Pos { line, col, len: 1 } });
+    out.push(Token {
+        t: Tok::Eof,
+        pos: Pos { line, col, len: 1 },
+    });
     Ok(out)
 }
 
@@ -326,7 +442,15 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
 fn lex_number(cs: &[char], start: usize, after_dot: bool, p: Pos) -> Result<(Tok, usize), Diag> {
     let mut i = start;
     let at = |k: usize| cs.get(k).copied().unwrap_or('\0');
-    let err = |m: String, i: usize| diag(m, Pos { len: i - start, ..p });
+    let err = |m: String, i: usize| {
+        diag(
+            m,
+            Pos {
+                len: i - start,
+                ..p
+            },
+        )
+    };
     let radix = if at(i) == '0' && !after_dot && matches!(at(i + 1), 'x' | 'X') {
         16
     } else if at(i) == '0' && !after_dot && matches!(at(i + 1), 'b' | 'B') {
@@ -335,13 +459,17 @@ fn lex_number(cs: &[char], start: usize, after_dot: bool, p: Pos) -> Result<(Tok
         10
     };
     let suffix_at = |mut j: usize, allow_f: bool| -> (usize, &'static str) {
-        let sfx = ["i64", "i32", "i16", "i8", "u64", "u32", "u16", "u8", "f64", "f32"];
+        let sfx = [
+            "i64", "i32", "i16", "i8", "u64", "u32", "u16", "u8", "f64", "f32",
+        ];
         for s in sfx {
             if s.starts_with('f') && !allow_f {
                 continue;
             }
             let n = s.len();
-            if (j..j + n).map(at).collect::<String>() == s && !(at(j + n).is_ascii_alphanumeric() || at(j + n) == '_') {
+            if (j..j + n).map(at).collect::<String>() == s
+                && !(at(j + n).is_ascii_alphanumeric() || at(j + n) == '_')
+            {
                 j += n;
                 return (j, s);
             }
@@ -356,14 +484,29 @@ fn lex_number(cs: &[char], start: usize, after_dot: bool, p: Pos) -> Result<(Tok
         }
         let txt: String = cs[ds..i].iter().filter(|c| **c != '_').collect();
         if txt.is_empty() {
-            return Err(err(format!("expected digits after `0{}`", if radix == 16 { 'x' } else { 'b' }), i));
+            return Err(err(
+                format!(
+                    "expected digits after `0{}`",
+                    if radix == 16 { 'x' } else { 'b' }
+                ),
+                i,
+            ));
         }
-        let v = u64::from_str_radix(&txt, radix).map_err(|_| err("number too large (the largest is 18446744073709551615)".into(), i))?;
+        let v = u64::from_str_radix(&txt, radix).map_err(|_| {
+            err(
+                "number too large (the largest is 18446744073709551615)".into(),
+                i,
+            )
+        })?;
         let (j, sfx) = suffix_at(i, false);
         if at(j).is_ascii_alphanumeric() || at(j) == '_' {
             return Err(err("unexpected letters after a number".into(), j + 1));
         }
-        return Ok(if sfx.is_empty() && v <= i64::MAX as u64 { (Tok::Num(v as i64), j) } else { (Tok::NumT(v, sfx), j) });
+        return Ok(if sfx.is_empty() && v <= i64::MAX as u64 {
+            (Tok::Num(v as i64), j)
+        } else {
+            (Tok::NumT(v, sfx), j)
+        });
     }
     while at(i).is_ascii_digit() || (at(i) == '_' && at(i + 1).is_ascii_digit()) {
         i += 1;
@@ -377,7 +520,10 @@ fn lex_number(cs: &[char], start: usize, after_dot: bool, p: Pos) -> Result<(Tok
                 i += 1;
             }
         }
-        if matches!(at(i), 'e' | 'E') && (at(i + 1).is_ascii_digit() || (matches!(at(i + 1), '+' | '-') && at(i + 2).is_ascii_digit())) {
+        if matches!(at(i), 'e' | 'E')
+            && (at(i + 1).is_ascii_digit()
+                || (matches!(at(i + 1), '+' | '-') && at(i + 2).is_ascii_digit()))
+        {
             is_float = true;
             i += 2;
             while at(i).is_ascii_digit() {
@@ -386,10 +532,19 @@ fn lex_number(cs: &[char], start: usize, after_dot: bool, p: Pos) -> Result<(Tok
         }
     }
     let txt: String = cs[start..i].iter().filter(|c| **c != '_').collect();
-    let (j, sfx) = if after_dot { (i, "") } else { suffix_at(i, true) };
+    let (j, sfx) = if after_dot {
+        (i, "")
+    } else {
+        suffix_at(i, true)
+    };
     if !after_dot && sfx.is_empty() && (at(j).is_ascii_alphabetic() || at(j) == '_') {
-        return Err(err(format!("unexpected letters after the number `{}`", txt), j + 1)
-            .note("number suffixes are i8 i16 i32 i64 u8 u16 u32 u64 f32 f64, e.g. `200u8` or `1.5f32`"));
+        return Err(err(
+            format!("unexpected letters after the number `{}`", txt),
+            j + 1,
+        )
+        .note(
+            "number suffixes are i8 i16 i32 i64 u8 u16 u32 u64 f32 f64, e.g. `200u8` or `1.5f32`",
+        ));
     }
     if is_float || sfx.starts_with('f') {
         return Ok((Tok::Float(txt, sfx), j));
@@ -397,7 +552,10 @@ fn lex_number(cs: &[char], start: usize, after_dot: bool, p: Pos) -> Result<(Tok
     match txt.parse::<u64>() {
         Ok(v) if v <= i64::MAX as u64 && sfx.is_empty() => Ok((Tok::Num(v as i64), j)),
         Ok(v) => Ok((Tok::NumT(v, sfx), j)),
-        Err(_) => Err(err("number too large (the largest is 18446744073709551615, written as UInt64)".into(), j)),
+        Err(_) => Err(err(
+            "number too large (the largest is 18446744073709551615, written as UInt64)".into(),
+            j,
+        )),
     }
 }
 
@@ -415,8 +573,8 @@ pub enum Ty {
     Text,
     String,
     List(usize), // index into `Types::lists` (the element type): List<T> is interned
-    Box(usize),  // index into `Types::boxes` (the pointee): Box<T> is interned; an owned heap cell holding one T
-    Ptr(usize),  // index into `Types::ptrs`; an unowned raw pointer for C interop
+    Box(usize), // index into `Types::boxes` (the pointee): Box<T> is interned; an owned heap cell holding one T
+    Ptr(usize), // index into `Types::ptrs`; an unowned raw pointer for C interop
     Dyn(usize), // erased pointee, used only behind Box or a borrow
     Struct(usize),
     Enum(usize),
@@ -444,7 +602,7 @@ pub struct StructDef {
     pub fields: Vec<(String, Ty)>,
     pub pos: Pos,
     pub origin: Option<(String, Vec<Ty>)>, // generic struct and type arguments this was instantiated from
-    pub generic: bool,                     // mentions a type parameter: only used while checking, never emitted
+    pub generic: bool, // mentions a type parameter: only used while checking, never emitted
 }
 
 #[derive(Clone)]
@@ -486,7 +644,7 @@ pub struct Types {
     pub dyns: Vec<(String, Pos)>,
     pub dyn_tables: Vec<DynTable>,
     pub boxes: Vec<Ty>, // pointee type of every Box<T> instantiation named in the program
-    pub ptrs: Vec<Ty>, // pointee type of every Ptr<T> instantiation
+    pub ptrs: Vec<Ty>,  // pointee type of every Ptr<T> instantiation
     pub params: Vec<ParamDef>,
     pub thread_bound: HashSet<String>,
     pub fns: Vec<FnTy>, // every function type named in the program (interned)
@@ -496,7 +654,19 @@ impl Types {
     pub fn name(&self, t: Ty) -> String {
         match t {
             Ty::Int => "Int".into(),
-            Ty::Range(lo, hi) => format!("Int<{}..{}>", if lo == i64::MIN { String::new() } else { lo.to_string() }, if hi == i64::MAX { String::new() } else { hi.to_string() }),
+            Ty::Range(lo, hi) => format!(
+                "Int<{}..{}>",
+                if lo == i64::MIN {
+                    String::new()
+                } else {
+                    lo.to_string()
+                },
+                if hi == i64::MAX {
+                    String::new()
+                } else {
+                    hi.to_string()
+                }
+            ),
             Ty::Num(k) => k.name().into(),
             Ty::Char => "Char".into(),
             Ty::Bool => "Bool".into(),
@@ -536,8 +706,15 @@ impl Types {
     pub fn owned(&self, t: Ty) -> bool {
         match t {
             Ty::List(_) | Ty::String | Ty::Box(_) | Ty::Fn(_) | Ty::Dyn(_) => true,
-            Ty::Struct(i) => self.is_lock_guard(i) || self.join_payload(i).is_some() || self.structs[i].fields.iter().any(|(_, f)| self.owned(*f)),
-            Ty::Enum(i) => self.enums[i].variants.iter().any(|(_, ps)| ps.iter().any(|p| self.owned(*p))),
+            Ty::Struct(i) => {
+                self.is_lock_guard(i)
+                    || self.join_payload(i).is_some()
+                    || self.structs[i].fields.iter().any(|(_, f)| self.owned(*f))
+            }
+            Ty::Enum(i) => self.enums[i]
+                .variants
+                .iter()
+                .any(|(_, ps)| ps.iter().any(|p| self.owned(*p))),
             // inside a generic body a `T` may be anything, so it is owned (moved) unless declared `T: Copy`
             Ty::Param(i) => !self.params[i].bounds.iter().any(|b| b == "Copy"),
             _ => false,
@@ -549,7 +726,10 @@ impl Types {
             return None;
         }
         let flag = format!("live_{capture}");
-        def.fields.iter().any(|(name, _)| *name == flag).then_some(flag)
+        def.fields
+            .iter()
+            .any(|(name, _)| *name == flag)
+            .then_some(flag)
     }
 
     pub fn runtime_struct(&self, id: usize, expected: &str) -> Option<Ty> {
@@ -570,9 +750,16 @@ impl Types {
             match ty {
                 Ty::Box(i) => contains(types, types.boxes[i], seen),
                 Ty::List(i) => contains(types, types.lists[i], seen),
-                Ty::Struct(i) => types.join_payload(i).is_some()
-                    || types.structs[i].fields.iter().any(|(_, t)| contains(types, *t, seen)),
-                Ty::Enum(i) => types.enums[i].variants.iter()
+                Ty::Struct(i) => {
+                    types.join_payload(i).is_some()
+                        || types.structs[i]
+                            .fields
+                            .iter()
+                            .any(|(_, t)| contains(types, *t, seen))
+                }
+                Ty::Enum(i) => types.enums[i]
+                    .variants
+                    .iter()
                     .any(|(_, fields)| fields.iter().any(|t| contains(types, *t, seen))),
                 _ => false,
             }
@@ -600,14 +787,20 @@ impl Types {
     }
 
     pub fn opaque_struct(&self, id: usize) -> bool {
-        self.is_lock_guard(id) || ["JoinHandle", "Shared", "Atomic", "Locked"].iter().any(|name| self.runtime_struct(id, name).is_some())
+        self.is_lock_guard(id)
+            || ["JoinHandle", "Shared", "Atomic", "Locked"]
+                .iter()
+                .any(|name| self.runtime_struct(id, name).is_some())
     }
     /// Does the type mention a type parameter (so it can only exist while checking generic code)?
     pub fn has_param(&self, t: Ty) -> bool {
         match t {
             Ty::Param(_) | Ty::Err => true, // Err: placeholder while a generic header is first read
             Ty::List(i) => self.has_param(self.lists[i]),
-            Ty::Fn(i) => self.fns[i].params.iter().any(|(_, t)| self.has_param(*t)) || self.has_param(self.fns[i].ret),
+            Ty::Fn(i) => {
+                self.fns[i].params.iter().any(|(_, t)| self.has_param(*t))
+                    || self.has_param(self.fns[i].ret)
+            }
             Ty::Box(i) => self.has_param(self.boxes[i]),
             Ty::Ptr(i) => self.has_param(self.ptrs[i]),
             Ty::Struct(i) => self.structs[i].generic,
@@ -619,7 +812,11 @@ impl Types {
     pub fn mangle(&self, t: Ty) -> String {
         match t {
             Ty::Int => "Int".into(),
-            Ty::Range(lo, hi) => format!("Range_{}_{}", lo.to_string().replace('-', "m"), hi.to_string().replace('-', "m")),
+            Ty::Range(lo, hi) => format!(
+                "Range_{}_{}",
+                lo.to_string().replace('-', "m"),
+                hi.to_string().replace('-', "m")
+            ),
             Ty::Num(k) => k.name().into(),
             Ty::Char => "Char".into(),
             Ty::Bool => "Bool".into(),
@@ -637,7 +834,17 @@ impl Types {
                 let ps: Vec<String> = f
                     .params
                     .iter()
-                    .map(|(m, t)| format!("{}{}", match m { Mode::Own => "", Mode::View => "v", Mode::Mut => "m" }, self.mangle(*t)))
+                    .map(|(m, t)| {
+                        format!(
+                            "{}{}",
+                            match m {
+                                Mode::Own => "",
+                                Mode::View => "v",
+                                Mode::Mut => "m",
+                            },
+                            self.mangle(*t)
+                        )
+                    })
                     .collect();
                 format!("Fn_{}_R{}", ps.join("_"), self.mangle(f.ret))
             }
@@ -706,30 +913,74 @@ pub enum EK {
     Bin(&'static str, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
     /// Type-level function: `List<T>.new()`, `String.from(x)`, ...
-    Static { ty: Ty, f: String, args: Vec<Expr> },
-    Method { recv: Box<Expr>, m: String, args: Vec<Expr> },
-    StructLit { sid: usize, fields: Vec<(String, Expr)> },
-    Variant { eid: usize, vname: String, vid: usize, args: Vec<Expr> },
+    Static {
+        ty: Ty,
+        f: String,
+        args: Vec<Expr>,
+    },
+    Method {
+        recv: Box<Expr>,
+        m: String,
+        args: Vec<Expr>,
+    },
+    StructLit {
+        sid: usize,
+        fields: Vec<(String, Expr)>,
+    },
+    Variant {
+        eid: usize,
+        vname: String,
+        vid: usize,
+        args: Vec<Expr>,
+    },
     /// `base` is the variant with index `vid` (created by the checker for general `match`)
     IsVariant(Box<Expr>, usize),
     /// payload `k` of variant `vid` of the enum value `base` (only evaluated after `IsVariant` held)
     Payload(Box<Expr>, usize, usize),
     /// Literal of a generic struct, `Pair<Int, Text> { .. }` or `Pair { .. }` (type arguments inferred);
     /// the checker turns it into `StructLit` of the right instantiation.
-    GenStruct { name: String, targs: Option<Vec<Ty>>, fields: Vec<(String, Expr)> },
+    GenStruct {
+        name: String,
+        targs: Option<Vec<Ty>>,
+        fields: Vec<(String, Expr)>,
+    },
     /// Same for a generic enum variant: `Maybe<Int>.None`, `Maybe.Some(5)`.
-    GenVariant { name: String, targs: Option<Vec<Ty>>, vname: String, args: Vec<Expr> },
+    GenVariant {
+        name: String,
+        targs: Option<Vec<Ty>>,
+        vname: String,
+        args: Vec<Expr>,
+    },
     /// `|x, y| x + y`, `move |x: Int| -> Int { .. }`: parsed only; the checker lifts the body into a function
     /// and turns the literal into `MkClosure`.
-    Closure { params: Vec<CParam>, ret: Option<Ty>, body: Vec<Stmt>, is_move: bool, expr_body: bool, parallel: bool, worker: bool },
+    Closure {
+        params: Vec<CParam>,
+        ret: Option<Ty>,
+        body: Vec<Stmt>,
+        is_move: bool,
+        expr_body: bool,
+        parallel: bool,
+        worker: bool,
+    },
     /// A function value: `func` is called as `func(env, args..)`. With `env: Some(sid)` the value owns a heap
     /// environment (struct `sid`: word 0 is the drop function, then one field per capture, `caps` in order);
     /// without captures it is a plain code pointer (environment 0). A by-reference capture is `AddrOf(place)`.
-    MkClosure { func: String, env: Option<usize>, caps: Vec<Expr> },
+    MkClosure {
+        func: String,
+        env: Option<usize>,
+        caps: Vec<Expr>,
+    },
     /// Call of a function value (a place of function type): `f(3)`.
     CallFn(Box<Expr>, Vec<Expr>),
-    DynBox { table: usize, value: Box<Expr> },
-    DynCall { slot: usize, sig: FnTy, args: Vec<Expr> },
+    DynBox {
+        table: usize,
+        value: Box<Expr>,
+    },
+    DynCall {
+        slot: usize,
+        sig: FnTy,
+        args: Vec<Expr>,
+    },
     /// The address of a variable, as an `Int` (environment of a borrowing closure); the flag: borrowed mutably.
     AddrOf(Box<Expr>, bool),
     /// The place whose address is the `Int` value of the operand (only as the source of a `Bind`).
@@ -746,9 +997,9 @@ pub struct CParam {
 
 #[derive(Clone)]
 pub struct Arm {
-    pub vname: String,                // variant name, or "_" for the wildcard
-    pub variant: Option<usize>,       // resolved by the checker
-    pub binds: Vec<(String, usize)>,  // payload bindings (name, variable id)
+    pub vname: String,               // variant name, or "_" for the wildcard
+    pub variant: Option<usize>,      // resolved by the checker
+    pub binds: Vec<(String, usize)>, // payload bindings (name, variable id)
     pub body: Vec<Stmt>,
     pub pos: Pos,
     /// the general pattern when the arm is not a plain `Variant(a, b)` / `_` (guards, `|`, literals, tuples, ..)
@@ -881,18 +1132,32 @@ pub struct ExternFn {
 
 impl Program {
     pub fn has_recoverable_workers(&self) -> bool {
-        self.funcs.iter().any(|f| f.pos.line >= PRELUDE_LINE && f.name.starts_with("__spawn_owned__"))
+        self.funcs
+            .iter()
+            .any(|f| f.pos.line >= PRELUDE_LINE && f.name.starts_with("__spawn_owned__"))
     }
 }
 
 pub fn pat_pos(p: &Pat) -> Pos {
     match p {
-        Pat::Wild(p) | Pat::Bind(_, _, p) | Pat::Int(_, p) | Pat::Char(_, p) | Pat::Bool(_, p) | Pat::Range(_, _, _, p) | Pat::Variant(_, _, p) | Pat::Tuple(_, p) | Pat::Or(_, p) => *p,
+        Pat::Wild(p)
+        | Pat::Bind(_, _, p)
+        | Pat::Int(_, p)
+        | Pat::Char(_, p)
+        | Pat::Bool(_, p)
+        | Pat::Range(_, _, _, p)
+        | Pat::Variant(_, _, p)
+        | Pat::Tuple(_, p)
+        | Pat::Or(_, p) => *p,
     }
 }
 
 fn mk(k: EK, pos: Pos) -> Expr {
-    Expr { k, pos, ty: Ty::Unit }
+    Expr {
+        k,
+        pos,
+        ty: Ty::Unit,
+    }
 }
 
 // ───────────────────────── Parser ─────────────────────────
@@ -984,7 +1249,7 @@ pub struct Parser {
     self_ty: Option<Ty>,          // `Self` inside an impl or a trait
     in_extern: bool,              // parsing a header inside `extern "C" { }`: `...` is allowed
     saw_variadic: bool,           // set by `fn_header_rest` when the header ended in `...`
-    prelude_len: usize, // tokens [0, prelude_len) are the built-in prelude
+    prelude_len: usize,           // tokens [0, prelude_len) are the built-in prelude
     thread_scopes: usize,
     memo: HashMap<(String, Vec<Ty>), Ty>,
     depth: usize,
@@ -994,9 +1259,15 @@ pub struct Parser {
     pub lazy_fns: HashMap<String, usize>,
 }
 
-const LEVELS: &[&[&str]] = &[&["||"], &["&&"], &["==", "!="], &["<", ">", "<=", ">="], &["+", "-"], &["*", "/", "%"]];
+const LEVELS: &[&[&str]] = &[
+    &["||"],
+    &["&&"],
+    &["==", "!="],
+    &["<", ">", "<=", ">="],
+    &["+", "-"],
+    &["*", "/", "%"],
+];
 const BUILTIN_TYPES: &[&str] = &["Int", "Char", "Bool", "Text", "String", "List"];
-
 
 /// Built-in traits and their implementations for the primitive types (parsed lazily, on first use).
 pub const PRELUDE_LINE: usize = 1 << 40; // tag on the line numbers of the built-in library
@@ -1032,9 +1303,9 @@ impl Parser {
     pub fn new(user: Vec<Token>) -> Parser {
         let mut t = lex(PRELUDE).unwrap_or_else(|d| panic!("prelude: {}", d.msg));
         t.pop(); // the prelude's Eof
-    for tk in t.iter_mut() {
-        tk.pos.line |= PRELUDE_LINE;
-    }
+        for tk in t.iter_mut() {
+            tk.pos.line |= PRELUDE_LINE;
+        }
         let prelude_len = t.len();
         t.extend(user);
         let mut names = HashMap::new();
@@ -1042,15 +1313,32 @@ impl Parser {
         let blank = |n: &str| (n.to_string(), Pos::default());
         for w in t.windows(3) {
             if let (Tok::Id(k), Tok::Id(n)) = (&w[0].t, &w[1].t) {
-                if (k == "struct" || k == "enum") && !names.contains_key(n) && w[2].t != Tok::Sym("<") {
+                if (k == "struct" || k == "enum")
+                    && !names.contains_key(n)
+                    && w[2].t != Tok::Sym("<")
+                {
                     if k == "struct" {
                         names.insert(n.clone(), Ty::Struct(types.structs.len()));
                         let (name, pos) = blank(n);
-                        types.structs.push(StructDef { cname: name.clone(), name, fields: vec![], pos, origin: None, generic: false });
+                        types.structs.push(StructDef {
+                            cname: name.clone(),
+                            name,
+                            fields: vec![],
+                            pos,
+                            origin: None,
+                            generic: false,
+                        });
                     } else {
                         names.insert(n.clone(), Ty::Enum(types.enums.len()));
                         let (name, pos) = blank(n);
-                        types.enums.push(EnumDef { cname: name.clone(), name, variants: vec![], pos, origin: None, generic: false });
+                        types.enums.push(EnumDef {
+                            cname: name.clone(),
+                            name,
+                            variants: vec![],
+                            pos,
+                            origin: None,
+                            generic: false,
+                        });
                     }
                 }
             }
@@ -1093,8 +1381,11 @@ impl Parser {
     }
     fn too_long(&self, what: &str, n: usize) -> PR<()> {
         if n > MAX_CHAIN {
-            return Err(diag(format!("{} is more than {} items long", what, MAX_CHAIN), self.pos())
-                .note("break it into several statements with `let`"));
+            return Err(diag(
+                format!("{} is more than {} items long", what, MAX_CHAIN),
+                self.pos(),
+            )
+            .note("break it into several statements with `let`"));
         }
         Ok(())
     }
@@ -1201,14 +1492,22 @@ impl Parser {
             } else {
                 Mode::Own
             };
-            let ty = if mode == Mode::Own { self.ty()? } else { self.indirect_ty()? };
+            let ty = if mode == Mode::Own {
+                self.ty()?
+            } else {
+                self.indirect_ty()?
+            };
             params.push((mode, ty));
             if !self.eat_sym(",") {
                 break;
             }
         }
         self.expect_sym(")")?;
-        let ret = if self.eat_sym("->") { self.ty()? } else { Ty::Unit };
+        let ret = if self.eat_sym("->") {
+            self.ty()?
+        } else {
+            Ty::Unit
+        };
         Ok(self.types.intern_fn(FnTy { params, ret }))
     }
 
@@ -1234,7 +1533,10 @@ impl Parser {
 
     fn ty_inner(&mut self) -> PR<Ty> {
         if self.is_kw("dyn") {
-            return Err(diag("dyn Trait requires Box or a view or mut parameter", self.pos()));
+            return Err(diag(
+                "dyn Trait requires Box or a view or mut parameter",
+                self.pos(),
+            ));
         }
         if self.is_kw("fn") {
             self.bump();
@@ -1251,8 +1553,14 @@ impl Parser {
             }
             let close = self.expect_sym(")")?;
             if !(2..=6).contains(&ts.len()) {
-                return Err(diag(format!("a tuple type has 2 to 6 elements, this one has {}", ts.len()), span(open, close))
-                    .note("help: for more elements, define a struct with named fields"));
+                return Err(diag(
+                    format!(
+                        "a tuple type has 2 to 6 elements, this one has {}",
+                        ts.len()
+                    ),
+                    span(open, close),
+                )
+                .note("help: for more elements, define a struct with named fields"));
             }
             return self.inst_type(&format!("Tuple{}", ts.len()), ts, open);
         }
@@ -1262,12 +1570,15 @@ impl Parser {
         }
         if n == "Self" {
             return self.self_ty.ok_or_else(|| {
-                diag("`Self` only exists inside `impl` and `trait`", p).note("help: write the type's name instead")
+                diag("`Self` only exists inside `impl` and `trait`", p)
+                    .note("help: write the type's name instead")
             });
         }
         match n.as_str() {
             "Int" => {
-                if !self.eat_sym("<") { return Ok(Ty::Int); }
+                if !self.eat_sym("<") {
+                    return Ok(Ty::Int);
+                }
                 self.range_after_lt(p)
             }
             "Char" => Ok(Ty::Char),
@@ -1277,7 +1588,8 @@ impl Parser {
             "List" => self.list_args(),
             "Box" if self.uses_builtin_box(p) => {
                 if !self.is_sym("<") {
-                    return Err(diag("Box needs a type argument", p).note("help: write Box<T>, e.g. `Box<Tree>`"));
+                    return Err(diag("Box needs a type argument", p)
+                        .note("help: write Box<T>, e.g. `Box<Tree>`"));
                 }
                 self.bump();
                 let e = self.indirect_ty()?;
@@ -1286,7 +1598,8 @@ impl Parser {
             }
             "Ptr" if !self.names.contains_key("Ptr") && !self.gtypes.contains_key("Ptr") => {
                 if !self.is_sym("<") {
-                    return Err(diag("Ptr needs a type argument", p).note("help: write Ptr<T>, for example Ptr<UInt8>"));
+                    return Err(diag("Ptr needs a type argument", p)
+                        .note("help: write Ptr<T>, for example Ptr<UInt8>"));
                 }
                 self.bump();
                 let pointee = self.indirect_ty()?;
@@ -1298,8 +1611,10 @@ impl Parser {
                 if self.gtypes.contains_key(&n) {
                     if !self.is_sym("<") {
                         let g = &self.gtypes[&n];
-                        return Err(diag(format!("{} is generic: it needs type arguments", n), p)
-                            .note(format!("help: write {}<{}>", n, g.params.join(", "))));
+                        return Err(
+                            diag(format!("{} is generic: it needs type arguments", n), p)
+                                .note(format!("help: write {}<{}>", n, g.params.join(", "))),
+                        );
                     }
                     let args = self.type_args()?;
                     return self.inst_type(&n, args, p);
@@ -1312,22 +1627,31 @@ impl Parser {
     }
 
     fn uses_builtin_box(&self, pos: Pos) -> bool {
-        pos.line >= PRELUDE_LINE || (!self.names.contains_key("Box") && !self.gtypes.contains_key("Box"))
+        pos.line >= PRELUDE_LINE
+            || (!self.names.contains_key("Box") && !self.gtypes.contains_key("Box"))
     }
 
     pub fn uses_workers(&self) -> bool {
-        self.t[self.prelude_len..].iter().any(|token| matches!(&token.t, Tok::Id(name) if name == "spawn"))
+        self.t[self.prelude_len..]
+            .iter()
+            .any(|token| matches!(&token.t, Tok::Id(name) if name == "spawn"))
     }
 
     fn new_param(&mut self, name: &str, bounds: Vec<String>) -> Ty {
-        self.types.params.push(ParamDef { name: name.to_string(), bounds });
+        self.types.params.push(ParamDef {
+            name: name.to_string(),
+            bounds,
+        });
         Ty::Param(self.types.params.len() - 1)
     }
 
     fn intern_ptr(&mut self, pointee: Ty) -> Ty {
         match self.types.ptrs.iter().position(|t| *t == pointee) {
             Some(i) => Ty::Ptr(i),
-            None => { self.types.ptrs.push(pointee); Ty::Ptr(self.types.ptrs.len() - 1) }
+            None => {
+                self.types.ptrs.push(pointee);
+                Ty::Ptr(self.types.ptrs.len() - 1)
+            }
         }
     }
 
@@ -1336,7 +1660,12 @@ impl Parser {
         let g = self.gtypes[name].clone();
         if args.len() != g.params.len() {
             return Err(diag(
-                format!("{} takes {} type argument(s) but {} given", name, g.params.len(), args.len()),
+                format!(
+                    "{} takes {} type argument(s) but {} given",
+                    name,
+                    g.params.len(),
+                    args.len()
+                ),
                 pos,
             )
             .note(format!("help: write {}<{}>", name, g.params.join(", "))));
@@ -1349,7 +1678,9 @@ impl Parser {
             return Err(diag(format!("the generic type {} expands forever", name), pos)
                 .note("help: a generic type cannot contain itself with a different argument each time (e.g. `Bad<List<T>>`)"));
         }
-        let generic = args.iter().any(|a| *a == Ty::Err || self.types.has_param(*a));
+        let generic = args
+            .iter()
+            .any(|a| *a == Ty::Err || self.types.has_param(*a));
         let shown: Vec<String> = args.iter().map(|a| self.types.name(*a)).collect();
         let mang: Vec<String> = args.iter().map(|a| self.types.mangle(*a)).collect();
         let dname = if g.body < self.prelude_len && name.starts_with("Tuple") {
@@ -1359,15 +1690,33 @@ impl Parser {
         };
         let cname = format!("{}__{}", name, mang.join("__"));
         let ty = if g.is_enum {
-            self.types.enums.push(EnumDef { name: dname, cname, variants: vec![], pos: g.pos, origin: Some((name.to_string(), args.clone())), generic });
+            self.types.enums.push(EnumDef {
+                name: dname,
+                cname,
+                variants: vec![],
+                pos: g.pos,
+                origin: Some((name.to_string(), args.clone())),
+                generic,
+            });
             Ty::Enum(self.types.enums.len() - 1)
         } else {
-            self.types.structs.push(StructDef { name: dname, cname, fields: vec![], pos: g.pos, origin: Some((name.to_string(), args.clone())), generic });
+            self.types.structs.push(StructDef {
+                name: dname,
+                cname,
+                fields: vec![],
+                pos: g.pos,
+                origin: Some((name.to_string(), args.clone())),
+                generic,
+            });
             Ty::Struct(self.types.structs.len() - 1)
         };
         self.memo.insert(key, ty);
         // re-parse the body under the substitution
-        let saved = (self.i, std::mem::take(&mut self.tparams), self.self_ty.take());
+        let saved = (
+            self.i,
+            std::mem::take(&mut self.tparams),
+            self.self_ty.take(),
+        );
         self.i = g.body;
         self.tparams = g.params.iter().cloned().zip(args).collect();
         self.depth += 1;
@@ -1433,7 +1782,10 @@ impl Parser {
         while !self.is_sym(">") {
             let (name, np) = self.ident()?;
             if v.iter().any(|p| p.name == name) {
-                return Err(diag(format!("type parameter '{}' is declared twice", name), np));
+                return Err(diag(
+                    format!("type parameter '{}' is declared twice", name),
+                    np,
+                ));
             }
             let mut bounds = vec![];
             if self.eat_sym(":") {
@@ -1452,7 +1804,10 @@ impl Parser {
         }
         self.expect_sym(">")?;
         if v.is_empty() {
-            return Err(diag("a generic list needs at least one type parameter", self.pos()));
+            return Err(diag(
+                "a generic list needs at least one type parameter",
+                self.pos(),
+            ));
         }
         Ok(v)
     }
@@ -1469,7 +1824,10 @@ impl Parser {
                     self.types.thread_bound.insert(name.clone());
                 }
             }
-            if (self.is_kw("struct") || self.is_kw("enum")) && matches!(self.peek_at(1), Tok::Id(_)) && *self.peek_at(2) == Tok::Sym("<") {
+            if (self.is_kw("struct") || self.is_kw("enum"))
+                && matches!(self.peek_at(1), Tok::Id(_))
+                && *self.peek_at(2) == Tok::Sym("<")
+            {
                 let is_enum = self.is_kw("enum");
                 self.bump();
                 let (name, pos) = self.type_name()?;
@@ -1482,9 +1840,24 @@ impl Parser {
                     return Err(diag(format!("type '{}' is defined twice", name), pos));
                 }
                 let params: Vec<String> = gl.iter().map(|p| p.name.clone()).collect();
-                let pids = params.iter().map(|p| match self.new_param(p, vec![]) { Ty::Param(i) => i, _ => 0 }).collect();
+                let pids = params
+                    .iter()
+                    .map(|p| match self.new_param(p, vec![]) {
+                        Ty::Param(i) => i,
+                        _ => 0,
+                    })
+                    .collect();
                 let body = self.i;
-                self.gtypes.insert(name, GenType { is_enum, params, pids, body, pos });
+                self.gtypes.insert(
+                    name,
+                    GenType {
+                        is_enum,
+                        params,
+                        pids,
+                        body,
+                        pos,
+                    },
+                );
                 self.skip_braces()?;
             } else {
                 self.skip_item()?;
@@ -1512,7 +1885,10 @@ impl Parser {
             if matches!(self.peek(), Tok::Id(n) if n == "type") {
                 self.bump();
                 let (name, pos) = self.ident()?;
-                if self.names.contains_key(&name) || BUILTIN_TYPES.contains(&name.as_str()) || numeric::NUMERIC_TYPE_NAMES.contains(&name.as_str()) {
+                if self.names.contains_key(&name)
+                    || BUILTIN_TYPES.contains(&name.as_str())
+                    || numeric::NUMERIC_TYPE_NAMES.contains(&name.as_str())
+                {
                     return Err(diag(format!("type '{}' is already defined", name), pos));
                 }
                 self.expect_sym("=")?;
@@ -1524,7 +1900,9 @@ impl Parser {
             if self.is_kw("link") {
                 self.bump();
                 match self.bump() {
-                    Token { t: Tok::Str(lib), .. } => links.push(lib),
+                    Token {
+                        t: Tok::Str(lib), ..
+                    } => links.push(lib),
                     t => return Err(diag("expected a library name string after `link`", t.pos)),
                 }
                 continue;
@@ -1541,14 +1919,24 @@ impl Parser {
                     let h = self.fn_header();
                     self.in_extern = false;
                     let h = h?;
-                    if !h.generics.is_empty() { return Err(diag("extern functions cannot be generic", h.pos)); }
+                    if !h.generics.is_empty() {
+                        return Err(diag("extern functions cannot be generic", h.pos));
+                    }
                     self.eat_sym(";");
-                    externs.push(ExternFn { name: h.name, params: h.params, ret: h.ret, variadic: self.saw_variadic, pos: h.pos });
+                    externs.push(ExternFn {
+                        name: h.name,
+                        params: h.params,
+                        ret: h.ret,
+                        variadic: self.saw_variadic,
+                        pos: h.pos,
+                    });
                 }
                 self.bump();
                 continue;
             }
-            if self.eat_sym("@") { self.bump(); } // validated during registration
+            if self.eat_sym("@") {
+                self.bump();
+            } // validated during registration
             if self.is_kw("struct") || self.is_kw("enum") {
                 if *self.peek_at(2) == Tok::Sym("<") {
                     self.skip_item()?;
@@ -1558,7 +1946,11 @@ impl Parser {
                 let (name, pos, ty) = {
                     let n = self.peek_at(1).clone();
                     let name = if let Tok::Id(n) = n { n } else { String::new() };
-                    (name.clone(), self.t[(self.i + 1).min(self.t.len() - 1)].pos, self.names.get(&name).copied())
+                    (
+                        name.clone(),
+                        self.t[(self.i + 1).min(self.t.len() - 1)].pos,
+                        self.names.get(&name).copied(),
+                    )
                 };
                 if defined.contains(&name) {
                     return Err(diag(format!("type '{}' is defined twice", name), pos));
@@ -1585,11 +1977,29 @@ impl Parser {
                 if !h.generics.is_empty() {
                     // generic function: re-parsed per instantiation; its body is skipped here
                     if self.gfns.iter().any(|g| g.name == h.name) {
-                        return Err(diag(format!("function '{}' is defined twice", h.name), h.pos));
+                        return Err(diag(
+                            format!("function '{}' is defined twice", h.name),
+                            h.pos,
+                        ));
                     }
                     self.skip_item()?;
-                    let pids = h.generics.iter().map(|p| match self.new_param(&p.name, vec![]) { Ty::Param(i) => i, _ => 0 }).collect();
-                    self.gfns.push(GenFn { name: h.name, tparams: h.generics, pids, tok, pos: h.pos, params: vec![], ret: Ty::Unit });
+                    let pids = h
+                        .generics
+                        .iter()
+                        .map(|p| match self.new_param(&p.name, vec![]) {
+                            Ty::Param(i) => i,
+                            _ => 0,
+                        })
+                        .collect();
+                    self.gfns.push(GenFn {
+                        name: h.name,
+                        tparams: h.generics,
+                        pids,
+                        tok,
+                        pos: h.pos,
+                        params: vec![],
+                        ret: Ty::Unit,
+                    });
                     continue;
                 }
                 if tok < self.prelude_len {
@@ -1599,7 +2009,13 @@ impl Parser {
                     continue;
                 }
                 let body = self.block()?;
-                funcs.push(Func { name: h.name, params: h.params, ret: h.ret, body, pos: h.pos });
+                funcs.push(Func {
+                    name: h.name,
+                    params: h.params,
+                    ret: h.ret,
+                    body,
+                    pos: h.pos,
+                });
             }
         }
         // templates: every generic function with its type parameters abstract, checked once against its bounds
@@ -1609,16 +2025,33 @@ impl Parser {
             for (p, pid) in g.tparams.iter().zip(&g.pids) {
                 self.types.params[*pid].bounds = p.bounds.iter().map(|b| b.0.clone()).collect();
             }
-            let subst: Vec<(String, Ty)> = g.tparams.iter().zip(&g.pids).map(|(p, id)| (p.name.clone(), Ty::Param(*id))).collect();
+            let subst: Vec<(String, Ty)> = g
+                .tparams
+                .iter()
+                .zip(&g.pids)
+                .map(|(p, id)| (p.name.clone(), Ty::Param(*id)))
+                .collect();
             let (h, body) = self.parse_fn_at(g.tok, subst, None, g.tok < self.prelude_len)?;
             self.gfns[gi].params = h.params.iter().map(|p| (p.mode, p.ty)).collect();
             self.gfns[gi].ret = h.ret;
             if g.tok < self.prelude_len {
                 continue; // the built-in library is trusted: only its instantiations are checked
             }
-            templates.push(Func { name: h.name, params: h.params, ret: h.ret, body: body.unwrap_or_default(), pos: h.pos });
+            templates.push(Func {
+                name: h.name,
+                params: h.params,
+                ret: h.ret,
+                body: body.unwrap_or_default(),
+                pos: h.pos,
+            });
         }
-        Ok(Program { types: std::mem::take(&mut self.types), funcs, externs, links, templates })
+        Ok(Program {
+            types: std::mem::take(&mut self.types),
+            funcs,
+            externs,
+            links,
+            templates,
+        })
     }
 
     /// Re-parse the function starting at token `tok` with `subst` as its type parameters (and `self_ty`
@@ -1636,7 +2069,11 @@ impl Parser {
         self.self_ty = self_ty;
         let r = (|| {
             let h = self.fn_header()?;
-            let b = if header_only { None } else { Some(self.block()?) };
+            let b = if header_only {
+                None
+            } else {
+                Some(self.block()?)
+            };
             Ok((h, b))
         })();
         self.i = saved.0;
@@ -1659,7 +2096,10 @@ impl Parser {
         self.gtypes.get(name).map_or(false, |g| g.is_enum)
     }
     pub fn generic_type_params(&self, name: &str) -> Vec<String> {
-        self.gtypes.get(name).map(|g| g.params.clone()).unwrap_or_default()
+        self.gtypes
+            .get(name)
+            .map(|g| g.params.clone())
+            .unwrap_or_default()
     }
 
     /// The rest of `Int<lo..hi>` after the `<`: inclusive literal bounds, either side may be omitted.
@@ -1676,20 +2116,30 @@ impl Parser {
             let v = if neg { -v } else { v };
             i64::try_from(v).map_err(|_| diag("range bound is outside Int", bp))
         };
-        let lo = if self.eat_sym("..") { i64::MIN } else {
+        let lo = if self.eat_sym("..") {
+            i64::MIN
+        } else {
             let lo = bound(self)?;
             self.expect_sym("..")?;
             lo
         };
-        let hi = if self.is_sym(">") { i64::MAX } else { bound(self)? };
+        let hi = if self.is_sym(">") {
+            i64::MAX
+        } else {
+            bound(self)?
+        };
         self.expect_sym(">")?;
-        if lo > hi { return Err(diag(format!("empty integer range {}..{}", lo, hi), p).note("the bounds of `Int<lo..hi>` are inclusive and `lo` must not exceed `hi`")); }
+        if lo > hi {
+            return Err(diag(format!("empty integer range {}..{}", lo, hi), p)
+                .note("the bounds of `Int<lo..hi>` are inclusive and `lo` must not exceed `hi`"));
+        }
         Ok(Ty::Range(lo, hi))
     }
 
     fn type_name(&mut self) -> PR<(String, Pos)> {
         let (n, p) = self.ident()?;
-        if BUILTIN_TYPES.contains(&n.as_str()) || numeric::NUMERIC_TYPE_NAMES.contains(&n.as_str()) {
+        if BUILTIN_TYPES.contains(&n.as_str()) || numeric::NUMERIC_TYPE_NAMES.contains(&n.as_str())
+        {
             return Err(diag(format!("'{}' is a built-in type name", n), p));
         }
         Ok((n, p))
@@ -1701,7 +2151,14 @@ impl Parser {
         self.expect_sym("{")?;
         let fields = self.struct_fields()?;
         self.expect_sym("}")?;
-        Ok(StructDef { cname: name.clone(), name, fields, pos, origin: None, generic: false })
+        Ok(StructDef {
+            cname: name.clone(),
+            name,
+            fields,
+            pos,
+            origin: None,
+            generic: false,
+        })
     }
     fn struct_fields(&mut self) -> PR<Vec<(String, Ty)>> {
         let mut fields: Vec<(String, Ty)> = vec![];
@@ -1726,7 +2183,14 @@ impl Parser {
         self.expect_sym("{")?;
         let variants = self.enum_variants()?;
         self.expect_sym("}")?;
-        Ok(EnumDef { cname: name.clone(), name, variants, pos, origin: None, generic: false })
+        Ok(EnumDef {
+            cname: name.clone(),
+            name,
+            variants,
+            pos,
+            origin: None,
+            generic: false,
+        })
     }
     fn enum_variants(&mut self) -> PR<Vec<(String, Vec<Ty>)>> {
         let mut variants: Vec<(String, Vec<Ty>)> = vec![];
@@ -1771,20 +2235,32 @@ impl Parser {
         let mut methods: Vec<TraitMethod> = vec![];
         while !self.is_sym("}") {
             if !self.is_kw("fn") {
-                return Err(diag("expected 'fn' (a trait lists method signatures)", self.pos()));
+                return Err(diag(
+                    "expected 'fn' (a trait lists method signatures)",
+                    self.pos(),
+                ));
             }
             let tok = self.i;
             // validate the signature with `Self` left abstract
             let (h, _) = self.parse_fn_at(tok, vec![], Some(self_param), true)?;
             if methods.iter().any(|m| m.name == h.name) {
-                return Err(diag(format!("method '{}' is listed twice in trait {}", h.name, name), h.pos));
+                return Err(diag(
+                    format!("method '{}' is listed twice in trait {}", h.name, name),
+                    h.pos,
+                ));
             }
             if !h.generics.is_empty() {
                 return Err(diag("trait methods cannot be generic yet", h.pos));
             }
             if !matches!(h.params.first(), Some(p) if p.name == "self") {
-                return Err(diag(format!("method '{}' must take `self` first (`view self`, `mut self` or `self`)", h.name), h.pos)
-                    .note("traits only describe methods you call as `x.method()`"));
+                return Err(diag(
+                    format!(
+                        "method '{}' must take `self` first (`view self`, `mut self` or `self`)",
+                        h.name
+                    ),
+                    h.pos,
+                )
+                .note("traits only describe methods you call as `x.method()`"));
             }
             // advance past this signature (the real parse above restored the cursor)
             self.bump(); // fn
@@ -1793,17 +2269,31 @@ impl Parser {
                     return Err(diag("missing closing '}'", pos));
                 }
                 if self.is_sym("{") {
-                    return Err(diag("a trait lists signatures only: remove the body", self.pos())
-                        .note("the body goes in `impl Trait for Type { .. }`"));
+                    return Err(
+                        diag("a trait lists signatures only: remove the body", self.pos())
+                            .note("the body goes in `impl Trait for Type { .. }`"),
+                    );
                 }
                 self.bump();
             }
             self.eat_sym(";");
-            let sig = FnTy { params: h.params.iter().map(|p| (p.mode, p.ty)).collect(), ret: h.ret };
-            methods.push(TraitMethod { name: h.name, tok, sig });
+            let sig = FnTy {
+                params: h.params.iter().map(|p| (p.mode, p.ty)).collect(),
+                ret: h.ret,
+            };
+            methods.push(TraitMethod {
+                name: h.name,
+                tok,
+                sig,
+            });
         }
         self.expect_sym("}")?;
-        self.traits.push(TraitDef { name, pos, methods, prelude });
+        self.traits.push(TraitDef {
+            name,
+            pos,
+            methods,
+            prelude,
+        });
         Ok(())
     }
 
@@ -1829,9 +2319,14 @@ impl Parser {
                 self.tparams.insert(g.name.clone(), t);
             }
         }
-        let subst: Vec<(String, Ty)> = generics.iter().zip(&pids).map(|(g, p)| (g.name.clone(), Ty::Param(*p))).collect();
+        let subst: Vec<(String, Ty)> = generics
+            .iter()
+            .zip(&pids)
+            .map(|(g, p)| (g.name.clone(), Ty::Param(*p)))
+            .collect();
         let (mut trait_name, mut trait_pos) = (None, ipos);
-        if matches!(self.peek(), Tok::Id(_)) && matches!(self.peek_at(1), Tok::Id(k) if k == "for") {
+        if matches!(self.peek(), Tok::Id(_)) && matches!(self.peek_at(1), Tok::Id(k) if k == "for")
+        {
             let (n, p) = self.ident()?;
             self.bump();
             trait_name = Some(n);
@@ -1851,7 +2346,10 @@ impl Parser {
                 return Err(diag("methods cannot be generic yet", h.pos));
             }
             if methods.iter().any(|m| m.name == h.name) {
-                return Err(diag(format!("method '{}' is defined twice in this impl", h.name), h.pos));
+                return Err(diag(
+                    format!("method '{}' is defined twice in this impl", h.name),
+                    h.pos,
+                ));
             }
             let lazy = prelude;
             if lazy {
@@ -1867,25 +2365,55 @@ impl Parser {
                 self.self_ty = saved;
                 let (h2, body) = r?;
                 let name = impl_fn_name(&self.types, trait_name.as_deref(), self_ty, &h2.name);
-                funcs.push(Func { name, params: h2.params, ret: h2.ret, body, pos: h2.pos });
+                funcs.push(Func {
+                    name,
+                    params: h2.params,
+                    ret: h2.ret,
+                    body,
+                    pos: h2.pos,
+                });
             }
-            methods.push(ImplMethod { name: h.name, tok, parsed: !lazy, pos: h.pos });
+            methods.push(ImplMethod {
+                name: h.name,
+                tok,
+                parsed: !lazy,
+                pos: h.pos,
+            });
         }
         self.expect_sym("}")?;
-        self.impls.push(ImplDef { trait_name, trait_pos, generics, pids, self_ty, pos: ipos, methods, prelude });
+        self.impls.push(ImplDef {
+            trait_name,
+            trait_pos,
+            generics,
+            pids,
+            self_ty,
+            pos: ipos,
+            methods,
+            prelude,
+        });
         Ok(())
     }
 
     fn fn_header(&mut self) -> PR<FnHeader> {
         if !self.is_kw("fn") {
-            return Err(diag("expected 'fn', 'struct', 'enum', 'trait' or 'impl'", self.pos()));
+            return Err(diag(
+                "expected 'fn', 'struct', 'enum', 'trait' or 'impl'",
+                self.pos(),
+            ));
         }
         self.bump();
         let (name, npos) = self.ident()?;
-        let generics = if self.is_sym("<") { self.generics_list()? } else { vec![] };
+        let generics = if self.is_sym("<") {
+            self.generics_list()?
+        } else {
+            vec![]
+        };
         // first sight of a generic header: its parameter names must resolve (to a placeholder)
-        let added: Vec<String> =
-            generics.iter().filter(|g| !self.tparams.contains_key(&g.name)).map(|g| g.name.clone()).collect();
+        let added: Vec<String> = generics
+            .iter()
+            .filter(|g| !self.tparams.contains_key(&g.name))
+            .map(|g| g.name.clone())
+            .collect();
         for n in &added {
             self.tparams.insert(n.clone(), Ty::Err);
         }
@@ -1914,15 +2442,28 @@ impl Parser {
             }
             let first = params.is_empty();
             // `self`, `view self`, `mut self`: only the first parameter of a method
-            let mode_kw = if self.is_kw("view") { Some(Mode::View) } else if self.is_kw("mut") { Some(Mode::Mut) } else { None };
+            let mode_kw = if self.is_kw("view") {
+                Some(Mode::View)
+            } else if self.is_kw("mut") {
+                Some(Mode::Mut)
+            } else {
+                None
+            };
             let self_at = if mode_kw.is_some() { 1 } else { 0 };
-            if first && self.self_ty.is_some() && matches!(self.peek_at(self_at), Tok::Id(s) if s == "self")
+            if first
+                && self.self_ty.is_some()
+                && matches!(self.peek_at(self_at), Tok::Id(s) if s == "self")
                 && matches!(self.peek_at(self_at + 1), Tok::Sym(",") | Tok::Sym(")"))
             {
                 for _ in 0..=self_at {
                     self.bump();
                 }
-                params.push(Param { name: "self".into(), mode: mode_kw.unwrap_or(Mode::Own), ty: self.self_ty.unwrap(), id: 0 });
+                params.push(Param {
+                    name: "self".into(),
+                    mode: mode_kw.unwrap_or(Mode::Own),
+                    ty: self.self_ty.unwrap(),
+                    id: 0,
+                });
             } else {
                 let (pn, pp) = self.ident()?;
                 if params.iter().any(|p| p.name == pn) {
@@ -1938,16 +2479,35 @@ impl Parser {
                 } else {
                     Mode::Own
                 };
-                let ty = if mode == Mode::Own { self.ty()? } else { self.indirect_ty()? };
-                params.push(Param { name: pn, mode, ty, id: 0 });
+                let ty = if mode == Mode::Own {
+                    self.ty()?
+                } else {
+                    self.indirect_ty()?
+                };
+                params.push(Param {
+                    name: pn,
+                    mode,
+                    ty,
+                    id: 0,
+                });
             }
             if !self.eat_sym(",") {
                 break;
             }
         }
         self.expect_sym(")")?;
-        let ret = if self.eat_sym("->") { self.ty()? } else { Ty::Unit };
-        Ok(FnHeader { name, pos: npos, generics, params, ret })
+        let ret = if self.eat_sym("->") {
+            self.ty()?
+        } else {
+            Ty::Unit
+        };
+        Ok(FnHeader {
+            name,
+            pos: npos,
+            generics,
+            params,
+            ret,
+        })
     }
 
     fn block(&mut self) -> PR<Vec<Stmt>> {
@@ -1979,14 +2539,28 @@ impl Parser {
                 self.expect_sym("=")?;
                 let e = self.expr()?;
                 self.eat_sym(";");
-                return Ok(Stmt { k: SK::Unpack(pat, e), pos });
+                return Ok(Stmt {
+                    k: SK::Unpack(pat, e),
+                    pos,
+                });
             }
             let (n, _) = self.ident()?;
-            let annot = if self.eat_sym(":") { Some(self.ty()?) } else { None };
+            let annot = if self.eat_sym(":") {
+                Some(self.ty()?)
+            } else {
+                None
+            };
             self.expect_sym("=")?;
             let e = self.expr()?;
             let e = match annot {
-                Some(t) => { let p = e.pos; Expr { k: EK::Ascribe(Box::new(e)), pos: p, ty: t } }
+                Some(t) => {
+                    let p = e.pos;
+                    Expr {
+                        k: EK::Ascribe(Box::new(e)),
+                        pos: p,
+                        ty: t,
+                    }
+                }
                 None => e,
             };
             SK::Let(n, mutable, e, 0)
@@ -2014,19 +2588,42 @@ impl Parser {
                 return Err(diag("expected 'for' after 'parallel'", self.pos()));
             }
             let stmt = self.loop_stmt(None)?;
-            let SK::For(head, body) = stmt.k else { unreachable!() };
+            let SK::For(head, body) = stmt.k else {
+                unreachable!()
+            };
             if head.mutable || head.step.is_some() {
-                return Err(diag("parallel for requires a read-only iterator without a step", pos));
+                return Err(diag(
+                    "parallel for requires a read-only iterator without a step",
+                    pos,
+                ));
             }
             let (name, mut args, mode, ty) = match head.iter {
-                ForIter::Range(first, end, inclusive) =>
-                    ("__parallel_range", vec![first, end, mk(EK::Bool(inclusive), pos)], Mode::Own, Some(Ty::Int)),
+                ForIter::Range(first, end, inclusive) => (
+                    "__parallel_range",
+                    vec![first, end, mk(EK::Bool(inclusive), pos)],
+                    Mode::Own,
+                    Some(Ty::Int),
+                ),
                 ForIter::Expr(list) => ("__parallel_list", vec![list], Mode::View, None),
             };
-            let param = CParam { name: head.var, pos: head.var_pos, mode: Some(mode), ty };
-            args.push(mk(EK::Closure {
-                params: vec![param], ret: None, body, is_move: false, expr_body: false, parallel: true, worker: false,
-            }, pos));
+            let param = CParam {
+                name: head.var,
+                pos: head.var_pos,
+                mode: Some(mode),
+                ty,
+            };
+            args.push(mk(
+                EK::Closure {
+                    params: vec![param],
+                    ret: None,
+                    body,
+                    is_move: false,
+                    expr_body: false,
+                    parallel: true,
+                    worker: false,
+                },
+                pos,
+            ));
             SK::ExprS(mk(EK::Call(name.into(), args), pos))
         } else if self.is_kw("while") || self.is_kw("for") {
             return self.loop_stmt(None);
@@ -2041,7 +2638,9 @@ impl Parser {
             let is_break = self.is_kw("break");
             let kp = self.bump().pos;
             let label = match self.peek() {
-                Tok::Id(n) if !KW.contains(&n.as_str()) && self.pos().line == kp.line => Some(self.ident()?),
+                Tok::Id(n) if !KW.contains(&n.as_str()) && self.pos().line == kp.line => {
+                    Some(self.ident()?)
+                }
                 _ => None,
             };
             if is_break {
@@ -2054,9 +2653,15 @@ impl Parser {
         } else if self.is_kw("defer") {
             self.bump();
             let ipos = self.pos();
-            if ["let", "var", "return", "if", "while", "match", "defer"].iter().any(|k| self.is_kw(k)) {
-                return Err(diag("`defer` takes a single call or assignment", ipos)
-                    .note("help: put the work in a function and defer the call: `defer cleanup(x)`"));
+            if ["let", "var", "return", "if", "while", "match", "defer"]
+                .iter()
+                .any(|k| self.is_kw(k))
+            {
+                return Err(
+                    diag("`defer` takes a single call or assignment", ipos).note(
+                        "help: put the work in a function and defer the call: `defer cleanup(x)`",
+                    ),
+                );
             }
             let e = self.expr()?;
             let inner = if self.eat_sym("=") {
@@ -2065,7 +2670,10 @@ impl Parser {
             } else {
                 SK::ExprS(e)
             };
-            SK::Defer(Box::new(Stmt { k: inner, pos: ipos }))
+            SK::Defer(Box::new(Stmt {
+                k: inner,
+                pos: ipos,
+            }))
         } else {
             let e = self.expr()?;
             if self.eat_sym("=") {
@@ -2096,8 +2704,11 @@ impl Parser {
         }
         let close = self.expect_sym(")")?;
         if items.len() < 2 {
-            return Err(diag("a tuple pattern needs at least two names", span(open, close))
-                .note("example: `let (a, b) = pair`; use `_` for an element you do not need"));
+            return Err(diag(
+                "a tuple pattern needs at least two names",
+                span(open, close),
+            )
+            .note("example: `let (a, b) = pair`; use `_` for an element you do not need"));
         }
         Ok(UnpackPat::Tuple(items, span(open, close)))
     }
@@ -2109,7 +2720,19 @@ impl Parser {
             self.bump();
             let c = self.expr()?;
             let b = self.block()?;
-            return Ok(Stmt { k: SK::While(c, b, Loop { label, id: 0, step: vec![], freeze: None }), pos });
+            return Ok(Stmt {
+                k: SK::While(
+                    c,
+                    b,
+                    Loop {
+                        label,
+                        id: 0,
+                        step: vec![],
+                        freeze: None,
+                    },
+                ),
+                pos,
+            });
         }
         self.bump(); // for
         let mutable = if self.is_kw("mut") {
@@ -2139,8 +2762,18 @@ impl Parser {
             None
         };
         let b = self.block()?;
-        let head = ForHead { var, var_pos, mutable, iter, step, label };
-        Ok(Stmt { k: SK::For(Box::new(head), b), pos })
+        let head = ForHead {
+            var,
+            var_pos,
+            mutable,
+            iter,
+            step,
+            label,
+        };
+        Ok(Stmt {
+            k: SK::For(Box::new(head), b),
+            pos,
+        })
     }
 
     fn if_stmt(&mut self) -> PR<Stmt> {
@@ -2158,7 +2791,10 @@ impl Parser {
         } else {
             None
         };
-        Ok(Stmt { k: SK::If(c, t, e), pos })
+        Ok(Stmt {
+            k: SK::If(c, t, e),
+            pos,
+        })
     }
 
     fn match_stmt(&mut self) -> PR<Stmt> {
@@ -2195,7 +2831,9 @@ impl Parser {
             let plain = guard.is_none()
                 && match &pat {
                     Pat::Wild(_) => true,
-                    Pat::Variant(_, subs, _) => subs.iter().all(|p| matches!(p, Pat::Wild(_) | Pat::Bind(_, None, _))),
+                    Pat::Variant(_, subs, _) => subs
+                        .iter()
+                        .all(|p| matches!(p, Pat::Wild(_) | Pat::Bind(_, None, _))),
                     _ => false,
                 };
             if plain {
@@ -2212,13 +2850,32 @@ impl Parser {
                     ),
                     _ => unreachable!(),
                 };
-                arms.push(Arm { vname, variant: None, binds, body, pos: apos, pat: None, guard: None });
+                arms.push(Arm {
+                    vname,
+                    variant: None,
+                    binds,
+                    body,
+                    pos: apos,
+                    pat: None,
+                    guard: None,
+                });
             } else {
-                arms.push(Arm { vname: String::new(), variant: None, binds: vec![], body, pos: apos, pat: Some(pat), guard });
+                arms.push(Arm {
+                    vname: String::new(),
+                    variant: None,
+                    binds: vec![],
+                    body,
+                    pos: apos,
+                    pat: Some(pat),
+                    guard,
+                });
             }
         }
         self.expect_sym("}")?;
-        Ok(Stmt { k: SK::Match(scrut, arms), pos })
+        Ok(Stmt {
+            k: SK::Match(scrut, arms),
+            pos,
+        })
     }
 
     /// `p1 | p2 | ..`
@@ -2270,7 +2927,10 @@ impl Parser {
         if self.eat_sym("..=") {
             return match self.pat_bound()? {
                 Some((hi, ch)) => Ok(Pat::Range(None, Some(hi), ch, pos)),
-                None => Err(diag("expected a number or a character after `..=`", self.pos())),
+                None => Err(diag(
+                    "expected a number or a character after `..=`",
+                    self.pos(),
+                )),
             };
         }
         if let Some((lo, ch)) = self.pat_bound()? {
@@ -2282,10 +2942,17 @@ impl Parser {
                 None
             };
             return match incl {
-                None => Ok(if ch { Pat::Char(lo, pos) } else { Pat::Int(lo, pos) }),
+                None => Ok(if ch {
+                    Pat::Char(lo, pos)
+                } else {
+                    Pat::Int(lo, pos)
+                }),
                 Some(inclusive) => match self.pat_bound()? {
                     None if !inclusive => Ok(Pat::Range(Some(lo), None, ch, pos)),
-                    None => Err(diag("expected a number or a character after `..=`", self.pos())),
+                    None => Err(diag(
+                        "expected a number or a character after `..=`",
+                        self.pos(),
+                    )),
                     Some((hi, ch2)) => {
                         if ch != ch2 {
                             return Err(diag("both ends of a range pattern must be the same kind", pos)
@@ -2300,8 +2967,11 @@ impl Parser {
                             }
                         };
                         if lo > hi {
-                            return Err(diag("this range pattern is empty: the start is after the end", pos)
-                                .note("help: write the smaller value first, e.g. `1..=9`"));
+                            return Err(diag(
+                                "this range pattern is empty: the start is after the end",
+                                pos,
+                            )
+                            .note("help: write the smaller value first, e.g. `1..=9`"));
                         }
                         Ok(Pat::Range(Some(lo), Some(hi), ch, pos))
                     }
@@ -2324,7 +2994,10 @@ impl Parser {
                 return Ok(items.pop().unwrap()); // parenthesised pattern
             }
             if !(2..=6).contains(&items.len()) {
-                return Err(diag("a tuple pattern has 2 to 6 elements", span(pos, close)));
+                return Err(diag(
+                    "a tuple pattern has 2 to 6 elements",
+                    span(pos, close),
+                ));
             }
             return Ok(Pat::Tuple(items, span(pos, close)));
         }
@@ -2393,10 +3066,21 @@ impl Parser {
                 let blk = self.block()?;
                 let end = self.t[self.i - 1].pos;
                 let p = span(e.pos, end);
-                return Ok(Expr { k: EK::AsElse(Box::new(e), blk), pos: p, ty });
+                return Ok(Expr {
+                    k: EK::AsElse(Box::new(e), blk),
+                    pos: p,
+                    ty,
+                });
             }
             let _ = apos;
-            return Ok(mk(EK::Static { ty, f: "from".into(), args: vec![e] }, p));
+            return Ok(mk(
+                EK::Static {
+                    ty,
+                    f: "from".into(),
+                    args: vec![e],
+                },
+                p,
+            ));
         }
         Ok(e)
     }
@@ -2438,7 +3122,15 @@ impl Parser {
             return Ok(mk(EK::Un(op, Box::new(x)), p));
         }
         if matches!(self.peek(), Tok::Id(n) if n == "comptime")
-            && matches!(self.peek_at(1), Tok::Id(_) | Tok::Num(_) | Tok::Char(_) | Tok::Sym("(") | Tok::Sym("-") | Tok::Sym("!"))
+            && matches!(
+                self.peek_at(1),
+                Tok::Id(_)
+                    | Tok::Num(_)
+                    | Tok::Char(_)
+                    | Tok::Sym("(")
+                    | Tok::Sym("-")
+                    | Tok::Sym("!")
+            )
         {
             // `comptime e`: evaluated by the compiler (src/comptime.rs); a marker call until then
             self.bump();
@@ -2451,7 +3143,14 @@ impl Parser {
             self.bump();
             let x = self.unary()?;
             let p = span(pos, x.pos);
-            return Ok(mk(EK::Method { recv: Box::new(x), m: "get".into(), args: vec![] }, p));
+            return Ok(mk(
+                EK::Method {
+                    recv: Box::new(x),
+                    m: "get".into(),
+                    args: vec![],
+                },
+                p,
+            ));
         }
         self.primary()
     }
@@ -2507,7 +3206,14 @@ impl Parser {
             if self.is_sym("(") {
                 let (args, end) = self.args()?;
                 let p = span(e.pos, end);
-                e = mk(EK::Method { recv: Box::new(e), m, args }, p);
+                e = mk(
+                    EK::Method {
+                        recv: Box::new(e),
+                        m,
+                        args,
+                    },
+                    p,
+                );
             } else {
                 let p = span(e.pos, mp);
                 e = mk(EK::Field(Box::new(e), m), p);
@@ -2527,7 +3233,11 @@ impl Parser {
         match tk.t {
             Tok::Num(n) => self.postfix(mk(EK::Int(n), pos)),
             Tok::NumT(v, sfx) => {
-                let k = if sfx.is_empty() { EK::Int(v as i64) } else { EK::Int(v as i64) };
+                let k = if sfx.is_empty() {
+                    EK::Int(v as i64)
+                } else {
+                    EK::Int(v as i64)
+                };
                 let mut e = mk(k, pos);
                 // a typed literal carries its type already; an untyped one that is too big keeps `Ty::Unit`
                 // until the checker decides (it needs to be UInt64)
@@ -2564,16 +3274,36 @@ impl Parser {
                     }
                     let close = self.expect_sym(")")?;
                     if items.len() < 2 {
-                        return Err(diag("a tuple needs at least two elements", span(pos, close))
-                            .note("help: write the value itself, without parentheses and comma"));
+                        return Err(
+                            diag("a tuple needs at least two elements", span(pos, close)).note(
+                                "help: write the value itself, without parentheses and comma",
+                            ),
+                        );
                     }
                     if items.len() > 6 {
-                        return Err(diag(format!("a tuple has at most 6 elements, this one has {}", items.len()), span(pos, close))
-                            .note("help: for more elements, define a struct with named fields"));
+                        return Err(diag(
+                            format!(
+                                "a tuple has at most 6 elements, this one has {}",
+                                items.len()
+                            ),
+                            span(pos, close),
+                        )
+                        .note("help: for more elements, define a struct with named fields"));
                     }
-                    let fields = items.into_iter().enumerate().map(|(k, x)| (format!("_{}", k), x)).collect::<Vec<_>>();
+                    let fields = items
+                        .into_iter()
+                        .enumerate()
+                        .map(|(k, x)| (format!("_{}", k), x))
+                        .collect::<Vec<_>>();
                     let name = format!("Tuple{}", fields.len());
-                    return Ok(mk(EK::GenStruct { name, targs: None, fields }, span(pos, close)));
+                    return Ok(mk(
+                        EK::GenStruct {
+                            name,
+                            targs: None,
+                            fields,
+                        },
+                        span(pos, close),
+                    ));
                 }
                 self.expect_sym(")")?;
                 self.postfix(e)
@@ -2591,7 +3321,18 @@ impl Parser {
                     self.bump();
                     let body = if self.is_sym("{") {
                         let body = self.block()?;
-                        mk(EK::Closure { params: vec![], ret: None, body, is_move: true, expr_body: false, parallel: false, worker: true }, pos)
+                        mk(
+                            EK::Closure {
+                                params: vec![],
+                                ret: None,
+                                body,
+                                is_move: true,
+                                expr_body: false,
+                                parallel: false,
+                                worker: true,
+                            },
+                            pos,
+                        )
                     } else {
                         let mut closure = self.closure(true, pos)?;
                         if let EK::Closure { worker, .. } = &mut closure.k {
@@ -2606,7 +3347,9 @@ impl Parser {
                     let (n, p) = self.ident()?;
                     Ok(mk(EK::Move(n, 0), span(pos, p)))
                 }
-                _ if KW.contains(&x.as_str()) => Err(diag(format!("unexpected keyword '{}' here", x), pos)),
+                _ if KW.contains(&x.as_str()) => {
+                    Err(diag(format!("unexpected keyword '{}' here", x), pos))
+                }
                 _ => self.after_name(x, pos),
             },
             _ => Err(diag("expected an expression", pos)),
@@ -2634,9 +3377,18 @@ impl Parser {
                     } else {
                         None
                     };
-                    ty = Some(if mode.is_some() { self.indirect_ty()? } else { self.ty()? });
+                    ty = Some(if mode.is_some() {
+                        self.indirect_ty()?
+                    } else {
+                        self.ty()?
+                    });
                 }
-                params.push(CParam { name, mode, ty, pos });
+                params.push(CParam {
+                    name,
+                    mode,
+                    ty,
+                    pos,
+                });
                 if !self.eat_sym(",") {
                     break;
                 }
@@ -2647,7 +3399,11 @@ impl Parser {
             }
             self.bump();
         }
-        let ret = if self.eat_sym("->") { Some(self.ty()?) } else { None };
+        let ret = if self.eat_sym("->") {
+            Some(self.ty()?)
+        } else {
+            None
+        };
         let expr_body = !self.is_sym("{");
         let (body, end) = if self.is_sym("{") {
             let b = self.block()?;
@@ -2664,12 +3420,35 @@ impl Parser {
                 self.bump();
                 let v = self.expr()?;
                 let end = v.pos;
-                (vec![Stmt { k: SK::Assign(e, v), pos: p }], end)
+                (
+                    vec![Stmt {
+                        k: SK::Assign(e, v),
+                        pos: p,
+                    }],
+                    end,
+                )
             } else {
-                (vec![Stmt { k: SK::Return(Some(e)), pos: p }], p)
+                (
+                    vec![Stmt {
+                        k: SK::Return(Some(e)),
+                        pos: p,
+                    }],
+                    p,
+                )
             }
         };
-        Ok(mk(EK::Closure { params, ret, body, is_move, expr_body, parallel: false, worker: false }, span(start, end)))
+        Ok(mk(
+            EK::Closure {
+                params,
+                ret,
+                body,
+                is_move,
+                expr_body,
+                parallel: false,
+                worker: false,
+            },
+            span(start, end),
+        ))
     }
 
     fn struct_lit_fields(&mut self) -> PR<(Vec<(String, Expr)>, Pos)> {
@@ -2693,14 +3472,26 @@ impl Parser {
             let (args, end) = self.args()?;
             return self.postfix(mk(EK::Call(x, args), span(pos, end)));
         }
-        if (x == "List" && (self.is_sym(".") || self.is_sym("<"))) || ((x == "String" || x == "Char") && self.is_sym(".")) {
-            let ty = if x == "List" { self.list_args()? } else if x == "Char" { Ty::Char } else { Ty::String };
+        if (x == "List" && (self.is_sym(".") || self.is_sym("<")))
+            || ((x == "String" || x == "Char") && self.is_sym("."))
+        {
+            let ty = if x == "List" {
+                self.list_args()?
+            } else if x == "Char" {
+                Ty::Char
+            } else {
+                Ty::String
+            };
             self.expect_sym(".")?;
             let (f, _) = self.ident()?;
             let (args, end) = self.args()?;
             return Ok(mk(EK::Static { ty, f, args }, span(pos, end)));
         }
-        if x == "Ptr" && self.is_sym("<") && !self.names.contains_key("Ptr") && !self.gtypes.contains_key("Ptr") {
+        if x == "Ptr"
+            && self.is_sym("<")
+            && !self.names.contains_key("Ptr")
+            && !self.gtypes.contains_key("Ptr")
+        {
             // `Ptr<UInt8>.null()`, `Ptr<UInt8>.alloc(n)`
             self.bump();
             let pointee = self.indirect_ty()?;
@@ -2744,35 +3535,84 @@ impl Parser {
             return Ok(mk(EK::Static { ty, f, args }, span(pos, end)));
         }
         if let Some(g) = self.gtypes.get(&x).cloned() {
-            let targs = if self.is_sym("<") { Some(self.type_args()?) } else { None };
+            let targs = if self.is_sym("<") {
+                Some(self.type_args()?)
+            } else {
+                None
+            };
             if g.is_enum {
                 if !self.is_sym(".") {
-                    return Err(diag(format!("expected '.Variant' after the enum {}", x), self.pos()));
+                    return Err(diag(
+                        format!("expected '.Variant' after the enum {}", x),
+                        self.pos(),
+                    ));
                 }
                 self.bump();
                 let (vname, vp) = self.ident()?;
-                let (args, end) = if self.is_sym("(") { self.args()? } else { (vec![], vp) };
-                return Ok(mk(EK::GenVariant { name: x, targs, vname, args }, span(pos, end)));
+                let (args, end) = if self.is_sym("(") {
+                    self.args()?
+                } else {
+                    (vec![], vp)
+                };
+                return Ok(mk(
+                    EK::GenVariant {
+                        name: x,
+                        targs,
+                        vname,
+                        args,
+                    },
+                    span(pos, end),
+                ));
             }
             if self.is_sym(".") {
                 // `Map<String, Int>.new()`: a function of the instantiated type
                 self.bump();
                 let (fname, _) = self.ident()?;
                 let (args, end) = self.args()?;
-                return Ok(mk(EK::GenVariant { name: x, targs, vname: fname, args }, span(pos, end)));
+                return Ok(mk(
+                    EK::GenVariant {
+                        name: x,
+                        targs,
+                        vname: fname,
+                        args,
+                    },
+                    span(pos, end),
+                ));
             }
             if !self.is_sym("{") {
-                return Err(diag(format!("expected '{{' with the fields of {}", x), self.pos()));
+                return Err(diag(
+                    format!("expected '{{' with the fields of {}", x),
+                    self.pos(),
+                ));
             }
             let (fields, end) = self.struct_lit_fields()?;
-            return Ok(mk(EK::GenStruct { name: x, targs, fields }, span(pos, end)));
+            return Ok(mk(
+                EK::GenStruct {
+                    name: x,
+                    targs,
+                    fields,
+                },
+                span(pos, end),
+            ));
         }
         match self.names.get(&x).copied() {
             Some(Ty::Enum(eid)) if self.is_sym(".") => {
                 self.bump();
                 let (vname, vp) = self.ident()?;
-                let (args, end) = if self.is_sym("(") { self.args()? } else { (vec![], vp) };
-                return Ok(mk(EK::Variant { eid, vname, vid: 0, args }, span(pos, end)));
+                let (args, end) = if self.is_sym("(") {
+                    self.args()?
+                } else {
+                    (vec![], vp)
+                };
+                return Ok(mk(
+                    EK::Variant {
+                        eid,
+                        vname,
+                        vid: 0,
+                        args,
+                    },
+                    span(pos, end),
+                ));
             }
             Some(Ty::Struct(sid)) if self.is_sym("{") => {
                 let (fields, end) = self.struct_lit_fields()?;

@@ -42,7 +42,9 @@ impl Scan {
                     self.pat(s);
                 }
             }
-            Pat::Variant(_, subs, _) | Pat::Tuple(subs, _) | Pat::Or(subs, _) => subs.iter().for_each(|s| self.pat(s)),
+            Pat::Variant(_, subs, _) | Pat::Tuple(subs, _) | Pat::Or(subs, _) => {
+                subs.iter().for_each(|s| self.pat(s))
+            }
             _ => {}
         }
     }
@@ -69,7 +71,14 @@ impl Scan {
                 self.use_(n);
                 self.touched.insert(n.clone());
             }
-            EK::Field(b, _) | EK::Un(_, b) | EK::Conv(b, _) | EK::Ascribe(b) | EK::IsVariant(b, _) | EK::Payload(b, ..) | EK::AddrOf(b, _) | EK::Deref(b) => self.expr(b),
+            EK::Field(b, _)
+            | EK::Un(_, b)
+            | EK::Conv(b, _)
+            | EK::Ascribe(b)
+            | EK::IsVariant(b, _)
+            | EK::Payload(b, ..)
+            | EK::AddrOf(b, _)
+            | EK::Deref(b) => self.expr(b),
             EK::AsElse(b, blk) => {
                 self.expr(b);
                 self.stmts(blk);
@@ -82,7 +91,9 @@ impl Scan {
                 self.use_(n);
                 self.args(args);
             }
-            EK::Static { args, .. } | EK::Variant { args, .. } | EK::GenVariant { args, .. } => self.args(args),
+            EK::Static { args, .. } | EK::Variant { args, .. } | EK::GenVariant { args, .. } => {
+                self.args(args)
+            }
             EK::Method { recv, m, args } => {
                 self.methods.insert(m.clone());
                 self.expr(recv);
@@ -91,7 +102,9 @@ impl Scan {
                 }
                 self.args(args);
             }
-            EK::StructLit { fields, .. } | EK::GenStruct { fields, .. } => fields.iter().for_each(|(_, f)| self.expr(f)),
+            EK::StructLit { fields, .. } | EK::GenStruct { fields, .. } => {
+                fields.iter().for_each(|(_, f)| self.expr(f))
+            }
             EK::Closure { params, body, .. } => {
                 for p in params {
                     self.declared.insert(p.name.clone());
@@ -238,7 +251,14 @@ fn complete_worker_returns(body: &mut [Stmt], done: usize) {
 }
 
 fn worker_done_expr(sid: usize, pos: Pos) -> Expr {
-    Expr { k: EK::StructLit { sid, fields: vec![] }, ty: Ty::Struct(sid), pos }
+    Expr {
+        k: EK::StructLit {
+            sid,
+            fields: vec![],
+        },
+        ty: Ty::Struct(sid),
+        pos,
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -277,26 +297,79 @@ impl<'a> Checker<'a> {
         if !self.sigs.contains_key(name) && !self.in_generic {
             self.load_lazy(name);
         }
-        let sig = self.sigs.get(name).cloned().or_else(|| if self.in_generic { self.lazy_header(name) } else { None })?;
-        let ty = self.types.intern_fn(FnTy { params: sig.params.clone(), ret: sig.ret });
+        let sig = self.sigs.get(name).cloned().or_else(|| {
+            if self.in_generic {
+                self.lazy_header(name)
+            } else {
+                None
+            }
+        })?;
+        let ty = self.types.intern_fn(FnTy {
+            params: sig.params.clone(),
+            ret: sig.ret,
+        });
         let thunk = format!("{}__fnv", name);
         if !self.in_generic && self.thunks.insert(thunk.clone()) {
             let base = 0;
-            let mut params = vec![Param { name: "env".into(), mode: Mode::Own, ty: Ty::Int, id: base }];
+            let mut params = vec![Param {
+                name: "env".into(),
+                mode: Mode::Own,
+                ty: Ty::Int,
+                id: base,
+            }];
             let mut args = vec![];
             for (k, (m, t)) in sig.params.iter().enumerate() {
                 let pn = format!("a{}", k);
                 let id = base + 1 + k;
-                params.push(Param { name: pn.clone(), mode: *m, ty: *t, id });
-                let ek = if *m == Mode::Own && self.types.owned(*t) { EK::Move(pn, id) } else { EK::Var(pn, id) };
+                params.push(Param {
+                    name: pn.clone(),
+                    mode: *m,
+                    ty: *t,
+                    id,
+                });
+                let ek = if *m == Mode::Own && self.types.owned(*t) {
+                    EK::Move(pn, id)
+                } else {
+                    EK::Var(pn, id)
+                };
                 args.push(Expr { k: ek, pos, ty: *t });
             }
-            let call = Expr { k: EK::Call(name.to_string(), args), pos, ty: sig.ret };
-            let body = vec![Stmt { k: if sig.ret == Ty::Unit { SK::ExprS(call) } else { SK::Return(Some(call)) }, pos }];
-            self.sigs.insert(thunk.clone(), Sig { params: params.iter().map(|p| (p.mode, p.ty)).collect(), ret: sig.ret });
-            self.lifted.push(Func { name: thunk.clone(), params, ret: sig.ret, body, pos });
+            let call = Expr {
+                k: EK::Call(name.to_string(), args),
+                pos,
+                ty: sig.ret,
+            };
+            let body = vec![Stmt {
+                k: if sig.ret == Ty::Unit {
+                    SK::ExprS(call)
+                } else {
+                    SK::Return(Some(call))
+                },
+                pos,
+            }];
+            self.sigs.insert(
+                thunk.clone(),
+                Sig {
+                    params: params.iter().map(|p| (p.mode, p.ty)).collect(),
+                    ret: sig.ret,
+                },
+            );
+            self.lifted.push(Func {
+                name: thunk.clone(),
+                params,
+                ret: sig.ret,
+                body,
+                pos,
+            });
         }
-        Some((ty, EK::MkClosure { func: thunk, env: None, caps: vec![] }))
+        Some((
+            ty,
+            EK::MkClosure {
+                func: thunk,
+                env: None,
+                caps: vec![],
+            },
+        ))
     }
 
     /// `Var(name)` where `name` is a function and not a variable: rewrite it to a function value.
@@ -304,7 +377,10 @@ impl<'a> Checker<'a> {
         if let EK::Var(n, _) = &arg.k {
             if self.lookup(n).is_none() {
                 let n = n.clone();
-                if self.sigs.contains_key(&n) || self.ps.gfns.iter().any(|g| g.name == n) || self.lazy_known(&n) {
+                if self.sigs.contains_key(&n)
+                    || self.ps.gfns.iter().any(|g| g.name == n)
+                    || self.lazy_known(&n)
+                {
                     if let Some((ty, k)) = self.fn_item(&n, arg.pos) {
                         arg.k = k;
                         arg.ty = ty;
@@ -364,11 +440,21 @@ impl<'a> Checker<'a> {
         }
         let name = format!("fn__{}", self.vars.len());
         let id = self.declare(&name, t, Mode::Own, mode == Mode::Mut);
-        let old = std::mem::replace(arg, Expr { k: EK::Var(name.clone(), id), pos, ty: t });
+        let old = std::mem::replace(
+            arg,
+            Expr {
+                k: EK::Var(name.clone(), id),
+                pos,
+                ty: t,
+            },
+        );
         if !loans.is_empty() {
             self.closure_loans.insert(id, loans);
         }
-        self.pre.push(Stmt { k: SK::Let(name, mode == Mode::Mut, old, id), pos });
+        self.pre.push(Stmt {
+            k: SK::Let(name, mode == Mode::Mut, old, id),
+            pos,
+        });
     }
 
     /// `f(args)` where `f` is a place of function type.
@@ -393,7 +479,10 @@ impl<'a> Checker<'a> {
         let Ty::Fn(fi) = p.ty else {
             if p.ty != Ty::Err {
                 let (n, t) = (place_str(callee), self.tn(p.ty));
-                self.err(diag(format!("'{}' is a {}, not a function, so it cannot be called", n, t), pos));
+                self.err(diag(
+                    format!("'{}' is a {}, not a function, so it cannot be called", n, t),
+                    pos,
+                ));
             }
             return Ty::Err;
         };
@@ -401,13 +490,27 @@ impl<'a> Checker<'a> {
         if ft.params.len() != args.len() {
             let shown = self.tn(p.ty);
             self.err(
-                diag(format!("this function value takes {} argument(s) but {} were given", ft.params.len(), args.len()), pos)
-                    .note(format!("its type is {}", shown)),
+                diag(
+                    format!(
+                        "this function value takes {} argument(s) but {} were given",
+                        ft.params.len(),
+                        args.len()
+                    ),
+                    pos,
+                )
+                .note(format!("its type is {}", shown)),
             );
             return ft.ret;
         }
         let pre = vec![None; args.len()];
-        self.call_args(Sig { params: ft.params, ret: ft.ret }, args, pre)
+        self.call_args(
+            Sig {
+                params: ft.params,
+                ret: ft.ret,
+            },
+            args,
+            pre,
+        )
     }
 
     pub(super) fn thread_transferable(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
@@ -421,14 +524,20 @@ impl<'a> Checker<'a> {
             Ty::Struct(i) => {
                 let def = &self.types.structs[i];
                 let name = def.origin.as_ref().map_or(&def.name, |(name, _)| name);
-                !self.types.thread_bound.contains(name) && self.types.join_payload(i).is_none()
-                    && def.fields.iter().all(|(_, t)| self.thread_transferable(*t, seen))
+                !self.types.thread_bound.contains(name)
+                    && self.types.join_payload(i).is_none()
+                    && def
+                        .fields
+                        .iter()
+                        .all(|(_, t)| self.thread_transferable(*t, seen))
             }
             Ty::Enum(i) => {
                 let def = &self.types.enums[i];
                 let name = def.origin.as_ref().map_or(&def.name, |(name, _)| name);
                 !self.types.thread_bound.contains(name)
-                    && def.variants.iter().all(|(_, fields)| fields.iter().all(|t| self.thread_transferable(*t, seen)))
+                    && def.variants.iter().all(|(_, fields)| {
+                        fields.iter().all(|t| self.thread_transferable(*t, seen))
+                    })
             }
             _ => true,
         }
@@ -437,10 +546,28 @@ impl<'a> Checker<'a> {
     /// Check a closure literal against the expected function type `hint`. `borrowing`: the literal is the
     /// argument of a `view fn` / `mut fn` parameter, so it may borrow the variables it uses instead of
     /// capturing them by value.
-    pub(super) fn closure_expr(&mut self, e: &mut Expr, hint: Option<Ty>, borrowing: bool, spawning: bool, locking: bool) -> Ty {
+    pub(super) fn closure_expr(
+        &mut self,
+        e: &mut Expr,
+        hint: Option<Ty>,
+        borrowing: bool,
+        spawning: bool,
+        locking: bool,
+    ) -> Ty {
         let pos = e.pos;
         let k = std::mem::replace(&mut e.k, EK::Int(0));
-        let EK::Closure { params, ret, mut body, is_move, expr_body, parallel, .. } = k else { unreachable!("closure_expr") };
+        let EK::Closure {
+            params,
+            ret,
+            mut body,
+            is_move,
+            expr_body,
+            parallel,
+            ..
+        } = k
+        else {
+            unreachable!("closure_expr")
+        };
         e.ty = Ty::Err;
         let exp: Option<FnTy> = match hint {
             Some(Ty::Fn(i)) => Some(self.types.fns[i].clone()),
@@ -465,7 +592,13 @@ impl<'a> Checker<'a> {
                 (Some(t), Some((m, wt))) => {
                     if t != wt && !self.mentions_free(wt) && wt != Ty::Err {
                         let (g, w) = (self.tn(t), self.tn(wt));
-                        self.err(diag(format!("parameter '{}' is declared {} but {} is expected here", p.name, g, w), p.pos));
+                        self.err(diag(
+                            format!(
+                                "parameter '{}' is declared {} but {} is expected here",
+                                p.name, g, w
+                            ),
+                            p.pos,
+                        ));
                     }
                     (p.mode.unwrap_or(m), t)
                 }
@@ -485,12 +618,22 @@ impl<'a> Checker<'a> {
         if ptys.iter().any(|(_, t)| *t == Ty::Err) {
             return Ty::Err;
         }
-        let declared_ret: Option<Ty> = ret.or_else(|| exp.as_ref().map(|x| x.ret).filter(|r| !self.mentions_free(*r)));
+        let declared_ret: Option<Ty> = ret.or_else(|| {
+            exp.as_ref()
+                .map(|x| x.ret)
+                .filter(|r| !self.mentions_free(*r))
+        });
 
         // `|x| list.push(x)`: an expression body whose value is not needed is just a statement
         if expr_body && declared_ret == Some(Ty::Unit) {
-            if let Some(Stmt { k: SK::Return(Some(_)), .. }) = body.first() {
-                if let SK::Return(Some(e)) = std::mem::replace(&mut body[0].k, SK::Block(vec![], false)) {
+            if let Some(Stmt {
+                k: SK::Return(Some(_)),
+                ..
+            }) = body.first()
+            {
+                if let SK::Return(Some(e)) =
+                    std::mem::replace(&mut body[0].k, SK::Block(vec![], false))
+                {
                     body[0].k = SK::ExprS(e);
                 }
             }
@@ -502,10 +645,37 @@ impl<'a> Checker<'a> {
             sc.declared.insert(p.name.clone());
         }
         sc.stmts(&body);
-        if locking && (sc.used.iter().any(|n| matches!(n.as_str(), "__spawn_owned" | "__thread_wait" | "__thread_start" | "__futex_park" | "__locked_with" | "__locked_with_view" | "__parallel_range" | "__parallel_list"))
-            || sc.methods.iter().any(|m| matches!(m.as_str(), "with" | "with_view" | "join" | "recv" | "sleep_ms" | "read_line" | "read_file" | "write_file")))
+        if locking
+            && (sc.used.iter().any(|n| {
+                matches!(
+                    n.as_str(),
+                    "__spawn_owned"
+                        | "__thread_wait"
+                        | "__thread_start"
+                        | "__futex_park"
+                        | "__locked_with"
+                        | "__locked_with_view"
+                        | "__parallel_range"
+                        | "__parallel_list"
+                )
+            }) || sc.methods.iter().any(|m| {
+                matches!(
+                    m.as_str(),
+                    "with"
+                        | "with_view"
+                        | "join"
+                        | "recv"
+                        | "sleep_ms"
+                        | "read_line"
+                        | "read_file"
+                        | "write_file"
+                )
+            }))
         {
-            self.err(diag("cannot wait or acquire a lock inside a with closure", pos));
+            self.err(diag(
+                "cannot wait or acquire a lock inside a with closure",
+                pos,
+            ));
             return Ty::Err;
         }
         let mut caps: Vec<Cap> = vec![];
@@ -514,22 +684,40 @@ impl<'a> Checker<'a> {
             if sc.declared.contains(&n) {
                 continue;
             }
-            let Some(outer) = self.lookup(&n) else { continue };
-            let (ty, omut, omode) = (self.vars[outer].ty, self.vars[outer].mutable, self.vars[outer].mode);
+            let Some(outer) = self.lookup(&n) else {
+                continue;
+            };
+            let (ty, omut, omode) = (
+                self.vars[outer].ty,
+                self.vars[outer].mutable,
+                self.vars[outer].mode,
+            );
             if self.types.contains_join_handle(ty) {
-                self.err(diag(format!("a closure cannot capture '{}' because it contains a JoinHandle", n), pos));
+                self.err(diag(
+                    format!(
+                        "a closure cannot capture '{}' because it contains a JoinHandle",
+                        n
+                    ),
+                    pos,
+                ));
                 bad = true;
                 continue;
             }
             if spawning && omode != Mode::Own {
-                self.err(diag(format!("spawn cannot capture '{}' because it is borrowed", n), pos));
+                self.err(diag(
+                    format!("spawn cannot capture '{}' because it is borrowed", n),
+                    pos,
+                ));
                 bad = true;
                 continue;
             }
             if (spawning || parallel) && !self.thread_transferable(ty, &mut HashSet::new()) {
                 let name = self.tn(ty);
                 let operation = if spawning { "spawn" } else { "parallel for" };
-                self.err(diag(format!("{} cannot transfer '{}' of type {}", operation, n, name), pos));
+                self.err(diag(
+                    format!("{} cannot transfer '{}' of type {}", operation, n, name),
+                    pos,
+                ));
                 bad = true;
                 continue;
             }
@@ -537,21 +725,50 @@ impl<'a> Checker<'a> {
             let touched = sc.touched.contains(&n);
             if parallel {
                 if assigned {
-                    self.err(diag(format!("parallel for cannot assign to captured variable '{}'", n), pos));
+                    self.err(diag(
+                        format!("parallel for cannot assign to captured variable '{}'", n),
+                        pos,
+                    ));
                     bad = true;
                 }
-                caps.push(Cap { name: n, outer, ty, by_ref: true, mode: Mode::View });
+                caps.push(Cap {
+                    name: n,
+                    outer,
+                    ty,
+                    by_ref: true,
+                    mode: Mode::View,
+                });
             } else if borrowing && !is_move {
                 if assigned && !omut {
                     self.err(
-                        diag(format!("this closure assigns '{}', but '{}' cannot be modified", n, n), pos)
-                            .note(if omode == Mode::View { "it is only borrowed for reading (`view`)".to_string() } else { "it was declared with `let` (immutable)".to_string() })
-                            .note("help: declare it with `var` (or receive it as `mut`)"),
+                        diag(
+                            format!(
+                                "this closure assigns '{}', but '{}' cannot be modified",
+                                n, n
+                            ),
+                            pos,
+                        )
+                        .note(if omode == Mode::View {
+                            "it is only borrowed for reading (`view`)".to_string()
+                        } else {
+                            "it was declared with `let` (immutable)".to_string()
+                        })
+                        .note("help: declare it with `var` (or receive it as `mut`)"),
                     );
                     bad = true;
                 }
-                let m = if omut && (assigned || touched) { Mode::Mut } else { Mode::View };
-                caps.push(Cap { name: n, outer, ty, by_ref: true, mode: m });
+                let m = if omut && (assigned || touched) {
+                    Mode::Mut
+                } else {
+                    Mode::View
+                };
+                caps.push(Cap {
+                    name: n,
+                    outer,
+                    ty,
+                    by_ref: true,
+                    mode: m,
+                });
             } else {
                 if self.types.owned(ty) && !is_move {
                     let tn = self.tn(ty);
@@ -571,9 +788,20 @@ impl<'a> Checker<'a> {
                     );
                     bad = true;
                 }
-                let mode = if spawning && self.types.owned(ty) { Mode::Own }
-                    else if is_move { Mode::Mut } else { Mode::View };
-                caps.push(Cap { name: n, outer, ty, by_ref: false, mode });
+                let mode = if spawning && self.types.owned(ty) {
+                    Mode::Own
+                } else if is_move {
+                    Mode::Mut
+                } else {
+                    Mode::View
+                };
+                caps.push(Cap {
+                    name: n,
+                    outer,
+                    ty,
+                    by_ref: false,
+                    mode,
+                });
             }
         }
         if bad {
@@ -583,7 +811,11 @@ impl<'a> Checker<'a> {
         // ── the outer side: what the closure takes from its surroundings, checked like ordinary uses ──
         let mut cap_exprs: Vec<Expr> = vec![];
         for c in &caps {
-            let mut v = Expr { k: EK::Var(c.name.clone(), c.outer), pos, ty: c.ty };
+            let mut v = Expr {
+                k: EK::Var(c.name.clone(), c.outer),
+                pos,
+                ty: c.ty,
+            };
             if c.by_ref {
                 if c.mode == Mode::Mut {
                     self.ev_escape.push(c.outer);
@@ -591,7 +823,11 @@ impl<'a> Checker<'a> {
                 if self.place(&mut v).is_some() && c.mode == Mode::Mut {
                     self.frozen_check(&v, true, pos);
                 }
-                cap_exprs.push(Expr { k: EK::AddrOf(Box::new(v), c.mode == Mode::Mut), pos, ty: Ty::Int });
+                cap_exprs.push(Expr {
+                    k: EK::AddrOf(Box::new(v), c.mode == Mode::Mut),
+                    pos,
+                    ty: Ty::Int,
+                });
             } else {
                 if self.types.owned(c.ty) {
                     v.k = EK::Move(c.name.clone(), c.outer);
@@ -639,16 +875,31 @@ impl<'a> Checker<'a> {
         let saved_pre = std::mem::take(&mut self.pre);
         let saved_ret = (self.ret, self.ret_free);
         let saved_free = std::mem::take(&mut self.free_pids);
-        let env_id = self.declare("env", env_ty, if sid.is_some() { Mode::Mut } else { Mode::Own }, sid.is_some());
+        let env_id = self.declare(
+            "env",
+            env_ty,
+            if sid.is_some() { Mode::Mut } else { Mode::Own },
+            sid.is_some(),
+        );
         let mut inner: Vec<usize> = vec![];
         for c in &caps {
             let id = self.declare(&c.name, c.ty, c.mode, c.mode != Mode::View);
             inner.push(id);
         }
-        let mut fparams = vec![Param { name: "env".into(), mode: if sid.is_some() { Mode::Mut } else { Mode::Own }, ty: env_ty, id: env_id }];
+        let mut fparams = vec![Param {
+            name: "env".into(),
+            mode: if sid.is_some() { Mode::Mut } else { Mode::Own },
+            ty: env_ty,
+            id: env_id,
+        }];
         for (p, (m, t)) in params.iter().zip(&ptys) {
             let id = self.declare(&p.name, *t, *m, *m != Mode::View);
-            fparams.push(Param { name: p.name.clone(), mode: *m, ty: *t, id });
+            fparams.push(Param {
+                name: p.name.clone(),
+                mode: *m,
+                ty: *t,
+                id,
+            });
         }
         self.ret = declared_ret.unwrap_or(Ty::Err);
         self.ret_free = declared_ret.is_none();
@@ -662,17 +913,27 @@ impl<'a> Checker<'a> {
         self.closure_depth -= 1;
         let mut ret_ty = if self.ret_free { Ty::Unit } else { self.ret };
         if (spawning || locking) && ret_ty == Ty::Unit {
-            let done = self.types.structs.iter().position(|d| d.name == "ThreadDone" && d.pos.line >= PRELUDE_LINE)
+            let done = self
+                .types
+                .structs
+                .iter()
+                .position(|d| d.name == "ThreadDone" && d.pos.line >= PRELUDE_LINE)
                 .expect("ThreadDone is defined in the prelude");
             complete_worker_returns(&mut body, done);
             if !always_returns(&body) {
-                body.push(Stmt { k: SK::Return(Some(worker_done_expr(done, pos))), pos });
+                body.push(Stmt {
+                    k: SK::Return(Some(worker_done_expr(done, pos))),
+                    pos,
+                });
             }
             ret_ty = Ty::Struct(done);
         }
         if ret_ty != Ty::Unit && ret_ty != Ty::Err && !always_returns(&body) {
             let n = self.tn(ret_ty);
-            self.err(diag(format!("this closure must return a {} on every path", n), pos));
+            self.err(diag(
+                format!("this closure must return a {} on every path", n),
+                pos,
+            ));
         }
         self.scopes = saved_scopes;
         self.st = saved_st;
@@ -686,28 +947,66 @@ impl<'a> Checker<'a> {
 
         if spawning && !self.thread_transferable(ret_ty, &mut HashSet::new()) {
             let name = self.tn(ret_ty);
-            self.err(diag(format!("spawn cannot return a value of type {}", name), pos));
+            self.err(diag(
+                format!("spawn cannot return a value of type {}", name),
+                pos,
+            ));
             return Ty::Err;
         }
 
         // Bind captures to their environment fields. A worker may consume its owned captures once.
         let mut binds: Vec<Stmt> = vec![];
         for (k, c) in caps.iter().enumerate() {
-            let envv = Expr { k: EK::Var("env".into(), env_id), pos, ty: env_ty };
+            let envv = Expr {
+                k: EK::Var("env".into(), env_id),
+                pos,
+                ty: env_ty,
+            };
             let fty = if c.by_ref { Ty::Int } else { c.ty };
-            let field = Expr { k: EK::Field(Box::new(envv), format!("c{}", k)), pos, ty: fty };
-            let src = if c.by_ref { Expr { k: EK::Deref(Box::new(field)), pos, ty: c.ty } } else { field };
-            binds.push(Stmt { k: SK::Bind(c.name.clone(), c.mode, src, inner[k]), pos });
+            let field = Expr {
+                k: EK::Field(Box::new(envv), format!("c{}", k)),
+                pos,
+                ty: fty,
+            };
+            let src = if c.by_ref {
+                Expr {
+                    k: EK::Deref(Box::new(field)),
+                    pos,
+                    ty: c.ty,
+                }
+            } else {
+                field
+            };
+            binds.push(Stmt {
+                k: SK::Bind(c.name.clone(), c.mode, src, inner[k]),
+                pos,
+            });
         }
         body.splice(0..0, binds);
         let name = format!("closure__{}", cid);
-        let fty = self.types.intern_fn(FnTy { params: ptys, ret: ret_ty });
-        let sig = Sig { params: fparams.iter().map(|p| (p.mode, p.ty)).collect(), ret: ret_ty };
+        let fty = self.types.intern_fn(FnTy {
+            params: ptys,
+            ret: ret_ty,
+        });
+        let sig = Sig {
+            params: fparams.iter().map(|p| (p.mode, p.ty)).collect(),
+            ret: ret_ty,
+        };
         self.sigs.insert(name.clone(), sig);
         if !self.in_generic {
-            self.lifted.push(Func { name: name.clone(), params: fparams, ret: ret_ty, body, pos });
+            self.lifted.push(Func {
+                name: name.clone(),
+                params: fparams,
+                ret: ret_ty,
+                body,
+                pos,
+            });
         }
-        e.k = EK::MkClosure { func: name, env: sid, caps: cap_exprs };
+        e.k = EK::MkClosure {
+            func: name,
+            env: sid,
+            caps: cap_exprs,
+        };
         e.ty = fty;
         fty
     }
@@ -736,7 +1035,11 @@ impl<'a> Checker<'a> {
             }
             Ty::Fn(i) => {
                 let f = self.types.fns[i].clone();
-                let params = f.params.iter().map(|(m, t)| (*m, self.subst_known(*t, pids, bind))).collect();
+                let params = f
+                    .params
+                    .iter()
+                    .map(|(m, t)| (*m, self.subst_known(*t, pids, bind)))
+                    .collect();
                 let ret = self.subst_known(f.ret, pids, bind);
                 self.types.intern_fn(FnTy { params, ret })
             }

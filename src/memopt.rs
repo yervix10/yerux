@@ -26,11 +26,25 @@ enum Cls {
 
 fn defs_of(i: &Inst) -> Option<V> {
     match i {
-        Inst::Const(d, _) | Inst::Text(d, _) | Inst::FnAddr(d, _) | Inst::VTableAddr(d, _) | Inst::Mov(d, _) | Inst::Bin(d, ..) | Inst::Neg(d, _) | Inst::Not(d, _) => Some(*d),
-        Inst::Slot(d, _) | Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::Lea(d, ..) | Inst::ListGet(d, ..) => Some(*d),
+        Inst::Const(d, _)
+        | Inst::Text(d, _)
+        | Inst::FnAddr(d, _)
+        | Inst::VTableAddr(d, _)
+        | Inst::Mov(d, _)
+        | Inst::Bin(d, ..)
+        | Inst::Neg(d, _)
+        | Inst::Not(d, _) => Some(*d),
+        Inst::Slot(d, _)
+        | Inst::Load(d, ..)
+        | Inst::LoadH(d, ..)
+        | Inst::Lea(d, ..)
+        | Inst::ListGet(d, ..) => Some(*d),
         Inst::Alloc(d, _) | Inst::Load8(d, ..) | Inst::LoadX(d, ..) | Inst::LeaX(d, ..) => Some(*d),
         Inst::N(_, d, ..) => Some(*d),
-        Inst::Thread(_, d, _) | Inst::Atomic(_, d, _) | Inst::Syscall(d, _) | Inst::Global(d, _) => Some(*d),
+        Inst::Thread(_, d, _)
+        | Inst::Atomic(_, d, _)
+        | Inst::Syscall(d, _)
+        | Inst::Global(d, _) => Some(*d),
         Inst::Call(d, ..) | Inst::CallInd(d, ..) => *d,
         _ => None,
     }
@@ -78,8 +92,17 @@ fn operands(i: &Inst) -> Vec<V> {
 /// Instructions that can be executed speculatively and early: no memory access, no panic, no trap.
 fn hoistable_pure(i: &Inst) -> bool {
     match i {
-        Inst::Const(..) | Inst::Text(..) | Inst::Slot(..) | Inst::Mov(..) | Inst::Not(..) | Inst::Lea(..) | Inst::LeaX(..) => true,
-        Inst::Bin(_, op, ..) => matches!(op, Op::AddU | Op::SubU | Op::MulU | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Eq | Op::Ne),
+        Inst::Const(..)
+        | Inst::Text(..)
+        | Inst::Slot(..)
+        | Inst::Mov(..)
+        | Inst::Not(..)
+        | Inst::Lea(..)
+        | Inst::LeaX(..) => true,
+        Inst::Bin(_, op, ..) => matches!(
+            op,
+            Op::AddU | Op::SubU | Op::MulU | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Eq | Op::Ne
+        ),
         _ => false,
     }
 }
@@ -115,7 +138,9 @@ fn analyse(f: &IrFunc) -> Option<Info> {
                 let (d, src): (V, bool) = match i {
                     Inst::Slot(d, _) => (*d, true),
                     Inst::Mov(d, s) | Inst::Lea(d, s, _) => (*d, derived[*s]),
-                    Inst::Bin(d, _, a, b2) | Inst::LeaX(d, a, b2, _) => (*d, derived[*a] || derived[*b2]),
+                    Inst::Bin(d, _, a, b2) | Inst::LeaX(d, a, b2, _) => {
+                        (*d, derived[*a] || derived[*b2])
+                    }
                     _ => continue,
                 };
                 if src && !derived[d] {
@@ -132,7 +157,14 @@ fn analyse(f: &IrFunc) -> Option<Info> {
     for b in &f.blocks {
         for i in &b.insts {
             match i {
-                Inst::Store(_, _, v) | Inst::Store8(_, _, v) | Inst::StoreX(_, _, _, v) | Inst::ListPush(_, v) if derived[*v] => return None,
+                Inst::Store(_, _, v)
+                | Inst::Store8(_, _, v)
+                | Inst::StoreX(_, _, _, v)
+                | Inst::ListPush(_, v)
+                    if derived[*v] =>
+                {
+                    return None
+                }
                 _ => {}
             }
         }
@@ -305,7 +337,11 @@ fn hoist_loop(f: &mut IrFunc, inf: &Info, lp: &Loop) -> bool {
                     continue;
                 }
                 let killed = lp.body.iter().enumerate().any(|(b2, inb2)| {
-                    *inb2 && f.blocks[b2].insts.iter().any(|i2| clobbers(inf, i2, a, *off as i64))
+                    *inb2
+                        && f.blocks[b2]
+                            .insts
+                            .iter()
+                            .any(|i2| clobbers(inf, i2, a, *off as i64))
                 });
                 if !killed {
                     cands.push((a, *off));
@@ -343,7 +379,12 @@ fn hoist_loop(f: &mut IrFunc, inf: &Info, lp: &Loop) -> bool {
             break;
         }
     }
-    let trivial = |&(b, ii): &(usize, usize)| matches!(f.blocks[b].insts[ii], Inst::Const(..) | Inst::Text(..) | Inst::Slot(..));
+    let trivial = |&(b, ii): &(usize, usize)| {
+        matches!(
+            f.blocks[b].insts[ii],
+            Inst::Const(..) | Inst::Text(..) | Inst::Slot(..)
+        )
+    };
     if cands.is_empty() && pure_hoist.iter().all(trivial) {
         return false; // constants are rematerialised anyway
     }
@@ -385,7 +426,14 @@ fn hoist_loop(f: &mut IrFunc, inf: &Info, lp: &Loop) -> bool {
     if outside.len() == 1 && matches!(f.blocks[outside[0]].term, Term::Jmp(_)) {
         f.blocks[outside[0]].insts.extend(pre_insts);
     } else {
-        insert_block(f, h, Block { insts: pre_insts, term: Term::Jmp(h + 1) });
+        insert_block(
+            f,
+            h,
+            Block {
+                insts: pre_insts,
+                term: Term::Jmp(h + 1),
+            },
+        );
         for &p in &outside {
             let p = if p >= h { p + 1 } else { p };
             let redir = |t: usize| if t == h + 1 { h } else { t };
@@ -402,7 +450,9 @@ fn hoist_loop(f: &mut IrFunc, inf: &Info, lp: &Loop) -> bool {
 pub fn run(f: &mut IrFunc) -> bool {
     let mut changed = false;
     for _ in 0..64 {
-        let Some(inf) = analyse(f) else { return changed };
+        let Some(inf) = analyse(f) else {
+            return changed;
+        };
         let loops = find_loops(f);
         let mut did = false;
         for lp in &loops {

@@ -5,8 +5,27 @@ use crate::numeric::*;
 
 /// One-argument math functions (free function `sqrt(x)` or method `x.sqrt()`).
 const MATH1: &[&str] = &[
-    "sqrt", "sin", "cos", "tan", "asin", "acos", "atan", "exp", "ln", "floor", "ceil", "round", "trunc", "is_nan", "is_inf", "is_finite",
-    "floor_int", "ceil_int", "round_int", "abs", "to_bits",
+    "sqrt",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "exp",
+    "ln",
+    "floor",
+    "ceil",
+    "round",
+    "trunc",
+    "is_nan",
+    "is_inf",
+    "is_finite",
+    "floor_int",
+    "ceil_int",
+    "round_int",
+    "abs",
+    "to_bits",
 ];
 const MATH2: &[&str] = &["atan2", "pow", "min", "max", "copysign"];
 const WRAPPING: &[&str] = &["wrapping_add", "wrapping_sub", "wrapping_mul"];
@@ -25,7 +44,11 @@ fn is_untyped_lit(e: &Expr) -> bool {
 
 fn conv(e: Expr, to: Ty) -> Expr {
     let pos = e.pos;
-    Expr { k: EK::Conv(Box::new(e), false), pos, ty: to }
+    Expr {
+        k: EK::Conv(Box::new(e), false),
+        pos,
+        ty: to,
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -39,10 +62,20 @@ impl<'a> Checker<'a> {
         let tok = *self.ps.lazy_fns.get(name)?;
         match self.with_ps(|ps| ps.parse_fn_at(tok, vec![], None, false)) {
             Ok((h, body)) => {
-                let f = Func { name: name.to_string(), params: h.params, ret: h.ret, body: body.unwrap_or_default(), pos: h.pos };
-                let sig = Sig { params: f.params.iter().map(|p| (p.mode, p.ty)).collect(), ret: f.ret };
+                let f = Func {
+                    name: name.to_string(),
+                    params: h.params,
+                    ret: h.ret,
+                    body: body.unwrap_or_default(),
+                    pos: h.pos,
+                };
+                let sig = Sig {
+                    params: f.params.iter().map(|p| (p.mode, p.ty)).collect(),
+                    ret: f.ret,
+                };
                 self.sigs.insert(name.to_string(), sig.clone());
-                self.queue.push((f, "the built-in numeric library".to_string()));
+                self.queue
+                    .push((f, "the built-in numeric library".to_string()));
                 Some(sig)
             }
             Err(d) => {
@@ -57,19 +90,38 @@ impl<'a> Checker<'a> {
     pub(super) fn num_mismatch_notes(&mut self, d: Diag, got: Ty, want: Ty, pos: Pos) -> Diag {
         let (g, w) = (self.tn(got), self.tn(want));
         let name = self.pos_names.get(&(pos.line, pos.col)).cloned();
-        let lit = name.as_ref().map_or(false, |n| n.chars().next().map_or(false, |c| c.is_ascii_digit()));
-        let mut d = d.note(format!("{} and {} are different types: numbers are never converted implicitly", g, w));
+        let lit = name.as_ref().map_or(false, |n| {
+            n.chars().next().map_or(false, |c| c.is_ascii_digit())
+        });
+        let mut d = d.note(format!(
+            "{} and {} are different types: numbers are never converted implicitly",
+            g, w
+        ));
         if lit && is_int(got) && is_float(want) {
-            d = d.note(format!("help: write a {} literal: `{}.0`, or convert a variable with `x.to_float()`", w, name.clone().unwrap()));
+            d = d.note(format!(
+                "help: write a {} literal: `{}.0`, or convert a variable with `x.to_float()`",
+                w,
+                name.clone().unwrap()
+            ));
         } else if lit && is_float(got) && is_int(want) {
             d = d.note(format!("help: `{}` is a Float literal; write an integer literal, or convert a value with `x.{}()`", name.clone().unwrap(), conv_method(want)));
         } else {
             let n = name.unwrap_or_else(|| "x".to_string());
-            let n = if n.contains(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')) || n == "value" { "x".to_string() } else { n };
+            let n = if n.contains(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))
+                || n == "value"
+            {
+                "x".to_string()
+            } else {
+                n
+            };
             if matches!(want, Ty::Range(..)) && is_int(got) {
                 d = d.note(format!("help: convert it explicitly: `{}.from(x)` panics when it does not fit, `{}.try_from(x)` returns a Result", w, w));
             } else {
-                d = d.note(format!("help: convert it explicitly: write `{}.{}()`", n, conv_method(want)));
+                d = d.note(format!(
+                    "help: convert it explicitly: write `{}.{}()`",
+                    n,
+                    conv_method(want)
+                ));
             }
         }
         if is_float(got) && is_int(want) {
@@ -118,7 +170,8 @@ impl<'a> Checker<'a> {
             return Ty::Int; // wrapping: no interval survives
         }
         let contract = std::mem::take(&mut self.div_contract);
-        if contract && matches!(op, "/" | "%") && matches!(tb, Ty::Range(..)) && bl <= 0 && bh >= 0 {
+        if contract && matches!(op, "/" | "%") && matches!(tb, Ty::Range(..)) && bl <= 0 && bh >= 0
+        {
             // a range-typed divisor is a contract: it must prove nonzero (a plain Int divisor stays a runtime check)
             let n = self.tn(tb);
             self.err(
@@ -172,7 +225,13 @@ impl<'a> Checker<'a> {
     /// Type of `a op b` for `+ - * / % < > <= >=` (and the wrapping forms): both sides must be the same number type.
     pub(super) fn arith_ty(&mut self, op: &str, ta: Ty, tb: Ty, pa: Pos, pb: Pos) -> Ty {
         if ta == Ty::Err || tb == Ty::Err {
-            return if is_num(ta) { ta } else if is_num(tb) { tb } else { Ty::Int };
+            return if is_num(ta) {
+                ta
+            } else if is_num(tb) {
+                tb
+            } else {
+                Ty::Int
+            };
         }
         if matches!(ta, Ty::Int | Ty::Range(..)) && matches!(tb, Ty::Int | Ty::Range(..)) {
             return self.range_arith(op, ta, tb, pb);
@@ -193,8 +252,9 @@ impl<'a> Checker<'a> {
         if op == "%" && is_float(ta) {
             let n = self.tn(ta);
             self.err(
-                diag(format!("`%` is not defined for {}", n), pa)
-                    .note("help: a remainder of floats is `x - floor(x / y) * y` (see also `trunc`)"),
+                diag(format!("`%` is not defined for {}", n), pa).note(
+                    "help: a remainder of floats is `x - floor(x / y) * y` (see also `trunc`)",
+                ),
             );
         }
         ta
@@ -232,7 +292,14 @@ impl<'a> Checker<'a> {
         if from_hint && matches!(hint, Some(Ty::Range(..))) && !big {
             // a literal is the singleton range of its value; whether it fits is the business of the context
             let v = if neg { v.wrapping_neg() } else { v };
-            self.pos_names.insert((pos.line, pos.col), if neg { format!("-{}", v.wrapping_neg()) } else { v.to_string() });
+            self.pos_names.insert(
+                (pos.line, pos.col),
+                if neg {
+                    format!("-{}", v.wrapping_neg())
+                } else {
+                    v.to_string()
+                },
+            );
             return (Ty::Range(v, v), v);
         }
         let t = if is_int(cur) {
@@ -242,17 +309,34 @@ impl<'a> Checker<'a> {
         } else {
             Ty::Int
         };
-        let mut vv: i128 = if big || is_u64(t) { v as u64 as i128 } else { v as i128 };
+        let mut vv: i128 = if big || is_u64(t) {
+            v as u64 as i128
+        } else {
+            v as i128
+        };
         if neg {
             vv = -vv;
         }
         let (lo, hi) = int_range(t);
         if vv < lo || vv > hi {
             let n = self.tn(t);
-            let shown = if neg { format!("-{}", -vv) } else { vv.to_string() };
-            let mut d = diag(format!("the literal {} does not fit {} ({} to {})", shown, n, lo, hi), pos);
+            let shown = if neg {
+                format!("-{}", -vv)
+            } else {
+                vv.to_string()
+            };
+            let mut d = diag(
+                format!(
+                    "the literal {} does not fit {} ({} to {})",
+                    shown, n, lo, hi
+                ),
+                pos,
+            );
             if from_hint {
-                d = d.note(format!("a {} is expected here, so the literal is read as a {}", n, n));
+                d = d.note(format!(
+                    "a {} is expected here, so the literal is read as a {}",
+                    n, n
+                ));
             }
             if neg && !t_signed(t) {
                 d = d.note(format!("{} has no negative values", n));
@@ -264,7 +348,11 @@ impl<'a> Checker<'a> {
             self.err(d);
         }
         self.pos_names.insert((pos.line, pos.col), v.to_string());
-        let bits = if is_u64(t) { vv as u64 as i64 } else { vv as i64 };
+        let bits = if is_u64(t) {
+            vv as u64 as i64
+        } else {
+            vv as i64
+        };
         (t, bits)
     }
 
@@ -280,13 +368,28 @@ impl<'a> Checker<'a> {
         if is_f32(t) {
             let f: f32 = txt.parse().unwrap_or(0.0);
             if f.is_infinite() {
-                self.err(diag(format!("the literal {} is too large for Float32 (largest 3.4028235e38)", txt), pos).note("help: use Float, whose largest value is about 1.8e308"));
+                self.err(
+                    diag(
+                        format!(
+                            "the literal {} is too large for Float32 (largest 3.4028235e38)",
+                            txt
+                        ),
+                        pos,
+                    )
+                    .note("help: use Float, whose largest value is about 1.8e308"),
+                );
             }
             (t, f as f64)
         } else {
             let f: f64 = txt.parse().unwrap_or(0.0);
             if f.is_infinite() {
-                self.err(diag(format!("the literal {} is too large for Float (largest 1.8e308)", txt), pos));
+                self.err(diag(
+                    format!(
+                        "the literal {} is too large for Float (largest 1.8e308)",
+                        txt
+                    ),
+                    pos,
+                ));
             }
             (t, f)
         }
@@ -316,12 +419,16 @@ impl<'a> Checker<'a> {
                 e.k = EK::Int(bits);
                 Some(t)
             }
-            EK::Call(name, _) if is_math(name) || name == "float_from_bits" || name == "float32_from_bits" => {
+            EK::Call(name, _)
+                if is_math(name) || name == "float_from_bits" || name == "float32_from_bits" =>
+            {
                 if self.sigs.contains_key(name) || self.ps.gfns.iter().any(|g| g.name == *name) {
                     return None; // the program's own function of that name wins
                 }
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
-                let EK::Call(name, args) = k else { unreachable!() };
+                let EK::Call(name, args) = k else {
+                    unreachable!()
+                };
                 if name == "float_from_bits" || name == "float32_from_bits" {
                     return Some(self.from_bits(e, &name, args, pos));
                 }
@@ -329,7 +436,8 @@ impl<'a> Checker<'a> {
             }
             EK::Method { recv, m, .. } if m != "at" => {
                 let m = m.clone();
-                let builtin = is_math(&m) || WRAPPING.contains(&m.as_str()) || conv_target(&m).is_some();
+                let builtin =
+                    is_math(&m) || WRAPPING.contains(&m.as_str()) || conv_target(&m).is_some();
                 if !builtin {
                     return None;
                 }
@@ -344,7 +452,9 @@ impl<'a> Checker<'a> {
                     }
                 }
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
-                let EK::Method { mut recv, m, args } = k else { unreachable!() };
+                let EK::Method { mut recv, m, args } = k else {
+                    unreachable!()
+                };
                 let rt = self.expr(&mut recv);
                 if !is_num(rt) {
                     // not a number: let the ordinary method path report it
@@ -362,7 +472,10 @@ impl<'a> Checker<'a> {
     }
 
     fn has_user_method(&self, t: Ty, m: &str) -> bool {
-        self.ps.impls.iter().any(|im| !im.prelude && im.self_ty == t && im.methods.iter().any(|x| x.name == m))
+        self.ps
+            .impls
+            .iter()
+            .any(|im| !im.prelude && im.self_ty == t && im.methods.iter().any(|x| x.name == m))
     }
 
     fn fail(&mut self, e: &mut Expr, d: Diag) -> Ty {
@@ -372,7 +485,15 @@ impl<'a> Checker<'a> {
     }
 
     /// `x.to_int8()`, `x.truncate_uint8()`, `x.wrapping_add(y)`, `x.sqrt()`, ...
-    fn num_method(&mut self, e: &mut Expr, recv: Expr, m: &str, mut args: Vec<Expr>, pos: Pos, hint: Option<Ty>) -> Ty {
+    fn num_method(
+        &mut self,
+        e: &mut Expr,
+        recv: Expr,
+        m: &str,
+        mut args: Vec<Expr>,
+        pos: Pos,
+        hint: Option<Ty>,
+    ) -> Ty {
         let rt = recv.ty;
         if let Some((target, trunc)) = conv_target(m) {
             if !args.is_empty() {
@@ -391,14 +512,19 @@ impl<'a> Checker<'a> {
         if WRAPPING.contains(&m) {
             if !is_int(rt) {
                 let n = self.tn(rt);
-                let d = diag(format!("'{}' is for integers, not {}", m, n), pos).note("floats never wrap: they overflow to infinity");
+                let d = diag(format!("'{}' is for integers, not {}", m, n), pos)
+                    .note("floats never wrap: they overflow to infinity");
                 return self.fail(e, d);
             }
             if args.len() != 1 {
                 return self.fail(e, diag(format!("'{}' expects 1 argument", m), pos));
             }
             // a flow-narrowed receiver is still an Int: wrapping keeps no interval
-            let rt = if matches!(rt, Ty::Range(..)) { Ty::Int } else { rt };
+            let rt = if matches!(rt, Ty::Range(..)) {
+                Ty::Int
+            } else {
+                rt
+            };
             self.hint = Some(rt);
             let t = self.expr(&mut args[0]);
             self.expect(t, rt, args[0].pos);
@@ -417,7 +543,11 @@ impl<'a> Checker<'a> {
     }
 
     fn from_bits(&mut self, e: &mut Expr, name: &str, mut args: Vec<Expr>, pos: Pos) -> Ty {
-        let (want, ret) = if name == "float_from_bits" { (Ty::Num(Nk::U64), Ty::Num(Nk::F64)) } else { (Ty::Num(Nk::U32), Ty::Num(Nk::F32)) };
+        let (want, ret) = if name == "float_from_bits" {
+            (Ty::Num(Nk::U64), Ty::Num(Nk::F64))
+        } else {
+            (Ty::Num(Nk::U32), Ty::Num(Nk::F32))
+        };
         if args.len() != 1 {
             return self.fail(e, diag(format!("{} expects 1 argument", name), pos));
         }
@@ -429,11 +559,27 @@ impl<'a> Checker<'a> {
     }
 
     /// Math functions on Float, Float32 and integers. `args[0]` is the receiver / first argument.
-    fn math(&mut self, e: &mut Expr, name: &str, mut args: Vec<Expr>, pos: Pos, _hint: Option<Ty>, evaluated: bool) -> Ty {
+    fn math(
+        &mut self,
+        e: &mut Expr,
+        name: &str,
+        mut args: Vec<Expr>,
+        pos: Pos,
+        _hint: Option<Ty>,
+        evaluated: bool,
+    ) -> Ty {
         let two = MATH2.contains(&name);
         let want = if two { 2 } else { 1 };
         if args.len() != want {
-            let d = diag(format!("{} expects {} argument(s) but got {}", name, want, args.len()), pos);
+            let d = diag(
+                format!(
+                    "{} expects {} argument(s) but got {}",
+                    name,
+                    want,
+                    args.len()
+                ),
+                pos,
+            );
             return self.fail(e, d);
         }
         // argument types (a literal second argument takes the type of the first)
@@ -446,7 +592,10 @@ impl<'a> Checker<'a> {
         if two {
             self.hint = Some(t0).filter(|t| is_num(*t));
             let t1 = self.expr(&mut args[1]);
-            if matches!(name, "min" | "max") && matches!(t0, Ty::Int | Ty::Range(..)) && matches!(t1, Ty::Int | Ty::Range(..)) {
+            if matches!(name, "min" | "max")
+                && matches!(t0, Ty::Int | Ty::Range(..))
+                && matches!(t1, Ty::Int | Ty::Range(..))
+            {
                 return self.int_minmax(e, name, args, pos);
             }
             if t0 != Ty::Err && t1 != Ty::Err && t1 != t0 {
@@ -465,15 +614,31 @@ impl<'a> Checker<'a> {
         let float_only = !matches!(name, "abs" | "min" | "max");
         if float_only && !is_float(t0) {
             let n = self.tn(t0);
-            let nm = self.pos_names.get(&(args[0].pos.line, args[0].pos.col)).cloned().unwrap_or_else(|| "x".into());
-            let d = diag(format!("{} works on Float or Float32, not {}", name, n), args[0].pos)
-                .note(format!("numbers are never converted implicitly: write `{}.to_float()` first", if nm.is_empty() { "x".to_string() } else { nm }));
+            let nm = self
+                .pos_names
+                .get(&(args[0].pos.line, args[0].pos.col))
+                .cloned()
+                .unwrap_or_else(|| "x".into());
+            let d = diag(
+                format!("{} works on Float or Float32, not {}", name, n),
+                args[0].pos,
+            )
+            .note(format!(
+                "numbers are never converted implicitly: write `{}.to_float()` first",
+                if nm.is_empty() { "x".to_string() } else { nm }
+            ));
             return self.fail(e, d);
         }
         if name == "abs" && matches!(t0, Ty::Range(..)) {
             // |x| over an interval; the operation itself is the ordinary Int abs (it panics only for i64::MIN)
             let (lo, hi) = int_range(t0);
-            let (rl, rh) = if lo >= 0 { (lo, hi) } else if hi <= 0 { (-hi, -lo) } else { (0, hi.max(-lo)) };
+            let (rl, rh) = if lo >= 0 {
+                (lo, hi)
+            } else if hi <= 0 {
+                (-hi, -lo)
+            } else {
+                (0, hi.max(-lo))
+            };
             if self.prelude_fn("m__abs_i64").is_some() {
                 args[0].ty = Ty::Int;
                 let a = args.pop().unwrap();
@@ -483,17 +648,27 @@ impl<'a> Checker<'a> {
         }
         if name == "abs" && !is_signed_int(t0) && !is_float(t0) {
             let n = self.tn(t0);
-            let d = diag(format!("abs of a {}: it has no negative values", n), args[0].pos);
+            let d = diag(
+                format!("abs of a {}: it has no negative values", n),
+                args[0].pos,
+            );
             return self.fail(e, d);
         }
         let f32_arg = is_f32(t0);
         let f64t = Ty::Num(Nk::F64);
         // ---- intrinsics: sqrt, to_bits
         if name == "to_bits" {
-            let ret = if f32_arg { Ty::Num(Nk::U32) } else { Ty::Num(Nk::U64) };
+            let ret = if f32_arg {
+                Ty::Num(Nk::U32)
+            } else {
+                Ty::Num(Nk::U64)
+            };
             if !is_float(t0) {
                 let n = self.tn(t0);
-                let d = diag(format!("to_bits works on Float or Float32, not {}", n), args[0].pos);
+                let d = diag(
+                    format!("to_bits works on Float or Float32, not {}", n),
+                    args[0].pos,
+                );
                 return self.fail(e, d);
             }
             e.k = EK::Call("__bits".into(), args);
@@ -502,7 +677,14 @@ impl<'a> Checker<'a> {
         if name == "sqrt" {
             let a = args.pop().unwrap();
             if f32_arg {
-                e.k = EK::Conv(Box::new(Expr { k: EK::Call("__sqrt".into(), vec![conv(a, f64t)]), pos, ty: f64t }), false);
+                e.k = EK::Conv(
+                    Box::new(Expr {
+                        k: EK::Call("__sqrt".into(), vec![conv(a, f64t)]),
+                        pos,
+                        ty: f64t,
+                    }),
+                    false,
+                );
             } else {
                 e.k = EK::Call("__sqrt".into(), vec![a]);
             }
@@ -523,14 +705,24 @@ impl<'a> Checker<'a> {
             (format!("m__{}_i64", name), t0, true)
         };
         if self.prelude_fn(&pname).is_none() {
-            let d = diag(format!("{} is not available for {}", name, self.tn(t0)), pos);
+            let d = diag(
+                format!("{} is not available for {}", name, self.tn(t0)),
+                pos,
+            );
             return self.fail(e, d);
         }
         let _ = widen_ints;
         let wide = if is_float(t0) { f64t } else { Ty::Int };
         let narrow_needed = t0 != wide && !is_u64(t0);
-        let args: Vec<Expr> = args.into_iter().map(|a| if narrow_needed { conv(a, wide) } else { a }).collect();
-        let call = Expr { k: EK::Call(pname, args), pos, ty: if ret == t0 { wide } else { ret } };
+        let args: Vec<Expr> = args
+            .into_iter()
+            .map(|a| if narrow_needed { conv(a, wide) } else { a })
+            .collect();
+        let call = Expr {
+            k: EK::Call(pname, args),
+            pos,
+            ty: if ret == t0 { wide } else { ret },
+        };
         if narrow_needed && ret == t0 {
             e.k = EK::Conv(Box::new(call), false);
         } else {
@@ -541,8 +733,15 @@ impl<'a> Checker<'a> {
 
     /// `min(a, b)` / `max(a, b)` of integers with intervals: componentwise bounds.
     fn int_minmax(&mut self, e: &mut Expr, name: &str, mut args: Vec<Expr>, _pos: Pos) -> Ty {
-        let (a, b) = (super::rng::ival(&args[0]).unwrap(), super::rng::ival(&args[1]).unwrap());
-        let (lo, hi) = if name == "min" { (a.0.min(b.0), a.1.min(b.1)) } else { (a.0.max(b.0), a.1.max(b.1)) };
+        let (a, b) = (
+            super::rng::ival(&args[0]).unwrap(),
+            super::rng::ival(&args[1]).unwrap(),
+        );
+        let (lo, hi) = if name == "min" {
+            (a.0.min(b.0), a.1.min(b.1))
+        } else {
+            (a.0.max(b.0), a.1.max(b.1))
+        };
         let pname = format!("m__{}_i64", name);
         if self.prelude_fn(&pname).is_none() {
             return self.fail_quiet(e);

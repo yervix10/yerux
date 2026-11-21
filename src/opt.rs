@@ -61,9 +61,13 @@ fn snapshot(f: &IrFunc) -> String {
 fn pass_off(name: &str) -> bool {
     use std::sync::OnceLock;
     static OFF: OnceLock<Vec<String>> = OnceLock::new();
-    OFF.get_or_init(|| std::env::var("YERUX_OPT_OFF").map(|v| v.split(',').map(|s| s.trim().to_string()).collect()).unwrap_or_default())
-        .iter()
-        .any(|s| s == name)
+    OFF.get_or_init(|| {
+        std::env::var("YERUX_OPT_OFF")
+            .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_default()
+    })
+    .iter()
+    .any(|s| s == name)
 }
 
 /// Functions this big (blocks x vregs) get only the cheap clean-up: the dataflow passes keep per-block state and
@@ -78,15 +82,33 @@ fn opt_func(f: &mut IrFunc) {
     }
     for _ in 0..16 {
         let before = snapshot(f);
-        if !pass_off("constprop") { constprop(f); }
-        if !pass_off("copyprop") { copyprop(f); }
-        if !pass_off("sroa") { crate::sroa::run(f); }
-        if !pass_off("memopt") { crate::memopt::run(f); }
-        if !pass_off("copyprop") { copyprop(f); }
-        if !pass_off("rangeopt") { rangeopt(f); }
-        if !pass_off("coalesce") { coalesce(f); }
-        if !pass_off("dce") { dce(f); }
-        if !pass_off("cfg") { cfg(f); }
+        if !pass_off("constprop") {
+            constprop(f);
+        }
+        if !pass_off("copyprop") {
+            copyprop(f);
+        }
+        if !pass_off("sroa") {
+            crate::sroa::run(f);
+        }
+        if !pass_off("memopt") {
+            crate::memopt::run(f);
+        }
+        if !pass_off("copyprop") {
+            copyprop(f);
+        }
+        if !pass_off("rangeopt") {
+            rangeopt(f);
+        }
+        if !pass_off("coalesce") {
+            coalesce(f);
+        }
+        if !pass_off("dce") {
+            dce(f);
+        }
+        if !pass_off("cfg") {
+            cfg(f);
+        }
         if snapshot(f) == before {
             break;
         }
@@ -98,11 +120,29 @@ fn opt_func(f: &mut IrFunc) {
 
 pub(crate) fn def(i: &Inst) -> Option<V> {
     match i {
-        Inst::Const(d, _) | Inst::Text(d, _) | Inst::FnAddr(d, _) | Inst::VTableAddr(d, _) | Inst::Mov(d, _) | Inst::Bin(d, ..) | Inst::Neg(d, _) | Inst::Not(d, _) => Some(*d),
-        Inst::Slot(d, _) | Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::Lea(d, ..) | Inst::ListGet(d, ..) => Some(*d),
-        Inst::Alloc(d, _) | Inst::Load8(d, ..) | Inst::Realloc(d, ..) | Inst::LoadX(d, ..) | Inst::LeaX(d, ..) => Some(*d),
+        Inst::Const(d, _)
+        | Inst::Text(d, _)
+        | Inst::FnAddr(d, _)
+        | Inst::VTableAddr(d, _)
+        | Inst::Mov(d, _)
+        | Inst::Bin(d, ..)
+        | Inst::Neg(d, _)
+        | Inst::Not(d, _) => Some(*d),
+        Inst::Slot(d, _)
+        | Inst::Load(d, ..)
+        | Inst::LoadH(d, ..)
+        | Inst::Lea(d, ..)
+        | Inst::ListGet(d, ..) => Some(*d),
+        Inst::Alloc(d, _)
+        | Inst::Load8(d, ..)
+        | Inst::Realloc(d, ..)
+        | Inst::LoadX(d, ..)
+        | Inst::LeaX(d, ..) => Some(*d),
         Inst::N(_, d, ..) => Some(*d),
-        Inst::Thread(_, d, _) | Inst::Atomic(_, d, _) | Inst::Syscall(d, _) | Inst::Global(d, _) => Some(*d),
+        Inst::Thread(_, d, _)
+        | Inst::Atomic(_, d, _)
+        | Inst::Syscall(d, _)
+        | Inst::Global(d, _) => Some(*d),
         Inst::Call(d, ..) | Inst::ExternCall(d, ..) | Inst::CallInd(d, ..) => *d,
         _ => None,
     }
@@ -110,11 +150,29 @@ pub(crate) fn def(i: &Inst) -> Option<V> {
 
 fn def_mut(i: &mut Inst) -> Option<&mut V> {
     match i {
-        Inst::Const(d, _) | Inst::Text(d, _) | Inst::FnAddr(d, _) | Inst::VTableAddr(d, _) | Inst::Mov(d, _) | Inst::Bin(d, ..) | Inst::Neg(d, _) | Inst::Not(d, _) => Some(d),
-        Inst::Slot(d, _) | Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::Lea(d, ..) | Inst::ListGet(d, ..) => Some(d),
-        Inst::Alloc(d, _) | Inst::Load8(d, ..) | Inst::Realloc(d, ..) | Inst::LoadX(d, ..) | Inst::LeaX(d, ..) => Some(d),
+        Inst::Const(d, _)
+        | Inst::Text(d, _)
+        | Inst::FnAddr(d, _)
+        | Inst::VTableAddr(d, _)
+        | Inst::Mov(d, _)
+        | Inst::Bin(d, ..)
+        | Inst::Neg(d, _)
+        | Inst::Not(d, _) => Some(d),
+        Inst::Slot(d, _)
+        | Inst::Load(d, ..)
+        | Inst::LoadH(d, ..)
+        | Inst::Lea(d, ..)
+        | Inst::ListGet(d, ..) => Some(d),
+        Inst::Alloc(d, _)
+        | Inst::Load8(d, ..)
+        | Inst::Realloc(d, ..)
+        | Inst::LoadX(d, ..)
+        | Inst::LeaX(d, ..) => Some(d),
         Inst::N(_, d, ..) => Some(d),
-        Inst::Thread(_, d, _) | Inst::Atomic(_, d, _) | Inst::Syscall(d, _) | Inst::Global(d, _) => Some(d),
+        Inst::Thread(_, d, _)
+        | Inst::Atomic(_, d, _)
+        | Inst::Syscall(d, _)
+        | Inst::Global(d, _) => Some(d),
         Inst::Call(d, ..) | Inst::ExternCall(d, ..) | Inst::CallInd(d, ..) => d.as_mut(),
         _ => None,
     }
@@ -122,8 +180,14 @@ fn def_mut(i: &mut Inst) -> Option<&mut V> {
 
 pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
     match i {
-        Inst::Const(..) | Inst::Text(..) | Inst::FnAddr(..) | Inst::VTableAddr(..) | Inst::Global(..) => {}
-        Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => args.iter_mut().for_each(f),
+        Inst::Const(..)
+        | Inst::Text(..)
+        | Inst::FnAddr(..)
+        | Inst::VTableAddr(..)
+        | Inst::Global(..) => {}
+        Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => {
+            args.iter_mut().for_each(f)
+        }
         Inst::Mov(_, s) | Inst::Neg(_, s) | Inst::Not(_, s) => f(s),
         Inst::Bin(_, _, a, b) | Inst::N(_, _, a, b) => {
             f(a);
@@ -137,11 +201,18 @@ pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
         Inst::PrintInt(v) | Inst::PrintBool(v) | Inst::PrintText(v) => f(v),
         Inst::Slot(..) => {}
         Inst::Load(_, a, _) | Inst::LoadH(_, a, _) | Inst::Lea(_, a, _) | Inst::ListFree(a) => f(a),
-        Inst::Store(a, _, v) | Inst::Copy(a, v, _) | Inst::ListPush(a, v) | Inst::ListGet(_, a, v) => {
+        Inst::Store(a, _, v)
+        | Inst::Copy(a, v, _)
+        | Inst::ListPush(a, v)
+        | Inst::ListGet(_, a, v) => {
             f(a);
             f(v)
         }
-        Inst::Alloc(_, n) | Inst::Free(n) | Inst::Load8(_, n, _) | Inst::CheckNonEmpty(n) | Inst::Assert(n) => f(n),
+        Inst::Alloc(_, n)
+        | Inst::Free(n)
+        | Inst::Load8(_, n, _)
+        | Inst::CheckNonEmpty(n)
+        | Inst::Assert(n) => f(n),
         Inst::Store8(a, _, v) | Inst::PrintBytes(a, v) | Inst::Panic(a, v) | Inst::Check(a, v) => {
             f(a);
             f(v)
@@ -232,7 +303,10 @@ fn fold_bin(op: Op, a: i64, b: i64) -> Option<i64> {
 }
 
 fn is_cmp(op: Op) -> bool {
-    !matches!(op.checked(), Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod)
+    !matches!(
+        op.checked(),
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod
+    )
 }
 
 // ───────────────────────── 1. constant propagation ─────────────────────────
@@ -290,9 +364,10 @@ fn cp_step(i: &Inst, st: &mut CState) -> Option<Inst> {
             } else {
                 // algebraic identities that can neither overflow nor trap
                 repl = match (&op.checked(), la, lb) {
-                    (Op::Add, _, Lat::C(0)) | (Op::Sub, _, Lat::C(0)) | (Op::Mul, _, Lat::C(1)) | (Op::Div, _, Lat::C(1)) => {
-                        Some(Inst::Mov(*d, *a))
-                    }
+                    (Op::Add, _, Lat::C(0))
+                    | (Op::Sub, _, Lat::C(0))
+                    | (Op::Mul, _, Lat::C(1))
+                    | (Op::Div, _, Lat::C(1)) => Some(Inst::Mov(*d, *a)),
                     (Op::Add, Lat::C(0), _) | (Op::Mul, Lat::C(1), _) => Some(Inst::Mov(*d, *b)),
                     (Op::Mul, _, Lat::C(0)) | (Op::Mul, Lat::C(0), _) => Some(Inst::Const(*d, 0)),
                     _ => None,
@@ -309,15 +384,33 @@ fn cp_step(i: &Inst, st: &mut CState) -> Option<Inst> {
                 st[*d] = Lat::Top;
             }
         }
-        Inst::Thread(_, d, _) | Inst::Atomic(_, d, _) | Inst::Syscall(d, _) | Inst::Global(d, _) => st[*d] = Lat::Top,
+        Inst::Thread(_, d, _)
+        | Inst::Atomic(_, d, _)
+        | Inst::Syscall(d, _)
+        | Inst::Global(d, _) => st[*d] = Lat::Top,
         Inst::PrintInt(_) | Inst::PrintBool(_) | Inst::PrintText(_) => {}
         // memory-derived values are never constants for the folder
-        Inst::Slot(d, _) | Inst::Load(d, ..) | Inst::LoadH(d, ..) | Inst::Lea(d, ..) | Inst::ListGet(d, ..) => st[*d] = Lat::Top,
-        Inst::Alloc(d, _) | Inst::Load8(d, ..) | Inst::Realloc(d, ..) | Inst::LoadX(d, ..) | Inst::LeaX(d, ..) => st[*d] = Lat::Top,
+        Inst::Slot(d, _)
+        | Inst::Load(d, ..)
+        | Inst::LoadH(d, ..)
+        | Inst::Lea(d, ..)
+        | Inst::ListGet(d, ..) => st[*d] = Lat::Top,
+        Inst::Alloc(d, _)
+        | Inst::Load8(d, ..)
+        | Inst::Realloc(d, ..)
+        | Inst::LoadX(d, ..)
+        | Inst::LeaX(d, ..) => st[*d] = Lat::Top,
         Inst::N(_, d, ..) => st[*d] = Lat::Top,
         Inst::StoreX(..) => {}
         Inst::Store(..) | Inst::Copy(..) | Inst::ListPush(..) | Inst::ListFree(..) => {}
-        Inst::Free(..) | Inst::MemCpy(..) | Inst::Store8(..) | Inst::PrintBytes(..) | Inst::Panic(..) | Inst::Check(..) | Inst::CheckNonEmpty(..) | Inst::Assert(..) => {}
+        Inst::Free(..)
+        | Inst::MemCpy(..)
+        | Inst::Store8(..)
+        | Inst::PrintBytes(..)
+        | Inst::Panic(..)
+        | Inst::Check(..)
+        | Inst::CheckNonEmpty(..)
+        | Inst::Assert(..) => {}
     }
     repl
 }
@@ -331,7 +424,9 @@ fn constprop(f: &mut IrFunc) {
     while changed {
         changed = false;
         for &b in &order {
-            let Some(mut st) = inn[b].clone() else { continue };
+            let Some(mut st) = inn[b].clone() else {
+                continue;
+            };
             for i in &f.blocks[b].insts {
                 cp_step(i, &mut st);
             }
@@ -363,7 +458,9 @@ fn constprop(f: &mut IrFunc) {
         }
     }
     for &b in &order {
-        let Some(mut st) = inn[b].clone() else { continue };
+        let Some(mut st) = inn[b].clone() else {
+            continue;
+        };
         for i in &mut f.blocks[b].insts {
             if let Some(r) = cp_step(i, &mut st) {
                 *i = r;
@@ -416,7 +513,9 @@ fn copyprop(f: &mut IrFunc) {
     while changed {
         changed = false;
         for &b in &order {
-            let Some(mut m) = inn[b].clone() else { continue };
+            let Some(mut m) = inn[b].clone() else {
+                continue;
+            };
             for i in &f.blocks[b].insts {
                 cpy_step(&mut i.clone(), &mut m, false);
             }
@@ -438,7 +537,9 @@ fn copyprop(f: &mut IrFunc) {
         }
     }
     for &b in &order {
-        let Some(mut m) = inn[b].clone() else { continue };
+        let Some(mut m) = inn[b].clone() else {
+            continue;
+        };
         for i in &mut f.blocks[b].insts {
             cpy_step(i, &mut m, true);
         }
@@ -529,7 +630,9 @@ fn coalesce(f: &mut IrFunc) {
             if i == 0 || touched[i - 1] || remove[i - 1] {
                 continue;
             }
-            let Inst::Mov(x, t) = blk.insts[i].clone() else { continue };
+            let Inst::Mov(x, t) = blk.insts[i].clone() else {
+                continue;
+            };
             if def(&blk.insts[i - 1]) == Some(t) {
                 *def_mut(&mut blk.insts[i - 1]).unwrap() = x;
                 touched[i - 1] = true;
@@ -548,11 +651,22 @@ fn coalesce(f: &mut IrFunc) {
 
 fn pure(i: &Inst) -> bool {
     match i {
-        Inst::Const(..) | Inst::Text(..) | Inst::FnAddr(..) | Inst::VTableAddr(..) | Inst::Mov(..) | Inst::Not(..) => true,
+        Inst::Const(..)
+        | Inst::Text(..)
+        | Inst::FnAddr(..)
+        | Inst::VTableAddr(..)
+        | Inst::Mov(..)
+        | Inst::Not(..) => true,
         Inst::N(op, ..) => op.pure(),
         Inst::Bin(_, op, ..) => is_cmp(*op) || op.is_unchecked(), // checked arithmetic may panic: keep it
         // address computations and plain reads (bounds are checked by a separate `Check`): dead results can go
-        Inst::Slot(..) | Inst::Lea(..) | Inst::LeaX(..) | Inst::Load(..) | Inst::LoadH(..) | Inst::LoadX(..) | Inst::Load8(..) => true,
+        Inst::Slot(..)
+        | Inst::Lea(..)
+        | Inst::LeaX(..)
+        | Inst::Load(..)
+        | Inst::LoadH(..)
+        | Inst::LoadX(..)
+        | Inst::Load8(..) => true,
         _ => false,
     }
 }
@@ -678,7 +792,13 @@ fn cfg(f: &mut IrFunc) {
         for a in 0..f.blocks.len() {
             if let Term::Jmp(bb) = f.blocks[a].term {
                 if bb != 0 && bb != a && preds[bb] == 1 {
-                    let moved = std::mem::replace(&mut f.blocks[bb], Block { insts: vec![], term: Term::Unreachable });
+                    let moved = std::mem::replace(
+                        &mut f.blocks[bb],
+                        Block {
+                            insts: vec![],
+                            term: Term::Unreachable,
+                        },
+                    );
                     f.blocks[a].insts.extend(moved.insts);
                     f.blocks[a].term = moved.term;
                     preds[bb] = 0; // now unreachable; swept below
@@ -756,9 +876,9 @@ const LEN_MAX: i128 = 1 << 47;
 #[derive(Clone, PartialEq)]
 struct RState {
     r: Vec<R>,
-    lt: HashSet<(V, V)>,                 // (a, b): a < b (signed) holds
-    conds: HashMap<V, (Op, V, V)>,       // c == (a op b), for branch refinement
-    loads: HashMap<(V, i32), V>,         // [addr+off] currently equals this vreg (no store/call since)
+    lt: HashSet<(V, V)>,           // (a, b): a < b (signed) holds
+    conds: HashMap<V, (Op, V, V)>, // c == (a op b), for branch refinement
+    loads: HashMap<(V, i32), V>,   // [addr+off] currently equals this vreg (no store/call since)
 }
 
 fn fit(lo: i128, hi: i128) -> (R, bool) {
@@ -816,7 +936,8 @@ fn rkill(st: &mut RState, v: V) {
         st.lt.retain(|&(a, b)| a != v && b != v);
     }
     if !st.conds.is_empty() {
-        st.conds.retain(|k, &mut (_, a, b)| *k != v && a != v && b != v);
+        st.conds
+            .retain(|k, &mut (_, a, b)| *k != v && a != v && b != v);
     }
     if !st.loads.is_empty() {
         st.loads.retain(|&(a, _), s| a != v && *s != v);
@@ -842,7 +963,9 @@ fn lt_known(st: &RState, a: V, b: V) -> bool {
     if st.r[a].1 < st.r[b].0 || st.lt.contains(&(a, b)) {
         return true;
     }
-    st.lt.iter().any(|&(x, m)| x == a && st.lt.contains(&(m, b)))
+    st.lt
+        .iter()
+        .any(|&(x, m)| x == a && st.lt.contains(&(m, b)))
 }
 
 fn cmp_negate(op: Op) -> Op {
@@ -881,13 +1004,16 @@ fn refine(st: &mut RState, op: Op, a: V, b: V) -> bool {
         _ => {
             // Ne: only a constant at the end of the other interval can be peeled off
             if xl == xh {
-                if yl == xl && !narrow(st, b, xl + 1, yh) || yh == xl && !narrow(st, b, yl, xl - 1) {
+                if yl == xl && !narrow(st, b, xl + 1, yh) || yh == xl && !narrow(st, b, yl, xl - 1)
+                {
                     return false;
                 }
             }
             if yl == yh {
                 let (x, c) = (st.r[a], yl);
-                if x.0 as i128 == c && !narrow(st, a, c + 1, x.1 as i128) || x.1 as i128 == c && !narrow(st, a, x.0 as i128, c - 1) {
+                if x.0 as i128 == c && !narrow(st, a, c + 1, x.1 as i128)
+                    || x.1 as i128 == c && !narrow(st, a, x.0 as i128, c - 1)
+                {
                     return false;
                 }
             }
@@ -1046,7 +1172,11 @@ fn rstep(i: &Inst, st: &mut RState) -> Rew {
         }
         Inst::Not(d, s) => {
             let x = st.r[*s];
-            let r = if x.0 >= 0 && x.1 <= 1 { (1 - x.1, 1 - x.0) } else { (0, 1) };
+            let r = if x.0 >= 0 && x.1 <= 1 {
+                (1 - x.1, 1 - x.0)
+            } else {
+                (0, 1)
+            };
             set(st, *d, r);
         }
         Inst::Check(idx, n) => {
@@ -1112,7 +1242,21 @@ fn rstep(i: &Inst, st: &mut RState) -> Rew {
                 st.loads.insert((*a, *off), *d);
             }
         }
-        Inst::Store(..) | Inst::StoreX(..) | Inst::Realloc(..) | Inst::Copy(..) | Inst::ListPush(..) | Inst::ListFree(..) | Inst::Free(..) | Inst::MemCpy(..) | Inst::Store8(..) | Inst::Call(..) | Inst::ExternCall(..) | Inst::CallInd(..) | Inst::Syscall(..) | Inst::Thread(..) | Inst::Atomic(..) => {
+        Inst::Store(..)
+        | Inst::StoreX(..)
+        | Inst::Realloc(..)
+        | Inst::Copy(..)
+        | Inst::ListPush(..)
+        | Inst::ListFree(..)
+        | Inst::Free(..)
+        | Inst::MemCpy(..)
+        | Inst::Store8(..)
+        | Inst::Call(..)
+        | Inst::ExternCall(..)
+        | Inst::CallInd(..)
+        | Inst::Syscall(..)
+        | Inst::Thread(..)
+        | Inst::Atomic(..) => {
             st.loads.clear();
             if let Some(d) = def(i) {
                 set(st, d, TOP);
@@ -1129,10 +1273,24 @@ fn rstep(i: &Inst, st: &mut RState) -> Rew {
 
 fn state_join(a: &RState, b: &RState) -> RState {
     RState {
-        r: a.r.iter().zip(&b.r).map(|(x, y)| (x.0.min(y.0), x.1.max(y.1))).collect(),
+        r: a.r
+            .iter()
+            .zip(&b.r)
+            .map(|(x, y)| (x.0.min(y.0), x.1.max(y.1)))
+            .collect(),
         lt: a.lt.intersection(&b.lt).cloned().collect(),
-        conds: a.conds.iter().filter(|(k, v)| b.conds.get(k) == Some(v)).map(|(k, v)| (*k, *v)).collect(),
-        loads: a.loads.iter().filter(|(k, v)| b.loads.get(k) == Some(v)).map(|(k, v)| (*k, *v)).collect(),
+        conds: a
+            .conds
+            .iter()
+            .filter(|(k, v)| b.conds.get(k) == Some(v))
+            .map(|(k, v)| (*k, *v))
+            .collect(),
+        loads: a
+            .loads
+            .iter()
+            .filter(|(k, v)| b.loads.get(k) == Some(v))
+            .map(|(k, v)| (*k, *v))
+            .collect(),
     }
 }
 
@@ -1141,7 +1299,13 @@ fn state_join(a: &RState, b: &RState) -> RState {
 /// `only` (assigned inside the loop; None = all): a vreg the loop never assigns changes only through the outer
 /// loops' own widening, and widening it here would throw away precision that narrowing cannot win back.
 const DELAY: u8 = 4;
-fn state_widen(old: &RState, new: &RState, only: Option<&Vec<bool>>, cnt: &mut Vec<u8>, th: &[i64]) -> RState {
+fn state_widen(
+    old: &RState,
+    new: &RState,
+    only: Option<&Vec<bool>>,
+    cnt: &mut Vec<u8>,
+    th: &[i64],
+) -> RState {
     let mut j = state_join(old, new);
     for k in 0..j.r.len() {
         if j.r[k] == old.r[k] {
@@ -1282,11 +1446,26 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
     }
     let mut entry_ranges = vec![TOP; nv];
     for (v, range) in f.vranges.iter().enumerate().take(nv) {
-        if let Some((lo, hi)) = range { entry_ranges[v] = (*lo, *hi); }
+        if let Some((lo, hi)) = range {
+            entry_ranges[v] = (*lo, *hi);
+        }
     }
-    let caps: Vec<(V, R)> = f.vranges.iter().enumerate().filter(|(v, _)| *v < nv).filter_map(|(v, r)| r.map(|r| (v, r))).collect();
-    let cap_of: Vec<Option<R>> = (0..nv).map(|v| f.vranges.get(v).copied().flatten()).collect();
-    let mut entry = RState { r: entry_ranges, lt: HashSet::new(), conds: HashMap::new(), loads: HashMap::new() };
+    let caps: Vec<(V, R)> = f
+        .vranges
+        .iter()
+        .enumerate()
+        .filter(|(v, _)| *v < nv)
+        .filter_map(|(v, r)| r.map(|r| (v, r)))
+        .collect();
+    let cap_of: Vec<Option<R>> = (0..nv)
+        .map(|v| f.vranges.get(v).copied().flatten())
+        .collect();
+    let mut entry = RState {
+        r: entry_ranges,
+        lt: HashSet::new(),
+        conds: HashMap::new(),
+        loads: HashMap::new(),
+    };
     apply_caps(&mut entry, &caps);
     let run_block = |b: usize, st: &mut RState| {
         apply_caps(st, &caps);
@@ -1316,7 +1495,9 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
             return; // give up (should not happen): leave the function untouched
         }
         for &b in &order {
-            let Some(mut st) = inn[b].clone() else { continue };
+            let Some(mut st) = inn[b].clone() else {
+                continue;
+            };
             run_block(b, &mut st);
             for (s, es) in edge_states(&f.blocks[b].term, &st) {
                 let Some(es) = es else { continue };
@@ -1347,7 +1528,9 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
         let mut new: Vec<Option<RState>> = vec![None; n];
         new[0] = Some(entry.clone());
         for &b in &order {
-            let Some(mut st) = inn[b].clone() else { continue };
+            let Some(mut st) = inn[b].clone() else {
+                continue;
+            };
             run_block(b, &mut st);
             for (s, es) in edge_states(&f.blocks[b].term, &st) {
                 let Some(es) = es else { continue };
@@ -1362,7 +1545,9 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
     // rewrite
     let mut next_v = f.nvregs;
     for &b in &order {
-        let Some(mut st) = inn[b].clone() else { continue };
+        let Some(mut st) = inn[b].clone() else {
+            continue;
+        };
         apply_caps(&mut st, &caps);
         let old = std::mem::take(&mut f.blocks[b].insts);
         let mut out = Vec::with_capacity(old.len());
@@ -1370,7 +1555,11 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
             let info = match (&i, collect.is_some()) {
                 (Inst::Check(idx, len), true) if idx != len => {
                     let x = st.r[*idx];
-                    if x.0 >= 0 && x.1 < i64::MAX { Some((*len, x.1)) } else { None }
+                    if x.0 >= 0 && x.1 < i64::MAX {
+                        Some((*len, x.1))
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             };
@@ -1387,7 +1576,12 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
             match rew {
                 Rew::Keep => {
                     if let (Some((len, hi)), Some(c)) = (info, collect.as_deref_mut()) {
-                        c.push(CheckInfo { block: b, at: out.len(), len, hi });
+                        c.push(CheckInfo {
+                            block: b,
+                            at: out.len(),
+                            len,
+                            hi,
+                        });
                     }
                     out.push(i)
                 }

@@ -265,9 +265,20 @@ impl<'a> Interp<'a> {
             _ => {}
         }
         let table = self.funcs;
-        let f = *table.get(name).ok_or_else(|| unsupported(&format!("a call to `{}`", name), e.pos, &self.chain))?;
-        if f.pos.line >= PRELUDE_LINE || (!scalar_ty(f.ret) && f.ret != Ty::Unit) || f.params.iter().any(|p| p.mode != Mode::Own || !scalar_ty(p.ty)) {
-            return Err(unsupported(&format!("a call to `{}`", name), e.pos, &self.chain));
+        let f = *table
+            .get(name)
+            .ok_or_else(|| unsupported(&format!("a call to `{}`", name), e.pos, &self.chain))?;
+        if f.pos.line >= PRELUDE_LINE
+            || (!scalar_ty(f.ret) && f.ret != Ty::Unit)
+            || f.params
+                .iter()
+                .any(|p| p.mode != Mode::Own || !scalar_ty(p.ty))
+        {
+            return Err(unsupported(
+                &format!("a call to `{}`", name),
+                e.pos,
+                &self.chain,
+            ));
         }
         if self.chain.len() >= MAX_DEPTH {
             return Err(self.fail("compile-time evaluation recursed too deeply", e.pos));
@@ -353,7 +364,14 @@ fn walk(e: &mut Expr, f: Visit) -> R<()> {
         return Ok(());
     }
     match &mut e.k {
-        EK::Ascribe(x) | EK::Conv(x, _) | EK::Field(x, _) | EK::Un(_, x) | EK::IsVariant(x, _) | EK::Payload(x, _, _) | EK::AddrOf(x, _) | EK::Deref(x) => walk(x, f)?,
+        EK::Ascribe(x)
+        | EK::Conv(x, _)
+        | EK::Field(x, _)
+        | EK::Un(_, x)
+        | EK::IsVariant(x, _)
+        | EK::Payload(x, _, _)
+        | EK::AddrOf(x, _)
+        | EK::Deref(x) => walk(x, f)?,
         EK::DynBox { value, .. } => walk(value, f)?,
         EK::AsElse(x, b) => {
             walk(x, f)?;
@@ -363,7 +381,11 @@ fn walk(e: &mut Expr, f: Visit) -> R<()> {
             walk(a, f)?;
             walk(b, f)?;
         }
-        EK::Call(_, args) | EK::Static { args, .. } | EK::Variant { args, .. } | EK::GenVariant { args, .. } | EK::DynCall { args, .. } => {
+        EK::Call(_, args)
+        | EK::Static { args, .. }
+        | EK::Variant { args, .. }
+        | EK::GenVariant { args, .. }
+        | EK::DynCall { args, .. } => {
             for a in args {
                 walk(a, f)?;
             }
@@ -443,7 +465,11 @@ pub fn run(prog: &mut Program) -> Result<(), Vec<Diag>> {
             if !is_marker(x) {
                 return Ok(false);
             }
-            let mut it = Interp { funcs: &table, steps: 0, chain: vec![] };
+            let mut it = Interp {
+                funcs: &table,
+                steps: 0,
+                chain: vec![],
+            };
             let v = match &x.k {
                 EK::Call(_, a) => it.expr(&a[0], &mut HashMap::new()),
                 _ => unreachable!(),
@@ -472,7 +498,11 @@ fn remove_asserts(b: &mut Vec<Stmt>, table: &HashMap<String, &Func>, errs: &mut 
         if is_assert {
             if let SK::ExprS(e) = &s.k {
                 if let EK::Call(_, a) = &e.k {
-                    let mut it = Interp { funcs: table, steps: 0, chain: vec![] };
+                    let mut it = Interp {
+                        funcs: table,
+                        steps: 0,
+                        chain: vec![],
+                    };
                     if let Err(d) = it.expr(&a[0], &mut HashMap::new()) {
                         errs.push(d);
                     }

@@ -30,7 +30,11 @@ impl<'a> L<'a> {
     pub(super) fn num_expr(&mut self, e: &Expr) -> LR<V> {
         match &e.k {
             EK::Float(v, _) => {
-                let bits = if is_f32(e.ty) { (*v as f32).to_bits() as i64 } else { v.to_bits() as i64 };
+                let bits = if is_f32(e.ty) {
+                    (*v as f32).to_bits() as i64
+                } else {
+                    v.to_bits() as i64
+                };
                 Ok(self.konst(bits))
             }
             EK::Conv(x, trunc) => self.num_conv(x, e.ty, *trunc),
@@ -77,7 +81,12 @@ impl<'a> L<'a> {
                 ">=" => return Ok(self.n2(NOp::FLe, b, a)),
                 "==" => return Ok(self.n2(NOp::FEq, a, b)),
                 "!=" => return Ok(self.n2(NOp::FNe, a, b)),
-                _ => return Err(format!("native backend: float operator {} is not supported", op)),
+                _ => {
+                    return Err(format!(
+                        "native backend: float operator {} is not supported",
+                        op
+                    ))
+                }
             };
             return Ok(if f32t { self.n1(NOp::F2S, r) } else { r });
         }
@@ -127,7 +136,10 @@ impl<'a> L<'a> {
             _ => (Op::Ne, 0),
         };
         let r = self.bin(o, a, b);
-        if matches!(o, Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Eq | Op::Ne | Op::Mod) {
+        if matches!(
+            o,
+            Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::Eq | Op::Ne | Op::Mod
+        ) {
             return Ok(r);
         }
         Ok(match rng_of(t) {
@@ -166,7 +178,11 @@ impl<'a> L<'a> {
                 Ok(())
             },
             |l| {
-                let r = if f32t { l.n1(NOp::I2S, v) } else { l.n1(NOp::I2F, v) };
+                let r = if f32t {
+                    l.n1(NOp::I2S, v)
+                } else {
+                    l.n1(NOp::I2F, v)
+                };
                 l.emit(Inst::Mov(res, r));
                 Ok(())
             },
@@ -206,7 +222,11 @@ impl<'a> L<'a> {
             return Ok(v);
         }
         match (is_float(from), is_float(to)) {
-            (true, true) => Ok(if is_f32(from) { self.n1(NOp::S2F, v) } else { self.n1(NOp::F2S, v) }),
+            (true, true) => Ok(if is_f32(from) {
+                self.n1(NOp::S2F, v)
+            } else {
+                self.n1(NOp::F2S, v)
+            }),
             (false, true) => {
                 let f32t = is_f32(to);
                 Ok(if is_u64(from) {
@@ -218,7 +238,11 @@ impl<'a> L<'a> {
                 })
             }
             (true, false) => {
-                let f = if is_f32(from) { self.n1(NOp::S2F, v) } else { v };
+                let f = if is_f32(from) {
+                    self.n1(NOp::S2F, v)
+                } else {
+                    v
+                };
                 if is_u64(to) {
                     return Ok(self.f64_to_u64(f));
                 }
@@ -248,7 +272,11 @@ impl<'a> L<'a> {
                     return Ok(v); // widening: always fits
                 }
                 // a UInt64 above i64::MAX has a negative bit pattern: reject it before the narrow range test
-                let v = if is_u64(from) { self.n2(NOp::Chk(Rng::NonNeg, MSG_CONV), v, v) } else { v };
+                let v = if is_u64(from) {
+                    self.n2(NOp::Chk(Rng::NonNeg, MSG_CONV), v, v)
+                } else {
+                    v
+                };
                 Ok(match rng_of(to) {
                     Some(r) => self.n2(NOp::Chk(r, MSG_CONV), v, v),
                     // target Int / UInt64: only the sign (or the top bit of a UInt64) can be wrong

@@ -18,8 +18,15 @@ const MAX_WORDS: usize = 16;
 
 pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
     match i {
-        Inst::Const(..) | Inst::Text(..) | Inst::Slot(..) | Inst::FnAddr(..) | Inst::VTableAddr(..) | Inst::Global(..) => {}
-        Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => args.iter_mut().for_each(f),
+        Inst::Const(..)
+        | Inst::Text(..)
+        | Inst::Slot(..)
+        | Inst::FnAddr(..)
+        | Inst::VTableAddr(..)
+        | Inst::Global(..) => {}
+        Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => {
+            args.iter_mut().for_each(f)
+        }
         Inst::Mov(_, s) | Inst::Neg(_, s) | Inst::Not(_, s) => f(s),
         Inst::Bin(_, _, a, b) | Inst::N(_, _, a, b) => {
             f(a);
@@ -41,11 +48,18 @@ pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
             f(i);
             f(v)
         }
-        Inst::Store(a, _, v) | Inst::Copy(a, v, _) | Inst::ListPush(a, v) | Inst::ListGet(_, a, v) => {
+        Inst::Store(a, _, v)
+        | Inst::Copy(a, v, _)
+        | Inst::ListPush(a, v)
+        | Inst::ListGet(_, a, v) => {
             f(a);
             f(v)
         }
-        Inst::Alloc(_, n) | Inst::Free(n) | Inst::Load8(_, n, _) | Inst::CheckNonEmpty(n) | Inst::Assert(n) => f(n),
+        Inst::Alloc(_, n)
+        | Inst::Free(n)
+        | Inst::Load8(_, n, _)
+        | Inst::CheckNonEmpty(n)
+        | Inst::Assert(n) => f(n),
         Inst::Store8(a, _, v) | Inst::PrintBytes(a, v) | Inst::Panic(a, v) | Inst::Check(a, v) => {
             f(a);
             f(v)
@@ -159,7 +173,8 @@ pub fn run(f: &mut IrFunc) -> bool {
         }
     }
     let size = |k: usize| f.slots[k] as i32 * 8;
-    let ok_word = |p: (usize, i32), extra: i32| p.1 >= 0 && p.1 % 8 == 0 && p.1 + extra <= size(p.0);
+    let ok_word =
+        |p: (usize, i32), extra: i32| p.1 >= 0 && p.1 % 8 == 0 && p.1 + extra <= size(p.0);
     for b in &f.blocks {
         for i in &b.insts {
             // classify every use of a tracked vreg
@@ -249,7 +264,11 @@ pub fn run(f: &mut IrFunc) -> bool {
                 Inst::Slot(d, _) | Inst::Mov(d, _) | Inst::Lea(d, ..) if live(d).is_some() => {}
                 Inst::Load(d, a, o) | Inst::LoadH(d, a, o) => match live(a) {
                     Some((k, x)) => b.insts.push(Inst::Mov(d, word((k, x + o)))),
-                    None => b.insts.push(if matches!(i, Inst::LoadH(..)) { Inst::LoadH(d, a, o) } else { Inst::Load(d, a, o) }),
+                    None => b.insts.push(if matches!(i, Inst::LoadH(..)) {
+                        Inst::LoadH(d, a, o)
+                    } else {
+                        Inst::Load(d, a, o)
+                    }),
                 },
                 Inst::Store(a, o, v) => match live(a) {
                     Some((k, x)) => b.insts.push(Inst::Mov(word((k, x + o)), v)),
@@ -259,17 +278,28 @@ pub fn run(f: &mut IrFunc) -> bool {
                     (None, None) => b.insts.push(Inst::Copy(d, s, n)),
                     (Some(pd), Some(ps)) => {
                         for w in 0..n {
-                            b.insts.push(Inst::Mov(word((pd.0, pd.1 + 8 * w as i32)), word((ps.0, ps.1 + 8 * w as i32))));
+                            b.insts.push(Inst::Mov(
+                                word((pd.0, pd.1 + 8 * w as i32)),
+                                word((ps.0, ps.1 + 8 * w as i32)),
+                            ));
                         }
                     }
                     (Some(pd), None) => {
                         for w in 0..n {
-                            b.insts.push(Inst::Load(word((pd.0, pd.1 + 8 * w as i32)), s, 8 * w as i32));
+                            b.insts.push(Inst::Load(
+                                word((pd.0, pd.1 + 8 * w as i32)),
+                                s,
+                                8 * w as i32,
+                            ));
                         }
                     }
                     (None, Some(ps)) => {
                         for w in 0..n {
-                            b.insts.push(Inst::Store(d, 8 * w as i32, word((ps.0, ps.1 + 8 * w as i32))));
+                            b.insts.push(Inst::Store(
+                                d,
+                                8 * w as i32,
+                                word((ps.0, ps.1 + 8 * w as i32)),
+                            ));
                         }
                     }
                 },
@@ -301,7 +331,13 @@ pub fn run(f: &mut IrFunc) -> bool {
         for b in &mut f.blocks {
             remap_term(&mut b.term, &|x| x + 1);
         }
-        f.blocks.insert(0, Block { insts: init, term: Term::Jmp(1) });
+        f.blocks.insert(
+            0,
+            Block {
+                insts: init,
+                term: Term::Jmp(1),
+            },
+        );
     } else {
         let e = &mut f.blocks[0].insts;
         let rest = std::mem::take(e);

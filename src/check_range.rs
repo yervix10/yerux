@@ -198,7 +198,9 @@ impl<'a> Checker<'a> {
                 }
             }
             EK::Bin(op @ ("<" | "<=" | ">" | ">=" | "==" | "!="), a, b) => {
-                let (Some(ia), Some(ib)) = (ival(a), ival(b)) else { return };
+                let (Some(ia), Some(ib)) = (ival(a), ival(b)) else {
+                    return;
+                };
                 let op = if truth { *op } else { neg_op(op) };
                 if let Some(id) = self.narrowable(a) {
                     if let Some(r) = constrain(op, ia, ib) {
@@ -224,7 +226,12 @@ impl<'a> Checker<'a> {
     /// Record facts (intersecting with what is known already).
     pub(super) fn apply_facts(&mut self, facts: &[(usize, (i128, i128))]) {
         for (id, (lo, hi)) in facts {
-            let cur = self.st.ivl.get(id).map(|&(l, h)| (l as i128, h as i128)).unwrap_or_else(|| int_range(self.vars[*id].ty));
+            let cur = self
+                .st
+                .ivl
+                .get(id)
+                .map(|&(l, h)| (l as i128, h as i128))
+                .unwrap_or_else(|| int_range(self.vars[*id].ty));
             let (l, h) = (cur.0.max(*lo), cur.1.min(*hi));
             if l > h {
                 // the condition cannot hold here: this code never runs, so anything may be assumed in it
@@ -252,13 +259,24 @@ impl<'a> Checker<'a> {
         }
         let g = self.tn(got);
         let w = self.tn(want);
-        let name = self.pos_names.get(&(pos.line, pos.col)).filter(|s| !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_')).cloned();
+        let name = self
+            .pos_names
+            .get(&(pos.line, pos.col))
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_'))
+            .cloned();
         let n = name.as_deref().unwrap_or("x");
-        let lost = self.pos_vars.get(&(pos.line, pos.col)).and_then(|id| self.lost_facts.get(id)).copied();
+        let lost = self
+            .pos_vars
+            .get(&(pos.line, pos.col))
+            .and_then(|id| self.lost_facts.get(id))
+            .copied();
         let holds = match (wlo == i64::MIN, whi == i64::MAX) {
             (_, true) => format!("{} holds the values from {} upwards", w, wlo),
             (true, _) => format!("{} holds the values up to {}", w, whi),
-            _ => format!("{} holds the values from {} to {} (both ends included)", w, wlo, whi),
+            _ => format!(
+                "{} holds the values from {} to {} (both ends included)",
+                w, wlo, whi
+            ),
         };
         let test = match (wlo == i64::MIN, whi == i64::MAX) {
             (_, true) => format!("{} >= {}", n, wlo),
@@ -266,17 +284,28 @@ impl<'a> Checker<'a> {
             _ => format!("{} >= {} && {} <= {}", n, wlo, n, whi),
         };
         let mut d = match got {
-            Ty::Range(a, b) if a == b => diag(format!("the value {} does not fit {}", a, w), pos).note(holds),
+            Ty::Range(a, b) if a == b => {
+                diag(format!("the value {} does not fit {}", a, w), pos).note(holds)
+            }
             Ty::Range(..) => diag(format!("this value may be outside {}", w), pos)
-                .note(format!("the compiler can only prove that it has type {}", g))
+                .note(format!(
+                    "the compiler can only prove that it has type {}",
+                    g
+                ))
                 .note(holds),
             _ => diag(format!("this value may be outside {}", w), pos)
-                .note(format!("it has type {}, so the compiler cannot prove that it fits {}", g, w))
+                .note(format!(
+                    "it has type {}, so the compiler cannot prove that it fits {}",
+                    g, w
+                ))
                 .note(holds),
         };
         if let Some((why, line)) = lost {
             d = d.note(if why.starts_with("the loop") {
-                format!("{} was narrower earlier, but {} {} may change it", n, why, line)
+                format!(
+                    "{} was narrower earlier, but {} {} may change it",
+                    n, why, line
+                )
             } else {
                 format!("{} was narrower earlier, but {} {}", n, why, line)
             });
@@ -295,14 +324,25 @@ impl<'a> Checker<'a> {
     pub(super) fn range_as_else(&mut self, e: &mut Expr) -> Ty {
         let pos = e.pos;
         let rt = e.ty;
-        let Ty::Range(lo, hi) = rt else { return Ty::Err };
-        let EK::AsElse(x, mut blk) = std::mem::replace(&mut e.k, EK::Int(0)) else { return Ty::Err };
+        let Ty::Range(lo, hi) = rt else {
+            return Ty::Err;
+        };
+        let EK::AsElse(x, mut blk) = std::mem::replace(&mut e.k, EK::Int(0)) else {
+            return Ty::Err;
+        };
         let rn = self.tn(rt);
         if self.in_defer {
-            self.err(diag("`as .. else` cannot be used in a deferred statement", pos).note("the else block returns or jumps, which a deferred statement cannot do"));
+            self.err(
+                diag("`as .. else` cannot be used in a deferred statement", pos)
+                    .note("the else block returns or jumps, which a deferred statement cannot do"),
+            );
             return Ty::Err;
         }
-        let x_id = if let EK::Var(n, _) = &x.k { self.lookup(n) } else { None };
+        let x_id = if let EK::Var(n, _) = &x.k {
+            self.lookup(n)
+        } else {
+            None
+        };
         self.hint = None;
         self.hid += 1;
         let vn = format!("$ae{}", self.hid);
@@ -317,12 +357,21 @@ impl<'a> Checker<'a> {
         } else if !is_int(at) {
             let n = self.tn(at);
             self.err(
-                diag(format!("`as {}` converts an integer, but this is {}", rn, n), xpos)
-                    .note("help: convert a Float to an integer first: `x.to_int()`, `x.floor_int()`, ..."),
+                diag(
+                    format!("`as {}` converts an integer, but this is {}", rn, n),
+                    xpos,
+                )
+                .note(
+                    "help: convert a Float to an integer first: `x.to_int()`, `x.floor_int()`, ...",
+                ),
             );
             true
         } else if is_u64(at) {
-            self.err(diag(format!("`as {}` does not take a UInt64", rn), xpos).note("help: convert it with `x.to_int()` first (panics above 9223372036854775807)"));
+            self.err(
+                diag(format!("`as {}` does not take a UInt64", rn), xpos).note(
+                    "help: convert it with `x.to_int()` first (panics above 9223372036854775807)",
+                ),
+            );
             true
         } else {
             false
@@ -335,11 +384,22 @@ impl<'a> Checker<'a> {
         let mut vname = vn.clone();
         if !matches!(at, Ty::Int | Ty::Range(..)) {
             vname = format!("$aw{}", self.hid);
-            let src = Expr { k: EK::Var(vn.clone(), self.lookup(&vn).unwrap_or(0)), pos, ty: at };
-            let conv = Expr { k: EK::Conv(Box::new(src), false), pos, ty: Ty::Int };
+            let src = Expr {
+                k: EK::Var(vn.clone(), self.lookup(&vn).unwrap_or(0)),
+                pos,
+                ty: at,
+            };
+            let conv = Expr {
+                k: EK::Conv(Box::new(src), false),
+                pos,
+                ty: Ty::Int,
+            };
             self.chk(&mut out, s_let(&vname, false, conv, pos));
         }
-        let vty = self.lookup(&vname).map(|i| self.vars[i].ty).unwrap_or(Ty::Err);
+        let vty = self
+            .lookup(&vname)
+            .map(|i| self.vars[i].ty)
+            .unwrap_or(Ty::Err);
         let vid = self.lookup(&vname).unwrap();
         let (ilo, ihi) = int_range(vty);
         let free = ilo >= lo as i128 && ihi <= hi as i128;
@@ -374,7 +434,11 @@ impl<'a> Checker<'a> {
             let mut facts = facts_ok;
             if let Some(o) = x_id {
                 if self.stable(o) && matches!(self.vars[o].ty, Ty::Int | Ty::Range(..)) {
-                    let extra: Vec<_> = facts.iter().filter(|(i, _)| *i == vid).map(|(_, r)| (o, *r)).collect();
+                    let extra: Vec<_> = facts
+                        .iter()
+                        .filter(|(i, _)| *i == vid)
+                        .map(|(_, r)| (o, *r))
+                        .collect();
                     facts.extend(extra);
                 }
             }
@@ -395,7 +459,9 @@ impl<'a> Checker<'a> {
     /// `unchecked(x)`: `x` taken as the range type the context expects, without a test (unsafe code only).
     pub(super) fn range_unchecked(&mut self, e: &mut Expr, hint: Option<Ty>) -> Ty {
         let pos = e.pos;
-        let EK::Call(_, args) = &mut e.k else { return Ty::Err };
+        let EK::Call(_, args) = &mut e.k else {
+            return Ty::Err;
+        };
         let mut arg = args.pop().unwrap();
         if self.unsafe_depth == 0 {
             self.err(
@@ -430,9 +496,13 @@ impl<'a> Checker<'a> {
     /// `Int<lo..hi>.from(x)` and `Int<lo..hi>.try_from(x)`.
     pub(super) fn range_static(&mut self, e: &mut Expr) -> Ty {
         let pos = e.pos;
-        let EK::Static { ty, f, args } = &mut e.k else { return Ty::Err };
+        let EK::Static { ty, f, args } = &mut e.k else {
+            return Ty::Err;
+        };
         let (rt, f) = (*ty, f.clone());
-        let Ty::Range(lo, hi) = rt else { return Ty::Err };
+        let Ty::Range(lo, hi) = rt else {
+            return Ty::Err;
+        };
         let rn = self.tn(rt);
         if f != "from" && f != "try_from" {
             self.err(diag(format!("{} has no function '{}'", rn, f), pos).note("functions: from(x) (checked, panics when x is out of range), try_from(x) (returns a Result)"));
@@ -461,12 +531,19 @@ impl<'a> Checker<'a> {
             return rt;
         }
         // try_from: Result<Int<lo..hi>, Int>, Err carrying the rejected value
-        let Ok(res) = self.with_ps(|ps| ps.generic_instance("Result", vec![rt, Ty::Int], pos)) else {
+        let Ok(res) = self.with_ps(|ps| ps.generic_instance("Result", vec![rt, Ty::Int], pos))
+        else {
             self.err(diag("Result is not available here", pos));
             return Ty::Err;
         };
         let Ty::Enum(reid) = res else { return Ty::Err };
-        let vid = |this: &Self, n: &str| this.types.enums[reid].variants.iter().position(|v| v.0 == n).unwrap_or(0);
+        let vid = |this: &Self, n: &str| {
+            this.types.enums[reid]
+                .variants
+                .iter()
+                .position(|v| v.0 == n)
+                .unwrap_or(0)
+        };
         self.hid += 1;
         let (an, rn_) = (format!("$ra{}", self.hid), format!("$rr{}", self.hid));
         let mut vn = an.clone();
@@ -481,12 +558,21 @@ impl<'a> Checker<'a> {
         } else if !is_int(at) {
             let n = self.tn(at);
             self.err(
-                diag(format!("{}.try_from() converts an integer, but this is {}", rn, n), apos)
-                    .note("help: convert a Float to an integer first: `x.to_int()`, `x.floor_int()`, ..."),
+                diag(
+                    format!("{}.try_from() converts an integer, but this is {}", rn, n),
+                    apos,
+                )
+                .note(
+                    "help: convert a Float to an integer first: `x.to_int()`, `x.floor_int()`, ...",
+                ),
             );
             true
         } else if is_u64(at) {
-            self.err(diag(format!("{}.try_from() does not take a UInt64", rn), apos).note("help: convert it with `x.to_int()` first (panics above 9223372036854775807)"));
+            self.err(
+                diag(format!("{}.try_from() does not take a UInt64", rn), apos).note(
+                    "help: convert it with `x.to_int()` first (panics above 9223372036854775807)",
+                ),
+            );
             true
         } else {
             false
@@ -498,11 +584,27 @@ impl<'a> Checker<'a> {
         }
         if !matches!(at, Ty::Int | Ty::Range(..)) {
             vn = format!("$rw{}", self.hid);
-            let src = Expr { k: EK::Var(an.clone(), self.lookup(&an).unwrap_or(0)), pos, ty: at };
-            let conv = Expr { k: EK::Conv(Box::new(src), false), pos, ty: Ty::Int };
+            let src = Expr {
+                k: EK::Var(an.clone(), self.lookup(&an).unwrap_or(0)),
+                pos,
+                ty: at,
+            };
+            let conv = Expr {
+                k: EK::Conv(Box::new(src), false),
+                pos,
+                ty: Ty::Int,
+            };
             self.chk(&mut out, s_let(&vn, false, conv, pos));
         }
-        let err_v = sx(EK::Variant { eid: reid, vname: "Err".into(), vid: vid(self, "Err"), args: vec![s_var(&vn, pos)] }, pos);
+        let err_v = sx(
+            EK::Variant {
+                eid: reid,
+                vname: "Err".into(),
+                vid: vid(self, "Err"),
+                args: vec![s_var(&vn, pos)],
+            },
+            pos,
+        );
         self.chk(&mut out, s_let(&rn_, true, err_v, pos));
         let mut cond: Option<Expr> = None;
         if lo != i64::MIN {
@@ -515,7 +617,15 @@ impl<'a> Checker<'a> {
                 None => c,
             });
         }
-        let ok_v = sx(EK::Variant { eid: reid, vname: "Ok".into(), vid: vid(self, "Ok"), args: vec![s_var(&vn, pos)] }, pos);
+        let ok_v = sx(
+            EK::Variant {
+                eid: reid,
+                vname: "Ok".into(),
+                vid: vid(self, "Ok"),
+                args: vec![s_var(&vn, pos)],
+            },
+            pos,
+        );
         let set = s_stmt(SK::Assign(s_var(&rn_, pos), ok_v), pos);
         match cond {
             Some(c) => self.chk(&mut out, s_stmt(SK::If(c, vec![set], None), pos)),
@@ -524,17 +634,56 @@ impl<'a> Checker<'a> {
         self.pre = outer_pre;
         let id = self.lookup(&rn_).unwrap();
         self.scopes.pop();
-        e.k = EK::Sequence(out, Box::new(Expr { k: EK::Var(rn_, id), pos, ty: res }));
+        e.k = EK::Sequence(
+            out,
+            Box::new(Expr {
+                k: EK::Var(rn_, id),
+                pos,
+                ty: res,
+            }),
+        );
         res
     }
 }
 
 // ───────────────────── which parameters can change ─────────────────────
 
-const PURE_PREFIXES: &[&str] = &["to_", "truncate_", "wrapping_", "saturating_", "floor", "ceil", "round"];
-const PURE_METHODS: &[&str] = &["signum", "cmp", "hash", "is_even", "is_odd",
-    "push", "set", "get", "at", "len", "swap", "push_int", "push_char", "push_byte", "push_str", "eq", "char_at", "byte", "min", "max", "abs", "pow",
-    "clamp", "wrapping_add", "wrapping_sub", "wrapping_mul",
+const PURE_PREFIXES: &[&str] = &[
+    "to_",
+    "truncate_",
+    "wrapping_",
+    "saturating_",
+    "floor",
+    "ceil",
+    "round",
+];
+const PURE_METHODS: &[&str] = &[
+    "signum",
+    "cmp",
+    "hash",
+    "is_even",
+    "is_odd",
+    "push",
+    "set",
+    "get",
+    "at",
+    "len",
+    "swap",
+    "push_int",
+    "push_char",
+    "push_byte",
+    "push_str",
+    "eq",
+    "char_at",
+    "byte",
+    "min",
+    "max",
+    "abs",
+    "pow",
+    "clamp",
+    "wrapping_add",
+    "wrapping_sub",
+    "wrapping_mul",
 ];
 
 impl<'a> Checker<'a> {
@@ -565,7 +714,18 @@ impl<'a> Checker<'a> {
         if let Some(g) = self.ps.gfns.iter().find(|g| g.name == name) {
             return g.params.get(i).map_or(false, |p| p.0 == Mode::Mut);
         }
-        if matches!(name, "print" | "assert" | "assert_eq" | "panic" | "todo" | "unreachable" | "min" | "max" | "abs") {
+        if matches!(
+            name,
+            "print"
+                | "assert"
+                | "assert_eq"
+                | "panic"
+                | "todo"
+                | "unreachable"
+                | "min"
+                | "max"
+                | "abs"
+        ) {
             return false;
         }
         if let Some(modes) = self.lazy_modes.get(name) {
@@ -586,7 +746,8 @@ impl<'a> Checker<'a> {
             for n in names {
                 if !self.lazy_modes.contains_key(&n) {
                     if let Some(sig) = self.lazy_header(&n) {
-                        self.lazy_modes.insert(n, sig.params.iter().map(|p| p.0).collect());
+                        self.lazy_modes
+                            .insert(n, sig.params.iter().map(|p| p.0).collect());
                         any = true;
                     }
                 }
@@ -703,9 +864,13 @@ impl<'a> Checker<'a> {
                 }
                 self.scan_expr(b, out, cl)
             }
-            EK::Ascribe(b) | EK::Conv(b, _) | EK::Field(b, _) | EK::Un(_, b) | EK::IsVariant(b, _) | EK::Payload(b, ..) | EK::Deref(b) => {
-                self.scan_expr(b, out, cl)
-            }
+            EK::Ascribe(b)
+            | EK::Conv(b, _)
+            | EK::Field(b, _)
+            | EK::Un(_, b)
+            | EK::IsVariant(b, _)
+            | EK::Payload(b, ..)
+            | EK::Deref(b) => self.scan_expr(b, out, cl),
             EK::AddrOf(b, _) => {
                 if let Some(n) = Self::root_name(b) {
                     out.insert(n.to_string());
@@ -726,7 +891,11 @@ impl<'a> Checker<'a> {
                 }
             }
             EK::Method { recv, m, args } => {
-                if !self.scan_assign.get() && matches!(recv.k, EK::Var(..)) && !PURE_METHODS.contains(&m.as_str()) && !PURE_PREFIXES.iter().any(|p| m.starts_with(p)) {
+                if !self.scan_assign.get()
+                    && matches!(recv.k, EK::Var(..))
+                    && !PURE_METHODS.contains(&m.as_str())
+                    && !PURE_PREFIXES.iter().any(|p| m.starts_with(p))
+                {
                     // a user method with `mut self` on an integer variable
                     if let Some(n) = Self::root_name(recv) {
                         out.insert(n.to_string());
@@ -742,7 +911,10 @@ impl<'a> Checker<'a> {
                     self.scan_expr(a, out, cl);
                 }
             }
-            EK::Static { args, .. } | EK::Variant { args, .. } | EK::GenVariant { args, .. } | EK::DynCall { args, .. } => {
+            EK::Static { args, .. }
+            | EK::Variant { args, .. }
+            | EK::GenVariant { args, .. }
+            | EK::DynCall { args, .. } => {
                 for a in args {
                     self.scan_expr(a, out, cl);
                 }
