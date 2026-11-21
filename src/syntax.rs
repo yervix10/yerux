@@ -868,6 +868,26 @@ impl Types {
             Ty::Err => "?".into(),
         }
     }
+    /// Why a struct's fields cannot be moved out because of Drop: it implements Drop itself,
+    /// is a lock guard, or has a field that does (transitively).
+    pub fn drop_reason(&self, t: Ty) -> Option<String> {
+        let Ty::Struct(i) = t else { return None };
+        let nm = &self.structs[i].name;
+        if self.user_drop.contains_key(&i) {
+            return Some(format!("'{}' implements Drop: its `drop` runs when it goes out of scope and needs all its fields", nm));
+        }
+        if self.is_lock_guard(i) {
+            return Some(format!("'{}' is a lock guard: releasing the lock needs the whole value", nm));
+        }
+        for (fname, f) in &self.structs[i].fields {
+            if let Ty::Struct(k) = f {
+                if self.drop_reason(*f).is_some() {
+                    return Some(format!("'{}' owns a Drop resource in field '{}' (a '{}')", nm, fname, self.structs[*k].name));
+                }
+            }
+        }
+        None
+    }
     /// A type is "owned" when it holds heap memory: it has a single owner and is moved, not copied.
     pub fn owned(&self, t: Ty) -> bool {
         match t {

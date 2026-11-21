@@ -1,0 +1,19 @@
+error: cannot move 'g.name' out of its struct
+  --> tests/e1030_move_field_out_of_drop.yx:11:11
+   |
+11 |   let n = g.name
+   |           ^^^^^^
+   = 'Guard' implements Drop: its `drop` runs when it goes out of scope and needs all its fields
+   = a struct with a destructor must be dropped whole, so none of its fields can be taken out
+   = help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct
+
+error: cannot move 'h.g' out of its struct
+  --> tests/e1030_move_field_out_of_drop.yx:13:11
+   |
+13 |   let m = h.g
+   |           ^^^
+   = 'Holder' owns a Drop resource in field 'g' (a 'Guard')
+   = a struct with a destructor must be dropped whole, so none of its fields can be taken out
+   = help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct
+
+2 error(s). Nothing was generated.

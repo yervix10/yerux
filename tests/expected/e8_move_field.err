@@ -3,6 +3,6 @@ error: cannot move 'b.items' out of its struct
   |
 5 |   let stolen = b.items
   |                ^^^^^^^
-  = help: borrow it instead: call a method on it, or pass it to a `view`/`mut` parameter
+  = help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct
 
 1 error(s). Nothing was generated.

@@ -1,0 +1,10 @@
+fn main() {
+  let a = [10, 20, 30]
+  for c in a.chunks(1) {
+    print(c.len())
+    print(c[0])
+  }
+  for c in a.chunks(3) { print(c.len()) }
+  for c in a.chunks(7) { print(c.len()) }
+  var m = [1, 2, 3]
+}

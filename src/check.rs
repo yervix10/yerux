@@ -1325,8 +1325,12 @@ impl<'a> Checker<'a> {
                         diag(format!("cannot move '{}' out of its Box", n), pos)
                             .note("help: `b.take()` moves the value out and frees the Box; or borrow it (`b.get().len()`, or pass `b.get()` to a `view`/`mut` parameter)")
                     } else if matches!(e.k, EK::Field(..)) {
-                        diag(format!("cannot move '{}' out of its struct", n), pos)
-                            .note("help: borrow it instead: call a method on it, or pass it to a `view`/`mut` parameter")
+                        let why = if let EK::Field(b, _) = &e.k { self.types.drop_reason(b.ty) } else { None };
+                        let mut d = diag(format!("cannot move '{}' out of its struct", n), pos);
+                        if let Some(w) = why {
+                            d = d.note(w).note("a struct with a destructor must be dropped whole, so none of its fields can be taken out");
+                        }
+                        d.note("help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct")
                     } else {
                         let mut d = diag(
                             format!("'{}' is a {} and is not copied", n, self.tn(p.ty)),

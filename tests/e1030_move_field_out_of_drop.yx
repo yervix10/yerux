@@ -1,0 +1,15 @@
+struct Guard { name: String }
+
+impl Drop for Guard {
+  fn drop(mut self) { print("drop") }
+}
+
+struct Holder { g: Guard, n: Int }
+
+fn main() {
+  let g = Guard { name: String.from("a") }
+  let n = g.name
+  let h = Holder { g: Guard { name: String.from("b") }, n: 1 }
+  let m = h.g
+  print(n)
+}
