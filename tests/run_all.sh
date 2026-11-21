@@ -153,6 +153,7 @@ if [ $BLESS -eq 0 ]; then bash tests/stack_overflow.sh >"$TMP/so.out" 2>&1 || { 
 if [ $BLESS -eq 0 ]; then bash tests/ffi_native.sh >"$TMP/ffi.out" 2>&1 || { cat "$TMP/ffi.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/tokens_dump.sh >"$TMP/td.out" 2>&1 || { cat "$TMP/td.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/lsp_vscode.sh >"$TMP/lspvs.out" 2>&1 || { cat "$TMP/lspvs.out"; fails=$((fails+1)); }; fi
+if [ $BLESS -eq 0 ]; then bash tests/doctest.sh >"$TMP/doctest.out" 2>&1 || { cat "$TMP/doctest.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then cargo test -q --test lsp >"$TMP/lsp.out" 2>&1 || { cat "$TMP/lsp.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/selfhost_lexer.sh >"$TMP/shlex.out" 2>&1 || { cat "$TMP/shlex.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/selfhost_parser.sh >"$TMP/shparser.out" 2>&1 || { cat "$TMP/shparser.out"; fails=$((fails+1)); }; fi

@@ -10,6 +10,7 @@
 #   ```yerux exit=3               the program must exit with code 3
 #   ```yerux args=a b             command-line arguments
 #   ```yerux stdin=hello          standard input
+#   ```yerux file=helper.yx       a module written next to the document's programs (imported with `import helper`), not run
 #   ```output                     directly after a yerux block: its exact stdout (trailing newlines ignored)
 #
 # Blocks run with the native backend (fast, no cc); DOCTEST_BACKEND=c uses the C backend (the oracle).
@@ -29,14 +30,21 @@ for f in docs/book/*.md; do [ -e "$f" ] && files+=("$f"); done
 # 1. cut the documents into blocks: $tmp/<n>.yx, <n>.attrs, <n>.out (expected stdout, when given), <n>.id
 awk -v dir="$tmp" '
 BEGIN { n = 0; inb = 0; kind = "" }
-FNR == 1 { inb = 0; pending = 0 }
+FNR == 1 { inb = 0; pending = 0; last = 0; docn++; ddir = sprintf("%s/d%d", dir, docn); system("mkdir -p " ddir) }
 {
   line = $0
   if (!inb) {
     if (line ~ /^```(yerux|yx)([ ,].*)?$/) {
-      n++; inb = 1; kind = "code"
+      inb = 1; kind = "code"
       attrs = line; sub(/^```(yerux|yx)[ ,]*/, "", attrs)
-      f = sprintf("%s/%04d", dir, n)
+      if (match(attrs, /(^|[ ,])file=[^ ,]+/)) {
+        # a support file of the document (a module next to the main program), never run by itself
+        name = substr(attrs, RSTART, RLENGTH); sub(/^.*file=/, "", name)
+        f = ddir "/" name; printf "" > f; close(f); last = 0; fileblock = 1; next
+      }
+      fileblock = 0
+      n++
+      f = sprintf("%s/%04d", ddir, n)
       printf "" > (f ".yx"); print attrs > (f ".attrs"); print FILENAME ":" FNR > (f ".id")
       close(f ".attrs"); close(f ".id")
       last = n; next
@@ -45,14 +53,14 @@ FNR == 1 { inb = 0; pending = 0 }
       inb = 1; kind = "out"; f = sprintf("%s/%04d", dir, last); printf "" > (f ".out"); next
     }
   } else {
-    if (line ~ /^```[ ]*$/) { inb = 0; lastend = FNR; if (kind == "out") last = 0; close(f ".yx"); close(f ".out"); next }
-    if (kind == "code") print line >> (f ".yx"); else print line >> (f ".out")
+    if (line ~ /^```[ ]*$/) { inb = 0; lastend = FNR; if (kind == "out") last = 0; if (fileblock) close(f); else { close(f ".yx"); close(f ".out") }; next }
+    if (fileblock) print line >> f; else if (kind == "code") print line >> (f ".yx"); else print line >> (f ".out")
   }
 }
 ' "${files[@]}"
 
 pass=0; fail=0; skip=0
-for src in "$tmp"/*.yx; do
+for src in "$tmp"/d*/[0-9][0-9][0-9][0-9].yx; do
   [ -e "$src" ] || continue
   b=${src%.yx}; id=$(cat "$b.id"); attrs=$(cat "$b.attrs")
   case "$id" in *"${DOCTEST_FILTER:-}"*) ;; *) continue ;; esac
