@@ -1,0 +1,18 @@
+true 0 -1 false false
+{a=one b=2 =empty key}
+3 2 1
+false true false
+{a=one b=2}
+one
+{b=2!}
+true true
+{}
+0 false
+{after=clear}
+667 667 0
+1 2 3 -1
+true false true 2
+true false false true
+true 2
+true true {5}
+true false true 1
