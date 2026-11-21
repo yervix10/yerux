@@ -2429,7 +2429,9 @@ impl<'a> Checker<'a> {
         let k = match &idx.k {
             EK::Int(k) => Some(*k),
             EK::Un("-", x) => match x.k {
-                EK::Int(k) => Some(-k),
+                // An overflowing negation is not an index constant. The
+                // checked negation in the program reports the runtime panic.
+                EK::Int(k) => k.checked_neg(),
                 _ => None,
             },
             _ => None,
