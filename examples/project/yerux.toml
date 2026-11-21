@@ -1,0 +1,7 @@
+[package]
+name = "hello-project"
+version = "0.1.0"
+
+[dependencies]
+# local-lib = { path = "../local-lib" }
+# remote-lib = { git = "https://example.invalid/remote-lib.git", tag = "v1.0.0" }

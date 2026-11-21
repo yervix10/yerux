@@ -16,6 +16,7 @@ mod memopt;
 mod modules;
 mod numeric;
 mod opt;
+mod project;
 mod regalloc;
 mod sroa;
 mod stdlib;
@@ -256,6 +257,19 @@ fn real_main() {
     }
     if args.len() >= 2 && args[1] == "fmt" {
         exit(fmt::run_cli(&args[2..]));
+    }
+    if args.len() == 3 && args[1] == "new" {
+        match project::new_project(&args[2]) {
+            Ok(()) => println!("created project: {}", args[2]),
+            Err(e) => { eprintln!("{e}"); exit(1); }
+        }
+        return;
+    }
+    if args.len() == 2 && matches!(args[1].as_str(), "build" | "run" | "test") {
+        match project::run(&args[1]) {
+            Ok(code) => exit(code),
+            Err(e) => { eprintln!("{e}"); exit(1); }
+        }
     }
     if args.len() >= 2 && args[1] == "test" {
         exit(run_tests(&args[2..]));
