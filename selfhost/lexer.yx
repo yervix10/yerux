@@ -1,0 +1,165 @@
+// M7 bootstrap: a small source lexer whose output is compared to `yerux tokens`.
+// The token row format is documented in docs/SELFHOST.md.
+import std.env
+import std.fs
+
+fn hex(s: view String) -> String {
+  let digits = String.from("0123456789abcdef")
+  var out = String.new()
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    out.push_byte(digits.byte(b / 16))
+    out.push_byte(digits.byte(b % 16))
+  }
+  return out
+}
+
+fn emit(kind: Text, value: view String) {
+  print("{kind}{hex(value)}")
+}
+
+fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
+fn is_alpha(b: Int) -> Bool { return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 }
+fn is_alnum(b: Int) -> Bool { return is_alpha(b) || is_digit(b) }
+fn hex_value(b: Int) -> Int {
+  if b >= 48 && b <= 57 { return b - 48 }
+  if b >= 65 && b <= 70 { return b - 55 }
+  if b >= 97 && b <= 102 { return b - 87 }
+  return -1
+}
+
+fn main() {
+  let path = env.arg(1)
+  match path {
+    None => { print("usage: lexer.yx file.yx"); return }
+    Some(p) => {
+      match fs.read_to_string(p) {
+        Err(e) => { print("could not read {p}: {e.message}"); return }
+        Ok(src) => { lex(src) }
+      }
+    }
+  }
+}
+
+fn lex(src: view String) {
+  let n = src.len()
+  var i = 0
+  while i < n {
+    let b = src.byte(i)
+    if b == 10 || b == 13 || b == 32 || b == 9 { i = i + 1 }
+    else if b == 47 && i + 1 < n && src.byte(i + 1) == 47 {
+      while i < n && src.byte(i) != 10 { i = i + 1 }
+    }
+    else if is_alpha(b) {
+      let start = i
+      i = i + 1
+      while i < n && is_alnum(src.byte(i)) { i = i + 1 }
+      emit("Id:", src.slice(start, i))
+    }
+    else if is_digit(b) {
+      let start = i
+      i = i + 1
+      while i < n && (is_digit(src.byte(i)) || src.byte(i) == 95) { i = i + 1 }
+      var is_float = false
+      if i + 1 < n && src.byte(i) == 46 && is_digit(src.byte(i + 1)) {
+        is_float = true
+        i = i + 1
+        while i < n && (is_digit(src.byte(i)) || src.byte(i) == 95) { i = i + 1 }
+      }
+      if i + 1 < n && (src.byte(i) == 101 || src.byte(i) == 69) {
+        var epos = i + 1
+        if src.byte(epos) == 43 || src.byte(epos) == 45 { epos = epos + 1 }
+        if epos < n && is_digit(src.byte(epos)) {
+          is_float = true
+          i = epos + 1
+          while i < n && is_digit(src.byte(i)) { i = i + 1 }
+        }
+      }
+      let core_end = i
+      while i < n && is_alpha(src.byte(i)) { i = i + 1 }
+      let raw = src.slice(start, i)
+      let core = src.slice(start, core_end).replace("_", "")
+      let suffix = raw.slice(core_end - start, raw.len())
+      if is_float || suffix == "f32" || suffix == "f64" {
+        print("Float:{hex(core)}:{suffix}")
+      } else {
+        var value = 0
+        if core.parse_int(value) {
+          if suffix.len() == 0 { print("Num:{value}") }
+          else { print("NumT:{value}:{suffix}") }
+        } else { emit("UnsupportedNumber:", raw) }
+      }
+    }
+    else if b == 39 {
+      var j = i + 1
+      var value = 0
+      if src.byte(j) == 92 {
+        j = j + 1
+        let e = src.byte(j)
+        if e == 110 { value = 10; j = j + 1 }
+        else if e == 116 { value = 9; j = j + 1 }
+        else if e == 114 { value = 13; j = j + 1 }
+        else if e == 48 { value = 0; j = j + 1 }
+        else if e == 39 || e == 34 || e == 92 { value = e; j = j + 1 }
+        else if e == 117 && j + 1 < n && src.byte(j + 1) == 123 {
+          j = j + 2
+          while j < n && src.byte(j) != 125 {
+            let d = hex_value(src.byte(j))
+            if d >= 0 { value = value * 16 + d }
+            j = j + 1
+          }
+          if j < n { j = j + 1 }
+        } else { value = e; j = j + 1 }
+      } else {
+        value = src.char_at(j).to_int()
+        j = j + src.char_size(j)
+      }
+      if j < n && src.byte(j) == 39 { j = j + 1 }
+      print("Char:{value}")
+      i = j
+    }
+    else if b == 34 {
+      let start = i + 1
+      i = i + 1
+      var value = String.new()
+      while i < n && src.byte(i) != 34 && src.byte(i) != 10 {
+        if src.byte(i) == 92 && i + 1 < n {
+          let e = src.byte(i + 1)
+          if e == 110 { value.push_byte(10) }
+          else if e == 116 { value.push_byte(9) }
+          else if e == 114 { value.push_byte(13) }
+          else { value.push_byte(e) }
+          i = i + 2
+        } else {
+          value.push_byte(src.byte(i))
+          i = i + 1
+        }
+      }
+      if i < n && src.byte(i) == 34 { i = i + 1 }
+      // Preserve plain literal contents. Interpolated strings are listed as
+      // a known gap until the expression lexer is ported.
+      let _ = start
+      emit("Str:", value)
+    }
+    else {
+      var three = String.new()
+      var two = String.new()
+      if i + 2 < n { three = src.slice(i, i + 3) }
+      if i + 1 < n { two = src.slice(i, i + 2) }
+      if three == "..=" { emit("Sym:", three); i = i + 3 }
+      else if two == "==" || two == "!=" || two == "<=" || two == ">=" || two == "&&" || two == "||" || two == "->" || two == "=>" || two == ".." {
+        emit("Sym:", two); i = i + 2
+      }
+      else {
+        let one = src.slice(i, i + 1)
+        if one == "(" || one == ")" || one == "{{" || one == "}}" || one == "[" || one == "]" || one == "," || one == ":" || one == ";" || one == "=" || one == "<" || one == ">" || one == "+" || one == "-" || one == "*" || one == "/" || one == "%" || one == "!" || one == "." || one == "|" || one == "@" || one == "?" {
+          emit("Sym:", one); i = i + 1
+        } else {
+          print("UnsupportedCharacter:{i}")
+          i = i + src.char_size(i)
+        }
+      }
+    }
+  }
+  print("Eof")
+}

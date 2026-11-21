@@ -129,9 +129,41 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for byte in bytes {
+        out.push_str(&format!("{:02x}", byte));
+    }
+    out
+}
+
+fn dump_tokens(file: &str) {
+    let src = fs::read_to_string(file).unwrap_or_else(|e| {
+        eprintln!("could not read {}: {}", file, e);
+        exit(2)
+    });
+    let tokens = syntax::lex(&src).unwrap_or_else(|d| {
+        eprintln!("lex error: {} at {}:{}", d.msg, d.pos.line, d.pos.col);
+        exit(1)
+    });
+    for token in tokens {
+        let row = match token.t {
+            syntax::Tok::Id(s) => format!("Id:{}", hex(s.as_bytes())),
+            syntax::Tok::Num(n) => format!("Num:{}", n),
+            syntax::Tok::NumT(n, suffix) => format!("NumT:{}:{}", n, suffix),
+            syntax::Tok::Float(s, suffix) => format!("Float:{}:{}", hex(s.as_bytes()), suffix),
+            syntax::Tok::Str(s) => format!("Str:{}", hex(s.as_bytes())),
+            syntax::Tok::Char(n) => format!("Char:{}", n),
+            syntax::Tok::Sym(s) => format!("Sym:{}", hex(s.as_bytes())),
+            syntax::Tok::Eof => "Eof".to_string(),
+        };
+        println!("{}", row);
+    }
+}
 
 fn main() {
     // the front end and the IR passes are recursive: run on a thread with a large (lazily committed) stack
@@ -150,6 +182,10 @@ fn main() {
 
 fn real_main() {
     let args: Vec<String> = env::args().collect();
+    if args.len() == 3 && args[1] == "tokens" {
+        dump_tokens(&args[2]);
+        return;
+    }
     if args.len() >= 2 && args[1] == "fmt" {
         exit(fmt::run_cli(&args[2..]));
     }
