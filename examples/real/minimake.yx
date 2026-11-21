@@ -1,0 +1,326 @@
+// minimake: a small `make`. Reads a Makefile and builds targets, running recipes with std.process and
+// comparing modification times with std.fs.
+//
+//   minimake [-f Makefile] [target ...] [--then target ...] ...
+//
+// Supported: `NAME = value` variables, `$(NAME)`, `$@` (target), `$<` (first dependency), `$^` (all
+// dependencies), `$$`, `target: dep dep` rules (one target per rule) with tab-indented recipe lines, `.PHONY`,
+// `#` comments, `@cmd` (do not echo) and `-cmd` (ignore failure). Each recipe line runs as `/bin/sh -c line`.
+// Targets after `--then` start a fresh build (nothing is remembered between them but the files).
+// Exit status: 0 ok, 2 on a parse error, a missing rule, a cycle or a failing recipe.
+import std.process
+import std.fs
+import std.io
+import std.env
+
+struct Rule {
+  target: String,
+  deps: List<String>,
+  recipe: List<String>,
+}
+
+struct Ctx {
+  rules: List<Rule>,
+  vars: Map<String, String>,
+  phony: List<String>,
+  state: Map<String, Int>,
+}
+
+fn words(s: view String) -> List<String> {
+  var out = List<String>.new()
+  let parts = s.split(" ")
+  for p in parts {
+    let t = p.trim()
+    if t.len() > 0 {
+      out.push(move t)
+    }
+  }
+  return out
+}
+
+// List<String> has no copy(): String is not Copy
+fn clone_list(l: view List<String>) -> List<String> {
+  var out = List<String>.new()
+  for x in l {
+    out.push(String.from(x))
+  }
+  return out
+}
+
+// $(NAME), $@, $<, $^ and $$ in `s`
+fn expand(s: view String, vars: view Map<String, String>, target: view String, deps: view List<String>) -> String {
+  var out = String.new()
+  var i = 0
+  while i < s.len() {
+    let b = s.byte(i)
+    if b == 36 && i + 1 < s.len() {
+      let n = s.byte(i + 1)
+      if n == 36 {
+        out.push_byte(36)
+        i = i + 2
+      } else if n == 64 {
+        out.push_str(target)
+        i = i + 2
+      } else if n == 60 {
+        if deps.len() > 0 {
+          out.push_str(deps.at(0))
+        }
+        i = i + 2
+      } else if n == 94 {
+        let all = deps.join(" ")
+        out.push_str(all)
+        i = i + 2
+      } else if n == 40 {
+        let close = s.find_from(")", i)
+        if close < 0 {
+          out.push_byte(b)
+          i = i + 1
+        } else {
+          let name = s.slice(i + 2, close)
+          if vars.contains(name) {
+            out.push_str(vars.vals.at(vars.find(name)))
+          }
+          i = close + 1
+        }
+      } else {
+        out.push_byte(b)
+        i = i + 1
+      }
+    } else {
+      out.push_byte(b)
+      i = i + 1
+    }
+  }
+  return out
+}
+
+fn parse_error(file: view String, line: Int, msg: Text) -> Int {
+  io.eprintln("{file}:{line}: {msg}")
+  return 2
+}
+
+fn parse(file: view String, ctx: mut Ctx) -> Int {
+  var lines = List<String>.new()
+  match fs.read_lines(file) {
+    Ok(l) => {
+      lines = move l
+    }
+    Err(e) => {
+      io.eprintln("minimake: {e}")
+      return 2
+    }
+  }
+  let none = List<String>.new()
+  var current = -1
+  var n = 0
+  for raw in lines {
+    n = n + 1
+    if raw.starts_with("\t") {
+      if current < 0 {
+        return parse_error(file, n, "recipe line before any rule")
+      }
+      let cmd = raw.slice(1, raw.len())
+      ctx.rules.at(current).recipe.push(move cmd)
+      continue
+    }
+    let line = raw.trim()
+    if line.len() == 0 || line.starts_with("#") {
+      continue
+    }
+    let eq = line.find("=")
+    let colon = line.find(":")
+    if eq > 0 && (colon < 0 || eq < colon) {
+      var name = line.slice(0, eq).trim()
+      if name.ends_with(":") {
+        name = name.slice(0, name.len() - 1).trim()
+      }
+      let value = expand(line.slice(eq + 1, line.len()).trim(), ctx.vars, "", none)
+      ctx.vars.insert(move name, move value)
+      current = -1
+    } else if colon > 0 {
+      let head = expand(line.slice(0, colon), ctx.vars, "", none)
+      let deps = words(expand(line.slice(colon + 1, line.len()), ctx.vars, "", none))
+      let names = words(head)
+      if names.len() != 1 {
+        return parse_error(file, n, "a rule needs exactly one target")
+      }
+      if names.at(0) == ".PHONY" {
+        for d in deps {
+          ctx.phony.push(String.from(d))
+        }
+        current = -1
+      } else {
+        ctx.rules.push(Rule { target: String.from(names.at(0)), deps: move deps, recipe: List<String>.new() })
+        current = ctx.rules.len() - 1
+      }
+    } else {
+      return parse_error(file, n, "expected `target: deps`, `NAME = value` or a recipe line")
+    }
+  }
+  return 0
+}
+
+fn mtime(path: view String) -> Int {
+  match fs.metadata(path) {
+    Ok(m) => { return m.modified_ns }
+    Err(e) => { return -1 }
+  }
+}
+
+fn find_rule(ctx: view Ctx, target: view String) -> Int {
+  for i in 0..ctx.rules.len() {
+    if ctx.rules.at(i).target == target {
+      return i
+    }
+  }
+  return -1
+}
+
+// Run one recipe line. 0 = ok, otherwise the status to report.
+fn run_line(line: view String, target: view String) -> Int {
+  var cmd = String.from(line)
+  var quiet = false
+  var ignore = false
+  while cmd.len() > 0 && (cmd.starts_with("@") || cmd.starts_with("-")) {
+    if cmd.starts_with("@") {
+      quiet = true
+    } else {
+      ignore = true
+    }
+    cmd = cmd.slice(1, cmd.len())
+  }
+  if !quiet {
+    print(cmd)
+  }
+  var c = process.command("/bin/sh")
+  c.arg("-c")
+  c.arg(cmd)
+  match process.start(c) {
+    Ok(child) => {
+      var ch = move child
+      match ch.wait() {
+        Ok(st) => {
+          if st.success() || ignore {
+            return 0
+          }
+          if st.signal != 0 {
+            io.eprintln("minimake: *** [{target}] Terminated by signal {st.signal}")
+          } else {
+            io.eprintln("minimake: *** [{target}] Error {st.code}")
+          }
+          return 2
+        }
+        Err(e) => {
+          io.eprintln("minimake: {e}")
+          return 2
+        }
+      }
+    }
+    Err(e) => {
+      io.eprintln("minimake: {e}")
+      return 2
+    }
+  }
+}
+
+// Build `target` after its dependencies. 0 = ok.
+fn build(ctx: mut Ctx, target: view String, top: Bool) -> Int {
+  let st = ctx.state.get_or(target, 0)
+  if st == 2 {
+    return 0
+  }
+  if st == 1 {
+    io.eprintln("minimake: circular dependency involving {target}")
+    return 2
+  }
+  let ri = find_rule(ctx, target)
+  if ri < 0 {
+    if fs.exists(target) {
+      ctx.state.insert(String.from(target), 2)
+      return 0
+    }
+    io.eprintln("minimake: *** No rule to make target '{target}'.")
+    return 2
+  }
+  ctx.state.insert(String.from(target), 1)
+  let deps = clone_list(ctx.rules.at(ri).deps)
+  for d in deps {
+    let rc = build(ctx, d, false)
+    if rc != 0 {
+      return rc
+    }
+  }
+  var phony = false
+  for p in ctx.phony {
+    if p == target {
+      phony = true
+    }
+  }
+  var need = phony || !fs.exists(target)
+  if !need {
+    let mine = mtime(target)
+    for d in deps {
+      if mtime(d) > mine {
+        need = true
+      }
+    }
+  }
+  if need {
+    let recipe = clone_list(ctx.rules.at(ri).recipe)
+    for line in recipe {
+      let cmd = expand(line, ctx.vars, target, deps)
+      let rc = run_line(cmd, target)
+      if rc != 0 {
+        return rc
+      }
+    }
+  } else if top {
+    print("minimake: '{target}' is up to date.")
+  }
+  ctx.state.insert(String.from(target), 2)
+  return 0
+}
+
+fn main() {
+  let argv = env.args()
+  var file = String.from("Makefile")
+  var passes = List<List<String>>.new()
+  passes.push(List<String>.new())
+  var i = 1
+  while i < argv.len() {
+    let a = String.from(argv.at(i))
+    if a == "-f" && i + 1 < argv.len() {
+      file = String.from(argv.at(i + 1))
+      i = i + 2
+    } else if a == "--then" {
+      passes.push(List<String>.new())
+      i = i + 1
+    } else {
+      passes.at(passes.len() - 1).push(String.from(a))
+      i = i + 1
+    }
+  }
+  var ctx = Ctx {
+    rules: List<Rule>.new(),
+    vars: Map<String, String>.new(),
+    phony: List<String>.new(),
+    state: Map<String, Int>.new(),
+  }
+  let rc = parse(file, ctx)
+  if rc != 0 {
+    io.exit(rc)
+  }
+  for pass in passes {
+    ctx.state.clear()
+    var targets = clone_list(pass)
+    if targets.len() == 0 && ctx.rules.len() > 0 {
+      targets.push(String.from(ctx.rules.at(0).target))
+    }
+    for t in targets {
+      let r = build(ctx, t, true)
+      if r != 0 {
+        io.exit(r)
+      }
+    }
+  }
+}

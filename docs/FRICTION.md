@@ -243,3 +243,32 @@ The compiler accepted the code but the formatter stopped at the escaped
 apostrophe and then treated later characters as separate tokens. The
 formatter now consumes the escape together and tests the resulting text
 against a formatting golden.
+
+## minimake (`examples/real/minimake.yx`: std.process + std.fs)
+
+Found while writing a small `make`. Open unless marked.
+
+- **`match` is a statement, not an expression** (`let lines = match r { Ok(l) => l, Err(e) => { return .. } }` is
+  "unexpected keyword 'match'"). Every `Result` unwrap needs `var x = default` plus an assignment inside the arm
+  (`x = move l`), which also forces a throw-away initial value for owned types.
+- **`List<String>` has no `copy()`** (it needs `T: Copy`), so cloning a list of strings needs a hand-written
+  helper. Needed here because iterating `ctx.rules.at(i).deps` while `build(ctx, ..)` takes `ctx` as `mut`
+  conflicts with the borrow.
+- **Elements cannot be bound with `let x = list.at(i)`** ("cannot move 'argv.at(..)' out of its List"); it has to
+  be `String.from(list.at(i))` even to just compare it. `for x in list` borrows fine, so index loops over
+  `view List<String>` are the awkward case.
+- **`push(x)` of a local String needs `move x`** every time, including as the last use of a loop variable
+  (`out.push(move t)`), and a struct literal field too (`deps: move deps`). Consistent, but noisy in parsers.
+- **A call result cannot be an argument to a `view` parameter** (`out.push_str(deps.join(" "))` needs a `let`
+  first), and a method cannot be chained on a call result (`time.now().since(..)` earlier, `a.min(b).as_millis()`).
+- **`spawn` is a reserved word**, so a module cannot export a function called `spawn` (`std.process.start`
+  instead); the module loader drops it silently from the public item list ("module has no item called
+  'spawn'") instead of saying the name is a keyword. Same for any keyword used as an item name.
+- **Methods named like a stdlib module alias** (`c.env(..)`) are avoided on purpose (`set_env`): unqualified
+  names are rewritten per file, and the rules are subtle (see the `modules.rs` fixes for `FileKind.File`).
+- **No early `return` value from `match` arms inside `for`** is fine, but a `let` of a *statement* `match` result
+  is not available; a `Result<Option<T>, E>` is easiest to read through nested statement matches.
+- **`print` writes through stdio in the C backend and straight to fd 1 natively**; child processes that
+  inherit stdout therefore interleave correctly only because `nx_syscall` flushes before each raw syscall.
+  Worth documenting as a guarantee of `std.process`.
+
