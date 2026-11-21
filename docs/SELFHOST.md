@@ -88,7 +88,7 @@ module and global symbol lookup.
 
 `yerux locals-file file.yx` walks the Rust parser's native source AST and
 exports binding, use, and capture rows. `tests/selfhost_types.sh` compares
-these rows for every tracked source. It covers **699 files**, with 684
+these rows for every tracked source. It covers **703 files**, with 688
 matching lexical snapshots and 15 rejections at the lexer or parser stage.
 The Rust checker now also computes free uses in lexical scope order, so a
 local declaration inside a closure no longer hides a capture used in that
@@ -124,6 +124,50 @@ fixtures and 3 accepted ownership fixtures, and principal diagnostic
 messages on 20 type rejections and 12 ownership rejections.
 `tests/run_all.sh` includes the harness.
 
+## C code generation
+
+`selfhost/codegen.yx` reads the source AST and runs lexical resolution,
+type checking, and ownership checking. The emitter uses binding IDs for
+locals and expression types for operations. It emits C against
+`src/c_runtime.h`, which the Rust C backend also embeds. Both emitters use
+the same checked integer operations, panic messages, and string primitives.
+
+The supported subset includes file-local, non-generic functions and
+structs, direct calls, `let` and `var`, assignment, returns, `if`,
+short-circuit boolean operators, and unlabeled `while`, `break` and
+`continue`. It supports `Bool`, `Char`, `Int`, sized integers, checked
+`+`, `-`, `*`, `/`, `%` and negation, numeric comparisons, and scalar
+`print` and `assert` calls. Structs can nest and contain owned strings.
+The emitter handles moves, `view` and `mut` parameters, scoped cleanup, and
+field replacement. It supports `Text` literals, `String.new`,
+`String.from`, `String.concat`, and the String methods `len`, `byte`,
+`eq`, `clear`, `push_str`, and `push_int`.
+
+Build the stages from the repository root and feed the positioned tokens
+to the parser. Compile the emitted C with GCC or Clang on Linux.
+
+```bash
+cargo build
+for stage in lexer parser codegen; do
+  target/debug/yerux build "selfhost/$stage.yx" -o "/tmp/yx-$stage"
+done
+/tmp/yx-lexer examples/06_string.yx --positioned > /tmp/tokens
+/tmp/yx-parser /tmp/tokens > /tmp/source.ast
+/tmp/yx-codegen /tmp/source.ast > /tmp/source.c
+cc -std=gnu11 -O2 -I src /tmp/source.c -o /tmp/program -pthread -lm
+/tmp/program
+```
+
+`codegen` exits 0 after emitting C, 1 for checker diagnostics, 2 for an
+artifact or invocation error, and 3 for an unsupported construct. Run
+`bash tests/selfhost_codegen.sh` to compare stdout, stderr, and exit status
+against programs built by the Rust C backend. The test scans the
+top-level examples and tests and requires representative programs and
+panic cases to run through both backends. The current corpus has 62
+identical executions out of 318 candidates, including 33 runtime panics.
+The remaining candidates include 254 outside the subset and two
+fixtures for checker and emitter rejections.
+
 ## Remaining work
 
 The parser's source AST remains local to each file. In particular, source
@@ -142,7 +186,9 @@ cases, closure capture modes, defer lifetimes, and precise loans for
 indexed places and nested call arguments also remain in the Rust front
 end. Bootstrapping the compiler needs a staged build. At present
 `comptime` evaluates scalars, while the lexer and parser run as ordinary
-Yerux programs.
+Yerux programs. The next code generation features include module linkage,
+methods outside the String primitives, generics, pattern matching, and
+collection and range lowering.
 
 These constraints do not prevent writing the parser and checker as runtime
 Yerux programs, but they make a feature-for-feature port a separate milestone.

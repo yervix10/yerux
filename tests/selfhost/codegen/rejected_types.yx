@@ -1,0 +1,4 @@
+fn main() {
+    let number: Int = true
+    print(number)
+}

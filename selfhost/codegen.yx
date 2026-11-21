@@ -1,0 +1,637 @@
+// Lower the checked source AST to C using the production C runtime.
+import std.env
+import std.fs
+import std.io
+import ast
+import locals
+import types
+
+struct Value { ty: String, code: String }
+struct Generator {
+  checked: types.Checked,
+  locals: locals.Locals,
+  structs: List<Int>,
+  struct_states: List<Int>,
+  struct_owns: List<Bool>,
+  functions: List<Int>,
+  references: List<Bool>,
+  out: String,
+  indent: Int,
+  temp: Int,
+  loop_depth: Int,
+  result: String,
+}
+
+fn unsupported(message: view String) {
+  io.eprintln("codegen: {message}")
+  env.exit(3)
+}
+
+fn line(gen: mut Generator, text: view String) {
+  for i in 0..gen.indent { gen.out.push_str("  ") }
+  gen.out.push_str(text)
+  gen.out.push_str("\n")
+}
+
+fn integer_c(ty: view String) -> String {
+  if ty == "Int" || ty == "Char" { return String.from("int64_t") }
+  if ty == "Int8" { return String.from("int8_t") }
+  if ty == "Int16" { return String.from("int16_t") }
+  if ty == "Int32" { return String.from("int32_t") }
+  if ty == "UInt8" { return String.from("uint8_t") }
+  if ty == "UInt16" { return String.from("uint16_t") }
+  if ty == "UInt32" { return String.from("uint32_t") }
+  if ty == "UInt64" { return String.from("uint64_t") }
+  return String.new()
+}
+
+fn integer_suffix(ty: view String) -> String {
+  if ty == "Int" { return String.new() }
+  if ty == "Int8" { return String.from("_i8") }
+  if ty == "Int16" { return String.from("_i16") }
+  if ty == "Int32" { return String.from("_i32") }
+  if ty == "UInt8" { return String.from("_u8") }
+  if ty == "UInt16" { return String.from("_u16") }
+  if ty == "UInt32" { return String.from("_u32") }
+  if ty == "UInt64" { return String.from("_u64") }
+  unsupported("arithmetic on {ty}")
+  return String.new()
+}
+
+fn find_named(tree: view List<ast.AstNode>, nodes: view List<Int>, name: view String) -> Int {
+  for node in nodes {
+    let candidate = ast.name_at(tree, node, 0)
+    if candidate == name { return node }
+  }
+  return -1
+}
+
+fn c_type(gen: view Generator, tree: view List<ast.AstNode>, ty: view String) -> String {
+  let int_type = integer_c(ty)
+  if int_type != "" { return int_type }
+  if ty == "Bool" { return String.from("bool") }
+  if ty == "Text" { return String.from("const char *") }
+  if ty == "String" { return String.from("String") }
+  if ty == "nothing" { return String.from("void") }
+  let structure = find_named(tree, gen.structs, ty)
+  if structure >= 0 { return "S{structure}" }
+  unsupported("type {ty}")
+  return String.new()
+}
+
+fn drop_fn(gen: view Generator, tree: view List<ast.AstNode>, ty: view String) -> String {
+  if ty == "String" { return String.from("nx_str_free") }
+  let structure = find_named(tree, gen.structs, ty)
+  if structure >= 0 && gen.struct_owns.at(structure) { return "sc_drop_S{structure}" }
+  return String.new()
+}
+
+fn declared_type(tree: view List<ast.AstNode>, node: Int) -> String {
+  if tree.at(node).tag == "_" { return String.from("nothing") }
+  if tree.at(node).tag != "Type" { unsupported("non-nominal type") }
+  let args = ast.child(tree, node, 1)
+  if tree.at(args).end != args + 1 { unsupported("type arguments or bounds") }
+  let name = ast.name_at(tree, node, 0)
+  if name == "Int64" { return String.from("Int") }
+  return name
+}
+
+fn id_at(gen: view Generator, node: Int) -> Int {
+  let id = gen.locals.identities.at(node)
+  if id < 0 { unsupported("unresolved local binding") }
+  return id
+}
+
+fn local_place(gen: view Generator, node: Int) -> Value {
+  let id = id_at(gen, node)
+  let ty = String.from(gen.checked.bindings.at(id))
+  if gen.references.at(id) { return Value { ty: move ty, code: "(*v{id})" } }
+  return Value { ty: move ty, code: "v{id}" }
+}
+
+fn is_place(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  if tree.at(node).tag == "Var" { return true }
+  if tree.at(node).tag == "Field" { return is_place(tree, ast.child(tree, node, 0)) }
+  return false
+}
+
+fn temp(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String, code: view String) -> Value {
+  if ty == "nothing" {
+    line(gen, "{code};")
+    return Value { ty: String.from(ty), code: String.new() }
+  }
+  let id = gen.temp
+  gen.temp = id + 1
+  let c = c_type(gen, tree, ty)
+  let name = "t{id}"
+  let drop = drop_fn(gen, tree, ty)
+  if drop != "" { line(gen, "{c} {name} __attribute__((cleanup({drop}))) = {code};") }
+  else { line(gen, "{c} {name} = {code};") }
+  return Value { ty: String.from(ty), code: move name }
+}
+
+fn text_view(value: view Value) -> String {
+  if value.ty == "String" { return "nx_str_view(&({value.code}))" }
+  if value.ty == "Text" { return "nx_str_text({value.code})" }
+  unsupported("expected Text or String")
+  return String.new()
+}
+
+fn coerce(gen: mut Generator, tree: view List<ast.AstNode>, value: Value, expected: view String) -> Value {
+  if expected == "String" && value.ty == "Text" {
+    return temp(gen, tree, expected, "nx_str_from({text_view(value)})")
+  }
+  if value.ty != expected { unsupported("expected {expected}, got {value.ty}") }
+  return move value
+}
+
+fn transfer(gen: view Generator, tree: view List<ast.AstNode>, value: view Value) -> String {
+  // The take helpers leave a zero value for the source slot's scope cleanup.
+  if drop_fn(gen, tree, value.ty).len() != 0 { return "sc_take_{c_type(gen, tree, value.ty)}(&({value.code}))" }
+  return String.from(value.code)
+}
+
+fn quoted_text(tree: view List<ast.AstNode>, node: Int) -> String {
+  if tree.at(node).end == node + 1 { return String.from("\"\"") }
+  let bytes = ast.decoded_name(tree, ast.child(tree, node, 0))
+  var result = String.from("\"")
+  // Three octal digits per byte keep C escape boundaries and UTF-8 deterministic.
+  for i in 0..bytes.len() {
+    let b = bytes.byte(i)
+    result.push_byte(92)
+    result.push_byte(48 + b / 64)
+    result.push_byte(48 + (b / 8) % 8)
+    result.push_byte(48 + b % 8)
+  }
+  result.push_byte(34)
+  return result
+}
+
+fn number(tree: view List<ast.AstNode>, node: Int, ty: view String, negative: Bool) -> Value {
+  let digits = String.from(tree.at(ast.child(tree, node, 0)).tag)
+  let c = integer_c(ty)
+  if c == "" { unsupported("numeric literal of type {ty}") }
+  var code = "(({c})UINT64_C({digits}))"
+  if negative {
+    if ty == "Int" && digits == "9223372036854775808" { code = String.from("INT64_MIN") }
+    else { code = "(({c})(-INT64_C({digits})))" }
+  }
+  return Value { ty: String.from(ty), code: move code }
+}
+
+fn binary(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
+  let op = ast.name_at(tree, node, 0)
+  let left = expression(gen, tree, ast.child(tree, node, 1))
+  if drop_fn(gen, tree, left.ty).len() != 0 { unsupported("operator {op} on {left.ty}") }
+  let saved = temp(gen, tree, left.ty, left.code)
+  let right_node = ast.child(tree, node, 2)
+  if op == "&&" || op == "||" {
+    if saved.ty != "Bool" { unsupported("non-Bool logical operand") }
+    var test = String.from(saved.code)
+    if op == "||" { test = "!{test}" }
+    line(gen, "if ({test}) {{")
+    gen.indent = gen.indent + 1
+    let right = expression(gen, tree, right_node)
+    if right.ty != "Bool" { unsupported("non-Bool logical operand") }
+    line(gen, "{saved.code} = {right.code};")
+    gen.indent = gen.indent - 1
+    line(gen, "}}")
+    return move saved
+  }
+  let right = expression(gen, tree, right_node)
+  if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+    if left.ty != right.ty || (integer_c(left.ty).len() == 0 && left.ty != "Bool") {
+      unsupported("comparison {op} on {left.ty} and {right.ty}")
+    }
+    return temp(gen, tree, ty, "({saved.code} {op} {right.code})")
+  }
+  var helper = String.new()
+  if op == "+" { helper = String.from("add") }
+  else if op == "-" { helper = String.from("sub") }
+  else if op == "*" { helper = String.from("mul") }
+  else if op == "/" { helper = String.from("div") }
+  else if op == "%" { helper = String.from("mod") }
+  else { unsupported("operator {op}") }
+  let suffix = integer_suffix(ty)
+  return temp(gen, tree, ty, "nx_{helper}{suffix}({saved.code}, {right.code})")
+}
+
+fn emit_print(gen: mut Generator, value: view Value) {
+  if value.ty == "Bool" { line(gen, "puts({value.code} ? \"true\" : \"false\");") }
+  else if value.ty == "Text" { line(gen, "printf(\"%s\\n\", {value.code});") }
+  else if value.ty == "String" { line(gen, "nx_print_str({text_view(value)});") }
+  else if value.ty == "Char" { line(gen, "nx_print_char({value.code});") }
+  else if value.ty == "UInt64" { line(gen, "printf(\"%llu\\n\", (unsigned long long)({value.code}));") }
+  else if integer_c(value.ty).len() != 0 { line(gen, "printf(\"%lld\\n\", (long long)({value.code}));") }
+  else { unsupported("print of {value.ty}") }
+}
+
+fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
+  if gen.locals.identities.at(node) >= 0 { unsupported("function values") }
+  let name = ast.name_at(tree, node, 0)
+  let args = ast.child(tree, node, 1)
+  let fun = find_named(tree, gen.functions, name)
+  if fun < 0 {
+    if name != "print" && name != "assert" { unsupported("call to {name}") }
+    if tree.at(args).end == args + 1 || tree.at(args + 1).end != tree.at(args).end {
+      unsupported("{name} arity")
+    }
+    let value = expression(gen, tree, args + 1)
+    if name == "print" { emit_print(gen, value) }
+    else {
+      if value.ty != "Bool" { unsupported("assert argument type") }
+      line(gen, "nx_assert({value.code});")
+    }
+    return Value { ty: String.from("nothing"), code: String.new() }
+  }
+  let params = ast.child(tree, fun, 2)
+  var actual = args + 1
+  var formal = params + 1
+  var values = List<String>.new()
+  // Evaluate value arguments into temporaries before entering the C call.
+  while actual < tree.at(args).end && formal < tree.at(params).end {
+    let expected = declared_type(tree, ast.child(tree, formal, 2))
+    let mode = String.from(tree.at(ast.child(tree, formal, 1)).tag)
+    let operand = expression(gen, tree, actual)
+    let arg = coerce(gen, tree, move operand, expected)
+    if mode == "Own" || (mode == "View" && drop_fn(gen, tree, expected).len() == 0) {
+      let saved = temp(gen, tree, expected, transfer(gen, tree, arg))
+      values.push(transfer(gen, tree, saved))
+    } else { values.push("&({arg.code})") }
+    actual = tree.at(actual).end
+    formal = tree.at(formal).end
+  }
+  if actual != tree.at(args).end || formal != tree.at(params).end { unsupported("arity of {name}") }
+  let list = values.join(", ")
+  return temp(gen, tree, ty, "F{fun}({list})")
+}
+
+fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
+  let recv = ast.child(tree, node, 0)
+  let name = ast.name_at(tree, node, 1)
+  let args = ast.child(tree, node, 2)
+  var owner = String.new()
+  if tree.at(recv).tag == "Var" { owner = ast.name_at(tree, recv, 0) }
+  var actual = args + 1
+  var values = List<String>.new()
+  var helper = String.new()
+  if tree.at(recv).tag == "Var" && gen.locals.identities.at(recv) < 0 &&
+      owner == "String" {
+    if name != "new" && name != "from" && name != "concat" { unsupported("String.{name}") }
+    helper = "nx_str_{name}"
+    while actual < tree.at(args).end {
+      let arg = expression(gen, tree, actual)
+      values.push(text_view(arg))
+      actual = tree.at(actual).end
+    }
+  } else {
+    let receiver = expression(gen, tree, recv)
+    if receiver.ty != "String" { unsupported("method {name} on {receiver.ty}") }
+    if name != "len" && name != "byte" && name != "eq" && name != "clear" &&
+        name != "push_int" && name != "push_str" { unsupported("String.{name}") }
+    helper = "nx_str_{name}"
+    values.push("&({receiver.code})")
+    while actual < tree.at(args).end {
+      let arg = expression(gen, tree, actual)
+      if name == "eq" || name == "push_str" { values.push(text_view(arg)) }
+      else { values.push(String.from(arg.code)) }
+      actual = tree.at(actual).end
+    }
+  }
+  let list = values.join(", ")
+  return temp(gen, tree, ty, "{helper}({list})")
+}
+
+fn struct_literal(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
+  let fields = ast.child(tree, node, 2)
+  let value = temp(gen, tree, ty, String.from("{{0}}"))
+  let structure = find_named(tree, gen.structs, ty)
+  if structure < 0 { unsupported("unknown struct {ty}") }
+  let definitions = ast.child(tree, structure, 2)
+  var at = fields + 1
+  while at < tree.at(fields).end {
+    let name = String.from(tree.at(ast.child(tree, at, 0)).tag)
+    var definition = definitions + 1
+    while definition < tree.at(definitions).end {
+      let id = ast.child(tree, definition, 0)
+      if tree.at(id).tag == name { break }
+      definition = tree.at(definition).end
+    }
+    if definition == tree.at(definitions).end { unsupported("unknown field of {ty}") }
+    let expected = declared_type(tree, ast.child(tree, definition, 1))
+    let init = expression(gen, tree, ast.child(tree, at, 1))
+    let field = coerce(gen, tree, move init, expected)
+    line(gen, "{value.code}.m{name} = {transfer(gen, tree, field)};")
+    at = tree.at(at).end
+  }
+  return move value
+}
+
+fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Value {
+  let tag = String.from(tree.at(node).tag)
+  let ty = String.from(gen.checked.expressions.at(node))
+  if tag == "Var" { return local_place(gen, node) }
+  if tag == "Move" {
+    let place = local_place(gen, node)
+    if drop_fn(gen, tree, place.ty).len() != 0 {
+      let moved = transfer(gen, tree, place)
+      return temp(gen, tree, place.ty, moved)
+    }
+    return move place
+  }
+  if tag == "Text" { return Value { ty: String.from("Text"), code: quoted_text(tree, node) } }
+  if tag == "Int" || tag == "NumT" || tag == "Char" { return number(tree, node, ty, false) }
+  if tag == "Bool" { return Value { ty: move ty, code: String.from(tree.at(ast.child(tree, node, 0)).tag) } }
+  if tag == "Ascribe" {
+    let value = expression(gen, tree, ast.child(tree, node, 1))
+    return coerce(gen, tree, move value, ty)
+  }
+  if tag == "Field" {
+    let base = expression(gen, tree, ast.child(tree, node, 0))
+    let field = String.from(tree.at(ast.child(tree, node, 1)).tag)
+    return Value { ty: move ty, code: "({base.code}).m{field}" }
+  }
+  if tag == "StructLit" { return struct_literal(gen, tree, node, ty) }
+  if tag == "Bin" { return binary(gen, tree, node, ty) }
+  if tag == "Call" { return call(gen, tree, node, ty) }
+  if tag == "Method" { return string_method(gen, tree, node, ty) }
+  if tag == "Un" {
+    let op = ast.name_at(tree, node, 0)
+    let arg = ast.child(tree, node, 1)
+    if op == "-" && (tree.at(arg).tag == "Int" || tree.at(arg).tag == "NumT") {
+      return number(tree, arg, ty, true)
+    }
+    let value = expression(gen, tree, arg)
+    if op == "!" { return temp(gen, tree, ty, "!({value.code})") }
+    if op == "-" { return temp(gen, tree, ty, "nx_neg{integer_suffix(ty)}({value.code})") }
+    unsupported("unary operator {op}")
+  }
+  unsupported("expression {tag}")
+  return Value { ty: String.new(), code: String.new() }
+}
+
+fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Block" || tag == "[" || tag == "Scope" {
+    line(gen, String.from("{{"))
+    gen.indent = gen.indent + 1
+    var at = node + 1
+    while at < tree.at(node).end {
+      statement(gen, tree, at)
+      at = tree.at(at).end
+    }
+    gen.indent = gen.indent - 1
+    line(gen, String.from("}}"))
+  } else if tag == "Let" {
+    let place = local_place(gen, node)
+    let value = expression(gen, tree, ast.child(tree, node, 2))
+    let init = coerce(gen, tree, move value, place.ty)
+    let c = c_type(gen, tree, place.ty)
+    let drop = drop_fn(gen, tree, place.ty)
+    if drop != "" {
+      line(gen, "{c} {place.code} __attribute__((cleanup({drop}))) = {transfer(gen, tree, init)};")
+    } else { line(gen, "{c_type(gen, tree, place.ty)} {place.code} = {init.code};") }
+  } else if tag == "Assign" {
+    let target = ast.child(tree, node, 0)
+    if !is_place(tree, target) { unsupported("assignment target") }
+    let place = expression(gen, tree, target)
+    let value = expression(gen, tree, ast.child(tree, node, 1))
+    let rhs = coerce(gen, tree, move value, place.ty)
+    let drop = drop_fn(gen, tree, place.ty)
+    if drop != "" {
+      let moved = transfer(gen, tree, rhs)
+      let saved = temp(gen, tree, place.ty, moved)
+      line(gen, "{drop}(&({place.code}));")
+      line(gen, "{place.code} = {transfer(gen, tree, saved)};")
+    } else { line(gen, "{place.code} = {rhs.code};") }
+  } else if tag == "Expr" {
+    let value = expression(gen, tree, ast.child(tree, node, 0))
+    if value.ty != "nothing" { line(gen, "(void)({value.code});") }
+  } else if tag == "Return" {
+    let arg = ast.child(tree, node, 0)
+    if tree.at(arg).tag == "_" { line(gen, String.from("return;")) }
+    else {
+      let expected = String.from(gen.result)
+      if expected == "nothing" { unsupported("return value in a function without a result type") }
+      let value = expression(gen, tree, arg)
+      let result = coerce(gen, tree, move value, expected)
+      line(gen, "return {transfer(gen, tree, result)};")
+    }
+  } else if tag == "If" {
+    let condition = expression(gen, tree, ast.child(tree, node, 0))
+    if condition.ty != "Bool" { unsupported("if condition type") }
+    line(gen, "if ({condition.code})")
+    statement(gen, tree, ast.child(tree, node, 1))
+    let alternative = ast.child(tree, node, 2)
+    if tree.at(alternative).tag != "_" {
+      line(gen, String.from("else {{"))
+      gen.indent = gen.indent + 1
+      statement(gen, tree, alternative)
+      gen.indent = gen.indent - 1
+      line(gen, String.from("}}"))
+    }
+  } else if tag == "While" {
+    if tree.at(ast.child(tree, node, 0)).tag != "_" { unsupported("labeled while") }
+    line(gen, String.from("for (;;) {{"))
+    gen.indent = gen.indent + 1
+    let condition = expression(gen, tree, ast.child(tree, node, 1))
+    if condition.ty != "Bool" { unsupported("while condition type") }
+    line(gen, "if (!({condition.code})) break;")
+    gen.loop_depth = gen.loop_depth + 1
+    statement(gen, tree, ast.child(tree, node, 2))
+    gen.loop_depth = gen.loop_depth - 1
+    gen.indent = gen.indent - 1
+    line(gen, String.from("}}"))
+  } else if tag == "Break" || tag == "Continue" {
+    if gen.loop_depth == 0 || tree.at(ast.child(tree, node, 0)).tag != "_" {
+      unsupported("loop exit with invalid or unsupported target")
+    }
+    if tag == "Break" { line(gen, String.from("break;")) }
+    else { line(gen, String.from("continue;")) }
+  } else if tag != "_" { unsupported("statement {tag}") }
+}
+
+fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
+  let state = gen.struct_states.at(node)
+  if state == 2 { return }
+  if state == 1 { unsupported("recursive by-value struct") }
+  gen.struct_states.set(node, 1)
+  let fields = ast.child(tree, node, 2)
+  var drops = List<String>.new()
+  var at = fields + 1
+  while at < tree.at(fields).end {
+    let ty = declared_type(tree, ast.child(tree, at, 1))
+    let dep = find_named(tree, gen.structs, ty)
+    if dep >= 0 { emit_struct(gen, tree, dep) }
+    let drop = drop_fn(gen, tree, ty)
+    if drop != "" {
+      let name = String.from(tree.at(ast.child(tree, at, 0)).tag)
+      drops.push("{drop}(&value->m{name});")
+    }
+    at = tree.at(at).end
+  }
+  line(gen, "typedef struct {{")
+  gen.indent = gen.indent + 1
+  at = fields + 1
+  if at == tree.at(fields).end { line(gen, String.from("char empty;")) }
+  while at < tree.at(fields).end {
+    let ty = declared_type(tree, ast.child(tree, at, 1))
+    let name = String.from(tree.at(ast.child(tree, at, 0)).tag)
+    line(gen, "{c_type(gen, tree, ty)} m{name};")
+    at = tree.at(at).end
+  }
+  gen.indent = gen.indent - 1
+  line(gen, "}} S{node};")
+  if drops.len() != 0 {
+    gen.struct_owns.set(node, true)
+    line(gen, "static inline void sc_drop_S{node}(S{node} *value) {{")
+    gen.indent = gen.indent + 1
+    var field = drops.len()
+    while field > 0 {
+      field = field - 1
+      line(gen, drops.at(field))
+    }
+    gen.indent = gen.indent - 1
+    line(gen, String.from("}}"))
+    line(gen, "static inline S{node} sc_take_S{node}(S{node} *value) {{")
+    line(gen, "  S{node} result = *value; *value = (S{node}){{0}}; return result;")
+    line(gen, String.from("}}"))
+  }
+  gen.struct_states.set(node, 2)
+}
+
+fn returns_value(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Return" { return tree.at(ast.child(tree, node, 0)).tag != "_" }
+  if tag == "If" {
+    return returns_value(tree, ast.child(tree, node, 1)) && returns_value(tree, ast.child(tree, node, 2))
+  }
+  if tag == "Block" || tag == "[" || tag == "Scope" {
+    var at = node + 1
+    while at < tree.at(node).end {
+      if returns_value(tree, at) { return true }
+      at = tree.at(at).end
+    }
+  }
+  return false
+}
+
+fn emit_function(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, body: Bool) {
+  let params = ast.child(tree, node, 2)
+  let result = declared_type(tree, ast.child(tree, node, 3))
+  let c = c_type(gen, tree, result)
+  var entries = List<String>.new()
+  var owned = List<Int>.new()
+  var at = params + 1
+  while at < tree.at(params).end {
+    let id = id_at(gen, at)
+    let ty = declared_type(tree, ast.child(tree, at, 2))
+    let mode = String.from(tree.at(ast.child(tree, at, 1)).tag)
+    let drop = drop_fn(gen, tree, ty)
+    let reference = mode == "Mut" || (mode == "View" && drop != "")
+    gen.references.set(id, reference)
+    let param = c_type(gen, tree, ty)
+    if reference { entries.push("{param} *v{id}") }
+    else if drop != "" { entries.push("{param} p{id}"); owned.push(id) }
+    else { entries.push("{param} v{id}") }
+    at = tree.at(at).end
+  }
+  if entries.len() == 0 { entries.push(String.from("void")) }
+  let args = entries.join(", ")
+  if !body {
+    line(gen, "static {c} F{node}({args});")
+    return
+  }
+  let block = ast.child(tree, node, 4)
+  if result != "nothing" && !returns_value(tree, block) { unsupported("function missing a return value") }
+  line(gen, "static {c} F{node}({args}) {{")
+  gen.indent = gen.indent + 1
+  gen.result = String.from(result)
+  for id in owned {
+    let ty = String.from(gen.checked.bindings.at(id))
+    line(gen, "{c_type(gen, tree, ty)} v{id} __attribute__((cleanup({drop_fn(gen, tree, ty)}))) = p{id};")
+  }
+  statement(gen, tree, block)
+  gen.indent = gen.indent - 1
+  line(gen, String.from("}}"))
+}
+
+fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
+  let items = ast.child(tree, 0, 0)
+  var at = items + 1
+  while at < tree.at(items).end {
+    let item = ast.child(tree, at, 2)
+    let tag = String.from(tree.at(item).tag)
+    if tag == "Fn" || tag == "Struct" {
+      let parameters = ast.child(tree, item, 1)
+      if tree.at(parameters).end != parameters + 1 { unsupported("generic {tag}") }
+      let name = ast.name_at(tree, item, 0)
+      if tag == "Fn" {
+        if find_named(tree, gen.functions, name) >= 0 { unsupported("duplicate function {name}") }
+        gen.functions.push(item)
+      } else {
+        if find_named(tree, gen.structs, name) >= 0 { unsupported("duplicate struct {name}") }
+        gen.structs.push(item)
+      }
+    } else { unsupported("declaration {tag}") }
+    at = tree.at(at).end
+  }
+  let entry = find_named(tree, gen.functions, String.from("main"))
+  if entry < 0 { unsupported("no main function") }
+  let params = ast.child(tree, entry, 2)
+  if tree.at(params).end != params + 1 || tree.at(ast.child(tree, entry, 3)).tag != "_" {
+    unsupported("main must take no arguments and return nothing")
+  }
+  line(gen, String.from("#include \"c_runtime.h\""))
+  line(gen, String.from("static inline String sc_take_String(String *value) {{"))
+  line(gen, String.from("  String result = *value; *value = (String){{0}}; return result;"))
+  line(gen, String.from("}}"))
+  for i in 0..gen.structs.len() {
+    let node = gen.structs.at(i)
+    emit_struct(gen, tree, node)
+  }
+  for i in 0..gen.functions.len() {
+    let node = gen.functions.at(i)
+    emit_function(gen, tree, node, false)
+  }
+  for i in 0..gen.functions.len() {
+    let node = gen.functions.at(i)
+    emit_function(gen, tree, node, true)
+  }
+  line(gen, "int main(void) {{ F{entry}(); return 0; }}")
+}
+
+fn main() {
+  let args = env.args()
+  if args.len() != 2 {
+    io.eprintln("usage: codegen FILE.ast")
+    env.exit(2)
+    return
+  }
+  match fs.read_to_string(args.at(1)) {
+    Err(e) => { io.eprintln(e.message); env.exit(2) }
+    Ok(source) => {
+      let file = ast.decode(move source)
+      let bindings = locals.resolve(file.nodes)
+      let checked = types.check_file(file.nodes, bindings, true, false)
+      if checked.errors > 0 {
+        for row in checked.messages { io.eprintln(row) }
+        env.exit(1)
+        return
+      }
+      var gen = Generator {
+        checked: move checked, locals: move bindings, structs: List<Int>.new(), functions: List<Int>.new(),
+        struct_states: List<Int>.new(), struct_owns: List<Bool>.new(),
+        references: List<Bool>.new(), out: String.new(),
+        indent: 0, temp: 0, loop_depth: 0, result: String.new(),
+      }
+      for i in 0..file.nodes.len() {
+        gen.struct_states.push(0)
+        gen.struct_owns.push(false)
+      }
+      for i in 0..gen.locals.bindings.len() { gen.references.push(false) }
+      generate(gen, file.nodes)
+      print(gen.out)
+    }
+  }
+}

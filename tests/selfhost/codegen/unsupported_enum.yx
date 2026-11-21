@@ -1,0 +1,5 @@
+enum Choice { First, Second }
+
+fn main() {
+    let choice = Choice.First
+}
