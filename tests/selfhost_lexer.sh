@@ -5,7 +5,10 @@ cd "$(dirname "$0")/.."
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cargo build -q
-target/debug/yerux build selfhost/lexer.yx -o "$tmp/lexer" >/dev/null
+bins=${SELFHOST_BIN_DIR:-$tmp}
+if [[ -z ${SELFHOST_BIN_DIR:-} ]]; then
+  target/debug/yerux build selfhost/lexer.yx -o "$bins/lexer" >/dev/null
+fi
 
 failures=0
 total=0
@@ -14,7 +17,7 @@ while IFS= read -r -d '' file; do
   rust_rc=0
   target/debug/yerux tokens "$file" >"$tmp/rust" 2>"$tmp/rust-err" || rust_rc=$?
   lexer_rc=0
-  "$tmp/lexer" "$file" >"$tmp/yerux" 2>"$tmp/err" || lexer_rc=$?
+  "$bins/lexer" "$file" >"$tmp/yerux" 2>"$tmp/err" || lexer_rc=$?
   if [ "$lexer_rc" -gt 1 ]; then
     failures=$((failures + 1))
     if [ "${SELFHOST_VERBOSE:-0}" = 1 ] || [ "$failures" -le 10 ]; then printf 'LEXER CRASH %s\n' "$file"; cat "$tmp/err"; fi

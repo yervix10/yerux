@@ -1,0 +1,4 @@
+fn main() {
+    let add = |value: Int| value + 1
+    print(add(2))
+}

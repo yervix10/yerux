@@ -7,9 +7,12 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cargo build -q
 rust=target/debug/yerux
-for stage in lexer parser types; do
-  "$rust" build "selfhost/$stage.yx" -o "$tmp/$stage" >/dev/null
-done
+bins=${SELFHOST_BIN_DIR:-$tmp}
+if [[ -z ${SELFHOST_BIN_DIR:-} ]]; then
+  for stage in lexer parser types; do
+    "$rust" build "selfhost/$stage.yx" -o "$tmp/$stage" >/dev/null
+  done
+fi
 
 report_mismatch() {
   printf 'selfhost types: %s in %s\n' "$1" "$file" >&2
@@ -18,8 +21,8 @@ report_mismatch() {
 }
 
 source_ast() {
-  "$tmp/lexer" "$1" --positioned >"$tmp/tokens" &&
-    "$tmp/parser" "$tmp/tokens" >"$tmp/ast"
+  "$bins/lexer" "$1" --positioned >"$tmp/tokens" &&
+    "$bins/parser" "$tmp/tokens" >"$tmp/ast"
 }
 
 total=0
@@ -40,7 +43,7 @@ while IFS= read -r -d '' file; do
   sed '/^$/d' "$tmp/rust" >"$tmp/want"
   : >"$tmp/got"
   if [[ $rust_rc == 0 && $self_rc == 0 ]]; then
-    "$tmp/types" locals "$tmp/ast" >"$tmp/got" || self_rc=$?
+    "$bins/types" locals "$tmp/ast" >"$tmp/got" || self_rc=$?
   fi
   if [[ $rust_rc != 0 || $self_rc != 0 ]] || ! cmp -s "$tmp/want" "$tmp/got"; then
     report_mismatch "lexical resolution mismatch (Rust $rust_rc, Yerux $self_rc)"
@@ -59,7 +62,7 @@ for file in tests/selfhost/{types,ownership}/*.yx; do
   rust_rc=0
   self_rc=0
   "$rust" types-file "$file" >"$tmp/rust" 2>"$tmp/rust-errors" || rust_rc=$?
-  "$tmp/types" "$stage" "$tmp/ast" >"$tmp/self" || self_rc=$?
+  "$bins/types" "$stage" "$tmp/ast" >"$tmp/self" || self_rc=$?
   case "$(basename "$file")" in
     bad_*)
       sed -n '/^error: /p' "$tmp/rust-errors" | sort >"$tmp/want"
