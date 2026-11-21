@@ -1,0 +1,12 @@
+import std.toml
+
+fn main() {
+  let input = String.from("[package]\nname = \"demo\"\nversion_code = 7\nactive = true\ntags = [\"a\", \"b\"]\n")
+  print(toml.get_string(input, String.from("package.name")))
+  print(" ")
+  print(toml.get_int(input, String.from("package.version_code")))
+  print(" ")
+  print(toml.get_bool(input, String.from("package.active")))
+  print(" ")
+  print(toml.get_array(input, String.from("package.tags")).len())
+}

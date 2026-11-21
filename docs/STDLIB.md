@@ -671,6 +671,12 @@ File system (`read_dir`, `create_dir_all`, `remove_dir_all`, `metadata`, `copy`,
 ### `std.path`
 Textual paths with `/` as the separator (nothing touches the file system). `join(a, b)` (an absolute `b` replaces `a`) · `parent(p)` (`a/b/c.txt` -> `a/b`, `/c` -> `/`, `c` -> empty) · `file_name(p)` · `stem(p)` · `extension(p)` (without dot; a leading dot is not an extension) · `with_extension(p, ext)` · `is_absolute(p)` · `components(p)` · `normalize(p)` (`.`/`..`/repeated slashes; empty result is `.`).
 
+### `std.regex`, `std.csv`, and `std.toml`
+`std.regex` provides bounded matching and substitution; its supported syntax and
+step budget are documented in [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md).
+`std.csv.parse/write` handle quoted RFC 4180 records. `std.toml` reads the
+manifest subset via dotted-key accessors.
+
 ### Language limits met while writing these modules
 - Methods cannot be added to `String` / `List` from a module, so the helpers are free functions (`text.split(s, ",")`, not `s.split(",")`).
 - (Fixed) Temporaries can be passed to `view` parameters, also of the built-in String methods, and methods can be chained on call results (`d.len().show()`, `make().scaled(2).sum()`): `tests/chain_temps.yx`.
