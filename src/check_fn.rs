@@ -122,6 +122,15 @@ impl Scan {
                 self.stmts(stmts);
                 self.expr(result);
             }
+            EK::ArrayLit(items) => self.args(items),
+            EK::ArrayFill(b, _) => self.expr(b),
+            EK::SliceOf(b, lo, hi) => {
+                self.expr(b);
+                if let Some(r) = root_name(b) {
+                    self.touched.insert(r);
+                }
+                lo.iter().chain(hi).for_each(|a| self.expr(a));
+            }
             EK::Int(_) | EK::Float(..) | EK::Char(_) | EK::Bool(_) | EK::Text(_) => {}
         }
     }

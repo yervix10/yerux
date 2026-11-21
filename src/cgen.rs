@@ -307,8 +307,14 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
     for i in 0..g.types.enums.len() {
         all.push(Ty::Enum(i));
     }
-    for i in 0..g.types.lists.len() {
-        all.push(Ty::List(i));
+    // a slice `[T]` has the C type of `List<T>`: emit that type once (prefer the List entry itself)
+    let mut list_c: HashSet<String> = HashSet::new();
+    let mut lists: Vec<usize> = (0..g.types.lists.len()).collect();
+    lists.sort_by_key(|i| g.types.slices.contains(i));
+    for i in lists {
+        if !g.types.has_param(Ty::List(i)) && list_c.insert(g.types.cty(Ty::List(i))) {
+            all.push(Ty::List(i));
+        }
     }
     let all: Vec<Ty> = all.into_iter().filter(|t| !g.types.has_param(*t)).collect();
     for t in &all {
@@ -501,6 +507,10 @@ impl Gen<'_> {
     }
 
     fn is_ref(&self, mode: Mode, ty: Ty) -> bool {
+        // a slice is passed as a copy of its {ptr, len, cap} header (it can never change the header)
+        if self.types.slice_elem(ty).is_some() {
+            return false;
+        }
         mode == Mode::Mut || (mode == Mode::View && self.types.owned(ty))
     }
 
@@ -687,6 +697,19 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 let et = self.types.cty(self.types.lists[i]);
                 self.line(&format!("struct {cname} {{ {et} *d; int64_t len, cap; }};"));
             }
+            Ty::Struct(i) if self.types.arrays.contains_key(&i) => {
+                let (el, n) = self.types.arrays[&i];
+                self.emit_body(el, done);
+                let et = self.types.cty(el);
+                let c = &cname;
+                self.line(&format!("struct {c} {{ {et} e[{n}]; }};"));
+                self.line(&format!("static inline {et} *nx_at_{c}({c} *a, int64_t i) {{ if (i < 0 || i >= {n}) nx_panic(\"index out of range\"); return &a->e[i]; }}"));
+                self.line(&format!(
+                    "static inline int64_t nx_len_{c}({c} *a) {{ (void)a; return {n}; }}"
+                ));
+                self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ *nx_at_{c}(a, i) = v; }}"));
+                self.line(&format!("static inline void nx_swap_{c}({c} *a, int64_t i, int64_t j) {{ {et} *x = nx_at_{c}(a, i); {et} *y = nx_at_{c}(a, j); {et} t = *x; *x = *y; *y = t; }}"));
+            }
             Ty::Struct(i) => {
                 let def = self.types.structs[i].clone();
                 for (_, f) in &def.fields {
@@ -782,6 +805,9 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                     String::new()
                 };
                 self.line(&format!("static inline void nx_swap_{c}({c} *l, int64_t i, int64_t j) {{ {et} *a = nx_at_{c}(l, i); {et} *b = nx_at_{c}(l, j); {et} t = *a; *a = *b; *b = t; }}"));
+                // slices `[T]` share this header: elements [lo, hi) of a buffer, of a List, or of a slice
+                self.line(&format!("static inline {c} nx_slice_{c}({et} *d, int64_t n, int64_t lo, int64_t hi) {{ if (hi < 0 || hi > n || lo < 0 || lo > hi) nx_panic(\"index out of range\"); {c} s = {{ d + lo, hi - lo, hi - lo }}; return s; }}"));
+                self.line(&format!("static inline {c} nx_slicel_{c}({c} *l, int64_t lo, int64_t hi, bool whole) {{ return nx_slice_{c}(l->d, l->len, lo, whole ? l->len : hi); }}"));
                 if let Some(members) = self.types.general_scc(HeapNode::List(i)) {
                     // recursive through lists/boxes: released by the component's worklist (clear gives the buffer up too)
                     let tag = members
@@ -1606,6 +1632,59 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 }
                 _ => format!("nx_new_{}()", self.types.cty(*ty)),
             },
+            EK::ArrayLit(items) => {
+                let c = self.types.cty(e.ty);
+                let items: Vec<(String, &Expr)> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(k, v)| (format!(".e[{k}] = "), v))
+                    .collect();
+                self.init_c(&format!("({}){{ ", c), items, " }")
+            }
+            EK::ArrayFill(v, n) => {
+                let c = self.types.cty(e.ty);
+                let et = self.types.cty(v.ty);
+                format!("({{ {et} v_ = {}; {c} a_; for (int64_t i_ = 0; i_ < {n}; i_++) a_.e[i_] = v_; a_; }})", self.ex(v))
+            }
+            EK::SliceOf(b, lo, hi) => {
+                // a List-shaped header (by value: see `is_ref`)
+                let lc = self.types.cty(e.ty);
+                let int = |x: &Option<Box<Expr>>, dflt: String| match x {
+                    Some(x) => self.val_c(x),
+                    None => Arg {
+                        code: dflt,
+                        val: true,
+                        lit: true,
+                        impure: false,
+                    },
+                };
+                match self.types.array_of(b.ty) {
+                    Some((_, n)) => {
+                        let base = Arg {
+                            code: format!("({}).e", self.place_c(b)),
+                            val: false,
+                            lit: false,
+                            impure: !is_pure(b),
+                        };
+                        let args = vec![
+                            base,
+                            int(&None, n.to_string()),
+                            int(lo, "0".into()),
+                            int(hi, n.to_string()),
+                        ];
+                        self.call_c(&format!("nx_slice_{lc}"), args)
+                    }
+                    None => {
+                        let args = vec![
+                            self.ref_c(b),
+                            int(lo, "0".into()),
+                            int(hi, "0".into()),
+                            int(&None, (if hi.is_none() { "true" } else { "false" }).into()),
+                        ];
+                        self.call_c(&format!("nx_slicel_{lc}"), args)
+                    }
+                }
+            }
             EK::StructLit { sid, fields } => {
                 let c = self.types.cty(Ty::Struct(*sid));
                 if fields.is_empty() {

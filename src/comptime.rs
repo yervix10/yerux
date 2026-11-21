@@ -417,6 +417,18 @@ fn walk(e: &mut Expr, f: Visit) -> R<()> {
             walk(x, f)?;
         }
         EK::Closure { body, .. } => walk_stmts(body, f)?,
+        EK::ArrayLit(items) => {
+            for a in items {
+                walk(a, f)?;
+            }
+        }
+        EK::ArrayFill(b, _) => walk(b, f)?,
+        EK::SliceOf(b, lo, hi) => {
+            walk(b, f)?;
+            for a in lo.iter_mut().chain(hi.iter_mut()) {
+                walk(a, f)?;
+            }
+        }
         _ => {}
     }
     Ok(())
