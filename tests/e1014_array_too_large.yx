@@ -1,0 +1,4 @@
+fn main() {
+  let big = [0; 1000000]
+  print(big[0])
+}

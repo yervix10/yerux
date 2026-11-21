@@ -1,0 +1,8 @@
+error: an array needs at least one element
+ --> tests/e1018_array_zero_len.yx:2:10
+  |
+2 |   let a: [Int; 0] = [1]
+  |          ^^^^^^^^
+  = help: use `List<T>.new()` for a collection that may be empty
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,3 @@
+fn main() {
+  let a: [Int; 0] = [1]
+}

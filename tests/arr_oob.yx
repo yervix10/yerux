@@ -1,0 +1,10 @@
+// A run-time index outside an array panics (exit 101) instead of reading past it.
+fn pick(i: Int) -> Int {
+  let a = [1, 2, 3]
+  return a[i]
+}
+
+fn main() {
+  print(pick(2))
+  print(pick(3))
+}

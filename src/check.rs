@@ -163,6 +163,14 @@ fn walk_ids(e: &Expr, out: &mut Vec<usize>, only_moves: bool) {
             args.iter().for_each(|a| walk_ids(a, out, only_moves));
         }
         EK::AddrOf(b, _) | EK::Deref(b) => walk_ids(b, out, only_moves),
+        EK::ArrayLit(items) => items.iter().for_each(|a| walk_ids(a, out, only_moves)),
+        EK::ArrayFill(b, _) => walk_ids(b, out, only_moves),
+        EK::SliceOf(b, lo, hi) => {
+            walk_ids(b, out, only_moves);
+            lo.iter()
+                .chain(hi)
+                .for_each(|a| walk_ids(a, out, only_moves));
+        }
         EK::Closure { .. } => {}
     }
 }
@@ -190,6 +198,9 @@ fn can_propagate(e: &Expr) -> bool {
         | EK::Variant { args, .. } => args.iter().any(can_propagate),
         EK::Method { recv, args, .. } => can_propagate(recv) || args.iter().any(can_propagate),
         EK::StructLit { fields, .. } => fields.iter().any(|(_, value)| can_propagate(value)),
+        EK::ArrayLit(items) => items.iter().any(can_propagate),
+        EK::ArrayFill(b, _) => can_propagate(b),
+        EK::SliceOf(b, lo, hi) => can_propagate(b) || lo.iter().chain(hi).any(|a| can_propagate(a)),
         _ => false,
     }
 }
@@ -754,6 +765,18 @@ impl<'a> Checker<'a> {
                 let b = self.place_inner(recv, check_moved)?;
                 let elem = match b.ty {
                     Ty::List(i) => self.types.lists[i],
+                    t if self.types.array_of(t).is_some() => {
+                        let (elem, n) = self.types.array_of(t).unwrap();
+                        if args.len() == 1 {
+                            let t = self.expr(&mut args[0]);
+                            self.expect(t, Ty::Int, args[0].pos);
+                            self.const_index(&args[0], n, b.ty);
+                        } else {
+                            self.err(diag("'at' expects 1 argument(s)", pos));
+                        }
+                        e.ty = elem;
+                        return Some(PlaceInfo { ty: elem, ..b });
+                    }
                     Ty::Err => return None,
                     t => {
                         let n = self.tn(t);
@@ -1151,6 +1174,9 @@ impl<'a> Checker<'a> {
             if m != "at" && self.isp(recv) {
                 if let Some(rt) = self.peek_ty(recv) {
                     let builtin = match rt {
+                        // a slice has only the built-in element methods: the library ones may grow a List
+                        Ty::List(_) if self.types.slice_elem(rt).is_some() => true,
+                        Ty::Struct(_) if self.types.array_of(rt).is_some() => true,
                         Ty::List(_) => ["push", "pop", "len", "get", "set", "clear", "swap"]
                             .contains(&m.as_str()),
                         Ty::String => [
@@ -1541,6 +1567,19 @@ impl<'a> Checker<'a> {
             EK::StructLit { sid, fields } => {
                 let sid = *sid;
                 self.struct_lit(sid, fields, pos, None)
+            }
+            EK::ArrayLit(items) => self.array_lit(items, hint, pos),
+            EK::ArrayFill(v, n) => {
+                let n = *n;
+                self.array_fill(v, n, hint, pos)
+            }
+            EK::SliceOf(..) => {
+                self.err(
+                    diag("a slice `x[from..to]` can only be passed to a `view [T]` or `mut [T]` parameter", pos)
+                        .note("slices are borrows: they cannot be stored in a variable, returned or kept")
+                        .note("help: pass it directly to a function that takes `view [T]`, or index the original: `x[i]`"),
+                );
+                Ty::Err
             }
             EK::Variant {
                 eid,
@@ -2291,6 +2330,10 @@ impl<'a> Checker<'a> {
                 Ty::Err
             }
             Ty::List(li) => self.list_method(p, recv, m, args, pos, self.types.lists[li]),
+            t if self.types.array_of(t).is_some() => {
+                let (elem, n) = self.types.array_of(t).unwrap();
+                self.array_method(p, recv, m, args, pos, elem, n)
+            }
             Ty::String => self.string_method(p, recv, m, args, pos),
             Ty::Ptr(_) => self.ptr_method(m, args, pos),
             Ty::Char => self.char_method(m, args, pos),
@@ -2302,6 +2345,288 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[a, b, c]`: every element has the element type (from the context, else from the first element).
+    fn array_lit(&mut self, items: &mut [Expr], hint: Option<Ty>, pos: Pos) -> Ty {
+        let want = hint.and_then(|h| {
+            self.types
+                .array_of(h)
+                .map(|(e, _)| e)
+                .or_else(|| self.types.slice_elem(h))
+        });
+        let mut elem = want;
+        for it in items.iter_mut() {
+            self.hint = elem;
+            let t = self.expr(it);
+            if t == Ty::Err {
+                return Ty::Err;
+            }
+            match elem {
+                None => {
+                    elem = Some(if matches!(t, Ty::Range(..)) {
+                        Ty::Int
+                    } else {
+                        t
+                    });
+                }
+                Some(w) => self.expect(t, w, it.pos),
+            }
+        }
+        let elem = elem.unwrap_or(Ty::Err);
+        self.make_array(elem, items.len(), pos)
+    }
+    /// `[v; N]`: `v` is evaluated once and copied N times.
+    fn array_fill(&mut self, v: &mut Expr, n: usize, hint: Option<Ty>, pos: Pos) -> Ty {
+        self.hint = hint.and_then(|h| self.types.array_of(h).map(|(e, _)| e));
+        let want = self.hint;
+        let t = self.expr(v);
+        if t == Ty::Err {
+            return Ty::Err;
+        }
+        let elem = match want {
+            Some(w) => {
+                self.expect(t, w, v.pos);
+                w
+            }
+            None if matches!(t, Ty::Range(..)) => Ty::Int,
+            None => t,
+        };
+        self.make_array(elem, n, pos)
+    }
+    fn make_array(&mut self, elem: Ty, n: usize, pos: Pos) -> Ty {
+        if elem == Ty::Err {
+            return Ty::Err;
+        }
+        if elem == Ty::Unit {
+            self.err(diag("an array element must be a value", pos));
+            return Ty::Err;
+        }
+        if self.types.owned(elem) {
+            self.err(self.array_copy_error(elem, pos));
+            return Ty::Err;
+        }
+        if let Err(d) = crate::syntax::check_array_len(&self.types, elem, n as i64, pos) {
+            self.err(d);
+            return Ty::Err;
+        }
+        self.types.intern_array(elem, n, pos)
+    }
+    fn array_copy_error(&self, elem: Ty, pos: Pos) -> Diag {
+        let n = self.tn(elem);
+        let mut d = diag(
+            format!("the elements of an array must be Copy, but {} owns memory", n),
+            pos,
+        )
+        .note("fixed-size arrays hold plain values (numbers, Bool, Char, Text, Copy structs, other arrays)");
+        if matches!(elem, Ty::Param(_)) {
+            d = d.note(format!("help: add the bound `{}: Copy`", n));
+        } else {
+            d = d.note(format!("help: use `List<{}>` for owned elements", n));
+        }
+        d
+    }
+    /// A literal index is checked against the array length at compile time.
+    fn const_index(&mut self, idx: &Expr, n: usize, arr: Ty) {
+        let k = match &idx.k {
+            EK::Int(k) => Some(*k),
+            EK::Un("-", x) => match x.k {
+                EK::Int(k) => Some(-k),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(k) = k {
+            if k < 0 || k >= n as i64 {
+                let an = self.tn(arr);
+                self.err(
+                    diag(
+                        format!("index {} is out of bounds for the array {}", k, an),
+                        idx.pos,
+                    )
+                    .note(format!("valid indexes are 0 to {}", n - 1)),
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn array_method(
+        &mut self,
+        p: PlaceInfo,
+        recv: &mut Expr,
+        m: &str,
+        args: &mut Vec<Expr>,
+        pos: Pos,
+        elem: Ty,
+        n: usize,
+    ) -> Ty {
+        let (want, ret, mutates): (Vec<Ty>, Ty, bool) = match m {
+            "len" => (vec![], Ty::Int, false),
+            "get" => (vec![Ty::Int], elem, false),
+            "set" => (vec![Ty::Int, elem], Ty::Unit, true),
+            "swap" => (vec![Ty::Int, Ty::Int], Ty::Unit, true),
+            _ => {
+                self.err(diag(format!("{} has no method '{}'", self.tn(p.ty), m), pos)
+                    .note("methods: len(), get(i), set(i, x), swap(i, j); `a[i]`, `a[i] = x`, `a[from..to]` (for a `view [T]`/`mut [T]` parameter), `for x in a`"));
+                return Ty::Err;
+            }
+        };
+        if args.len() != want.len() {
+            self.err(diag(
+                format!("'{}' expects {} argument(s)", m, want.len()),
+                pos,
+            ));
+            return ret;
+        }
+        for (k, (a, w)) in args.iter_mut().zip(want).enumerate() {
+            self.hint = Some(w);
+            let t = self.expr(a);
+            self.expect(t, w, a.pos);
+            if w == Ty::Int && (k == 0 || m == "swap") {
+                self.const_index(a, n, p.ty);
+            }
+        }
+        if mutates {
+            self.need_mut(p, recv, pos);
+        }
+        ret
+    }
+
+    /// An argument for a `view [T]` / `mut [T]` parameter: a slice, an array or a List place (lent), a slice
+    /// expression `x[a..b]`, or (for `view`) a temporary array or List kept alive for the call.
+    #[allow(clippy::too_many_arguments)]
+    fn slice_arg(
+        &mut self,
+        arg: &mut Expr,
+        mode: Mode,
+        pty: Ty,
+        selem: Ty,
+        pre: Option<Ty>,
+        before: &mut [Expr],
+        params: &[(Mode, Ty)],
+        loans: &mut Vec<(usize, u8, Pos)>,
+    ) {
+        let apos = arg.pos;
+        if let EK::SliceOf(b, lo, hi) = &mut arg.k {
+            for x in lo.iter_mut().chain(hi.iter_mut()) {
+                self.hint = Some(Ty::Int);
+                let t = self.expr(x);
+                self.expect(t, Ty::Int, x.pos);
+            }
+            if !self.isp(b) {
+                self.err(diag("cannot take a slice of a temporary", b.pos).note(
+                    "help: store the array or List in a variable first, then slice the variable",
+                ));
+                return;
+            }
+            let Some(p) = self.place(b) else {
+                return;
+            };
+            if self.lend_slice(p, b, mode, pty, selem, apos, loans) {
+                arg.ty = pty;
+            }
+            return;
+        }
+        if matches!(arg.k, EK::Move(..)) {
+            self.err(
+                diag("this function only borrows: remove `move`", apos)
+                    .note("the parameter is declared `view` or `mut`, so you remain the owner"),
+            );
+            return;
+        }
+        if pre.is_none() && self.isp(arg) {
+            let Some(p) = self.place(arg) else {
+                return;
+            };
+            if self.lend_slice(p, arg, mode, pty, selem, apos, loans)
+                && self.types.array_of(p.ty).is_some()
+            {
+                Self::wrap_slice(arg, pty);
+            }
+            return;
+        }
+        // a temporary array or List (`sum([1, 2, 3])`, `sum(make())`)
+        let t = match pre {
+            Some(t) => t,
+            None => {
+                self.hint = Some(pty);
+                self.expr(arg)
+            }
+        };
+        if t == Ty::Err {
+            return;
+        }
+        if self.types.seq_elem(t) != Some(selem) {
+            self.err(diag(
+                format!("expected {} but this is {}", self.tn(pty), self.tn(t)),
+                apos,
+            ).note("a slice parameter accepts an array, a List or a slice of the same element type"));
+            return;
+        }
+        if mode == Mode::Mut {
+            self.err(
+                diag("pass a variable here (the function borrows it)", apos)
+                    .note("a temporary would be modified and thrown away"),
+            );
+            return;
+        }
+        self.hoist_view_temp(arg, t, before, params);
+        if self.types.array_of(t).is_some() {
+            Self::wrap_slice(arg, pty);
+        }
+    }
+    fn wrap_slice(arg: &mut Expr, pty: Ty) {
+        let pos = arg.pos;
+        let inner = std::mem::replace(arg, sx(EK::Int(0), pos));
+        *arg = Expr {
+            k: EK::SliceOf(Box::new(inner), None, None),
+            pos,
+            ty: pty,
+        };
+    }
+    /// Lend the place `place` (already checked: `p`) to a slice parameter. Returns false after an error.
+    #[allow(clippy::too_many_arguments)]
+    fn lend_slice(
+        &mut self,
+        p: PlaceInfo,
+        place: &Expr,
+        mode: Mode,
+        pty: Ty,
+        selem: Ty,
+        apos: Pos,
+        loans: &mut Vec<(usize, u8, Pos)>,
+    ) -> bool {
+        if p.ty == Ty::Err {
+            return false;
+        }
+        if self.types.seq_elem(p.ty) != Some(selem) {
+            self.err(
+                diag(
+                    format!("expected {} but this is {}", self.tn(pty), self.tn(p.ty)),
+                    apos,
+                )
+                .note("a slice parameter accepts an array, a List or a slice of the same element type"),
+            );
+            return false;
+        }
+        if mode == Mode::Mut && !p.mutable {
+            let n = place_str(place);
+            let why = self.immutable_reason(p.root_mode);
+            self.err(
+                diag(format!("cannot lend '{}' as `mut`: {}", n, why), apos)
+                    .note("help: declare it with `var` (or receive it as `mut`)"),
+            );
+        }
+        if mode == Mode::Mut {
+            self.frozen_check(place, true, apos);
+            self.ev_escape.push(p.root);
+        }
+        loans.push((p.root, if mode == Mode::Mut { 1 } else { 0 }, apos));
+        if let Some(ls) = self.closure_loans.get(&p.root).cloned() {
+            loans.extend(ls);
+        }
+        true
+    }
+
     fn list_method(
         &mut self,
         p: PlaceInfo,
@@ -2311,6 +2636,14 @@ impl<'a> Checker<'a> {
         pos: Pos,
         elem: Ty,
     ) -> Ty {
+        if self.types.slice_elem(p.ty).is_some() && !matches!(m, "len" | "get" | "set" | "swap") {
+            self.err(
+                diag(format!("{} has no method '{}'", self.tn(p.ty), m), pos)
+                    .note("a slice borrows elements of an array or a List: it can read and replace them, but never add, remove or reorder through library methods")
+                    .note("methods: len(), get(i), set(i, x), swap(i, j), `s[i]`, `s[i] = x`, `s[from..to]`, `for x in s`"),
+            );
+            return Ty::Err;
+        }
         let (nargs, ret, mutates) = match m {
             "push" => (1, Ty::Unit, true),
             "len" => (0, Ty::Int, false),
@@ -2901,6 +3234,19 @@ impl<'a> Checker<'a> {
             let (before, rest) = args.split_at_mut(k);
             let arg = &mut rest[0];
             let apos = arg.pos;
+            if let (Some(selem), true) = (self.types.slice_elem(pty), mode != Mode::Own) {
+                self.slice_arg(
+                    arg,
+                    mode,
+                    pty,
+                    selem,
+                    pre[k],
+                    before,
+                    &sig.params,
+                    &mut loans,
+                );
+                continue;
+            }
             // a function value (closure literal, function name, call result) for a `view fn` / `mut fn` parameter
             // is created in a hidden variable, which is then lent like any other variable
             if matches!(pty, Ty::Fn(_)) && mode != Mode::Own {
@@ -3384,6 +3730,15 @@ impl<'a> Checker<'a> {
                 }
                 let is_var = matches!(target.k, EK::Var(..));
                 if let Some(p) = self.place_inner(target, !is_var) {
+                    if self.types.slice_elem(p.ty).is_some() {
+                        let n = place_str(target);
+                        self.err(
+                            diag(format!("cannot assign to the slice '{}' itself", n), pos)
+                                .note("a slice parameter is a borrow of someone else's elements")
+                                .note(format!("help: replace elements one by one: `{}[i] = x`", n)),
+                        );
+                        return;
+                    }
                     self.ev_assign.push(p.root);
                     self.frozen_check(target, true, pos);
                     if !p.mutable {
@@ -4866,7 +5221,18 @@ impl<'a> Checker<'a> {
                 return;
             }
         }
+        // `for x in l[lo..hi]`: the borrowing loop over the indexes lo..hi of the place `l`
+        let (e, range) = match e.k {
+            EK::SliceOf(b, lo, hi) => (*b, Some((lo, hi))),
+            k => (Expr { k, ..e }, None),
+        };
         let borrow = !matches!(e.k, EK::Move(..)) && self.isp(&e);
+        if range.is_some() && !borrow {
+            self.err(diag("cannot loop over a slice of a temporary", ep).note(
+                "help: store the array or List in a variable first, then loop over `v[from..to]`",
+            ));
+            return;
+        }
         if borrow {
             if !simple_place(&e) {
                 self.err(
@@ -4880,7 +5246,7 @@ impl<'a> Checker<'a> {
             let Some(p) = self.place(&mut probe) else {
                 return;
             };
-            let Ty::List(li) = p.ty else {
+            let Some(et) = self.types.seq_elem(p.ty) else {
                 let n = self.tn(p.ty);
                 if p.ty != Ty::Err {
                     self.err(teach(diag(
@@ -4890,14 +5256,44 @@ impl<'a> Checker<'a> {
                 }
                 return;
             };
-            let et = self.types.lists[li];
             let mut place = e.clone();
             self.resolve_ids(&mut place);
-            self.chk(
-                out,
-                s_let(&nn, false, s_meth(place.clone(), "len", vec![], ep), ep),
-            );
-            self.chk(out, s_let(&ni, true, s_int(0, ep), ep));
+            let len = s_meth(place.clone(), "len", vec![], ep);
+            match range {
+                None => {
+                    self.chk(out, s_let(&nn, false, len, ep));
+                    self.chk(out, s_let(&ni, true, s_int(0, ep), ep));
+                }
+                Some((lo, hi)) => {
+                    // bounds left to right, then `0 <= lo <= hi <= len` (else the slice panic)
+                    let lo = lo.map(|x| *x).unwrap_or_else(|| s_int(0, ep));
+                    self.chk(out, s_let(&ni, true, lo, ep));
+                    let hi = hi.map(|x| *x).unwrap_or_else(|| len.clone());
+                    self.chk(out, s_let(&nn, false, hi, ep));
+                    let bad = s_bin(
+                        "||",
+                        s_bin(
+                            "||",
+                            s_bin("<", s_var(&ni, ep), s_int(0, ep), ep),
+                            s_bin(">", s_var(&ni, ep), s_var(&nn, ep), ep),
+                            ep,
+                        ),
+                        s_bin(">", s_var(&nn, ep), len, ep),
+                        ep,
+                    );
+                    let panic = s_stmt(
+                        SK::ExprS(sx(
+                            EK::Call(
+                                "panic".into(),
+                                vec![sx(EK::Text("index out of range".into()), ep)],
+                            ),
+                            ep,
+                        )),
+                        ep,
+                    );
+                    self.chk(out, s_stmt(SK::If(bad, vec![panic], None), ep));
+                }
+            }
             let at = s_meth(place.clone(), "at", vec![s_var(&ni, ep)], ep);
             let first = if !h.mutable && !self.types.owned(et) {
                 s_let(&h.var, false, at, h.var_pos)
@@ -4925,6 +5321,13 @@ impl<'a> Checker<'a> {
         // ── consume a list: `move l` or any list value ──
         self.chk(out, s_let(&nl, true, e, ep));
         let lt = self.lookup(&nl).map(|i| self.vars[i].ty).unwrap_or(Ty::Err);
+        if self.types.array_of(lt).is_some() {
+            // an array value (`for x in [1, 2, 3]`): kept in the hidden variable and read in place
+            let mut h2 = h.clone();
+            h2.step = None;
+            self.for_each(out, &h2, s_var(&nl, ep), body, id, pos);
+            return;
+        }
         let Ty::List(_) = lt else {
             if lt != Ty::Err {
                 let n = self.tn(lt);
@@ -5227,6 +5630,11 @@ fn unify(
     }
     match (pat, conc) {
         (Ty::List(a), Ty::List(b)) => unify(types, types.lists[a], types.lists[b], pids, bind),
+        // an array is lent to a slice parameter
+        (Ty::List(a), Ty::Struct(_)) if types.slices.contains(&a) => match types.array_of(conc) {
+            Some((e, _)) => unify(types, types.lists[a], e, pids, bind),
+            None => Err(None),
+        },
         (Ty::Fn(a), Ty::Fn(b)) => {
             let (fa, fb) = (&types.fns[a], &types.fns[b]);
             if fa.params.len() != fb.params.len()
@@ -5240,6 +5648,12 @@ fn unify(
             unify(types, fa.ret, fb.ret, pids, bind)
         }
         (Ty::Box(a), Ty::Box(b)) => unify(types, types.boxes[a], types.boxes[b], pids, bind),
+        (Ty::Struct(_), Ty::Struct(_)) if types.array_of(pat).is_some() => {
+            match (types.array_of(pat), types.array_of(conc)) {
+                (Some((e1, n1)), Some((e2, n2))) if n1 == n2 => unify(types, e1, e2, pids, bind),
+                _ => Err(None),
+            }
+        }
         (Ty::Struct(a), Ty::Struct(b)) => {
             match (&types.structs[a].origin, &types.structs[b].origin) {
                 (Some((n1, a1)), Some((n2, a2))) if n1 == n2 => {
@@ -5287,10 +5701,7 @@ impl<'a> Checker<'a> {
                     .map(|x| x.1),
                 _ => None,
             },
-            EK::Method { recv, m, .. } if m == "at" => match self.peek_ty(recv)? {
-                Ty::List(i) => Some(self.types.lists[i]),
-                _ => None,
-            },
+            EK::Method { recv, m, .. } if m == "at" => self.types.seq_elem(self.peek_ty(recv)?),
             EK::Method { recv, m, args }
                 if e.pos.line >= PRELUDE_LINE && m == "locked_value" && args.is_empty() =>
             {
@@ -6390,6 +6801,14 @@ impl<'a> Checker<'a> {
                 t
             } else if let Some(t) = pre[k] {
                 t
+            } else if let EK::SliceOf(b, ..) = &arg.k {
+                match self.peek_ty(b).and_then(|t| self.types.seq_elem(t)) {
+                    Some(e) => self.types.intern_slice(e),
+                    None => {
+                        self.err(diag("a slice needs an array, a List or a slice variable (or field) before `[..]`", arg.pos));
+                        return Ty::Err;
+                    }
+                }
             } else if self.isp(arg) {
                 match self.peek_ty(arg) {
                     Some(t) => t,
@@ -6835,6 +7254,16 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
     // Some object types first appear when a generic body is instantiated.
     for i in 0..ck.types.dyns.len() {
         ck.object_methods(i, ck.types.dyns[i].1);
+    }
+    // fixed-size arrays hold Copy values only (checked here: struct fields are known by now)
+    let mut arrays: Vec<(usize, Ty)> = ck.types.arrays.iter().map(|(s, (e, _))| (*s, *e)).collect();
+    arrays.sort_by_key(|a| a.0);
+    for (sid, elem) in arrays {
+        if ck.types.owned(elem) {
+            let pos = ck.types.structs[sid].pos;
+            let d = ck.array_copy_error(elem, pos);
+            ck.err(d);
+        }
     }
     ck.with_ps(|_| ());
     p.funcs.extend(done);

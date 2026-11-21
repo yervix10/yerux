@@ -100,8 +100,8 @@ pub struct Token {
 const SYMS3: &[&str] = &["..="];
 const SYMS2: &[&str] = &["==", "!=", "<=", ">=", "&&", "||", "->", "=>", ".."];
 const SYMS1: &[&str] = &[
-    "(", ")", "{", "}", ",", ":", ";", "=", "<", ">", "+", "-", "*", "/", "%", "!", ".", "|", "@",
-    "?",
+    "(", ")", "{", "}", "[", "]", ",", ":", ";", "=", "<", ">", "+", "-", "*", "/", "%", "!", ".",
+    "|", "@", "?",
 ];
 pub const KW: &[&str] = &[
     "fn", "let", "var", "if", "else", "while", "return", "move", "view", "mut", "true", "false",
@@ -648,9 +648,147 @@ pub struct Types {
     pub params: Vec<ParamDef>,
     pub thread_bound: HashSet<String>,
     pub fns: Vec<FnTy>, // every function type named in the program (interned)
+    /// Fixed-size arrays `[T; N]`: struct id -> (element, length). An array is a struct with one hidden
+    /// field `$elem` (so ownership/recursion queries see the element type); its layout is N elements.
+    pub arrays: HashMap<usize, (Ty, usize)>,
+    pub array_ids: HashMap<(Ty, usize), usize>,
+    /// List indices that are slices `[T]` (a `view`/`mut` borrow of a run of elements): same header as a
+    /// List, but they never own or grow their buffer.
+    pub slices: HashSet<usize>,
+}
+
+/// Largest fixed-size array (in bytes of the native layout): bigger buffers belong on the heap (`List<T>`).
+pub const MAX_ARRAY_BYTES: usize = 1 << 20;
+
+pub fn check_array_len(types: &Types, elem: Ty, n: i64, pos: Pos) -> Result<(), Diag> {
+    if n < 1 {
+        return Err(diag("an array needs at least one element", pos)
+            .note("help: use `List<T>.new()` for a collection that may be empty"));
+    }
+    let ws = array_elem_bytes(&types, elem).max(1) as i128;
+    if (n as i128) * ws > MAX_ARRAY_BYTES as i128 {
+        return Err(diag(
+            format!(
+                "this array is too large: {} elements of {} take more than {} bytes",
+                n,
+                types.name(elem),
+                MAX_ARRAY_BYTES
+            ),
+            pos,
+        )
+        .note("arrays live on the stack (or inline in their owner); big buffers belong on the heap")
+        .note("help: use `List<T>` for large buffers"));
+    }
+    Ok(())
+}
+
+/// Bytes one array/list element takes in the native layout (`Bool` is packed to a byte; everything else
+/// is a whole number of 8-byte words). Struct sizes may not be known yet while parsing: then 8.
+pub fn array_elem_bytes(types: &Types, t: Ty) -> usize {
+    fn words(types: &Types, t: Ty, depth: usize) -> usize {
+        if depth > 64 {
+            return 1;
+        }
+        match t {
+            Ty::List(_) | Ty::String => 3,
+            Ty::Fn(_) | Ty::Dyn(_) => 2,
+            Ty::Struct(i) => match types.arrays.get(&i) {
+                Some((e, n)) => (array_elem_bytes_d(types, *e, depth + 1) * n).div_ceil(8),
+                None => types.structs[i]
+                    .fields
+                    .iter()
+                    .map(|(_, f)| words(types, *f, depth + 1))
+                    .sum(),
+            },
+            Ty::Enum(i) => {
+                1 + types.enums[i]
+                    .variants
+                    .iter()
+                    .map(|(_, ps)| {
+                        ps.iter()
+                            .map(|p| words(types, *p, depth + 1))
+                            .sum::<usize>()
+                    })
+                    .max()
+                    .unwrap_or(0)
+            }
+            _ => 1,
+        }
+    }
+    fn array_elem_bytes_d(types: &Types, t: Ty, depth: usize) -> usize {
+        if t == Ty::Bool {
+            1
+        } else {
+            8 * words(types, t, depth).max(1)
+        }
+    }
+    array_elem_bytes_d(types, t, 0)
 }
 
 impl Types {
+    /// `[T; N]` (element, length) when `t` is a fixed-size array.
+    pub fn array_of(&self, t: Ty) -> Option<(Ty, usize)> {
+        match t {
+            Ty::Struct(s) => self.arrays.get(&s).copied(),
+            _ => None,
+        }
+    }
+    /// The element type when `t` is a slice `[T]`.
+    pub fn slice_elem(&self, t: Ty) -> Option<Ty> {
+        match t {
+            Ty::List(i) if self.slices.contains(&i) => Some(self.lists[i]),
+            _ => None,
+        }
+    }
+    /// Element type of a list, a slice or an array (the things `at`, `len`, `for` and slicing work on).
+    pub fn seq_elem(&self, t: Ty) -> Option<Ty> {
+        match t {
+            Ty::List(i) => Some(self.lists[i]),
+            _ => self.array_of(t).map(|(e, _)| e),
+        }
+    }
+    /// The one `List<T>` type (never a slice).
+    pub fn intern_list(&mut self, elem: Ty) -> Ty {
+        match (0..self.lists.len()).find(|i| self.lists[*i] == elem && !self.slices.contains(i)) {
+            Some(i) => Ty::List(i),
+            None => {
+                self.lists.push(elem);
+                Ty::List(self.lists.len() - 1)
+            }
+        }
+    }
+    /// The one slice type `[T]`.
+    pub fn intern_slice(&mut self, elem: Ty) -> Ty {
+        match (0..self.lists.len()).find(|i| self.lists[*i] == elem && self.slices.contains(i)) {
+            Some(i) => Ty::List(i),
+            None => {
+                self.lists.push(elem);
+                self.slices.insert(self.lists.len() - 1);
+                Ty::List(self.lists.len() - 1)
+            }
+        }
+    }
+    /// The one array type `[T; N]`.
+    pub fn intern_array(&mut self, elem: Ty, n: usize, pos: Pos) -> Ty {
+        if let Some(s) = self.array_ids.get(&(elem, n)) {
+            return Ty::Struct(*s);
+        }
+        let name = format!("[{}; {}]", self.name(elem), n);
+        let cname = format!("Arr__{}__{}", self.mangle(elem), n);
+        let generic = self.has_param(elem);
+        self.structs.push(StructDef {
+            name,
+            cname,
+            fields: vec![("$elem".into(), elem)],
+            pos,
+            origin: None,
+            generic,
+        });
+        let sid = self.structs.len() - 1;
+        self.arrays.insert(sid, (elem, n));
+        self.array_ids.insert((elem, n), sid);
+        Ty::Struct(sid)
+    }
     pub fn name(&self, t: Ty) -> String {
         match t {
             Ty::Int => "Int".into(),
@@ -672,6 +810,7 @@ impl Types {
             Ty::Bool => "Bool".into(),
             Ty::Text => "Text".into(),
             Ty::String => "String".into(),
+            Ty::List(i) if self.slices.contains(&i) => format!("[{}]", self.name(self.lists[i])),
             // `List` is the alias of `List<Int>`, and keeps its short name in diagnostics
             Ty::List(i) if self.lists[i] == Ty::Int => "List".into(),
             Ty::List(i) => format!("List<{}>", self.name(self.lists[i])),
@@ -985,6 +1124,14 @@ pub enum EK {
     AddrOf(Box<Expr>, bool),
     /// The place whose address is the `Int` value of the operand (only as the source of a `Bind`).
     Deref(Box<Expr>),
+    /// `[a, b, c]`: a fixed-size array (`Expr::ty` is the array type once checked).
+    ArrayLit(Vec<Expr>),
+    /// `[v; N]`: N copies of one Copy value (evaluated once).
+    ArrayFill(Box<Expr>, usize),
+    /// `x[lo..hi]` (either end may be missing): a slice of an array, a List or a slice place. Only valid as the
+    /// argument of a `view [T]` / `mut [T]` parameter; the checker also wraps a whole array lent to such a
+    /// parameter in one (no ends). Backends build a temporary List-shaped header {ptr, len, len}.
+    SliceOf(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>),
 }
 
 #[derive(Clone)]
@@ -1439,13 +1586,7 @@ impl Parser {
         }
     }
     fn intern_list(&mut self, elem: Ty) -> Ty {
-        match self.types.lists.iter().position(|e| *e == elem) {
-            Some(i) => Ty::List(i),
-            None => {
-                self.types.lists.push(elem);
-                Ty::List(self.types.lists.len() - 1)
-            }
-        }
+        self.types.intern_list(elem)
     }
     pub fn intern_box(&mut self, elem: Ty) -> Ty {
         match self.types.boxes.iter().position(|e| *e == elem) {
@@ -1497,7 +1638,7 @@ impl Parser {
             let ty = if mode == Mode::Own {
                 self.ty()?
             } else {
-                self.indirect_ty()?
+                self.param_ty()?
             };
             params.push((mode, ty));
             if !self.eat_sym(",") {
@@ -1518,6 +1659,51 @@ impl Parser {
         let r = self.ty_inner();
         self.leave();
         r
+    }
+    /// The type of a `view`/`mut` parameter: anything `indirect_ty` accepts, plus a slice `[T]`.
+    fn param_ty(&mut self) -> PR<Ty> {
+        if self.is_sym("[") {
+            self.enter()?;
+            let r = self.bracket_ty(true);
+            self.leave();
+            return r;
+        }
+        self.indirect_ty()
+    }
+    /// `[T; N]` (a fixed-size array) or, when `slice_ok`, `[T]` (a slice). The `[` is next.
+    fn bracket_ty(&mut self, slice_ok: bool) -> PR<Ty> {
+        let open = self.expect_sym("[")?;
+        let elem = self.ty()?;
+        if self.is_sym("]") {
+            let close = self.bump().pos;
+            if !slice_ok {
+                return Err(diag(
+                    format!("the slice type `[{}]` can only be the type of a `view` or `mut` parameter", self.types.name(elem)),
+                    span(open, close),
+                )
+                .note("a slice borrows elements that belong to an array or a List, so it only lives during a call")
+                .note(format!("help: write `[{}; N]` for an array of N elements, or `List<{}>` for a growable list", self.types.name(elem), self.types.name(elem))));
+            }
+            return Ok(self.types.intern_slice(elem));
+        }
+        if !self.eat_sym(";") {
+            return Err(diag("expected `;` or `]` in an array type", self.pos())
+                .note("help: `[Int; 4]` is an array of 4 Ints, `view [Int]` a slice parameter"));
+        }
+        let npos = self.pos();
+        let n = match self.peek().clone() {
+            Tok::Num(n) => {
+                self.bump();
+                n
+            }
+            _ => {
+                return Err(diag("the length of an array type must be an integer literal", npos)
+                    .note("help: write the number itself, e.g. `[Int; 16]`; for a length known only at run time use `List<T>`"))
+            }
+        };
+        let close = self.expect_sym("]")?;
+        check_array_len(&self.types, elem, n, span(open, close))?;
+        Ok(self.types.intern_array(elem, n as usize, span(open, close)))
     }
     fn indirect_ty(&mut self) -> PR<Ty> {
         if !self.is_kw("dyn") {
@@ -1543,6 +1729,9 @@ impl Parser {
         if self.is_kw("fn") {
             self.bump();
             return self.fn_ty();
+        }
+        if self.is_sym("[") {
+            return self.bracket_ty(false);
         }
         if self.is_sym("(") {
             let open = self.bump().pos;
@@ -2484,7 +2673,7 @@ impl Parser {
                 let ty = if mode == Mode::Own {
                     self.ty()?
                 } else {
-                    self.indirect_ty()?
+                    self.param_ty()?
                 };
                 params.push(Param {
                     name: pn,
@@ -2667,8 +2856,9 @@ impl Parser {
             }
             let e = self.expr()?;
             let inner = if self.eat_sym("=") {
+                let bracket = self.bracket_target();
                 let v = self.expr()?;
-                SK::Assign(e, v)
+                Self::assign(e, v, bracket)
             } else {
                 SK::ExprS(e)
             };
@@ -2679,8 +2869,9 @@ impl Parser {
         } else {
             let e = self.expr()?;
             if self.eat_sym("=") {
+                let bracket = self.bracket_target();
                 let v = self.expr()?;
-                SK::Assign(e, v)
+                Self::assign(e, v, bracket)
             } else {
                 SK::ExprS(e)
             }
@@ -3172,6 +3363,28 @@ impl Parser {
     }
 
     /// `.method(args)` / `.field` / `.0` after any primary expression.
+    /// Just after the `=` of an assignment: was the target written `x[i]`?
+    fn bracket_target(&self) -> bool {
+        self.i >= 2 && self.t[self.i - 2].t == Tok::Sym("]")
+    }
+    /// `x[i] = v` is `x.set(i, v)` (lists, slices and arrays); anything else is a plain assignment.
+    fn assign(e: Expr, v: Expr, bracket: bool) -> SK {
+        match e.k {
+            EK::Method { recv, m, mut args } if bracket && m == "at" && args.len() == 1 => {
+                args.push(v);
+                SK::ExprS(Expr {
+                    k: EK::Method {
+                        recv,
+                        m: "set".into(),
+                        args,
+                    },
+                    pos: e.pos,
+                    ty: e.ty,
+                })
+            }
+            k => SK::Assign(Expr { k, ..e }, v),
+        }
+    }
     fn postfix(&mut self, mut e: Expr) -> PR<Expr> {
         let mut n = 0;
         loop {
@@ -3185,6 +3398,48 @@ impl Parser {
                 let (args, end) = self.args()?;
                 let p = span(e.pos, end);
                 e = mk(EK::CallFn(Box::new(e), args), p);
+                continue;
+            }
+            // `x[i]` (same line: a statement may start with an array literal) is `x.at(i)`;
+            // `x[a..b]`, `x[..b]`, `x[a..]`, `x[..]` are slices
+            if self.is_sym("[") && self.i > 0 && self.t[self.i - 1].pos.line == self.pos().line {
+                self.bump();
+                n += 1;
+                self.too_long("this chain of indexes", n)?;
+                let lo = if self.is_sym("..") {
+                    None
+                } else {
+                    Some(self.expr()?)
+                };
+                if self.eat_sym("..") {
+                    let hi = if self.is_sym("]") {
+                        None
+                    } else {
+                        Some(Box::new(self.expr()?))
+                    };
+                    let close = self.expect_sym("]")?;
+                    let p = span(e.pos, close);
+                    e = mk(EK::SliceOf(Box::new(e), lo.map(Box::new), hi), p);
+                    continue;
+                }
+                if self.is_sym("..=") {
+                    return Err(diag(
+                        "a slice is written `x[from..to]` (the end is excluded)",
+                        self.pos(),
+                    )
+                    .note("help: for an inclusive end write `x[from..to + 1]`"));
+                }
+                let close = self.expect_sym("]")?;
+                let p = span(e.pos, close);
+                let idx = lo.expect("index");
+                e = mk(
+                    EK::Method {
+                        recv: Box::new(e),
+                        m: "at".into(),
+                        args: vec![idx],
+                    },
+                    p,
+                );
                 continue;
             }
             if self.is_sym("?") {
@@ -3264,6 +3519,50 @@ impl Parser {
             Tok::Sym("|") | Tok::Sym("||") => {
                 self.i -= 1; // the closure parser reads the opening bar itself
                 self.closure(false, pos)
+            }
+            Tok::Sym("[") => {
+                // `[a, b, c]` or `[v; N]`
+                if self.is_sym("]") {
+                    return Err(diag(
+                        "an array literal needs at least one element",
+                        span(pos, self.pos()),
+                    )
+                    .note("help: use `List<T>.new()` for a collection that starts empty"));
+                }
+                let first = self.expr()?;
+                if self.eat_sym(";") {
+                    let npos = self.pos();
+                    let n = match self.peek().clone() {
+                        Tok::Num(n) => {
+                            self.bump();
+                            n
+                        }
+                        _ => {
+                            return Err(diag("the length in `[value; N]` must be an integer literal", npos)
+                                .note("help: write the number itself, e.g. `[0; 16]`; for a length known only at run time use a List"))
+                        }
+                    };
+                    let close = self.expect_sym("]")?;
+                    if n < 1 {
+                        return Err(diag(
+                            "an array needs at least one element",
+                            span(pos, close),
+                        ));
+                    }
+                    let e = mk(EK::ArrayFill(Box::new(first), n as usize), span(pos, close));
+                    return self.postfix(e);
+                }
+                let mut items = vec![first];
+                while self.eat_sym(",") {
+                    if self.is_sym("]") {
+                        break;
+                    }
+                    items.push(self.expr()?);
+                    self.too_long("this array literal", items.len())?;
+                }
+                let close = self.expect_sym("]")?;
+                let e = mk(EK::ArrayLit(items), span(pos, close));
+                self.postfix(e)
             }
             Tok::Sym("(") => {
                 let e = self.expr()?;
@@ -3381,7 +3680,7 @@ impl Parser {
                         None
                     };
                     ty = Some(if mode.is_some() {
-                        self.indirect_ty()?
+                        self.param_ty()?
                     } else {
                         self.ty()?
                     });
@@ -3421,11 +3720,12 @@ impl Parser {
             if self.is_sym("=") {
                 // `|x| total = total + x`: an assignment is a statement, the closure returns nothing
                 self.bump();
+                let bracket = self.bracket_target();
                 let v = self.expr()?;
                 let end = v.pos;
                 (
                     vec![Stmt {
-                        k: SK::Assign(e, v),
+                        k: Self::assign(e, v, bracket),
                         pos: p,
                     }],
                     end,

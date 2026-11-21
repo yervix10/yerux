@@ -1,0 +1,91 @@
+// Fixed-size arrays `[T; N]`: literals, `[v; N]`, indexing, `set`, `len`, copies, nesting, loops.
+struct Point { x: Int, y: Int }
+
+struct Grid { cells: [[Int; 3]; 2], name: Text }
+
+fn total(a: [Int; 4]) -> Int {
+  var t = 0
+  for x in a { t = t + x }
+  return t
+}
+
+fn squares() -> [Int; 4] {
+  var a = [0; 4]
+  for i in 0..4 { a[i] = i * i }
+  return a
+}
+
+fn first<T: Copy>(a: [T; 3]) -> T { return a[0] }
+
+fn bump(a: mut [Int; 4]) { a[0] = a[0] + 100 }
+
+fn main() {
+  // literal, index, assignment through `x[i] = v`, len
+  var a = [1, 2, 3, 4]
+  a[1] = 20
+  print(a[0] + a[1] + a[3])
+  print(a.len())
+  print(a.get(2))
+  a.set(2, 30)
+  a.swap(0, 3)
+  print(a[0] * 1000 + a[3])
+  // arrays are values: assignment and passing copy them
+  var b = a
+  b[0] = -1
+  print(a[0])
+  print(b[0])
+  print(total(a))
+  bump(a)
+  print(a[0])
+  let s = squares()
+  print(s[3])
+  // fill, typed literals, Float / Char / Text / Bool elements
+  let z: [UInt8; 5] = [7; 5]
+  print(z[4])
+  let f = [1.5, 2.25]
+  print(f[0] + f[1])
+  let cs = ['a', 'é', 'z']
+  print(cs[1])
+  let ts = ["one", "two"]
+  print(ts[1])
+  var bs = [false; 10]
+  bs[9] = true
+  bs[3] = true
+  var n = 0
+  for x in bs { if x { n = n + 1 } }
+  print(n)
+  print(bs[9] && !bs[8])
+  // nesting and struct elements
+  var g = [[0; 3]; 2]
+  g[1][2] = 7
+  g[0][1] = g[1][2] + 1
+  print(g[0][1] * 10 + g[1][2])
+  var ps = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+  ps[1].y = 40
+  print(ps[1].x + ps[1].y)
+  var grid = Grid { cells: [[1, 2, 3], [4, 5, 6]], name: "g" }
+  grid.cells[1][0] = 44
+  print(grid.cells[1][0] + grid.cells[0][2])
+  print(grid.name)
+  // `for mut` changes elements in place
+  for mut x in a { x = x * 2 }
+  print(a[1])
+  // arrays inside lists and options; generic code over arrays
+  var rows = List<[Int; 2]>.new()
+  rows.push([1, 2])
+  rows.push([3, 4])
+  rows.at(1)[0] = 30
+  print(rows.at(1)[0] + rows.at(0)[1])
+  let o: Option<[Int; 2]> = Some([5, 6])
+  match o {
+    Some(p) => { print(p[1]) }
+    None => { print(0) }
+  }
+  print(first(["x", "y", "z"]))
+  print(first([9, 8, 7]))
+  // index arithmetic and a constant length
+  var fib = [0; 20]
+  fib[1] = 1
+  for i in 2..fib.len() { fib[i] = fib[i - 1] + fib[i - 2] }
+  print(fib[19])
+}

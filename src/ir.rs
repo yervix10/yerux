@@ -514,6 +514,14 @@ fn scan_expr(e: &Expr, sigs: &HashMap<String, Sig>, types: &Types, out: &mut Has
         EK::StructLit { fields, .. } => fields
             .iter()
             .for_each(|(_, f)| scan_expr(f, sigs, types, out)),
+        EK::ArrayLit(items) => items.iter().for_each(|a| scan_expr(a, sigs, types, out)),
+        EK::ArrayFill(b, _) => scan_expr(b, sigs, types, out),
+        EK::SliceOf(b, lo, hi) => {
+            scan_expr(b, sigs, types, out);
+            lo.iter()
+                .chain(hi.iter())
+                .for_each(|a| scan_expr(a, sigs, types, out));
+        }
         EK::Variant { args, .. } => args.iter().for_each(|a| scan_expr(a, sigs, types, out)),
         EK::Static { args, .. } => args.iter().for_each(|a| scan_expr(a, sigs, types, out)),
         EK::DynBox { value, .. } => scan_expr(value, sigs, types, out),
@@ -593,6 +601,11 @@ impl<'a> L<'a> {
             Ty::List(_) | Ty::String => 3,
             Ty::Fn(_) | Ty::Dyn(_) => 2,
             Ty::Box(_) => 1,
+            // `[T; N]`: N elements laid out like a List buffer (packed bytes for Bool)
+            Ty::Struct(i) if self.types.arrays.contains_key(&i) => {
+                let (e, n) = self.types.arrays[&i];
+                (self.esz(e) as usize * n).div_ceil(8)
+            }
             Ty::Struct(i) => self.types.structs[i]
                 .fields
                 .iter()
@@ -651,6 +664,8 @@ impl<'a> L<'a> {
         matches!(
             e.k,
             EK::StructLit { .. }
+                | EK::ArrayLit(..)
+                | EK::ArrayFill(..)
                 | EK::Variant { .. }
                 | EK::Static { .. }
                 | EK::MkClosure { .. }
@@ -700,6 +715,15 @@ impl<'a> L<'a> {
                 v.push(self.expr(&args[0])?);
                 v
             }
+            EK::SliceOf(b, lo, hi) => {
+                // by-value bounds first, then the borrowed base (see the evaluation order in SPEC.md)
+                let mut v = vec![];
+                for x in lo.iter().chain(hi.iter()) {
+                    v.push(self.expr(x)?);
+                }
+                v.extend(self.prep(b)?);
+                v
+            }
             EK::Method { recv, m, args }
                 if matches!(m.as_str(), "get" | "locked_value") && args.is_empty() =>
             {
@@ -731,7 +755,48 @@ impl<'a> L<'a> {
                 let (lb, lo) = self.place_at(recv, it)?;
                 let la = self.at(lb, lo);
                 let i = it.next().expect("prepared index");
+                if let Some((et, n)) = self.types.array_of(recv.ty) {
+                    return Ok((self.arr_elem_addr(la, i, et, n), 0));
+                }
                 Ok((self.elem_addr(la, i, e.ty), 0))
+            }
+            EK::SliceOf(b, lo, hi) => {
+                // a List-shaped header {ptr, len, len} for the elements [lo, hi) of an array, List or slice
+                let lo_v = lo.as_ref().map(|_| it.next().expect("prepared start"));
+                let hi_v = hi.as_ref().map(|_| it.next().expect("prepared end"));
+                let (bb, bo) = self.place_at(b, it)?;
+                let ba = self.at(bb, bo);
+                let (ptr, len, et) = match self.types.array_of(b.ty) {
+                    Some((et, n)) => (ba, self.konst(n as i64), et),
+                    None => {
+                        let Ty::List(li) = b.ty else {
+                            return Err("native backend: slice of a non-sequence".into());
+                        };
+                        (self.hload(ba, 0), self.hload(ba, 8), self.types.lists[li])
+                    }
+                };
+                let start = match lo_v {
+                    Some(v) => v,
+                    None => self.konst(0),
+                };
+                let end = match hi_v {
+                    Some(v) => v,
+                    None => len,
+                };
+                if lo_v.is_some() || hi_v.is_some() {
+                    // 0 <= start <= end <= len (the same checks as a List index: `Check(i, n)` is `0 <= i < n`)
+                    let len1 = self.bink(Op::AddU, len, 1);
+                    self.emit(Inst::Check(end, len1));
+                    let end1 = self.bink(Op::AddU, end, 1);
+                    self.emit(Inst::Check(start, end1));
+                }
+                let n = self.bin(Op::SubU, end, start);
+                let p = self.elem_ptr(ptr, start, self.esz(et));
+                let h = self.new_slot(3);
+                self.emit(Inst::Store(h, 0, p));
+                self.emit(Inst::Store(h, 8, n));
+                self.emit(Inst::Store(h, 16, n));
+                Ok((h, 0))
             }
             EK::Deref(_) => Ok((it.next().expect("prepared address"), 0)),
             EK::Method { recv, m, args }
@@ -771,7 +836,13 @@ impl<'a> L<'a> {
     /// A place that is one packed byte of a `List<Bool>` (`l.at(i)`): it cannot be read or written with
     /// word loads/stores and cannot be handed out as a pointer.
     fn byte_place(&self, e: &Expr) -> bool {
-        matches!(&e.k, EK::Method { recv, m, .. } if m == "at" && matches!(recv.ty, Ty::List(li) if self.types.lists[li] == Ty::Bool))
+        matches!(&e.k, EK::Method { recv, m, .. } if m == "at" && self.types.seq_elem(recv.ty) == Some(Ty::Bool))
+    }
+    /// Bounds-checked address of element `i` of the array `[et; n]` at `base`.
+    fn arr_elem_addr(&mut self, base: V, i: V, et: Ty, n: usize) -> V {
+        let len = self.konst(n as i64);
+        self.emit(Inst::Check(i, len));
+        self.elem_ptr(base, i, self.esz(et))
     }
     /// Address of element `idx` (no check) of a buffer at `ptr` with `esz`-byte elements.
     fn elem_ptr(&mut self, ptr: V, idx: V, esz: i64) -> V {
@@ -1616,11 +1687,53 @@ impl<'a> L<'a> {
         }
     }
 
+    /// `len/get/set/swap` of the array `[et; n]` at address `a` (arguments already evaluated).
+    fn array_method(&mut self, a: V, et: Ty, n: usize, m: &str, argv: &[V]) -> LR<V> {
+        match m {
+            "len" => Ok(self.konst(n as i64)),
+            "get" => {
+                let addr = self.arr_elem_addr(a, argv[0], et, n);
+                if is_agg(et) {
+                    Ok(addr)
+                } else {
+                    Ok(self.load_elem(addr, et))
+                }
+            }
+            "set" => {
+                let addr = self.arr_elem_addr(a, argv[0], et, n);
+                self.put_elem(addr, argv[1], et);
+                Ok(self.v())
+            }
+            "swap" => {
+                let x = self.arr_elem_addr(a, argv[0], et, n);
+                let y = self.arr_elem_addr(a, argv[1], et, n);
+                if is_agg(et) {
+                    let t = self.copy_temp(x, et);
+                    let w = self.words(et);
+                    self.emit(Inst::Copy(x, y, w));
+                    self.emit(Inst::Copy(y, t, w));
+                } else {
+                    let vx = self.load_elem(x, et);
+                    let vy = self.load_elem(y, et);
+                    self.put_elem(x, vy, et);
+                    self.put_elem(y, vx, et);
+                }
+                Ok(self.v())
+            }
+            other => Err(format!(
+                "native backend: array method '{}' is not supported",
+                other
+            )),
+        }
+    }
+
     fn list_method(&mut self, recv: &Expr, m: &str, args: &[Expr]) -> LR<V> {
-        let Ty::List(li) = recv.ty else {
-            return Err("native backend: method on a non-list".into());
+        let li = match recv.ty {
+            Ty::List(li) => li,
+            t if self.types.array_of(t).is_some() => usize::MAX,
+            _ => return Err("native backend: method on a non-list".into()),
         };
-        let et = self.types.lists[li];
+        let et = self.types.seq_elem(recv.ty).expect("list or array element");
         // by-value arguments first (left to right), then the list place
         let mut argv = vec![];
         for (k, a) in args.iter().enumerate() {
@@ -1633,6 +1746,9 @@ impl<'a> L<'a> {
         let rpre = self.prep(recv)?;
         let (b, o) = self.place_at(recv, &mut rpre.into_iter())?;
         let la = self.at(b, o);
+        if let Some((et, n)) = self.types.array_of(recv.ty) {
+            return self.array_method(la, et, n, m, &argv);
+        }
         match m {
             "len" => Ok(self.hload(la, 8)),
             "push" => {
@@ -1897,6 +2013,51 @@ impl<'a> L<'a> {
                     self.store_into(a, off, fe)?;
                 }
                 a
+            }
+            EK::ArrayLit(items) => {
+                let (et, _) = self.types.array_of(e.ty).expect("array type");
+                let a = self.new_slot(self.words(e.ty));
+                let esz = self.esz(et) as i32;
+                for (k, it) in items.iter().enumerate() {
+                    let v = self.expr(it)?;
+                    let off = esz * k as i32;
+                    if et == Ty::Bool {
+                        self.emit(Inst::Store8(a, off, v));
+                    } else if is_agg(et) {
+                        let d = self.at(a, off);
+                        self.emit(Inst::Copy(d, v, self.words(et)));
+                    } else {
+                        self.emit(Inst::Store(a, off, v));
+                    }
+                }
+                a
+            }
+            EK::ArrayFill(x, _) => {
+                let (et, n) = self.types.array_of(e.ty).expect("array type");
+                let v = self.expr(x)?;
+                let a = self.new_slot(self.words(e.ty));
+                // for i in 0..n: a[i] = v
+                let i = self.v();
+                self.emit(Inst::Const(i, 0));
+                let (head, body, done) = (self.block(), self.block(), self.block());
+                self.term(Term::Jmp(head));
+                self.switch(head);
+                let nk = self.konst(n as i64);
+                let more = self.bin(Op::Lt, i, nk);
+                self.term(Term::Br(more, body, done));
+                self.switch(body);
+                let addr = self.elem_ptr(a, i, self.esz(et));
+                self.put_elem(addr, v, et);
+                let i1 = self.bink(Op::AddU, i, 1);
+                self.emit(Inst::Mov(i, i1));
+                self.term(Term::Jmp(head));
+                self.switch(done);
+                a
+            }
+            EK::SliceOf(..) => {
+                return Err(
+                    "native backend: internal error, a slice outside of a call argument".into(),
+                )
             }
             EK::Variant { eid, vid, args, .. } => {
                 let n = self.words(Ty::Enum(*eid));

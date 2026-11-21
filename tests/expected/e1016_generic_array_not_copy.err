@@ -1,0 +1,17 @@
+error: the elements of an array must be Copy, but T owns memory
+ --> tests/e1016_generic_array_not_copy.yx:1:16
+  |
+1 | fn first<T>(a: [T; 2]) -> Int { return 0 }
+  |                ^^^^^^
+  = fixed-size arrays hold plain values (numbers, Bool, Char, Text, Copy structs, other arrays)
+  = help: add the bound `T: Copy`
+
+error: the elements of an array must be Copy, but List owns memory
+ --> tests/e1016_generic_array_not_copy.yx:3:21
+  |
+3 | struct Bag { items: [List<Int>; 2] }
+  |                     ^^^^^^^^^^^^^^
+  = fixed-size arrays hold plain values (numbers, Bool, Char, Text, Copy structs, other arrays)
+  = help: use `List<List>` for owned elements
+
+2 error(s). Nothing was generated.

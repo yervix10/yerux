@@ -944,6 +944,12 @@ impl<'a> Checker<'a> {
                 self.scan_stmts(stmts, out, cl);
                 self.scan_expr(r, out, cl);
             }
+            EK::ArrayLit(items) => items.iter().for_each(|a| self.scan_expr(a, out, cl)),
+            EK::ArrayFill(b, _) => self.scan_expr(b, out, cl),
+            EK::SliceOf(b, lo, hi) => {
+                self.scan_expr(b, out, cl);
+                lo.iter().chain(hi).for_each(|a| self.scan_expr(a, out, cl));
+            }
             EK::Int(_) | EK::Float(..) | EK::Char(_) | EK::Bool(_) | EK::Text(_) => {}
         }
     }

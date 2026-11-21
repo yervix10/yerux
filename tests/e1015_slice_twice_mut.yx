@@ -1,0 +1,8 @@
+fn copy(dst: mut [Int], src: view [Int]) {
+  for i in 0..src.len() { dst[i] = src[i] }
+}
+
+fn main() {
+  var a = [1, 2, 3, 4]
+  copy(a[0..2], a[2..4])
+}

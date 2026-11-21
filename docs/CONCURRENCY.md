@@ -213,7 +213,7 @@ scope {
   spawn { fill(hi, 2) }
 }
 ```
-`split_at_mut`, `chunks_mut(n)` (an iterator of disjoint `mut` slices) are implemented with `unsafe` inside the library, exactly once. Slices are the "arrays/slices" item of M2; until then `parallel for` over indices of **disjoint writes** uses `Parallel.fill(mut out, f)`.
+`split_at_mut`, `chunks_mut(n)` (an iterator of disjoint `mut` slices) are implemented with `unsafe` inside the library, exactly once. Second-class slices (`view [T]`/`mut [T]`, docs/ARRAYS.md) now exist, but these splitting helpers do not yet; until then `parallel for` over indices of **disjoint writes** uses `Parallel.fill(mut out, f)`.
 
 ## 7. Typing rules summarised
 

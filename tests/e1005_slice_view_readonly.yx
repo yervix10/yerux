@@ -1,0 +1,8 @@
+fn zero(xs: view [Int]) {
+  xs[0] = 0
+}
+
+fn main() {
+  var a = [1, 2]
+  zero(a)
+}

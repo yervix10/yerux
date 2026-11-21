@@ -1,0 +1,8 @@
+fn count(xs: view [Bool]) -> Int { return xs.len() }
+
+fn main() {
+  let a = [1, 2, 3]
+  print(count(a))
+  let l = List<Bool>.new()
+  print(count(l))
+}

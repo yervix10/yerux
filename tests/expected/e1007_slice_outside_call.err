@@ -1,0 +1,17 @@
+error: a slice `x[from..to]` can only be passed to a `view [T]` or `mut [T]` parameter
+ --> tests/e1007_slice_outside_call.yx:3:11
+  |
+3 |   let s = a[1..3]
+  |           ^^^^^^^
+  = slices are borrows: they cannot be stored in a variable, returned or kept
+  = help: pass it directly to a function that takes `view [T]`, or index the original: `x[i]`
+
+error: a slice `x[from..to]` can only be passed to a `view [T]` or `mut [T]` parameter
+ --> tests/e1007_slice_outside_call.yx:4:9
+  |
+4 |   print(a[0..2].len())
+  |         ^^^^^^^
+  = slices are borrows: they cannot be stored in a variable, returned or kept
+  = help: pass it directly to a function that takes `view [T]`, or index the original: `x[i]`
+
+2 error(s). Nothing was generated.

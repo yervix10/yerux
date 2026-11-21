@@ -33,7 +33,7 @@ struct T {
 
 const SYMS3: &[&str] = &["..="];
 const SYMS2: &[&str] = &["==", "!=", "<=", ">=", "&&", "||", "->", "=>", ".."];
-const SYMS1: &str = "(){},:;=<>+-*/%!.|@?";
+const SYMS1: &str = "(){}[],:;=<>+-*/%!.|@?";
 const KEYWORDS: &[&str] = &[
     "fn", "let", "var", "if", "else", "while", "return", "move", "view", "mut", "struct", "enum",
     "match", "defer", "import", "pub", "test", "as", "impl", "trait", "dyn", "for", "in", "break",
@@ -72,9 +72,7 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
                 .trim_end()
                 .to_string();
         } else if c.is_ascii_digit() {
-            let after_dot = out
-                .last()
-                .is_some_and(|t: &T| t.k == K::Sym && t.s == ".");
+            let after_dot = out.last().is_some_and(|t: &T| t.k == K::Sym && t.s == ".");
             let scan = |i: &mut usize| {
                 while *i < cs.len() && (cs[*i].is_ascii_alphanumeric() || cs[*i] == '_') {
                     *i += 1;
@@ -277,6 +275,10 @@ fn generics(toks: &[T]) -> Vec<bool> {
                     }
                 }
                 (K::Word, _) | (K::Sym, ",") | (K::Sym, ":") | (K::Sym, "+") | (K::Sym, ".") => {}
+                // array and slice types as type arguments: `List<[Int; 3]>`, `Option<[Bool]>`
+                (K::Sym, "[") | (K::Sym, "]") => {}
+                (K::Num, _) | (K::Sym, ";")
+                    if toks[i + 1..j].iter().any(|x| x.k == K::Sym && x.s == "[") => {}
                 // range bounds: `Int<0..255>`, `Int<-5..>`, `Int<..9>`
                 (K::Num, _) | (K::Sym, "..") | (K::Sym, "-") if pw == "Int" => {}
                 // function types as type arguments: `List<fn(Int) -> Int>`
@@ -348,6 +350,7 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
                 Some(p) => match p.k {
                     K::Sym => {
                         !(p.s == ")"
+                            || p.s == "]"
                             || (p.s == ">"
                                 && gen[toks[..i].iter().rposition(|q| q.k != K::Comment).unwrap()]))
                     }
@@ -512,9 +515,8 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
                     && !(p.s == ">" && prev.is_some_and(|j| gen[j]))
             }) {
                 b = B::Cont;
-            } else if pt.is_some_and(|p| {
-                p.k == K::Sym && matches!(p.s.as_str(), "->" | "=>" | ".")
-            }) {
+            } else if pt.is_some_and(|p| p.k == K::Sym && matches!(p.s.as_str(), "->" | "=>" | "."))
+            {
                 // join
             } else {
                 b = B::Hard(src_blank);
@@ -591,8 +593,8 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
 
         // ── bookkeeping after the token ──
         match (t.k, t.s.as_str()) {
-            (K::Sym, "(") => f.pd += 1,
-            (K::Sym, ")") => f.pd -= 1,
+            (K::Sym, "(") | (K::Sym, "[") => f.pd += 1,
+            (K::Sym, ")") | (K::Sym, "]") => f.pd -= 1,
             (K::Word, "struct") | (K::Word, "enum")
                 if f.stack.is_empty() || ctx_kind == Some(Br::Block) =>
             {
@@ -674,7 +676,7 @@ fn space(
     // after `p`
     if p.k == K::Sym {
         match p.s.as_str() {
-            "(" | "." => return false,
+            "(" | "." | "[" => return false,
             "!" => return false,
             "-" if p_unary => return false,
             "<" if p_gen => return false,
@@ -685,7 +687,15 @@ fn space(
     // before `t`
     if t.k == K::Sym {
         match t.s.as_str() {
-            "," | ")" | ";" | "." | ":" | "?" => return false,
+            "," | ")" | ";" | "." | ":" | "?" | "]" => return false,
+            // an index or a slice: `a[i]`, `f()[0]`, `g[i][j]`
+            "[" => {
+                return match p.k {
+                    K::Word => is_kw(&p.s),
+                    K::Sym => !(p.s == ")" || p.s == "]"),
+                    _ => true,
+                }
+            }
             "(" => {
                 return match p.k {
                     K::Word => is_kw(&p.s) && p.s != "fn",

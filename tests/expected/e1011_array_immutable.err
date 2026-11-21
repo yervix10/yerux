@@ -1,0 +1,15 @@
+error: cannot modify 'a': it was declared with `let` (immutable)
+ --> tests/e1011_array_immutable.yx:3:3
+  |
+3 |   a[0] = 9
+  |   ^^^^
+  = help: declare it with `var` instead of `let`
+
+error: cannot modify 'a': it was declared with `let` (immutable)
+ --> tests/e1011_array_immutable.yx:4:3
+  |
+4 |   a.swap(0, 1)
+  |   ^^^^^^^^^^^^
+  = help: declare it with `var` instead of `let`
+
+2 error(s). Nothing was generated.

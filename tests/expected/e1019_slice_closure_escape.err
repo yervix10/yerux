@@ -1,0 +1,8 @@
+error: cannot move 'xs': it is only borrowed
+ --> tests/e1019_slice_closure_escape.yx:2:10
+  |
+2 |   return move || xs.len()
+  |          ^^^^^^^^^^^^^^^^
+  = help: whoever lent it is still the owner; only move what you own
+
+1 error(s). Nothing was generated.

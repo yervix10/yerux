@@ -1,0 +1,37 @@
+// Bounds checks of fixed-size arrays: the length is a constant, so loops over the indexes and
+// range-typed indexes need no run-time check (tests/range_ir.sh inspects the IR).
+fn sum_idx(a: [Int; 8]) -> Int {
+  var t = 0
+  for i in 0..8 { t = t + a[i] }
+  return t
+}
+
+fn sum_for(a: [Int; 8]) -> Int {
+  var t = 0
+  for x in a { t = t + x }
+  return t
+}
+
+fn by_range(a: [Int; 8], i: Int<0..7>) -> Int { return a[i] }
+
+fn by_len(a: [Int; 8]) -> Int {
+  var t = 0
+  var i = 0
+  while i < a.len() {
+    t = t + a[i]
+    i = i + 1
+  }
+  return t
+}
+
+fn unknown(a: [Int; 8], i: Int) -> Int { return a[i] }
+
+fn main() {
+  var a = [0; 8]
+  for i in 0..8 { a[i] = i * 3 }
+  print(sum_idx(a))
+  print(sum_for(a))
+  print(by_range(a, 7))
+  print(by_len(a))
+  print(unknown(a, 2))
+}

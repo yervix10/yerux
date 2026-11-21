@@ -1,0 +1,13 @@
+error: expected [Int; 3] but this is [Int; 2]
+ --> tests/e1009_array_len_mismatch.yx:2:21
+  |
+2 |   let a: [Int; 3] = [1, 2]
+  |                     ^^^^^^
+
+error: expected Int but this is Bool
+ --> tests/e1009_array_len_mismatch.yx:3:15
+  |
+3 |   let b = [1, true]
+  |               ^^^^
+
+2 error(s). Nothing was generated.
