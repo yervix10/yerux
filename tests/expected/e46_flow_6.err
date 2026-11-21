@@ -11,7 +11,7 @@ error: cannot loop over a value of type Int
   |
 3 |   for x in 5 { print(x) }
   |            ^
-  = you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`)
+  = you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`); a type with `fn next(mut self) -> Option<T>` is an iterator and works too
 
 error: expected Int but this is Text
  --> tests/e46_flow_6.yx:5:15

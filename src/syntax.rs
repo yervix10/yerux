@@ -1557,6 +1557,8 @@ pub const PRELUDE: &str = concat!(
     "\n",
     include_str!("prelude_opt.yx"),
     "\n",
+    include_str!("prelude_iter.yx"),
+    "\n",
     include_str!("prelude_arena.yx"),
     "\n",
     include_str!("prelude_threads.yx"),

@@ -1,0 +1,349 @@
+// Lazy iterators. `Iter<T>` owns a closure that produces the next item; adapters wrap it in a new closure,
+// so nothing is computed until a consumer (or a `for` loop) pulls. Items are owned values (Copy or moved).
+// Methods that need an extra type parameter (map, zip, fold, ..) are free functions `std__iter_<name>`
+// that the checker calls through method syntax (`it.map(f)`).
+
+struct Iter<T> { nxt: fn() -> Option<T> }
+
+impl<T> Iter<T> {
+    fn next(mut self) -> Option<T> {
+        return self.nxt()
+    }
+
+    fn take(self, n: Int) -> Iter<T> {
+        var src = move self
+        var left = n
+        return Iter<T> { nxt: move || {
+            if left <= 0 { return Option<T>.None }
+            left = left - 1
+            return src.nxt()
+        } }
+    }
+
+    fn skip(self, n: Int) -> Iter<T> {
+        var src = move self
+        var left = n
+        return Iter<T> { nxt: move || {
+            while left > 0 {
+                left = left - 1
+                match src.nxt() {
+                    Some(x) => { }
+                    None => { left = 0 }
+                }
+            }
+            return src.nxt()
+        } }
+    }
+
+    fn chain(self, other: Iter<T>) -> Iter<T> {
+        var a = move self
+        var b = move other
+        var first = true
+        return Iter<T> { nxt: move || {
+            if first {
+                match a.nxt() {
+                    Some(x) => { return Some(move x) }
+                    None => { first = false }
+                }
+            }
+            return b.nxt()
+        } }
+    }
+
+    fn enumerate(self) -> Iter<(Int, T)> {
+        var src = move self
+        var i = 0
+        return Iter<(Int, T)> { nxt: move || {
+            match src.nxt() {
+                Some(x) => {
+                    let k = i
+                    i = i + 1
+                    return Some((k, move x))
+                }
+                None => { return Option<(Int, T)>.None }
+            }
+        } }
+    }
+
+    fn filter(self, f: fn(view T) -> Bool) -> Iter<T> {
+        var src = move self
+        return Iter<T> { nxt: move || {
+            while true {
+                match src.nxt() {
+                    Some(x) => {
+                        if f(x) { return Some(move x) }
+                    }
+                    None => { return Option<T>.None }
+                }
+            }
+            return Option<T>.None
+        } }
+    }
+
+    // buffers the remaining items (an iterator is one-directional), then yields them from the back
+    fn rev(self) -> Iter<T> {
+        var src = move self
+        var buf = List<T>.new()
+        while true {
+            match src.nxt() {
+                Some(x) => { buf.push(move x) }
+                None => { break }
+            }
+        }
+        return Iter<T> { nxt: move || {
+            if buf.len() == 0 { return Option<T>.None }
+            return Some(buf.pop())
+        } }
+    }
+
+    fn to_list(self) -> List<T> {
+        var src = move self
+        var out = List<T>.new()
+        while true {
+            match src.nxt() {
+                Some(x) => { out.push(move x) }
+                None => { break }
+            }
+        }
+        return out
+    }
+
+    fn count(self) -> Int {
+        var src = move self
+        var n = 0
+        while true {
+            match src.nxt() {
+                Some(x) => { n = n + 1 }
+                None => { break }
+            }
+        }
+        return n
+    }
+
+    fn any(self, f: fn(view T) -> Bool) -> Bool {
+        var src = move self
+        while true {
+            match src.nxt() {
+                Some(x) => { if f(x) { return true } }
+                None => { break }
+            }
+        }
+        return false
+    }
+
+    fn all(self, f: fn(view T) -> Bool) -> Bool {
+        var src = move self
+        while true {
+            match src.nxt() {
+                Some(x) => { if !f(x) { return false } }
+                None => { break }
+            }
+        }
+        return true
+    }
+
+    fn find(self, f: fn(view T) -> Bool) -> Option<T> {
+        var src = move self
+        while true {
+            match src.nxt() {
+                Some(x) => { if f(x) { return Some(move x) } }
+                None => { break }
+            }
+        }
+        return None
+    }
+
+    fn last(self) -> Option<T> {
+        var src = move self
+        var best: Option<T> = None
+        while true {
+            match src.nxt() {
+                Some(x) => { best = Some(move x) }
+                None => { break }
+            }
+        }
+        return best
+    }
+
+    fn nth(self, n: Int) -> Option<T> {
+        var src = move self
+        var i = 0
+        while true {
+            match src.nxt() {
+                Some(x) => {
+                    if i == n { return Some(move x) }
+                    i = i + 1
+                }
+                None => { break }
+            }
+        }
+        return None
+    }
+}
+
+impl Iter<Int> {
+    fn range(a: Int, b: Int) -> Iter<Int> {
+        var i = a
+        return Iter<Int> { nxt: move || {
+            if i >= b { return Option<Int>.None }
+            let v = i
+            i = i + 1
+            return Some(v)
+        } }
+    }
+
+    fn sum(self) -> Int {
+        var src = move self
+        var s = 0
+        while true {
+            match src.nxt() {
+                Some(x) => { s = s + x }
+                None => { break }
+            }
+        }
+        return s
+    }
+
+    fn product(self) -> Int {
+        var src = move self
+        var s = 1
+        while true {
+            match src.nxt() {
+                Some(x) => { s = s * x }
+                None => { break }
+            }
+        }
+        return s
+    }
+}
+
+impl<T: Ordered> Iter<T> {
+    fn min(self) -> Option<T> {
+        var src = move self
+        var best: Option<T> = None
+        while true {
+            match src.nxt() {
+                Some(x) => {
+                    var swap = false
+                    match best {
+                        Some(b) => { swap = x.cmp(b) < 0 }
+                        None => { swap = true }
+                    }
+                    if swap { best = Some(move x) }
+                }
+                None => { break }
+            }
+        }
+        return best
+    }
+
+    fn max(self) -> Option<T> {
+        var src = move self
+        var best: Option<T> = None
+        while true {
+            match src.nxt() {
+                Some(x) => {
+                    var swap = false
+                    match best {
+                        Some(b) => { swap = x.cmp(b) > 0 }
+                        None => { swap = true }
+                    }
+                    if swap { best = Some(move x) }
+                }
+                None => { break }
+            }
+        }
+        return best
+    }
+}
+
+impl<T: Hash + Equal> Iter<T> {
+    fn to_set(self) -> Set<T> {
+        var src = move self
+        var out = Set<T>.new()
+        while true {
+            match src.nxt() {
+                Some(x) => { out.insert(move x) }
+                None => { break }
+            }
+        }
+        return out
+    }
+}
+
+impl<K: Hash + Equal, V> Iter<(K, V)> {
+    fn to_map(self) -> Map<K, V> {
+        var src = move self
+        var out = Map<K, V>.new()
+        while true {
+            match src.nxt() {
+                Some(p) => {
+                    let (k, v) = move p
+                    out.insert(move k, move v)
+                }
+                None => { break }
+            }
+        }
+        return out
+    }
+}
+
+fn std__iter_map<T, U>(it: Iter<T>, f: fn(T) -> U) -> Iter<U> {
+    var src = move it
+    return Iter { nxt: move || {
+        match src.nxt() {
+            Some(x) => { return Some(f(move x)) }
+            None => { return None }
+        }
+    } }
+}
+
+fn std__iter_zip<T, U>(a: Iter<T>, b: Iter<U>) -> Iter<(T, U)> {
+    var x = move a
+    var y = move b
+    return Iter { nxt: move || {
+        match x.nxt() {
+            Some(p) => {
+                match y.nxt() {
+                    Some(q) => { return Some((move p, move q)) }
+                    None => { return None }
+                }
+            }
+            None => { return None }
+        }
+    } }
+}
+
+fn std__iter_fold<T, A>(it: Iter<T>, init: A, f: fn(A, T) -> A) -> A {
+    var src = move it
+    var acc = move init
+    while true {
+        match src.nxt() {
+            Some(x) => { acc = f(move acc, move x) }
+            None => { break }
+        }
+    }
+    return acc
+}
+
+impl<T> List<T> {
+    // consumes the list; items come out in order
+    fn into_iter(self) -> Iter<T> {
+        var src = move self
+        var buf = List<T>.new()
+        while src.len() > 0 {
+            buf.push(src.pop())
+        }
+        return Iter<T> { nxt: move || {
+            if buf.len() == 0 { return Option<T>.None }
+            return Some(buf.pop())
+        } }
+    }
+}
+
+impl<T: Clone> List<T> {
+    // an iterator over a snapshot (clone) of the list: the list stays usable
+    fn cloned(view self) -> Iter<T> {
+        return self.clone().into_iter()
+    }
+}

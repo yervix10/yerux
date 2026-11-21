@@ -1,0 +1,29 @@
+error: cannot loop over a value of type NoNext
+  --> tests/e1038_iter_errors.yx:11:12
+   |
+11 |   for x in a { print(x) }
+   |            ^
+   = you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`); a type with `fn next(mut self) -> Option<T>` is an iterator and works too
+
+error: cannot loop over a value of type ViewNext
+  --> tests/e1038_iter_errors.yx:13:12
+   |
+13 |   for x in b { print(x) }
+   |            ^
+   = you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`); a type with `fn next(mut self) -> Option<T>` is an iterator and works too
+
+error: 'it' is a Iter<Int> and is not copied
+  --> tests/e1038_iter_errors.yx:15:11
+   |
+15 |   let m = it.map(|x| x + 1)
+   |           ^^
+   = help: use `move it` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: type Iter<Int> has no method 'unknown_adapter'
+  --> tests/e1038_iter_errors.yx:16:11
+   |
+16 |   let u = Iter<Int>.range(0, 3).unknown_adapter()
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+
+4 error(s). Nothing was generated.

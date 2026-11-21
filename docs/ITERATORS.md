@@ -1,0 +1,61 @@
+# Iterators
+
+## Constraints (what the language already had)
+
+- Closures exist (`fn(T) -> U` values, owning closures with `move`), generic functions and (since GENERICS.md)
+  generic impls on user types, but **no associated types** and no generic traits, and **no stored borrows**
+  (borrows are second-class: a struct cannot hold a `view` of a list).
+- So a classic `trait Iterator { type Item; .. }` and iterators that borrow a collection are not expressible.
+
+## Design
+
+1. **Protocol, not a trait.** A type is an *iterator* when it has a method `next(mut self) -> Option<T>`.
+   `for x in it { .. }` works on such a type: a variable is iterated **in place** (it is borrowed mutably, so it
+   keeps its state afterwards, like `by_ref`), a temporary or `move it` is kept in a hidden variable. The checker
+   desugars it to `while true { match it.next() { Some(x) => body, _ => break } }` (`Checker::iter_loop`), so
+   `break`, `continue` and labels work and both backends see plain loops.
+2. **`Iter<T>` library type** (`src/prelude_iter.yx`): a struct owning one closure `nxt: fn() -> Option<T>`. Every
+   adapter wraps the source in a new owning closure, so it is lazy and monomorphised; owned items are moved
+   through (no hidden clones).
+3. **Adapters with an extra type parameter** (`map`, `zip`, `fold`) cannot be methods (generic methods are not
+   supported), so they are free functions `std__iter_map/zip/fold`; the checker maps `it.map(f)` to
+   `std__iter_map(it, f)` when the receiver is an `Iter` (`Checker::iter_free_fn`). A hoisted temporary
+   receiver is moved; a variable needs `move it` like any owned argument.
+4. **Sources**: `Iter<Int>.range(a, b)`, `list.into_iter()` (consumes the list), `list.cloned()` (iterates a
+   snapshot clone; needs `T: Clone`), or build one: `Iter { nxt: move || { .. } }`. Borrowing iteration over a
+   list stays `for x in list`.
+
+## Library
+
+| Adapter (lazy) | |
+|---|---|
+| `map(f)`, `filter(f)`, `take(n)`, `skip(n)`, `chain(other)`, `enumerate()` -> `Iter<(Int, T)>`, `zip(other)` -> `Iter<(T, U)>` | |
+| `rev()` | buffers the remaining items, then yields them from the back (not lazy) |
+
+| Consumer | |
+|---|---|
+| `to_list()`, `to_set()` (`T: Hash + Equal`), `to_map()` (`Iter<(K, V)>`), `count()`, `fold(init, f)`, `any(f)`, `all(f)`, `find(f)`, `last()`, `nth(n)`, `next()` | |
+| `min()`, `max()` (`T: Ordered`), `sum()`, `product()` (`Iter<Int>`) | |
+
+Predicates take the item by view: `.filter(|x| x % 2 == 0)`, `.any(|x| x == 3)` (no `*`).
+
+```yerux
+let squares = Iter<Int>.range(1, 6).map(|x| x * x).to_list()      // [1, 4, 9, 16, 25]
+let total = Iter<Int>.range(0, 100).filter(|x| x % 7 == 0).take(4).sum()
+for p in names.cloned().enumerate() { print("{p.0}: {p.1}") }
+
+struct Counter { n: Int, max: Int }
+impl Counter { fn next(mut self) -> Option<Int> { .. } }
+for x in counter { .. }
+```
+
+## Not yet
+
+- Wrapping a user iterator type into an `Iter<T>` to use adapters on it (write
+  `Iter { nxt: move || c.next() }` by hand).
+- `filter_map`, `flat_map`, `windows`/`step_by`, `sum` for floats, `min_by`/`max_by`, `collect` chosen by the
+  expected type (use `to_list`/`to_set`/`to_map`).
+- Borrowing `list.iter()` (needs stored borrows); `rev()` on a lazy source is O(n) memory.
+- Closure return types are not inferred through `Option<U>`, hence no `filter_map`.
+
+Tests: `tests/iter_basic.yx` (C, native, ASan, native debug-alloc), `tests/e1038_iter_errors.yx`.
