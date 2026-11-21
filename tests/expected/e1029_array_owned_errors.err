@@ -1,0 +1,45 @@
+error: an array cannot hold List<Node> values
+ --> tests/e1029_array_owned_errors.yx:1:21
+  |
+1 | struct Node { kids: [List<Node>; 2] }
+  |                     ^^^^^^^^^^^^^^^
+  = array elements are Copy values or owned values without heap indirection: String, List<T>, and structs, enums and tuples of those
+  = help: use `List<List<Node>>` for Box, closures, dyn values or recursive types
+
+error: an array cannot hold Box<Int> values
+ --> tests/e1029_array_owned_errors.yx:4:11
+  |
+4 |   let a = [Box.new(1), Box.new(2)]
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^
+  = array elements are Copy values or owned values without heap indirection: String, List<T>, and structs, enums and tuples of those
+  = help: use `List<Box<Int>>` for Box, closures, dyn values or recursive types
+
+error: `[value; N]` copies its value, but String owns memory
+ --> tests/e1029_array_owned_errors.yx:5:11
+  |
+5 |   let b = [String.from("x"); 3]
+  |           ^^^^^^^^^^^^^^^^^^^^^
+  = help: write the elements out (`[String.new(), String.new()]`), or use a List
+
+error: cannot move 'c[..]' out of its array
+ --> tests/e1029_array_owned_errors.yx:7:11
+  |
+7 |   let s = c[0]
+  |           ^^^^
+  = help: borrow the element instead (`a[i].len()`, or pass `a[i]` to a `view`/`mut` parameter), or replace it: `a[i] = x`
+
+error: cannot copy an element out of a [String; 2]: its elements are owned, not copied
+ --> tests/e1029_array_owned_errors.yx:8:11
+  |
+8 |   let t = c.get(1)
+  |           ^^^^^^^^
+  = help: borrow it with `a[i]` (e.g. `a[i].len()`, or pass `a[i]` to a `view` parameter), or replace it with `a[i] = x`
+
+error: 'c' is a [String; 2] and is not copied
+ --> tests/e1029_array_owned_errors.yx:9:11
+  |
+9 |   let u = c
+  |           ^
+  = help: use `move c` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+6 error(s). Nothing was generated.

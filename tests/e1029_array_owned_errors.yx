@@ -1,0 +1,11 @@
+struct Node { kids: [List<Node>; 2] }
+
+fn main() {
+  let a = [Box.new(1), Box.new(2)]
+  let b = [String.from("x"); 3]
+  var c = [String.from("p"), String.from("q")]
+  let s = c[0]
+  let t = c.get(1)
+  let u = c
+  print(c[0])
+}

@@ -1,0 +1,9 @@
+error: index out of range [E-K6]
+ --> tests/e1027_comptime_array_oob.yx:3:12
+  |
+3 |   return a[i]
+  |            ^
+  = why: this code was being evaluated by the compiler (comptime), where a panic is a compile error
+  = called from `pick` (line 9)
+
+1 error(s). Nothing was generated.

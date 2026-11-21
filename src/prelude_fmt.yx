@@ -136,3 +136,13 @@ fn std__seq_show<T: Show>(a: view [T]) -> String {
     s.push_str("]")
     return s
 }
+
+// `xs.split_at(k, f)` / `xs.split_at_mut(k, f)`: `f` receives the two disjoint halves `xs[..k]` and `xs[k..]`
+// (the checker rewrites the method call; this body is the one place allowed to lend `xs` twice).
+fn std__split_at<T>(xs: view [T], k: Int, f: view fn(view [T], view [T])) {
+    f(xs[..k], xs[k..])
+}
+
+fn std__split_at_mut<T>(xs: mut [T], k: Int, f: view fn(mut [T], mut [T])) {
+    f(xs[..k], xs[k..])
+}

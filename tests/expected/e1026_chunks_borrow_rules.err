@@ -1,0 +1,24 @@
+error: 'arr' appears twice in the same call and one use modifies or moves it
+ --> tests/e1026_chunks_borrow_rules.yx:3:23
+  |
+3 |   arr.split_at_mut(1, |x, y| { arr[0] = 1 })
+  |                       ^^^^^^^^^^^^^^^^^^^^^
+  = the closure on line 3 borrows 'arr' for the whole call
+  = help: split the call in two steps, or pass a copy
+
+error: cannot loop over 'a' with `mut`: it was declared with `let` (immutable)
+ --> tests/e1026_chunks_borrow_rules.yx:5:11
+  |
+5 |   for mut c in a.chunks(1) { c[0] = 2 }
+  |           ^
+  = help: declare the variable with `var` (or receive it as `mut`) to change its elements in place
+
+error: cannot change 'arr' while a loop is reading it
+ --> tests/e1026_chunks_borrow_rules.yx:6:28
+  |
+6 |   for c in arr.chunks(2) { arr[0] = 3 }
+  |                            ^^^^^^
+  = the `for` loop on line 6 borrows 'arr' until the loop ends
+  = help: collect what you want to change and apply it after the loop, or loop over indexes: `for i in 0..n { .. l.at(i) .. }`
+
+3 error(s). Nothing was generated.

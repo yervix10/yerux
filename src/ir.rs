@@ -1004,6 +1004,36 @@ impl<'a> L<'a> {
     // ── drop glue and scopes ──
     /// Release the heap memory held by a value of type `ty` at base+off.
     fn drop_value(&mut self, ty: Ty, base: V, off: i32) {
+        if let Some((et, n)) = self.types.array_of(ty) {
+            // `[T; N]` with owned elements: drop each element (a loop beyond a few)
+            if !self.types.owned(et) {
+                return;
+            }
+            let a = self.at(base, off);
+            let esz = self.esz(et);
+            if n <= 4 {
+                for k in 0..n {
+                    self.drop_value(et, a, (esz * k as i64) as i32);
+                }
+                return;
+            }
+            let i = self.v();
+            self.emit(Inst::Const(i, 0));
+            let (head, body, done) = (self.block(), self.block(), self.block());
+            self.term(Term::Jmp(head));
+            self.switch(head);
+            let nk = self.konst(n as i64);
+            let more = self.bin(Op::Lt, i, nk);
+            self.term(Term::Br(more, body, done));
+            self.switch(body);
+            let addr = self.elem_ptr(a, i, esz);
+            self.drop_value(et, addr, 0);
+            let i1 = self.bink(Op::AddU, i, 1);
+            self.emit(Inst::Mov(i, i1));
+            self.term(Term::Jmp(head));
+            self.switch(done);
+            return;
+        }
         match ty {
             Ty::String => {
                 let a = self.at(base, off);
@@ -1705,6 +1735,9 @@ impl<'a> L<'a> {
             }
             "set" => {
                 let addr = self.arr_elem_addr(a, argv[0], et, n);
+                if self.types.owned(et) {
+                    self.drop_value(et, addr, 0);
+                }
                 self.put_elem(addr, argv[1], et);
                 Ok(self.v())
             }
