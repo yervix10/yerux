@@ -218,9 +218,13 @@ pub enum Inst {
     Lea(V, V, i32),   // vreg = addr + off
     Copy(V, V, usize), // copy n words: [dst..] = [src..]
     // ── heap: a List is 3 words {ptr, len, cap} at the given address ──
-    ListPush(V, V),   // list address, value (amortised growth; may allocate)
+    // Legacy list instructions: no longer produced by the lowering (memopt.rs inlines list access), but
+    // every backend still implements them and the passes keep their semantics.
+    #[allow(dead_code)]
+    ListPush(V, V), // list address, value (amortised growth; may allocate)
+    #[allow(dead_code)]
     ListGet(V, V, V), // vreg = list[idx], panics "index out of range"
-    ListFree(V),      // release the buffer (no-op when empty)
+    ListFree(V), // release the buffer (no-op when empty)
     // ── raw heap / byte primitives (String, generic List<T>): all side-effecting ──
     Alloc(V, V),         // vreg = fresh heap block of n bytes
     Free(V),             // release a heap block (null is ignored)

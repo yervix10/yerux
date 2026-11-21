@@ -1220,7 +1220,7 @@ pub struct Loop {
 #[derive(Clone)]
 pub enum UnpackPat {
     /// name (`_` for a discarded element), mutable, variable id (set by the checker), position
-    Bind(String, bool, usize, Pos),
+    Bind(String, bool, usize, #[allow(dead_code)] Pos), // the position is kept for future diagnostics
     Tuple(Vec<UnpackPat>, Pos),
 }
 

@@ -18,7 +18,6 @@ const RDI: u8 = 7;
 const R8: u8 = 8;
 const R9: u8 = 9;
 const R10: u8 = 10;
-const R11: u8 = 11;
 const SYSV_ARG_REGS: [u8; 6] = [RDI, RSI, RDX, RCX, R8, R9];
 const R12: u8 = 12;
 /// internal ABI: the first NREG_ARGS call arguments travel in these registers (scratch, never allocated)

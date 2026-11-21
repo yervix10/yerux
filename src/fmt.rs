@@ -174,8 +174,7 @@ struct Open {
     cont: bool,
 }
 
-struct F<'a> {
-    toks: &'a [T],
+struct F {
     out: String,
     at_start: bool,
     stack: Vec<Open>,
@@ -183,7 +182,7 @@ struct F<'a> {
     cont: bool,
 }
 
-impl<'a> F<'a> {
+impl F {
     fn depth(&self) -> usize {
         self.stack.iter().filter(|o| o.multi).count()
     }
@@ -387,7 +386,6 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
     }
 
     let mut f = F {
-        toks,
         out: String::new(),
         at_start: true,
         stack: vec![],
