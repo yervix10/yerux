@@ -142,6 +142,7 @@ fn native_build(
 }
 
 const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+       yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
@@ -223,8 +224,81 @@ fn main() {
     }
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `yerux doctor`: what this installation can do. Returns the exit code (1 when nothing can build programs).
+fn doctor() -> i32 {
+    println!("yerux {}", VERSION);
+    match env::current_exe() {
+        Ok(p) => println!("  binary:      {}", p.display()),
+        Err(e) => println!("  binary:      unknown ({})", e),
+    }
+    println!("  std library: built in (the prelude and std.* modules are part of the binary; nothing to locate)");
+    let tool = |name: &str, arg: &str| -> Option<String> {
+        let o = Command::new(name).arg(arg).output().ok()?;
+        let text = String::from_utf8_lossy(if o.stdout.is_empty() { &o.stderr } else { &o.stdout }).to_string();
+        Some(text.lines().next().unwrap_or("").to_string())
+    };
+    let cc = tool("cc", "--version");
+    match &cc {
+        Some(v) => println!("  C compiler:  ok  cc ({})", v),
+        None => println!("  C compiler:  MISSING  `cc` was not found: the C backend (`yerux build` without --native, `yerux run`) needs it; install gcc or clang"),
+    }
+    println!("  native:      x86-64 Linux backend writes ELF files itself (no linker needed){}", if cfg!(target_arch = "x86_64") { "" } else { "; this build is not x86-64, use the C backend" });
+    match tool("wine", "--version") {
+        Some(v) => println!("  wine:        found ({}), used to run Windows targets", v),
+        None => println!("  wine:        not found (optional: only for running --target windows output)"),
+    }
+    let dir = env::temp_dir();
+    let writable = fs::write(dir.join(format!("yerux_doctor_{}", std::process::id())), b"x")
+        .map(|_| {
+            let _ = fs::remove_file(dir.join(format!("yerux_doctor_{}", std::process::id())));
+        })
+        .is_ok();
+    println!("  temp dir:    {} ({})", dir.display(), if writable { "writable" } else { "NOT writable" });
+    // end-to-end check: compile and run a tiny program with each backend
+    let src = dir.join(format!("yerux_doctor_{}.yx", std::process::id()));
+    let _ = fs::write(&src, "fn main() {\n  print(6 * 7)\n}\n");
+    let exe = env::current_exe().ok();
+    let mut ok_any = false;
+    for (label, flag) in [("C backend", None), ("native backend", Some("--native"))] {
+        if label == "C backend" && cc.is_none() {
+            continue;
+        }
+        let out = dir.join(format!("yerux_doctor_{}_{}", std::process::id(), if flag.is_some() { "n" } else { "c" }));
+        let mut c = Command::new(exe.clone().unwrap_or_else(|| "yerux".into()));
+        c.arg("build").arg(&src).arg("-o").arg(&out);
+        if let Some(f) = flag {
+            c.arg(f);
+        }
+        let built = c.output().map(|o| o.status.success()).unwrap_or(false);
+        let ran = built
+            && Command::new(&out)
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "42")
+                .unwrap_or(false);
+        println!("  self-test:   {} {}", label, if ran { "ok (compiled and ran a program)" } else { "FAILED" });
+        ok_any |= ran;
+        let _ = fs::remove_file(&out);
+    }
+    let _ = fs::remove_file(&src);
+    if ok_any {
+        0
+    } else {
+        println!("  result:      no backend can build programs here");
+        1
+    }
+}
+
 fn real_main() {
     let args: Vec<String> = env::args().collect();
+    if args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V" | "version") {
+        println!("yerux {}", VERSION);
+        return;
+    }
+    if args.len() == 2 && args[1] == "doctor" {
+        exit(doctor());
+    }
     if args.len() == 3 {
         match args[1].as_str() {
             "tokens" | "tokens-positioned" => {

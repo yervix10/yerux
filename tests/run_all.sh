@@ -18,6 +18,7 @@
 # Timeouts scale with the load average (per CPU); a timed-out run is repeated once with twice the time.
 # Programs are independent, so they run in parallel; output is printed in a fixed order afterwards.
 set -uo pipefail
+export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 2
 # One suite at a time across agents/worktrees: queue on an exclusive flock (RUN_ALL_NOLOCK=1 skips it).
@@ -110,10 +111,11 @@ AUX=(
   "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
   "lsp_vscode|bash tests/lsp_vscode.sh"
   "tokens_dump|bash tests/tokens_dump.sh"
+  "dist|bash tests/dist.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
 )
-FAST_AUX=" range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
+FAST_AUX=" dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
 aux=()
 if [ "$BLESS" = 0 ]; then
   for a in "${AUX[@]}"; do

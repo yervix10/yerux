@@ -21,8 +21,9 @@ cargo test -q 2>&1 | tail -n 15
 [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "CI FAILED: cargo test"; exit 1; }
 
 step "tests/run_all.sh $FAST"
-bash tests/run_all.sh $FAST --times 2>&1 | tail -n 70
-[ "${PIPESTATUS[0]}" -eq 0 ] || { echo "CI FAILED: run_all (see FAILED / repeat with: above)"; exit 1; }
+LOG="${TMPDIR:-/tmp}/yerux_ci_run_all.log"
+bash tests/run_all.sh $FAST --times 2>&1 | tee "$LOG" | grep -vE '^[A-Za-z0-9_]+ +(PASS|SKIP|NOGOLD|-) +(PASS|SKIP|-) +(PASS|SKIP|-) +(PASS|-) *$|^[A-Za-z0-9_]+ +PASS$'
+[ "${PIPESTATUS[0]}" -eq 0 ] || { echo "CI FAILED: run_all (details above; full log: $LOG)"; exit 1; }
 
 echo
 echo "CI OK ($((SECONDS - t0))s)"
