@@ -636,7 +636,8 @@ fn imports(doc: &Doc) -> Vec<(String, String)> {
             if !segs.is_empty() {
                 out.push((alias, segs.join(".")));
             }
-            i = j;
+            i = j.max(i + 1);
+            continue;
         }
         i += 1;
     }

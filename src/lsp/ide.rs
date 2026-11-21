@@ -838,6 +838,12 @@ pub fn resolve(ctx: &Ctx, di: usize, ti: usize) -> Option<Loc> {
     if decl_at(doc, ti).is_some() {
         return Some(Loc { doc: di, tok: ti, exact: true });
     }
+    // the name of an item is its own declaration
+    let mut flat = vec![];
+    all_syms(&doc.syms, &mut flat);
+    if flat.iter().any(|x| x.name_tok == ti && x.kind != SymKind::Impl) {
+        return Some(Loc { doc: di, tok: ti, exact: true });
+    }
     if ti >= 2 && is_sym(&t[ti - 1], ".") {
         let found = chain_start(doc, ti - 2).and_then(|st| chain_type(ctx, di, st, ti - 2));
         match found {
@@ -1146,9 +1152,6 @@ pub fn completion(ctx: &Ctx, line: usize, ch: usize) -> Json {
     for ty in ["Int", "Float", "Bool", "Char", "String", "Text", "List", "Map", "Option", "Result", "UInt8", "Int64", "UInt64", "Float32"] {
         push(&mut items, item(ty, 7, "type"));
     }
-    for k in KEYWORDS {
-        push(&mut items, item(k, 14, "keyword"));
-    }
     for (label, detail, body) in SNIPPETS {
         let mut it = item(label, 15, detail);
         if let Json::Obj(kv) = &mut it {
@@ -1157,6 +1160,9 @@ pub fn completion(ctx: &Ctx, line: usize, ch: usize) -> Json {
             kv.push(("sortText".into(), s(format!("~{}", label))));
         }
         push(&mut items, it);
+    }
+    for k in KEYWORDS {
+        push(&mut items, item(k, 14, "keyword"));
     }
     obj(vec![("isIncomplete", Json::Bool(false)), ("items", Json::Arr(items))])
 }
@@ -1426,7 +1432,8 @@ fn kind_of(ctx: &Ctx, l: &Loc) -> usize {
     match flat.iter().find(|s| s.name_tok == l.tok || (s.kind == SymKind::Impl && s.start == l.tok)).map(|s| s.kind) {
         Some(SymKind::Fn) => 5,
         Some(SymKind::Method) => 6,
-        Some(SymKind::Struct) | Some(SymKind::Alias) | Some(SymKind::Impl) => 2,
+        Some(SymKind::Struct) => 2,
+        Some(SymKind::Alias) | Some(SymKind::Impl) => 1,
         Some(SymKind::Enum) => 3,
         Some(SymKind::Trait) => 11,
         Some(SymKind::Const) => 8,
