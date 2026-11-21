@@ -4742,10 +4742,15 @@ impl<'a> Checker<'a> {
             } else if self.isp(arg) {
                 match self.peek_ty(arg) {
                     Some(t) => t,
-                    None => {
-                        let _ = self.place(arg); // reports why
-                        return Ty::Err;
-                    }
+                    // not a plain place (`mk().x`, a field of a Copy temporary): check it now; when that
+                    // fails, `place` has reported why
+                    None => match self.place(arg) {
+                        Some(p) => {
+                            pre[k] = Some(p.ty);
+                            p.ty
+                        }
+                        None => return Ty::Err,
+                    },
                 }
             } else {
                 if !self.types.has_param(pat) {
@@ -4829,8 +4834,11 @@ impl<'a> Checker<'a> {
             Some(x) => x,
             None => return Ty::Err,
         };
+        // checking the arguments may check nested calls (`sh(mk().x)`), which consume `self.rename`:
+        // set it only once they are done, or the nested call would take the instance name
+        let r = self.call_args(sig, args, pre);
         self.rename = Some(iname);
-        self.call_args(sig, args, pre)
+        r
     }
 
     fn instance(&mut self, gi: usize, targs: Vec<Ty>, pos: Pos) -> Option<(String, Sig)> {
