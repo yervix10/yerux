@@ -1,0 +1,25 @@
+fn find(xs: view List<Int>) -> Int {
+  var i = 0
+  while true {
+    if i == xs.len() { return -1 }
+    if xs.get(i) > 0 { return i }
+    i = i + 1
+  }
+}
+
+fn nested() -> String {
+  while true {
+    while true { break }
+    return "done"
+  }
+}
+
+fn main() {
+  var xs = List<Int>.new()
+  print(find(xs))
+  xs.push(-3)
+  xs.push(7)
+  print(find(xs))
+  let result = nested()
+  print(result)
+}

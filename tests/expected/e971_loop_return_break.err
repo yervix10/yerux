@@ -1,0 +1,19 @@
+error: function 'direct' must return a Int on every path
+ --> tests/e971_loop_return_break.yx:1:4
+  |
+1 | fn direct(x: Bool) -> Int {
+  |    ^^^^^^
+
+error: function 'labeled' must return a Int on every path
+ --> tests/e971_loop_return_break.yx:8:4
+  |
+8 | fn labeled(x: Bool) -> Int {
+  |    ^^^^^^^
+
+error: function 'conditional' must return a Int on every path
+  --> tests/e971_loop_return_break.yx:17:4
+   |
+17 | fn conditional(x: Bool) -> Int {
+   |    ^^^^^^^^^^^
+
+3 error(s). Nothing was generated.

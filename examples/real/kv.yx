@@ -1,0 +1,137 @@
+// An in-memory key-value command processor. Each input line is one command.
+import std.io
+
+fn space(b: Int) -> Bool {
+  return b == ' '.to_int() || b == '\t'.to_int()
+}
+
+fn skip_space(line: view String, pos: Int) -> Int {
+  var i = pos
+  while i < line.len() && space(line.byte(i)) {
+    i = i + 1
+  }
+  return i
+}
+
+fn word_end(line: view String, pos: Int) -> Int {
+  var i = pos
+  while i < line.len() && !space(line.byte(i)) {
+    i = i + 1
+  }
+  return i
+}
+
+fn list_keys(store: view Map<String, String>, prefix: view String) {
+  var shown = 0
+  for i in 0..store.len() {
+    if store.keys.at(i).starts_with(prefix) {
+      print(store.keys.at(i))
+      shown = shown + 1
+    }
+  }
+  print("END {shown}")
+}
+
+fn help() {
+  print("SET key [value] | GET key | HAS key | DEL key")
+  print("KEYS [prefix] | SIZE | CLEAR | HELP | QUIT")
+}
+
+// False asks the input loop to stop; invalid commands leave the store unchanged.
+fn execute(store: mut Map<String, String>, line: view String) -> Bool {
+  let start = skip_space(line, 0)
+  if start == line.len() { return true }
+  let cmd_end = word_end(line, start)
+  let cmd = line.slice(start, cmd_end)
+  let key_start = skip_space(line, cmd_end)
+  let key_end = word_end(line, key_start)
+  let key = line.slice(key_start, key_end)
+  let extra = skip_space(line, key_end) < line.len()
+
+  if cmd.eq("SET") {
+    if key.is_empty() {
+      print("ERROR expected key")
+      return true
+    }
+    // One separator belongs to the command; the remaining bytes are the value.
+    var value_start = key_end
+    if value_start < line.len() { value_start = value_start + 1 }
+    let value = line.slice(value_start, line.len())
+    store.insert(move key, move value)
+    print("OK")
+    return true
+  }
+
+  if cmd.eq("GET") || cmd.eq("HAS") || cmd.eq("DEL") {
+    if key.is_empty() || extra {
+      print("ERROR expected exactly one key")
+      return true
+    }
+    if cmd.eq("GET") {
+      let i = store.find(key)
+      if i < 0 {
+        print("MISSING")
+      } else {
+        print("VALUE {store.vals.at(i).len()}:{store.vals.at(i)}")
+      }
+    } else if cmd.eq("HAS") {
+      print(store.contains(key))
+    } else if store.remove(key) {
+      print("OK")
+    } else {
+      print("MISSING")
+    }
+    return true
+  }
+
+  if cmd.eq("KEYS") {
+    if extra {
+      print("ERROR expected at most one prefix")
+    } else {
+      list_keys(store, key)
+    }
+    return true
+  }
+
+  if cmd.eq("SIZE") || cmd.eq("CLEAR") || cmd.eq("HELP") || cmd.eq("QUIT") {
+    if !key.is_empty() {
+      print("ERROR unexpected argument")
+      return true
+    }
+    if cmd.eq("SIZE") {
+      print(store.len())
+    } else if cmd.eq("CLEAR") {
+      store.clear()
+      print("OK")
+    } else if cmd.eq("HELP") {
+      help()
+    } else {
+      print("BYE")
+      return false
+    }
+    return true
+  }
+
+  print("ERROR unknown command")
+  return true
+}
+
+fn main() {
+  var store = Map<String, String>.new()
+  while true {
+    match io.read_line() {
+      Ok(line) => {
+        match line {
+          Some(command) => {
+            if !execute(store, command) { return }
+          }
+          None => { return }
+        }
+      }
+      Err(e) => {
+        io.eprintln("stdin: {e}")
+        io.exit(1)
+      }
+    }
+  }
+}

@@ -323,6 +323,7 @@ fn checked_text(s: String) -> Result<String, IoError> {
 pub fn read_line() -> Result<Option<String>, IoError> {
     var line = String.new()
     var got = false
+    var newline = false
     while true {
         let pos = __load64(__global(2))
         let end = __load64(__global(3))
@@ -343,6 +344,7 @@ pub fn read_line() -> Result<Option<String>, IoError> {
         if i < end {
             __store64(__global(2), i + 1)
             release_if_drained()
+            newline = true
             break
         }
         __store64(__global(2), end)
@@ -350,7 +352,7 @@ pub fn read_line() -> Result<Option<String>, IoError> {
     if !got {
         return Ok(None)
     }
-    if line.len() > 0 && line.byte(line.len() - 1) == 13 {
+    if newline && line.len() > 0 && line.byte(line.len() - 1) == 13 {
         let t = line.slice(0, line.len() - 1)
         let c = checked_text(move t)?
         return Ok(Some(move c))

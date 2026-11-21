@@ -1064,6 +1064,8 @@ pub struct Loop {
     pub label: Option<(String, Pos)>,
     pub id: usize,
     pub step: Vec<Stmt>,
+    /// The checker found no reachable exit through the condition or a break.
+    pub no_fallthrough: bool,
     /// a list or string iterated by this loop: (place, exclusive); see `Checker::frozen`
     pub freeze: Option<(Expr, bool)>,
 }
@@ -2728,6 +2730,7 @@ impl Parser {
                         label,
                         id: 0,
                         step: vec![],
+                        no_fallthrough: false,
                         freeze: None,
                     },
                 ),

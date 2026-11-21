@@ -28,7 +28,7 @@ pub struct IoError { kind: IoErrorKind, code: Int, message: String }            
 
 | Function | Result | Notes |
 |---|---|---|
-| `read_line()` | `Result<Option<String>, IoError>` | Next line of stdin without `\n` / `\r\n`; `Ok(None)` at end of input; a last line without newline is returned. |
+| `read_line()` | `Result<Option<String>, IoError>` | Next line of stdin without `\n` / `\r\n`; `Ok(None)` at end of input; a last line without newline is returned verbatim. |
 | `read_all()` | `Result<String, IoError>` | Rest of stdin (`""` at end of input). |
 | `write_stdout(s)`, `write_stderr(s)` | `Result<Int, IoError>` | Raw write of the bytes of `s` (no newline), returns the byte count. |
 | `eprint(s)`, `eprintln(s)` | | Diagnostics on stderr; errors ignored. |
@@ -46,7 +46,7 @@ pub struct IoError { kind: IoErrorKind, code: Int, message: String }            
 | `unix_nanos()`, `unix_secs()` | `Int` | Wall clock since 1970-01-01 UTC. |
 | `sleep_ms(ms)`, `sleep_ns(ns)` | | At least that long (restarted after a signal); `<= 0` returns at once. |
 
-`path` and `data` are `view String` parameters, so a `Text` literal works (the compiler lends a hidden copy); a String temporary does not (store it with `let` first).
+`path` and `data` are `view String` parameters, so a `Text` literal works (the compiler lends a hidden copy). A temporary `String` stays alive through the call.
 
 Rules worth knowing:
 - **Strings stay UTF-8.** `read_line`, `read_all` and `read_file` validate their input (no overlong forms, no surrogates, nothing above U+10FFFF) and return `IoErrorKind.InvalidData` instead of building a String that `char_at` would later panic on. `args()` and `env_*` are converted lossily instead (every non-ASCII byte of an invalid value becomes `?`), because a program cannot refuse its own command line.

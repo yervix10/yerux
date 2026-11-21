@@ -1,0 +1,18 @@
+14
+20
+9
+3
+6
+-2
+-1
+error at byte 2: division by zero
+error at byte 2: remainder by zero
+error at byte 3: expected an integer, sign, or '('
+error at byte 7: expected ')'
+error at byte 2: unexpected trailing input
+error at byte 4: expected an integer, sign, or '('
+error at byte 11: result out of range
+error at byte 0: literal out of range
+-1000000000
+error at byte 128: expression nested too deeply
+7

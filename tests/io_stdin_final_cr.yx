@@ -1,0 +1,15 @@
+import std.io
+
+fn main() {
+  for i in 0..3 {
+    match io.read_line() {
+      Ok(line) => {
+        match line {
+          Some(s) => { print("{s.len()} {s.byte(s.len() - 1)}") }
+          None => { print("EOF") }
+        }
+      }
+      Err(e) => { panic("stdin: {e}") }
+    }
+  }
+}

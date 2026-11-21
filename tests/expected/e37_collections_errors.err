@@ -3,7 +3,8 @@ error: type Map<String, String> has no method 'get'
   |
 7 |   let v = m.get(k)
   |           ^^^^^^^^
-  = 'get' needs V: Copy, but String does not implement Copy; a String is owned, so it is moved, never copied (borrow with `at(i)` or move it out with `pop()`/`take`)
+  = 'get' needs V: Copy, but String does not implement Copy; String values are owned and cannot be copied
+  = help: use `m.find(key)` and, if the index is nonnegative, borrow `m.vals.at(i)`; `m.take(key)` removes and returns an existing value
 
 error: Set<P> has no function 'new'
  --> examples/e37_collections_errors.yx:8:11
