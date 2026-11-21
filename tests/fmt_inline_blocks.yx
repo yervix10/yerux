@@ -1,0 +1,17 @@
+// yerux fmt keeps these on one line and stays idempotent (tests/fmt.sh formats every test)
+fn maxg<T: Ordered + Copy>(a: T, b: T) -> T { if a > b { return a } return b }
+
+fn cl(x: Int) -> Int {
+  match x {
+    ..=-1 => { return -1 }
+    100.. => { return 1000 }
+    _ => { return 5 }
+  }
+}
+
+fn main() {
+  print(maxg(3, 9))
+  match cl(150) { 1000 => { print("big") } _ => { print("other") } }
+  print(cl(-4))
+  print(cl(7))
+}
