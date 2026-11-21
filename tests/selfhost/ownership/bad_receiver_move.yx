@@ -1,0 +1,12 @@
+struct Buffer { text: String }
+
+impl Buffer {
+    fn finish(self) -> Int { return self.text.len() }
+    fn size(view self) -> Int { return self.text.len() }
+}
+
+fn main() {
+    let buffer = Buffer { text: String.from("original") }
+    print(buffer.finish())
+    print(buffer.size())
+}

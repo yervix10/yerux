@@ -1,0 +1,8 @@
+enum Item { Full(String), Empty }
+fn main() {
+    var item = Item.Full(String.from("payload"))
+    match item {
+        Full(text) => { item = Item.Empty; print(text) }
+        Empty => {}
+    }
+}

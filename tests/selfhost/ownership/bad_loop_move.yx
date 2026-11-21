@@ -1,0 +1,5 @@
+fn repeat(condition: Bool) {
+    let text = String.from("original")
+    while condition { let transferred = move text; print(transferred) }
+}
+fn main() {}

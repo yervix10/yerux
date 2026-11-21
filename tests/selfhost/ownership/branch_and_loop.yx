@@ -1,0 +1,19 @@
+fn keep(flag: Bool) {
+    var item = String.from("initial")
+    if flag {
+        let consumed = move item
+        print(consumed)
+        return
+    } else {
+        print(item)
+    }
+    while flag {
+        let consumed = move item
+        print(consumed)
+        item = String.from("next")
+    }
+    let kept = move item
+    print(kept)
+}
+
+fn main() { keep(false) }

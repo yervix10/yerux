@@ -1,0 +1,5 @@
+fn change(text: mut String) { text.clear() }
+fn main() {
+    let text = String.from("shared")
+    change(text)
+}

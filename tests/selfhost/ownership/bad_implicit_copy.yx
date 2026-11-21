@@ -1,0 +1,5 @@
+fn main() {
+    let text = String.from("shared")
+    let copied = text
+    print(copied)
+}
