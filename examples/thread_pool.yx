@@ -1,0 +1,7 @@
+fn main() {
+  let total = Shared.new(Atomic<Int>.new(0))
+  var pool = thread_pool_new(4)
+  pool.parallel_for(0, 1000, |i| total.get().add(i))
+  print(total.get().load())
+  pool.close()
+}

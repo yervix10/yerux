@@ -367,6 +367,89 @@ fn __parallel_list<T>(items: view List<T>, body: view fn(view T)) {
     __parallel_range(0, items.len(), false, |index| body(items.at(index)))
 }
 
+// A small reusable OS-worker pool. Workers wait between parallel_for calls;
+// close must be called to stop and join them.
+struct ThreadPoolState {
+    generation: Int,
+    remaining: Int,
+    next: Int,
+    end: Int,
+    body: Int,
+    closed: Bool,
+}
+
+struct ThreadPool {
+    state: Shared<Locked<ThreadPoolState>>,
+    threads: List<Int>,
+    worker_count: Int,
+}
+
+fn __thread_pool_worker(state: Shared<Locked<ThreadPoolState>>) -> Int {
+    var seen = 0
+    while true {
+        let (closed, generation) = state.get().with_view(|s| (s.closed, s.generation))
+        if closed { return 0 }
+        if generation == seen { continue }
+        seen = generation
+        while true {
+            let (index, body) = state.get().with(|s| {
+                if s.next >= s.end { return (-1, s.body) }
+                let i = s.next
+                s.next = s.next + 1
+                return (i, s.body)
+            })
+            if index < 0 { break }
+            __parallel_call(body, index)
+        }
+        state.get().with(|s| {
+            s.remaining = s.remaining - 1
+            return 0
+        })
+    }
+    return 0
+}
+
+impl ThreadPool {
+    fn parallel_for(view self, first: Int, end: Int, body: view fn(Int)) {
+        if first >= end { return }
+        let address = __parallel_address(body)
+        self.state.get().with(|s| {
+            if s.closed { panic("thread pool is closed") }
+            s.next = first
+            s.end = end
+            s.body = address
+            s.remaining = self.worker_count
+            s.generation = s.generation + 1
+            return 0
+        })
+        while self.state.get().with_view(|s| s.remaining > 0) {}
+    }
+
+    fn close(mut self) {
+        self.state.get().with(|s| {
+            s.closed = true
+            return 0
+        })
+        while self.threads.len() > 0 {
+            __thread_wait(self.threads.pop())
+        }
+    }
+}
+
+fn thread_pool_new(count: Int) -> ThreadPool {
+    var n = count
+    if n < 1 { n = 1 }
+    let state = Shared.new(Locked.new(ThreadPoolState {
+        generation: 0, remaining: 0, next: 0, end: 0, body: 0, closed: false,
+    }))
+    var threads = List<Int>.new()
+    for _ in 0..n {
+        let worker_state = state.clone()
+        threads.push(__thread_start(move || __thread_pool_worker(worker_state.clone())))
+    }
+    return ThreadPool { state: move state, threads: move threads, worker_count: n }
+}
+
 
 // Own the replacement before a failing index can transfer control back to join.
 fn __worker_list_set<T>(items: mut List<T>, index: Int, value: T) {
