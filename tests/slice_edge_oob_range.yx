@@ -1,0 +1,13 @@
+fn total(xs: view [Int]) -> Int {
+  var s = 0
+  for x in xs { s = s + x }
+  return s
+}
+
+fn main() {
+  let a = [1, 2, 3]
+  var k = 2
+  print(total(a[1..k]))
+  k = k + 2
+  print(total(a[0..k]))
+}
