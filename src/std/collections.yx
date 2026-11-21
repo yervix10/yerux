@@ -18,3 +18,22 @@ pub fn set_for_each<T: Hash + Equal>(s: view Set<T>, f: view fn(view T)) {
   }
 }
 
+// Growable double-ended queue. Free functions are used because generic impl blocks
+// are not yet supported for module-defined types.
+pub fn vecdeque_len<T>(q: view List<T>) -> Int { return q.len() }
+pub fn vecdeque_push_back<T>(q: mut List<T>, value: T) { q.push(move value) }
+pub fn vecdeque_push_front<T>(q: mut List<T>, value: T) { q.insert(0, move value) }
+pub fn vecdeque_pop_back<T>(q: mut List<T>) -> Option<T> {
+  if q.is_empty() { return None }
+  return Some(q.pop())
+}
+pub fn vecdeque_pop_front<T>(q: mut List<T>) -> Option<T> {
+  if q.is_empty() { return None }
+  return Some(q.remove(0))
+}
+pub fn vecdeque_for_each<T>(q: view List<T>, f: view fn(view T)) {
+  var i = 0
+  while i < q.len() { f(q.at(i)); i = i + 1 }
+}
+
+
