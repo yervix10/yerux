@@ -966,8 +966,10 @@ impl<'a> Checker<'a> {
         }
         // `a == b`, `a < b` on a type that implements Equal / Ordered
         if let EK::Bin(op, a, _) = &e.k {
-            if matches!(*op, "==" | "!=" | "<" | ">" | "<=" | ">=") && self.isp(a) {
-                if let Some(t) = self.peek_ty(a) {
+            // a Text literal on the left (`"abc" < s`) is compared like a Text variable
+            let lit = if matches!(a.k, EK::Text(_)) { Some(Ty::Text) } else { None };
+            if matches!(*op, "==" | "!=" | "<" | ">" | "<=" | ">=") && (lit.is_some() || self.isp(a)) {
+                if let Some(t) = lit.or_else(|| self.peek_ty(a)) {
                     let ordering = !matches!(*op, "==" | "!=");
                     if (matches!(t, Ty::Struct(_) | Ty::Enum(_) | Ty::Text | Ty::String | Ty::Param(_) | Ty::List(_)) || (ordering && t == Ty::Bool))
                         && self.rewrite_op(e, t).is_err()
@@ -1147,6 +1149,19 @@ impl<'a> Checker<'a> {
                     "<" | ">" | "<=" | ">=" => {
                         if ta == Ty::Char {
                             self.expect(tb, Ty::Char, b.pos);
+                        } else if !matches!(ta, Ty::Err | Ty::Int | Ty::Range(..)) && !is_num(ta) {
+                            // a non-numeric value that is not a variable (`mk() < x`, `String.from(..) < s`):
+                            // only places are rewritten to an `Ordered` call above
+                            let n = self.tn(ta);
+                            let d = if self.implements(ta, "Ordered") {
+                                diag(format!("cannot use `{}` here: the left side is a {} value that is not a variable", op, n), a.pos)
+                                    .note(format!("`{}` on {} calls `cmp`, which borrows its left side", op, n))
+                                    .note("help: store the value with `let` first, then compare the variable")
+                            } else {
+                                diag(format!("cannot use `{}` on values of type {}: it does not implement Ordered", op, n), a.pos)
+                                    .note("help: `<`, `>`, `<=` and `>=` work on numbers, Char, and types that implement Ordered")
+                            };
+                            self.err(d);
                         } else {
                             self.arith_ty("<", ta, tb, a.pos, b.pos);
                         }

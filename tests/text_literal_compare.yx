@@ -1,0 +1,12 @@
+fn main() {
+  let b = "abd"
+  print("abc" < "abd")
+  print("abd" > "abc")
+  print("abc" <= b)
+  print("abe" >= b)
+  print("abc" == "abc")
+  print("abc" != b)
+  if "a" < "b" && "zz" > "z" {
+    print("ordered")
+  }
+}
