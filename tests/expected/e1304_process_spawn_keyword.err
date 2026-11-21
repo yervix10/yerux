@@ -5,5 +5,6 @@ error: module 'std.process' has no item called 'spawn'
   |           ^^^^^^^^^^^^^
   = 'spawn' is a reserved word, so no module can export an item with that name
   = public items of 'std.process': Stdio, Fd, ExitStatus, Output, Command, command, Child, start, run, run_command, id, run_timeout
+  = help: check the module alias and exported item name; qualify the name with the correct module
 
 1 error(s). Nothing was generated.

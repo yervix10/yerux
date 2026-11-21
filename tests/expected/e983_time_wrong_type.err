@@ -3,5 +3,6 @@ error: expected Int but this is time.Instant
   |
 6 |   time.sleep_ms(t)
   |                 ^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 1 error(s). Nothing was generated.

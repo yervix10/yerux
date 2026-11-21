@@ -3,5 +3,6 @@ error: expected [Int; K] but this is [Int; 3]
   |
 4 |   print(dot([1, 2], [1, 2, 3]))
   |                     ^^^^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 1 error(s). Nothing was generated.

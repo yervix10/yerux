@@ -12,5 +12,6 @@ error: type Stack<Int> has no method 'size'
 9 |   print(s.size())
   |         ^^^^^^^^
   = 'size' needs T: Nope, but Int does not implement Nope
+  = help: check the receiver type and method name, or define the method in an `impl` block
 
 2 error(s). Nothing was generated.

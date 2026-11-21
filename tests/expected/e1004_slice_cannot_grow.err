@@ -5,6 +5,7 @@ error: [Int] has no method 'push'
   |   ^^^^^^^^^^
   = a slice borrows elements of an array or a List: it can read and replace them, but never add, remove or reorder through library methods
   = methods: len(), get(i), set(i, x), swap(i, j), `s[i]`, `s[i] = x`, `s[from..to]`, `for x in s`
+  = help: check the receiver type and method name, or define the method in an `impl` block
 
 error: [Int] has no method 'sort'
  --> tests/e1004_slice_cannot_grow.yx:3:3
@@ -13,5 +14,6 @@ error: [Int] has no method 'sort'
   |   ^^^^^^^^^
   = a slice borrows elements of an array or a List: it can read and replace them, but never add, remove or reorder through library methods
   = methods: len(), get(i), set(i, x), swap(i, j), `s[i]`, `s[i] = x`, `s[from..to]`, `for x in s`
+  = help: check the receiver type and method name, or define the method in an `impl` block
 
 2 error(s). Nothing was generated.

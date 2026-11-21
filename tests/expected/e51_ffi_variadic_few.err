@@ -3,5 +3,6 @@ error: 'printf' expects at least 1 argument(s) but got 0
   |
 6 |   unsafe { printf() }
   |            ^^^^^^^^
+  = help: pass the number of arguments shown in the function's signature
 
 1 error(s). Nothing was generated.

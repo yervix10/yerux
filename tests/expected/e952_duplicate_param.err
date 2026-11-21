@@ -3,5 +3,6 @@ error: duplicate parameter 'a'
   |
 1 | fn f(a: Int, a: Int) -> Int { return a }
   |              ^
+  = help: rename or remove the repeated declaration
 
 1 error(s). Nothing was generated.

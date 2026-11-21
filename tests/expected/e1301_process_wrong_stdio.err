@@ -3,5 +3,6 @@ error: expected process.Stdio but this is Int
   |
 6 |   c.set_stdin(2)
   |               ^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 1 error(s). Nothing was generated.

@@ -16,5 +16,6 @@ error: struct P has no field 'z'
   |
 6 |   print(p.z)
   |         ^^^
+  = help: check the field name and the struct's declared fields
 
 3 error(s). Nothing was generated.

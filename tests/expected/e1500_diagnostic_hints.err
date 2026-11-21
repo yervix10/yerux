@@ -1,0 +1,51 @@
+error: expected Int but this is Text
+ --> tests/e1500_diagnostic_hints.yx:5:20
+  |
+5 |   let wrong: Int = "text"
+  |                    ^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+error: variable 'missing_name' does not exist
+ --> tests/e1500_diagnostic_hints.yx:6:16
+  |
+6 |   let absent = missing_name
+  |                ^^^^^^^^^^^^
+  = help: check the spelling, scope, and whether the name needs to be imported or qualified
+
+error: type Int has no method 'no_such_method'
+ --> tests/e1500_diagnostic_hints.yx:7:16
+  |
+7 |   let method = wrong.no_such_method()
+  |                ^^^^^^^^^^^^^^^^^^^^^^
+  = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+
+error: 'one' expects 1 argument(s) but got 0
+ --> tests/e1500_diagnostic_hints.yx:8:15
+  |
+8 |   let arity = one()
+  |               ^^^^^
+  = help: pass the number of arguments shown in the function's signature
+
+error: 'wrong' is a variable of type Int, not a function, so it cannot be called
+ --> tests/e1500_diagnostic_hints.yx:9:16
+  |
+9 |   let not_fn = wrong()
+  |                ^^^^^^^
+  = only function values (closures and function names) can be called with `name(args)`
+  = help: call a function value, or use the variable as a value instead
+
+error: cannot modify 'list': it was declared with `let` (immutable)
+  --> tests/e1500_diagnostic_hints.yx:11:3
+   |
+11 |   list.push(1)
+   |   ^^^^^^^^^^^^
+   = help: declare it with `var` instead of `let`
+
+error: struct Point has no field 'no_such_field'
+  --> tests/e1500_diagnostic_hints.yx:13:15
+   |
+13 |   let field = point.no_such_field
+   |               ^^^^^^^^^^^^^^^^^^^
+   = help: check the field name and the struct's declared fields
+
+7 error(s). Nothing was generated.
