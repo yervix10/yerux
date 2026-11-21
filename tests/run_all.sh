@@ -42,7 +42,7 @@ run_exe() {
   CODE=$?
 }
 
-for f in examples/*.yx examples/real/*.yx tests/*.yx; do
+for f in examples/*.yx examples/real/*.yx examples/real/minilang/minilang.yx tests/*.yx; do
   [ -e "$f" ] || continue
   name="$(basename "$f" .yx)"
   CUR="$name"

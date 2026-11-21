@@ -46,3 +46,9 @@ programs report stdin read errors on stderr and exit with status 1.
 
 `tests/run_all.sh` exercises both examples using the `calc.stdin` and
 `kv.stdin` fixtures in `tests/`.
+
+## MiniLang
+
+The [MiniLang interpreter](../../docs/MINILANG.md) tokenizes, parses and
+evaluates script files with integers, strings, lexical scopes and recursive
+functions. Runnable scripts are in [minilang/scripts](minilang/scripts).

@@ -1,0 +1,1 @@
+fn duplicate(x, x) { return x; }

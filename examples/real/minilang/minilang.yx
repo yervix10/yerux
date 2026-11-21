@@ -1,0 +1,61 @@
+import std.env
+import std.fs
+import std.io
+import lexer
+import parser
+import evaluator
+
+fn interpret(src: view String) -> Result<Bool, lexer.Issue> {
+  let tokens = lexer.tokenize(src)?
+  let program = parser.parse(tokens[..], src)?
+  return evaluator.run(program.nodes[..], src, program.first)
+}
+
+fn report(path: view String, src: view String, problem: lexer.Issue) {
+  var line = 1
+  var column = 1
+  for i in 0..problem.offset {
+    if src.byte(i) == '\n'.to_int() {
+      line = line + 1
+      column = 1
+    } else {
+      column = column + 1
+    }
+  }
+  io.eprintln("{path}:{line}:{column}: {problem.message}")
+}
+
+fn run_file(path: view String) -> Bool {
+  match fs.read_to_string(path) {
+    Ok(src) => {
+      if src.len() > 1048576 {
+        io.eprintln("{path}: script exceeds 1 MiB")
+        return false
+      }
+      match interpret(src) {
+        Ok(_) => { return true }
+        Err(problem) => {
+          report(path, src, problem)
+          return false
+        }
+      }
+    }
+    Err(err) => {
+      io.eprintln("{path}: {err}")
+      return false
+    }
+  }
+}
+
+fn main() {
+  let args = env.args()
+  if args.len() < 2 {
+    io.eprintln("usage: minilang SCRIPT [SCRIPT ...]")
+    io.exit(2)
+  }
+  var had_error = false
+  for i in 1..args.len() {
+    if !run_file(args.at(i)) { had_error = true }
+  }
+  if had_error { io.exit(1) }
+}
