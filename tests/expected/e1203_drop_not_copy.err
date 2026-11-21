@@ -1,0 +1,8 @@
+error: 't' is a Tag and is not copied
+ --> tests/e1203_drop_not_copy.yx:8:11
+  |
+8 |   let u = t
+  |           ^
+  = help: use `move t` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+1 error(s). Nothing was generated.

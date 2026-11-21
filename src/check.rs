@@ -534,6 +534,7 @@ struct Checker<'a> {
     in_defer: bool,
     /// places that the loops being checked iterate over: (place, exclusive, line of the loop)
     frozen: Vec<(Expr, bool, usize, bool)>,
+    drop_self: Option<usize>,
     /// hidden `$m` variable of a borrowing `match` -> (scrutinee place, exclusive, line)
     match_scruts: HashMap<String, (Expr, bool, usize)>,
     // function values and closures (check_fn.rs)
@@ -863,6 +864,16 @@ impl<'a> Checker<'a> {
     /// A list or string that a `for` loop is iterating must not change while the loop borrows it (and
     /// with `for mut x in l` it must not even be read: `x` is the only way in).
     fn frozen_check(&mut self, e: &Expr, write: bool, pos: Pos) {
+        if write && matches!(e.k, EK::Var(_, id) if self.drop_self == Some(id)) {
+            self.err(
+                diag(
+                    "cannot replace or mutably lend all of `self` during Drop",
+                    pos,
+                )
+                .note("help: mutate or lend its individual fields instead"),
+            );
+            return;
+        }
         let hit = self
             .frozen
             .iter()
@@ -5570,7 +5581,12 @@ impl<'a> Checker<'a> {
                 self.explicit_range.insert(p.id);
             }
         }
+        self.drop_self = f.params.first().and_then(|p| {
+            matches!(p.ty, Ty::Struct(s) if self.types.user_drop.get(&s) == Some(&f.name))
+                .then_some(p.id)
+        });
         self.block(&mut f.body);
+        self.drop_self = None;
         if f.ret != Ty::Unit && !always_returns(&f.body) {
             let n = self.tn(f.ret);
             self.err(diag(
@@ -5876,6 +5892,13 @@ impl<'a> Checker<'a> {
     fn object_methods(&mut self, id: usize, pos: Pos) -> Option<Vec<(String, FnTy)>> {
         let ty = Ty::Dyn(id);
         let name = self.types.dyns[id].0.clone();
+        if name == "Drop" {
+            self.err(diag(
+                "`Drop` is not object-safe: its method is called by the compiler",
+                pos,
+            ));
+            return None;
+        }
         let Some(def) = self.ps.traits.iter().find(|t| t.name == name) else {
             self.err(diag(format!("unknown trait '{}'", name), pos));
             return None;
@@ -6052,7 +6075,7 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 if let Some(h) = self.trait_header(&b, m, ty) {
-                    let name = format!("{}__{}__{}", b, self.types.mangle(ty), m);
+                    let name = impl_fn_name(&self.types, Some(&b), ty, m);
                     let sig = Self::sig_of(&h);
                     self.sigs.insert(name.clone(), sig.clone());
                     return Some((name, sig));
@@ -6168,6 +6191,12 @@ impl<'a> Checker<'a> {
             }
         }
         if tr == "Copy" {
+            if matches!(ty, Ty::Struct(s) if self.types.user_drop.contains_key(&s)) {
+                return format!(
+                    "{} implements Drop, so it is moved when passed by value",
+                    tyn
+                );
+            }
             format!("a {} holds owned data (a String or a List), so it is moved, never copied; `Copy` types are Int, Bool, Text, enums and structs of those", tyn)
         } else {
             format!(
@@ -6179,6 +6208,14 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn direct_drop_error(&mut self, ty: &str, pos: Pos) {
+        self.err(
+            diag(format!("`drop` of {} cannot be called directly", ty), pos)
+                .note("the compiler runs it when the value is destroyed")
+                .note("help: end its scope or move it into a function that takes it by value"),
+        );
+    }
+
     /// `x.m(args)` -> `Trait__Type__m(x, args)`.
     fn rewrite_method(&mut self, e: &mut Expr, rt: Ty) -> Result<(), ()> {
         let pos = e.pos;
@@ -6188,6 +6225,10 @@ impl<'a> Checker<'a> {
         };
         let tyn = self.tn(rt);
         let mut target = self.method_target(rt, None, &m);
+        if target.as_ref().is_some_and(|(name, _)| name.starts_with("$Drop__")) {
+            self.direct_drop_error(&tyn, pos);
+            return Err(());
+        }
         if target.is_none() && m == "to_string" {
             // `x.to_string()` is `x.show()` for anything that implements Show
             target = self.method_target(rt, Some("Show"), "show");
@@ -6605,6 +6646,10 @@ impl<'a> Checker<'a> {
                         return (Ty::Err, EK::Int(0));
                     }
                 };
+                if fname.starts_with("$Drop__") {
+                    self.direct_drop_error(&tyn, pos);
+                    return (Ty::Err, EK::Int(0));
+                }
                 if sig.params.len() != args.len() {
                     self.err(diag(
                         format!(
@@ -7217,6 +7262,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         hid: 0,
         in_defer: false,
         frozen: vec![],
+        drop_self: None,
         match_scruts: HashMap::new(),
         lifted: vec![],
         thunks: HashSet::new(),
@@ -7348,6 +7394,33 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
+            if tn == "Drop" {
+                let ok = matches!(ty, Ty::Struct(s) if !self.types.arrays.contains_key(&s)
+                    && self.types.structs[s].pos.line < PRELUDE_LINE
+                    && !self.types.structs[s].name.starts_with("("));
+                if !ok {
+                    self.err(
+                        diag(
+                            format!(
+                                "`Drop` can only be implemented for a struct, not for {}",
+                                tyn
+                            ),
+                            tpos,
+                        )
+                        .note(
+                            "help: wrap the value in a struct and implement Drop for that struct",
+                        ),
+                    );
+                    continue;
+                }
+                if !self.ps.impls[ii].generics.is_empty() {
+                    self.err(diag(
+                        "`Drop` cannot be implemented by a generic impl yet",
+                        tpos,
+                    ));
+                    continue;
+                }
+            }
             let tr = match self.ps.traits.iter().find(|t| t.name == tn) {
                 Some(t) => t.methods.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
                 None => {
@@ -7392,6 +7465,7 @@ impl<'a> Checker<'a> {
                 if let (Some(w), Some(g)) = (want, got) {
                     let same = w.ret == g.ret
                         && w.params.len() == g.params.len()
+                        && (tn != "Drop" || g.params.first().is_some_and(|p| p.name == "self"))
                         && w.params
                             .iter()
                             .zip(&g.params)
@@ -7433,6 +7507,12 @@ impl<'a> Checker<'a> {
                     )
                     .note(format!("help: add {}", sigs.join(" and "))),
                 );
+            }
+            if tn == "Drop" && missing.is_empty() {
+                if let Ty::Struct(s) = ty {
+                    let name = impl_fn_name(&self.types, Some("Drop"), ty, "drop");
+                    self.types.user_drop.insert(s, name);
+                }
             }
         }
     }

@@ -1,0 +1,8 @@
+// impl Drop: only structs
+enum E { A, B }
+impl Drop for E {
+  fn drop(mut self) { print("e") }
+}
+fn main() {
+  let e = E.A
+}

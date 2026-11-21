@@ -1,0 +1,6 @@
+struct Resource { field: String }
+impl Drop for Resource { fn drop(mut self) {} }
+fn main() {
+  let item = Resource { field: String.new() }
+  let field = move item.field
+}

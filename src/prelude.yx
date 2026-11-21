@@ -7,6 +7,7 @@ trait Copy { }
 trait Equal { fn eq(view self, other: view Self) -> Bool }
 trait Ordered { fn cmp(view self, other: view Self) -> Int }
 trait Show { fn show(view self) -> String }
+trait Drop { fn drop(mut self) }
 
 impl Equal for Int { fn eq(view self, other: view Int) -> Bool { return self == other } }
 impl Equal for Char { fn eq(view self, other: view Char) -> Bool { return self == other } }

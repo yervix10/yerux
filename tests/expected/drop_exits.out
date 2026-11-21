@@ -1,0 +1,21 @@
+replace
+1 drop!
+2 drop!
+1 drop!
+replace
+2 drop!
+defer before ?
+3 drop!
+defer before return
+5 drop!
+6 drop!
+8 drop!
+10
+loop
+defer before break
+11 drop!
+end
+10 drop!
+9 drop!
+7 drop!
+4 drop!

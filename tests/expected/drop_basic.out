@@ -1,0 +1,12 @@
+consume
+tag 7
+inner scope end
+tag 4
+end of main
+tag 5
+holder 3 2
+drop b 2
+tag 3
+tag 1
+tag 2
+drop a 1

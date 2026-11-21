@@ -1,0 +1,13 @@
+struct Fails { id: Int }
+impl Drop for Fails {
+  fn drop(mut self) {
+    print(self.id)
+    panic("destructor")
+  }
+}
+fn main() {
+  scope {
+    let worker = spawn move { let item = Fails { id: 42 } }
+    print(worker.join().is_ok())
+  }
+}

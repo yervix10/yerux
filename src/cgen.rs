@@ -36,15 +36,23 @@ static inline void nx_cleanup_push(NxCleanup *slot, bool *live, void *value, voi
 }
 static inline void nx_cleanup_pop(void) { nx_cleanup_head = nx_cleanup_head->previous; }
 static _Thread_local bool nx_unwinding;
+static _Thread_local bool nx_in_destructor;
 static void nx_try_worker_panic(void) {
-  if (!nx_worker_panic) return;
+  if (nx_unwinding) {
+    fputs("panic: second panic during worker cleanup\n", stderr);
+    exit(101);
+  }
+  if (!nx_worker_panic || nx_in_destructor) return;
   jmp_buf *target = nx_worker_panic;
   nx_worker_panic = NULL;
   nx_unwinding = true;
   while (nx_cleanup_head) {
     NxCleanup *slot = nx_cleanup_head;
     nx_cleanup_pop();
-    if (*slot->live) slot->drop(slot->value);
+    if (*slot->live) {
+      *slot->live = false;
+      slot->drop(slot->value);
+    }
   }
   longjmp(*target, 1);
 }
@@ -84,8 +92,8 @@ static void *nx_thread_entry(void *arg) {
   task->result = ((int64_t (*)(void *))task->entry.code)(task->entry.env);
 cleanup:
   nx_worker_panic = NULL;
-  nx_unwinding = false;
   nx_drop_fn(&task->entry);
+  nx_unwinding = false;
   return NULL;
 }
 static inline int64_t nx_thread_start(NxFn entry, bool recover) {
@@ -353,6 +361,18 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
             _ => g.line(&format!("static void nx_drop_{c}({c} *s);")),
         }
     }
+    // `impl Drop` functions are called by the drop functions of their structs
+    let mut user_drops: Vec<(usize, String)> = g
+        .types
+        .user_drop
+        .iter()
+        .map(|(s, f)| (*s, f.clone()))
+        .collect();
+    user_drops.sort();
+    for (sid, f) in user_drops {
+        let c = g.types.cty(Ty::Struct(sid));
+        g.line(&format!("static void nx_f_{f}({c} *);"));
+    }
     // components of mutually recursive heap nodes are dropped with a worklist (one shared function each)
     let mut sccs: Vec<Vec<HeapNode>> = vec![];
     for t in &owned_tys {
@@ -516,6 +536,7 @@ impl Gen<'_> {
 
     fn plain_struct(&self, sid: usize) -> bool {
         !self.types.is_lock_guard(sid)
+            && !self.types.user_drop.contains_key(&sid)
             && self.types.join_payload(sid).is_none()
             && self.types.runtime_struct(sid, "Shared").is_none()
             && !self.types.structs[sid].cname.starts_with("Env__")
@@ -831,6 +852,9 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                     if self.types.is_lock_guard(i) {
                         b += " nx_unlock(s->f_address);";
                     }
+                    if let Some(f) = self.types.user_drop.get(&i) {
+                        b += &format!(" bool in_destructor = nx_in_destructor; nx_in_destructor = true; nx_f_{f}(s); nx_in_destructor = in_destructor;");
+                    }
                     if let Some(payload) = self.types.join_payload(i) {
                         b += " if (!s->f_thread_word) return; void *p = (void *)(intptr_t)nx_thread_wait(s->f_thread_word); if (p) {";
                         if self.types.owned(payload) {
@@ -845,7 +869,7 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                         }
                         b += " free(s->f_cell); }";
                     } else {
-                        for (n, f) in &def.fields {
+                        for (n, f) in def.fields.iter().rev() {
                             if self.types.owned(*f) {
                                 if let Some(flag) = self.types.capture_live_field(i, n) {
                                     b += &format!(" if (s->f_{flag})");
@@ -1014,7 +1038,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             ""
         };
         let drop = self.drop_call(*ty, &format!("&{name}"));
-        format!("{pop}if ({name}_live) {drop};")
+        format!("{pop}if ({name}_live) {{ {name}_live = false; {drop}; }}")
     }
 
     /// Bind every leaf of a tuple pattern to a variable holding that part of the temporary `path`.
@@ -1136,12 +1160,12 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                         EK::Var(_, id) if self.capture_flags.contains(id) => {
                             let live = format!("(*{}_live)", self.vars[id].0);
                             self.line(&format!(
-                                "{{ {c} t_ = {e}; if ({live}) {drop}; {pc} = t_; {live} = true; }}"
+                                "{{ {c} t_ = {e}; if ({live}) {{ {live} = false; {drop}; }} {pc} = t_; {live} = true; }}"
                             ));
                         }
                         EK::Var(_, id) if !self.vars[id].1 => {
                             let n = self.vars[id].0.clone();
-                            self.line(&format!("{{ {c} t_ = {e}; if ({n}_live) {drop}; {pc} = t_; {n}_live = true; }}"));
+                            self.line(&format!("{{ {c} t_ = {e}; if ({n}_live) {{ {n}_live = false; {drop}; }} {pc} = t_; {n}_live = true; }}"));
                         }
                         _ => {
                             let drop = self.drop_call(val.ty, "p_");
