@@ -3,6 +3,7 @@ error: module 'std.process' has no item called 'spawn'
   |
 6 |   let r = process.spawn(c)
   |           ^^^^^^^^^^^^^
+  = 'spawn' is a reserved word, so no module can export an item with that name
   = public items of 'std.process': Stdio, Fd, ExitStatus, Output, Command, command, Child, start, run, run_command, id
 
 1 error(s). Nothing was generated.
