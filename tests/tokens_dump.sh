@@ -29,5 +29,5 @@ if target/debug/yerux tokens "$tmp/bad.yx" >"$tmp/out" 2>"$tmp/err"; then
   echo 'expected a lexical error' >&2
   exit 1
 fi
-grep -F 'lex error: unexpected character' "$tmp/err" >/dev/null
+grep -F 'Error:756e65787065637465642063686172616374657220272327:1:1:1' "$tmp/out" >/dev/null
 echo 'token dump checks: passed'

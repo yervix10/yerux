@@ -137,6 +137,8 @@ if [ $BLESS -eq 0 ]; then bash tests/fmt.sh >"$TMP/fmt.out" 2>&1 || { cat "$TMP/
 if [ $BLESS -eq 0 ]; then bash tests/noopt_shortcircuit.sh >"$TMP/nsc.out" 2>&1 || { cat "$TMP/nsc.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/stack_overflow.sh >"$TMP/so.out" 2>&1 || { cat "$TMP/so.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/ffi_native.sh >"$TMP/ffi.out" 2>&1 || { cat "$TMP/ffi.out"; fails=$((fails+1)); }; fi
+if [ $BLESS -eq 0 ]; then bash tests/tokens_dump.sh >"$TMP/td.out" 2>&1 || { cat "$TMP/td.out"; fails=$((fails+1)); }; fi
+if [ $BLESS -eq 0 ]; then bash tests/selfhost_lexer.sh >"$TMP/shlex.out" 2>&1 || { cat "$TMP/shlex.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then python3 tests/fuzz_parse.py --edge-only -j 2 >"$TMP/fp.out" 2>&1 || { cat "$TMP/fp.out"; fails=$((fails+1)); }; fi
 echo "failures: $fails"
 [ $fails -eq 0 ]

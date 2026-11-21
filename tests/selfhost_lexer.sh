@@ -11,19 +11,22 @@ failures=0
 total=0
 while IFS= read -r -d '' file; do
   total=$((total + 1))
-  if ! target/debug/yerux tokens "$file" >"$tmp/rust" 2>"$tmp/rust-err"; then
+  rust_rc=0
+  target/debug/yerux tokens "$file" >"$tmp/rust" 2>"$tmp/rust-err" || rust_rc=$?
+  lexer_rc=0
+  "$tmp/lexer" "$file" >"$tmp/yerux" 2>"$tmp/err" || lexer_rc=$?
+  if [ "$lexer_rc" -gt 1 ]; then
     failures=$((failures + 1))
-    if [ "$failures" -le 10 ]; then printf 'RUST LEX ERROR %s\n' "$file"; cat "$tmp/rust-err"; fi
+    if [ "${SELFHOST_VERBOSE:-0}" = 1 ] || [ "$failures" -le 10 ]; then printf 'LEXER CRASH %s\n' "$file"; cat "$tmp/err"; fi
     continue
   fi
-  if ! "$tmp/lexer" "$file" >"$tmp/yerux" 2>"$tmp/err"; then
-    failures=$((failures + 1))
-    if [ "$failures" -le 10 ]; then printf 'LEXER CRASH %s\n' "$file"; cat "$tmp/err"; fi
-    continue
+  if [ "$rust_rc" -gt 0 ] && [ "$lexer_rc" -gt 0 ]; then
+    sed -n '/^Error:/,$p' "$tmp/yerux" >"$tmp/yerux-error"
+    cp "$tmp/yerux-error" "$tmp/yerux"
   fi
-  if ! diff -u "$tmp/rust" "$tmp/yerux" >"$tmp/diff"; then
+  if [ "$rust_rc" -ne "$lexer_rc" ] || ! diff -u "$tmp/rust" "$tmp/yerux" >"$tmp/diff"; then
     failures=$((failures + 1))
-    if [ "$failures" -le 10 ]; then
+    if [ "${SELFHOST_VERBOSE:-0}" = 1 ] || [ "$failures" -le 10 ]; then
       printf 'MISMATCH %s\n' "$file"
       sed -n '1,18p' "$tmp/diff"
     fi

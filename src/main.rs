@@ -147,7 +147,16 @@ fn dump_tokens(file: &str) {
         exit(2)
     });
     let tokens = syntax::lex(&src).unwrap_or_else(|d| {
-        eprintln!("lex error: {} at {}:{}", d.msg, d.pos.line, d.pos.col);
+        println!(
+            "Error:{}:{}:{}:{}",
+            hex(d.msg.as_bytes()),
+            d.pos.line,
+            d.pos.col,
+            d.pos.len
+        );
+        for note in d.notes {
+            println!("Note:{}", hex(note.as_bytes()));
+        }
         exit(1)
     });
     for token in tokens {
