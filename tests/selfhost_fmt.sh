@@ -6,6 +6,9 @@ TMP="$(mktemp -d /tmp/yerux_selfhost_fmt.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 cargo build -q
 target/debug/yerux build selfhost/fmt.yx -o "$TMP/fmt" >/dev/null
+target/debug/yerux fmt --selfhost --stdout tests/e1009_array_len_mismatch.yx >"$TMP/cli"
+target/debug/yerux fmt --stdout tests/e1009_array_len_mismatch.yx >"$TMP/oracle"
+cmp "$TMP/cli" "$TMP/oracle"
 # Freeze the Rust dirty-file set from a throwaway corpus copy. Never run in-place fmt in ROOT.
 mkdir "$TMP/corpus"
 cp -r examples tests "$TMP/corpus/"
