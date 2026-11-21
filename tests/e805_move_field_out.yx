@@ -1,0 +1,7 @@
+// moving one field out of an owned struct is an error that names the field (SPEC: Structs)
+struct T { s: String }
+fn take(s: String) {}
+fn main() {
+  let t = T { s: String.from("a") }
+  take(move t.s)
+}

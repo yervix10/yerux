@@ -524,6 +524,16 @@ impl<'a> Checker<'a> {
                     }
                     if self.types.owned(t) {
                         let n = self.tn(t);
+                        if let EK::Move(v, _) = &base.k {
+                            // `move t.s` parses as `(move t).s`: what was meant is moving the field out
+                            let what = format!("{}.{}", v, f);
+                            self.err(
+                                diag(format!("cannot move '{}' out of '{}': a field cannot be moved out of an owned {}", what, v, n), pos)
+                                    .note("`move` takes a whole variable; moving one field would leave the struct half freed")
+                                    .note(format!("help: borrow the field instead (pass '{}' as `view`/`mut`, or call a method on it), or move all of '{}'", what, v)),
+                            );
+                            return None;
+                        }
                         self.err(
                             diag(format!("cannot take a field of a temporary {} that owns memory", n), pos)
                                 .note("the rest of the value would be thrown away without being freed")
@@ -3590,7 +3600,16 @@ impl<'a> Checker<'a> {
                 let mut step_expr: Option<Expr> = None;
                 if let Some(se) = h.step.clone() {
                     let sp = se.pos;
-                    if let EK::Int(n) = se.k {
+                    // a literal step, including a negated one (`step -1`), is checked at compile time
+                    let lit = match &se.k {
+                        EK::Int(n) => Some(*n as i128),
+                        EK::Un("-", inner) => match inner.k {
+                            EK::Int(n) => Some(-(n as i128)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(n) = lit {
                         if n <= 0 {
                             self.err(
                                 diag("the step of a `for` loop must be positive", sp)
@@ -4733,10 +4752,15 @@ impl<'a> Checker<'a> {
             } else if self.isp(arg) {
                 match self.peek_ty(arg) {
                     Some(t) => t,
-                    None => {
-                        let _ = self.place(arg); // reports why
-                        return Ty::Err;
-                    }
+                    // not a plain place (`mk().x`, a field of a Copy temporary): check it now; when that
+                    // fails, `place` has reported why
+                    None => match self.place(arg) {
+                        Some(p) => {
+                            pre[k] = Some(p.ty);
+                            p.ty
+                        }
+                        None => return Ty::Err,
+                    },
                 }
             } else {
                 if !self.types.has_param(pat) {
@@ -4820,8 +4844,11 @@ impl<'a> Checker<'a> {
             Some(x) => x,
             None => return Ty::Err,
         };
+        // checking the arguments may check nested calls (`sh(mk().x)`), which consume `self.rename`:
+        // set it only once they are done, or the nested call would take the instance name
+        let r = self.call_args(sig, args, pre);
         self.rename = Some(iname);
-        self.call_args(sig, args, pre)
+        r
     }
 
     fn instance(&mut self, gi: usize, targs: Vec<Ty>, pos: Pos) -> Option<(String, Sig)> {

@@ -1,0 +1,6 @@
+// a negative literal step is a compile error, like `step 0` (SPEC: Loops)
+fn main() {
+  for i in 0..10 step -1 {
+    print(i)
+  }
+}

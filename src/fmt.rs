@@ -438,7 +438,8 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
             } else if let Some((kind, _)) = last_closed {
                 // after a `}` that ends a block: a new statement, unless `else`, `,`, `)` continue it
                 let continues = t.k == K::Sym && matches!(t.s.as_str(), "," | ")" | "." ) || (t.k == K::Word && t.s == "else");
-                if kind != Br::Lit && !continues && !is_close {
+                // inside a block written on one line the statements stay on that line
+                if kind != Br::Lit && !continues && !is_close && ctx_multi {
                     b = B::Hard(src_blank);
                 }
             }
@@ -569,7 +570,8 @@ fn space(p: &T, t: &T, p_gen: bool, t_gen: bool, p_unary: bool, t_close: bool, c
     let _ = close_multi;
     // ranges: `0..n`, `1..=9`
     if (p.k == K::Sym && matches!(p.s.as_str(), ".." | "..=")) || (t.k == K::Sym && matches!(t.s.as_str(), ".." | "..=")) {
-        return false;
+        // an open range pattern before `=>` (`100.. => ..`): `..=>` would lex as `..=` `>`
+        return p.k == K::Sym && p.s == ".." && t.k == K::Sym && t.s.starts_with('=');
     }
     // after `p`
     if p.k == K::Sym {

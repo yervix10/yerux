@@ -1,0 +1,6 @@
+// to_upper / to_lower over the whole Latin Extended-A block (U+0100..U+017F), simple Unicode mappings
+fn main() {
+  let s = String.from("ĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĲĳĴĵĶķĸĹĺĻļĽľĿŀŁłŃńŅņŇňŉŊŋŌōŎŏŐőŒœŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžſ")
+  print(s.to_upper())
+  print(s.to_lower())
+}

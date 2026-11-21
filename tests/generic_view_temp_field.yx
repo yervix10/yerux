@@ -1,0 +1,17 @@
+// a field of a Copy temporary passed to a generic `view T` parameter, also inside interpolation
+struct P { x: Int }
+fn mk() -> P { return P { x: 4 } }
+fn pair() -> (Int, Int) { return (1, 2) }
+fn sh<T: Show>(x: view T) -> Int { let s = x.show() print(s) return 1 }
+fn idx() -> Int { return 1 }
+fn main() {
+  print(sh(mk().x))
+  print("{mk().x}")
+  print("{pair().0} {pair().1}")
+  print("{(3, 4).1}")
+  var l = List<Int>.new()
+  l.push(5)
+  l.push(6)
+  print(sh(l.at(idx())))
+  print("{l.at(idx())}")
+}
