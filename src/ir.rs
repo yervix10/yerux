@@ -171,7 +171,7 @@ impl NOp {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ThreadOp {
     Start,
     StartRecover,
@@ -185,7 +185,7 @@ pub enum ThreadOp {
     Wake,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AtomicOp {
     Load,
     Store,
@@ -193,7 +193,7 @@ pub enum AtomicOp {
     FetchAdd,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Inst {
     N(NOp, V, V, V), // d = a op b, see NOp
     Const(V, i64),
@@ -255,7 +255,7 @@ pub enum Inst {
     LeaX(V, V, V, u8),  // vreg = base + idx*scale
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Term {
     Jmp(usize),
     Br(V, usize, usize),
@@ -263,6 +263,7 @@ pub enum Term {
     Unreachable,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Block {
     pub insts: Vec<Inst>,
     pub term: Term,
