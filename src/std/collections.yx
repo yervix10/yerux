@@ -9,3 +9,12 @@ pub fn map_for_each<K: Hash + Equal, V>(m: view Map<K, V>, f: view fn(view K, vi
   }
 }
 
+/// Visits set elements by borrow in the set's current storage order.
+pub fn set_for_each<T: Hash + Equal>(s: view Set<T>, f: view fn(view T)) {
+  var i = 0
+  while i < s.items.keys.len() {
+    f(s.items.keys.at(i))
+    i = i + 1
+  }
+}
+

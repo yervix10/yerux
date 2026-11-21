@@ -17,4 +17,8 @@ fn main() {
   var strings = Map<String, Int>.new()
   strings.insert(String.from("one"), 1)
   print(strings.get("one"))
+  var s = Set<Int>.new()
+  s.insert(8)
+  s.insert(3)
+  collections.set_for_each(s, |x: view Int| { print(x) })
 }
