@@ -204,19 +204,66 @@ pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
 pub fn read(s: view TcpStream, limit: Int) -> Result<String, io.IoError> {
   if limit < 0 || limit > 1048576 { return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: read limit must be 0..1048576")) }
   let p = __alloc(limit + 1)
-  let n = __syscall(0, s.fd, p, limit, 0, 0, 0)
-  if n < 0 { __free(p); return Err(io.os_error("read", "socket", 0 - n)) }
+  defer __free(p)
+  let n = receive(s, p, limit)
+  if n < 0 { return Err(io.os_error("read", "socket", 0 - n)) }
   var out = String.new()
   out.push_raw(p, n)
-  __free(p)
   return Ok(move out)
+}
+
+fn receive(s: view TcpStream, p: Int, limit: Int) -> Int {
+  while true {
+    let n = __syscall(0, s.fd, p, limit, 0, 0, 0)
+    if n != -4 { return n }
+  }
+}
+
+/// Read bytes into a caller-owned slice. Returns the number of bytes read.
+pub fn read_into(s: view TcpStream, data: mut [UInt8]) -> Result<Int, io.IoError> {
+  let size = data.len().min(1048576)
+  if size == 0 { return Ok(0) }
+  let p = __alloc(size)
+  defer __free(p)
+  let n = receive(s, p, size)
+  if n < 0 { return Err(io.os_error("read", "socket", 0 - n)) }
+  for i in 0..n { data[i] = __load8(p + i).to_uint8() }
+  return Ok(n)
+}
+
+fn send_all(s: view TcpStream, p: Int, total: Int) -> Result<Int, io.IoError> {
+  var off = 0
+  while off < total {
+    // sendto with MSG_NOSIGNAL on a connected socket.
+    let n = __syscall(44, s.fd, p + off, total - off, 16384, 0, 0)
+    if n == -4 { continue }
+    if n < 0 { return Err(io.os_error("write", "socket", 0 - n)) }
+    if n == 0 { return Err(io.custom_error(io.IoErrorKind.Other, "socket write made no progress")) }
+    off = off + n
+  }
+  return Ok(total)
 }
 
 /// Write all bytes from `data` and return the byte count.
 pub fn write(s: view TcpStream, data: view String) -> Result<Int, io.IoError> {
-  let n = __syscall(1, s.fd, data.raw_addr(), data.len(), 0, 0, 0)
-  if n < 0 { return Err(io.os_error("write", "socket", 0 - n)) }
-  return Ok(n)
+  return send_all(s, data.raw_addr(), data.len())
+}
+
+/// Write all bytes in a List, array or slice without UTF-8 conversion.
+pub fn write_bytes(s: view TcpStream, data: view [UInt8]) -> Result<Int, io.IoError> {
+  let total = data.len()
+  if total == 0 { return Ok(0) }
+  let size = total.min(16384)
+  let p = __alloc(size)
+  defer __free(p)
+  var offset = 0
+  while offset < total {
+    let n = (total - offset).min(size)
+    for i in 0..n { __store8(p + i, data[offset + i].to_int()) }
+    let written = send_all(s, p, n)?
+    offset = offset + written
+  }
+  return Ok(total)
 }
 
 /// Close a stream, consuming it and reporting the result of close(2).
