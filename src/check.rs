@@ -7864,8 +7864,33 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
     for f in p.funcs.iter_mut() {
         ck.func(f);
     }
-    // instantiations (they were created while checking the code above, and may create more)
     let mut done: Vec<Func> = vec![];
+    // Instantiate generic Drop impls for each concrete generic struct. Drop glue
+    // calls these functions implicitly, so ordinary call-driven monomorphization
+    // would otherwise never enqueue them.
+    let mut drop_checked = HashSet::new();
+    loop {
+        let concrete: Vec<usize> = (0..ck.types.structs.len())
+            .filter(|i| !ck.types.structs[*i].generic && ck.types.structs[*i].origin.is_some())
+            .filter(|i| drop_checked.insert(*i))
+            .collect();
+        if concrete.is_empty() { break; }
+        for sid in concrete {
+            let ty = Ty::Struct(sid);
+            if let Some((name, _)) = ck.method_target(ty, Some("Drop"), "drop") {
+                ck.types.user_drop.insert(sid, name);
+            }
+        }
+        while let Some((mut f, why)) = ck.queue.pop() {
+            let before = ck.errs.len();
+            ck.func(&mut f);
+            for d in ck.errs[before..].iter_mut() {
+                d.notes.push(format!("while checking {}", why));
+            }
+            done.push(f);
+        }
+    }
+    // instantiations (they were created while checking the code above, and may create more)
     while let Some((mut f, why)) = ck.queue.pop() {
         let before = ck.errs.len();
         ck.func(&mut f);
@@ -8031,13 +8056,6 @@ impl<'a> Checker<'a> {
                             "help: wrap the value in a struct and implement Drop for that struct",
                         ),
                     );
-                    continue;
-                }
-                if !self.ps.impls[ii].generics.is_empty() {
-                    self.err(diag(
-                        "`Drop` cannot be implemented by a generic impl yet",
-                        tpos,
-                    ));
                     continue;
                 }
             }
