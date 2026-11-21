@@ -1,0 +1,8 @@
+import std.log
+
+fn main() {
+  log.info("ready")
+  log.debug("details")
+  log.warn("slow")
+  log.error("failed")
+}

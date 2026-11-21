@@ -1,0 +1,21 @@
+// std.log: minimal structured-level logging to stderr (docs/STDLIB_IO.md).
+import std.io
+
+/// Writes one line as `[LEVEL] message` to stderr. I/O failure is intentionally best effort.
+fn emit(level: Text, message: view String) {
+  var line = String.new()
+  line.push_byte(91)
+  line.push_str(level)
+  line.push_str("] ")
+  line.push_str(message)
+  io.eprintln(line)
+}
+
+/// Informational event.
+pub fn info(message: view String) { emit("INFO", message) }
+/// Diagnostic event.
+pub fn debug(message: view String) { emit("DEBUG", message) }
+/// Recoverable problem.
+pub fn warn(message: view String) { emit("WARN", message) }
+/// Error event.
+pub fn error(message: view String) { emit("ERROR", message) }

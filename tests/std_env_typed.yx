@@ -1,0 +1,13 @@
+import std.env
+
+fn main() {
+  let _ = env.set("YX_TYPED_INT", "-42")
+  let parsed = env.get_int("YX_TYPED_INT")
+  match parsed { Ok(Some(n)) => { assert(n == -42) }, _ => { assert(false) } }
+  let missing = env.get_int("YX_TYPED_MISSING")
+  match missing { Ok(None) => { assert(true) }, _ => { assert(false) } }
+  let _ = env.set("YX_TYPED_INT", "4x")
+  let invalid = env.get_int("YX_TYPED_INT")
+  match invalid { Err(_) => { assert(true) }, _ => { assert(false) } }
+  let _ = env.remove("YX_TYPED_INT")
+}

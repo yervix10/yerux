@@ -183,3 +183,34 @@ pub fn normalize(p: view String) -> String {
   }
   return r
 }
+
+/// A relative path from directory `from` to target `to`, after lexical normalization.
+/// Returns an error for absolute/relative mismatches. `relative("a/b", "a/c/d")` is `../c/d`.
+pub fn relative(from: view String, to: view String) -> Result<String, String> {
+  let a = normalize(from)
+  let b = normalize(to)
+  if is_absolute(a) != is_absolute(b) {
+    return Err(String.from("path.relative: paths must both be absolute or both be relative"))
+  }
+  let ac = components(a)
+  let bc = components(b)
+  var common = 0
+  while common < ac.len() && common < bc.len() && ac.at(common).eq(bc.at(common)) {
+    common = common + 1
+  }
+  var out = String.new()
+  var i = common
+  while i < ac.len() {
+    if out.len() > 0 { out.push_byte(47) }
+    out.push_str("..")
+    i = i + 1
+  }
+  i = common
+  while i < bc.len() {
+    if out.len() > 0 { out.push_byte(47) }
+    out.push_str(bc.at(i))
+    i = i + 1
+  }
+  if out.len() == 0 { return Ok(String.from(".")) }
+  return Ok(move out)
+}
