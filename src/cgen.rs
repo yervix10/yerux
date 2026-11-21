@@ -353,6 +353,14 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
             _ => g.line(&format!("static void nx_drop_{c}({c} *s);")),
         }
     }
+    // `impl Drop` functions are called by the drop functions of their structs
+    let mut user_drops: Vec<(usize, String)> =
+        g.types.user_drop.iter().map(|(s, f)| (*s, f.clone())).collect();
+    user_drops.sort();
+    for (sid, f) in user_drops {
+        let c = g.types.cty(Ty::Struct(sid));
+        g.line(&format!("static void nx_f_{f}({c} *);"));
+    }
     // components of mutually recursive heap nodes are dropped with a worklist (one shared function each)
     let mut sccs: Vec<Vec<HeapNode>> = vec![];
     for t in &owned_tys {
@@ -516,6 +524,7 @@ impl Gen<'_> {
 
     fn plain_struct(&self, sid: usize) -> bool {
         !self.types.is_lock_guard(sid)
+            && !self.types.user_drop.contains_key(&sid)
             && self.types.join_payload(sid).is_none()
             && self.types.runtime_struct(sid, "Shared").is_none()
             && !self.types.structs[sid].cname.starts_with("Env__")
@@ -830,6 +839,9 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                     let mut b = format!("static void nx_drop_{}({} *s) {{", cname, cname);
                     if self.types.is_lock_guard(i) {
                         b += " nx_unlock(s->f_address);";
+                    }
+                    if let Some(f) = self.types.user_drop.get(&i) {
+                        b += &format!(" nx_f_{f}(s);");
                     }
                     if let Some(payload) = self.types.join_payload(i) {
                         b += " if (!s->f_thread_word) return; void *p = (void *)(intptr_t)nx_thread_wait(s->f_thread_word); if (p) {";

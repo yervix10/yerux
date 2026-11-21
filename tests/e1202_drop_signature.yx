@@ -1,0 +1,8 @@
+// impl Drop: the method is `fn drop(mut self)`
+struct Tag { id: Int }
+impl Drop for Tag {
+  fn drop(view self) { print("tag") }
+}
+fn main() {
+  let t = Tag { id: 1 }
+}

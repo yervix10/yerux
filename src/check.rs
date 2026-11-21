@@ -6185,6 +6185,18 @@ impl<'a> Checker<'a> {
             _ => return Err(()),
         };
         let tyn = self.tn(rt);
+        if m == "drop" && pos.line < PRELUDE_LINE {
+            if let Ty::Struct(s) = rt {
+                if self.types.user_drop.contains_key(&s) {
+                    self.err(
+                        diag(format!("`drop` of {} cannot be called directly", tyn), pos)
+                            .note("it runs automatically, exactly once, when the value goes out of scope")
+                            .note("help: to drop a value early, move it into a function that takes it by value (`fn close(f: File) { }`), or end its scope"),
+                    );
+                    return Err(());
+                }
+            }
+        }
         let mut target = self.method_target(rt, None, &m);
         if target.is_none() && m == "to_string" {
             // `x.to_string()` is `x.show()` for anything that implements Show
@@ -7346,6 +7358,26 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
+            if tn == "Drop" {
+                let ok = matches!(ty, Ty::Struct(s) if !self.types.arrays.contains_key(&s)
+                    && !self.types.opaque_struct(s)
+                    && !self.types.structs[s].cname.starts_with("Env__"));
+                if !ok {
+                    self.err(
+                        diag(format!("`Drop` can only be implemented for a struct, not for {}", tyn), tpos)
+                            .note("help: wrap the value in a struct and implement Drop for that struct"),
+                    );
+                    continue;
+                }
+                if !self.ps.impls[ii].generics.is_empty() {
+                    self.err(diag("`Drop` cannot be implemented by a generic impl yet", tpos));
+                    continue;
+                }
+                if let Ty::Struct(s) = ty {
+                    // registered now so that ownership queries see it; the name is fixed below
+                    self.types.user_drop.insert(s, String::new());
+                }
+            }
             let tr = match self.ps.traits.iter().find(|t| t.name == tn) {
                 Some(t) => t.methods.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
                 None => {
@@ -7431,6 +7463,19 @@ impl<'a> Checker<'a> {
                     )
                     .note(format!("help: add {}", sigs.join(" and "))),
                 );
+            }
+        }
+        // instantiate every `impl Drop` method (drop glue calls it; user code never names it)
+        let mut drops: Vec<usize> = self.types.user_drop.keys().copied().collect();
+        drops.sort();
+        for s in drops {
+            match self.method_target(Ty::Struct(s), Some("Drop"), "drop") {
+                Some((name, _)) => {
+                    self.types.user_drop.insert(s, name);
+                }
+                None => {
+                    self.types.user_drop.remove(&s);
+                }
             }
         }
     }

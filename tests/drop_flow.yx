@@ -1,0 +1,36 @@
+// impl Drop through enums, Option/Result, Box, closures, reassignment, loops with continue
+struct Tag { id: Int }
+impl Drop for Tag {
+  fn drop(mut self) { print("tag {self.id}") }
+}
+enum Slot { Empty, Full(Tag) }
+fn make(i: Int) -> Tag { return Tag { id: i } }
+fn pass(t: Tag) -> Tag { return t }
+fn opt(i: Int) -> Option<Tag> {
+  if i > 0 { return Some(make(i)) }
+  return None
+}
+fn main() {
+  let s = Slot.Full(make(1))
+  let e = Slot.Empty
+  let b = Box<Tag>.new(make(2))
+  let o = opt(3)
+  match opt(4) {
+    Some(t) => { print("got {t.id}") }
+    None => { print("none") }
+  }
+  let p = pass(make(5))
+  var x = make(6)
+  x = make(7)
+  print("reassigned")
+  let c = move || -> Int { return p.id }
+  print(c())
+  var i = 0
+  while i < 2 {
+    let w = make(10 + i)
+    i = i + 1
+    if i == 1 { continue }
+  }
+  let r: Result<Tag, String> = Ok(make(8))
+  print("end")
+}
