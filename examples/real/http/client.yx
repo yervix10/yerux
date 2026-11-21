@@ -1,0 +1,72 @@
+import std.env
+import std.fs
+import std.io
+import std.net
+import wire
+
+struct Destination { port: Int, target: String }
+
+fn destination(url: view String) -> Result<Destination, io.IoError> {
+  let prefix = String.from("http://127.0.0.1:")
+  if !url.starts_with(prefix) { return Err(wire.bad("expected http://127.0.0.1:PORT[/PATH]")) }
+  let rest = url.slice(prefix.len(), url.len())
+  let slash = rest.find("/")
+  var end = rest.len()
+  if slash >= 0 { end = slash }
+  let port_text = rest.slice(0, end)
+  let port = wire.decimal(port_text, 65535)
+  if port <= 0 { return Err(wire.bad("invalid URL port")) }
+  var target: String = "/"
+  if slash >= 0 { target = rest.slice(slash, rest.len()) }
+  if !wire.request_path(target) { return Err(wire.bad("invalid URL path")) }
+  return Ok(Destination { port: port, target: move target })
+}
+
+fn response_status(line: view String) -> Int {
+  let words = line.split(" ")
+  if words.len() < 3 || !words.at(0).eq("HTTP/1.1") || words.at(1).len() != 3 { return -1 }
+  return wire.decimal(words.at(1), 599)
+}
+
+fn exchange(method: view String, to: view Destination, body: view String) -> Result<Int, io.IoError> {
+  if body.len() > wire.body_limit() { return Err(wire.bad("request body exceeds 1 MiB")) }
+  let addr = net.address("127.0.0.1", to.port)?
+  let peer = net.connect(addr)?
+  let head = "{method} {to.target} HTTP/1.1\r\nHost: 127.0.0.1:{to.port}\r\nContent-Length: {body.len()}\r\nConnection: close\r\n\r\n"
+  let header_sent = net.write(peer, head)?
+  let body_sent = net.write(peer, body)?
+  let reply = wire.receive(peer, false)?
+  let status = response_status(reply.start)
+  if status < 200 { return Err(wire.bad("invalid or unsupported response status")) }
+  let prefix = "{reply.start}\n"
+  let status_written = io.write_stdout(prefix)?
+  let body_written = io.write_stdout_bytes(reply.body[..])?
+  if status >= 400 { return Ok(1) }
+  return Ok(0)
+}
+
+fn request(args: view List<String>) -> Result<Int, io.IoError> {
+  let to = destination(args.at(2))?
+  if args.len() == 4 { return exchange(args.at(1), to, args.at(3)) }
+  return exchange(args.at(1), to, "")
+}
+
+fn run() -> Int {
+  let args = env.args()
+  if (args.len() != 3 || !args.at(1).eq("GET")) && (args.len() != 4 || !args.at(1).eq("POST")) {
+    io.eprintln("usage: http-client GET URL | http-client POST URL TEXT")
+    return 2
+  }
+  match request(args) {
+    Ok(status) => { return status }
+    Err(e) => {
+      io.eprintln("{e}")
+      return 1
+    }
+  }
+}
+
+fn main() {
+  let status = run()
+  if status != 0 { io.exit(status) }
+}

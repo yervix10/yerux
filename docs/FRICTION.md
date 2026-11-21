@@ -188,3 +188,58 @@ the JSON escape rules in the parser.
 
 The bounded-read gap from MiniLang also applies to JSON. Both
 `std.fs.read_to_string` and `std.io.read_all` return entire strings.
+
+## HTTP
+
+See [HTTP](HTTP.md) for the loopback server and client.
+
+### Fixed: socket writes could return a short count
+
+`std.net.write` formerly returned after one syscall despite its write-all
+contract. It now shares a send loop with the binary writer, retries
+interrupted calls and reports peer write failures without SIGPIPE.
+
+### Fixed: socket framing had only a String interface
+
+A TCP read can split a UTF-8 character, and HTTP bodies can be binary.
+The codec now passes slices to `net.read_into` and `net.write_bytes`,
+and uses `io.write_stdout_bytes` to emit the body. Byte containers
+currently need a scratch copy for direct socket I/O.
+
+### Open: blocking sockets lack timeouts and a bound-address query
+
+`net.listen` can bind port zero, but the API cannot return the selected
+port. The loopback test reserves a port and retries on a collision.
+Blocking reads have no timeout option, so the example handles peers
+sequentially and the test runner bounds each exchange externally.
+
+### Open: path lookup and file open are separate operations
+
+The file API does not provide descriptor-relative traversal with
+no-follow flags. The example checks each path component with
+`fs.symlink_metadata` before opening and assumes a trusted static tree
+that is not being modified concurrently.
+
+### Open: a sized conversion written with .from gives a missing-variable error
+
+```yx
+fn main() { let b = UInt8.from(0) }
+```
+
+The diagnostic says the variable `UInt8` does not exist. For this type use a
+suffixed literal such as `0u8` or a checked conversion such as
+`n.to_uint8()`. Both forms work in a fixed-size buffer initializer.
+
+### Fixed: formatting an escaped apostrophe desynchronized later Char tokens
+
+```yx
+fn main() {
+  print('\'')
+  print('^')
+}
+```
+
+The compiler accepted the code but the formatter stopped at the escaped
+apostrophe and then treated later characters as separate tokens. The
+formatter now consumes the escape together and tests the resulting text
+against a formatting golden.

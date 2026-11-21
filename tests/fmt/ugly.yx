@@ -74,3 +74,5 @@ fn   asb(n:Int)->Int{
 let b=n   as Int<0..255>   else{return -1}
 let c = n as Int<..9>
 return b+c}
+
+fn quotes(){print('\'');print('^');print('\\')}

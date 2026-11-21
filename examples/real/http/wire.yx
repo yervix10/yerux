@@ -1,0 +1,154 @@
+// Bounded HTTP/1.1 framing shared by the loopback server and client.
+import std.io
+import std.net
+
+pub struct Message { start: String, body: List<UInt8> }
+struct Head { text: String, used: Int, next: Int }
+
+pub fn bad(message: Text) -> io.IoError {
+  return io.custom_error(io.IoErrorKind.InvalidData, message)
+}
+
+pub fn body_limit() -> Int { return 1048576 }
+
+pub fn decimal(s: view String, max: Int) -> Int {
+  if s.is_empty() { return -1 }
+  var n = 0
+  for i in 0..s.len() {
+    let d = s.byte(i) - 48
+    if d < 0 || d > 9 || d > max || n > (max - d) / 10 { return -1 }
+    n = n * 10 + d
+  }
+  return n
+}
+
+fn read_head(peer: view net.TcpStream, buf: mut [UInt8]) -> Result<Head, io.IoError> {
+  var text = String.new()
+  // Track the length of the matched prefix of CRLF CRLF across reads.
+  var mark = 0
+  while true {
+    let n = net.read_into(peer, buf)?
+    if n == 0 { return Err(bad("unexpected EOF before end of headers")) }
+    for i in 0..n {
+      let b = buf[i].to_int()
+      if b != 9 && b != 10 && b != 13 && (b < 32 || b > 126) {
+        return Err(bad("headers must use ASCII"))
+      }
+      text.push_byte(b)
+      if text.len() > 8192 { return Err(bad("headers exceed 8192 bytes")) }
+      if (mark == 0 || mark == 2) && b == 13 {
+        mark = mark + 1
+      } else if (mark == 1 || mark == 3) && b == 10 {
+        mark = mark + 1
+      } else if b == 13 {
+        mark = 1
+      } else {
+        mark = 0
+      }
+      if mark == 4 {
+        return Ok(Head { text: text.slice(0, text.len() - 4), used: n, next: i + 1 })
+      }
+    }
+  }
+}
+
+fn name_char(b: Int) -> Bool {
+  if (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 96 { return true }
+  match Char.from_int(b) {
+    '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '|' | '~' => { return true }
+    _ => { return false }
+  }
+}
+
+fn field_value(s: view String) -> Bool {
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b != 9 && (b < 32 || b > 126) { return false }
+  }
+  return true
+}
+
+fn host_value(s: view String) -> Bool {
+  if s.is_empty() { return false }
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b <= 32 || b == 44 { return false }
+  }
+  return true
+}
+
+fn fields(text: view String, request: Bool) -> Result<(String, Int), io.IoError> {
+  let lines = text.split("\r\n")
+  if lines.is_empty() || lines.at(0).is_empty() || !field_value(lines.at(0)) {
+    return Err(bad("missing or invalid start line"))
+  }
+  var length = -1
+  var host = false
+  for i in 1..lines.len() {
+    let colon = lines.at(i).find(":")
+    if colon <= 0 { return Err(bad("malformed header")) }
+    for j in 0..colon {
+      if !name_char(lines.at(i).byte(j)) { return Err(bad("invalid header name")) }
+    }
+    let raw_name = lines.at(i).slice(0, colon)
+    let name = raw_name.to_lower()
+    let raw_value = lines.at(i).slice(colon + 1, lines.at(i).len())
+    if !field_value(raw_value) { return Err(bad("invalid header value")) }
+    let value = raw_value.trim()
+    if name.eq("transfer-encoding") { return Err(bad("Transfer-Encoding is unsupported")) }
+    if request && name.eq("expect") { return Err(bad("Expect is unsupported")) }
+    if name.eq("content-length") {
+      if length >= 0 { return Err(bad("duplicate Content-Length")) }
+      length = decimal(value, body_limit())
+      if length < 0 { return Err(bad("invalid or oversized Content-Length")) }
+    }
+    if request && name.eq("host") {
+      if host || !host_value(value) { return Err(bad("invalid or duplicate Host")) }
+      host = true
+    }
+  }
+  if request && !host { return Err(bad("missing Host")) }
+  if length < 0 && (!request || lines.at(0).starts_with("POST ")) {
+    return Err(bad("missing Content-Length"))
+  }
+  return Ok((String.from(lines.at(0)), length.max(0)))
+}
+
+pub fn receive(peer: view net.TcpStream, request: Bool) -> Result<Message, io.IoError> {
+  var scratch = [0u8; 4096]
+  let head = read_head(peer, scratch[..])?
+  let (start, length) = fields(head.text, request)?
+  var body = List<UInt8>.new()
+  let buffered = (head.used - head.next).min(length)
+  for i in 0..buffered { body.push(scratch[head.next + i]) }
+  while body.len() < length {
+    let want = (length - body.len()).min(scratch.len())
+    let got = net.read_into(peer, scratch[..want])?
+    if got == 0 { return Err(bad("unexpected EOF in message body")) }
+    for i in 0..got { body.push(scratch[i]) }
+  }
+  return Ok(Message { start: move start, body: move body })
+}
+
+pub fn request_path(s: view String) -> Bool {
+  if !s.starts_with("/") { return false }
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b < 33 || b > 126 { return false }
+  }
+  return true
+}
+
+fn status_line(code: Int) -> Text {
+  if code == 200 { return "HTTP/1.1 200 OK" }
+  if code == 404 { return "HTTP/1.1 404 Not Found" }
+  return "HTTP/1.1 400 Bad Request"
+}
+
+pub fn respond(peer: view net.TcpStream, code: Int, body: view [UInt8]) -> Result<Int, io.IoError> {
+  let status = status_line(code)
+  let length = body.len()
+  let head = "{status}\r\nContent-Length: {length}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n"
+  let sent = net.write(peer, head)?
+  return net.write_bytes(peer, body)
+}

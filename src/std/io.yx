@@ -405,9 +405,7 @@ pub fn read_all() -> Result<String, IoError> {
 
 // ───────────────────────── writing to the standard streams ─────────────────────────
 
-fn write_fd(fd: Int, s: view String, what: Text) -> Result<Int, IoError> {
-    let total = s.len()
-    let base = s.raw_addr()
+fn write_raw_fd(fd: Int, base: Int, total: Int, what: Text) -> Result<Int, IoError> {
     var off = 0
     while off < total {
         let n = __syscall(1, fd, base + off, total - off, 0, 0, 0)
@@ -417,14 +415,38 @@ fn write_fd(fd: Int, s: view String, what: Text) -> Result<Int, IoError> {
         if n < 0 {
             return Err(os_error(what, "", 0 - n))
         }
+        if n == 0 {
+            return Err(custom_error(IoErrorKind.Other, "write made no progress"))
+        }
         off = off + n
     }
     return Ok(total)
 }
 
+fn write_fd(fd: Int, s: view String, what: Text) -> Result<Int, IoError> {
+    return write_raw_fd(fd, s.raw_addr(), s.len(), what)
+}
+
 // Write the bytes of `s` to standard output (no newline added; `print` adds one). Returns the byte count.
 pub fn write_stdout(s: view String) -> Result<Int, IoError> {
     return write_fd(1, s, "write stdout")
+}
+
+/// Write a List, array or slice of bytes to stdout without UTF-8 conversion.
+pub fn write_stdout_bytes(data: view [UInt8]) -> Result<Int, IoError> {
+    let total = data.len()
+    if total == 0 { return Ok(0) }
+    let size = total.min(16384)
+    let p = __alloc(size)
+    defer __free(p)
+    var offset = 0
+    while offset < total {
+        let n = (total - offset).min(size)
+        for i in 0..n { __store8(p + i, data[offset + i].to_int()) }
+        let written = write_raw_fd(1, p, n, "write stdout")?
+        offset = offset + written
+    }
+    return Ok(total)
 }
 
 pub fn write_stderr(s: view String) -> Result<Int, IoError> {

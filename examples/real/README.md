@@ -58,3 +58,8 @@ functions. Runnable scripts are in [minilang/scripts](minilang/scripts).
 The [JSON parser and formatter](../../docs/JSON.md) validates or formats
 a file or stdin, preserves number precision and member order, and handles
 Unicode escapes. See [the sample document](json/example.json).
+
+## HTTP
+
+The [HTTP/1.1 loopback example](../../docs/HTTP.md) serves static files,
+echoes POST bodies, and includes a CLI for GET and POST requests.

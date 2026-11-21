@@ -8,9 +8,14 @@ native backend and through `syscall(2)` on the C backend. Import it with
 literal `::1`. Names are not resolved (DNS is not implemented). `listen(addr)`,
 `accept(listener)`, `connect(addr)`, `read(stream, limit)`, `write(stream, data)`,
 `close_stream` and `close_listener` report failures as `Result` values. Reads
-return at most `limit` bytes; empty data denotes EOF. Writes return the number
-of bytes accepted by one syscall and can be short. Calls block; poll/epoll and
-nonblocking modes are not provided.
+return at most `limit` bytes; empty data denotes EOF. `read_into(stream, buf)`
+takes a mutable byte slice (or array/List), returns the number of bytes read,
+and caps a read at 1 MiB. Use it for binary input or text spanning TCP reads.
+`write(stream, data)` and `write_bytes(stream, data)` send all the bytes or
+return an error. `write_bytes` takes a read-only byte slice. Interrupted reads
+and writes are retried, and broken socket writes are reported as errors
+without raising SIGPIPE. Calls block; poll/epoll and nonblocking modes are
+not provided.
 
 ## Socket ownership and close
 
