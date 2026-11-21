@@ -178,6 +178,9 @@ type parity suites. The harness also compares formatter output against
 the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
+The bootstrap rebuilds 6 of 6 executables with identical C. At this
+milestone the program comparison matches 126 of 327 candidates, including
+61 runtime panics, with two expected rejections and zero discrepancies.
 
 ## Remaining work
 
