@@ -1,0 +1,26 @@
+fn invoke(f: view fn(Int) -> Int, x: Int) -> Int { return f(x) }
+
+fn main() {
+    let seed = 10
+    let wrap = || {
+        // The initializer reads the outer seed before introducing its shadow.
+        let seed = seed + 1
+        let f = |n: Int| seed + n
+        return f(2)
+    }
+    let a = wrap()
+    let b = invoke(|x| x + seed, a)
+    let run = move || {
+        let inner = || seed + 1
+        return inner()
+    }
+    let c = run()
+    if true {
+        let seed = false
+        let flag = || !seed
+        let test_result = flag()
+        print(test_result)
+    }
+    let last = a + b + c + seed
+    print(last)
+}

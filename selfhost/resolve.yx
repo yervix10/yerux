@@ -2,105 +2,13 @@
 import std.env
 import std.fs
 import std.path
-
-// A flat syntax tree. Children immediately follow their parent; end skips a subtree.
-struct AstNode { tag: String, end: Int }
-struct AstReader { source: String, cursor: Int, nodes: List<AstNode> }
+import ast
 
 struct Symbol { name: String, is_function: Bool, public: Bool }
 struct Module { key: String, owner: String, loading: Bool, symbols: List<Symbol> }
 struct Alias { name: String, module_id: Int }
 struct FileContext { module_id: Int, aliases: List<Alias>, shadowed: List<String> }
 struct Resolver { cache: String, root: String, modules: List<Module>, errors: Int }
-
-fn artifact_error(message: Text) {
-  print(message)
-  env.exit(2)
-}
-
-fn delimiter(b: Int) -> Bool {
-  return b == 40 || b == 41 || b == 91 || b == 93 || b == 44 || b == 10 || b == 13
-}
-
-fn tree_byte(reader: view AstReader) -> Int {
-  if reader.cursor >= reader.source.len() { return -1 }
-  return reader.source.byte(reader.cursor)
-}
-
-fn read_node(reader: mut AstReader) {
-  let start = reader.cursor
-  var close = 0
-  var label = String.from("[")
-  if tree_byte(reader) == 91 {
-    close = 93
-    reader.cursor = reader.cursor + 1
-  } else {
-    while tree_byte(reader) >= 0 && !delimiter(tree_byte(reader)) {
-      reader.cursor = reader.cursor + 1
-    }
-    label = reader.source.slice(start, reader.cursor)
-    if tree_byte(reader) == 40 {
-      close = 41
-      reader.cursor = reader.cursor + 1
-    }
-  }
-
-  let index = reader.nodes.len()
-  reader.nodes.push(AstNode { tag: move label, end: index + 1 })
-  if close == 0 { return }
-
-  if tree_byte(reader) != close {
-    read_node(reader)
-    while tree_byte(reader) == 44 {
-      reader.cursor = reader.cursor + 1
-      read_node(reader)
-    }
-  }
-  if tree_byte(reader) != close {
-    artifact_error("invalid source AST delimiter")
-    return
-  }
-  reader.cursor = reader.cursor + 1
-  reader.nodes.at(index).end = reader.nodes.len()
-}
-
-fn decode(source: String) -> AstReader {
-  var reader = AstReader { source: move source, cursor: 0, nodes: List<AstNode>.new() }
-  read_node(reader)
-  let next = tree_byte(reader)
-  if reader.nodes.at(0).tag != "File" || !(next == -1 || next == 10 || next == 13) {
-    artifact_error("expected a File AST")
-  }
-  return move reader
-}
-
-fn child(tree: view List<AstNode>, parent: Int, offset: Int) -> Int {
-  var i = parent + 1
-  for j in 0..offset {
-    if i >= tree.at(parent).end { artifact_error("invalid source AST node arity"); return parent }
-    i = tree.at(i).end
-  }
-  if i >= tree.at(parent).end { artifact_error("invalid source AST node arity"); return parent }
-  return i
-}
-
-fn nibble(b: Int) -> Int {
-  if b >= 97 { return b - 87 }
-  return b - 48
-}
-
-fn decoded_name(tree: view List<AstNode>, index: Int) -> String {
-  let text = String.from(tree.at(index).tag)
-  var out = String.new()
-  for i in 0..text.len() / 2 {
-    out.push_byte(nibble(text.byte(i * 2)) * 16 + nibble(text.byte(i * 2 + 1)))
-  }
-  return out
-}
-
-fn name_at(tree: view List<AstNode>, parent: Int, offset: Int) -> String {
-  return decoded_name(tree, child(tree, parent, offset))
-}
 
 fn module_index(resolver: view Resolver, key: view String) -> Int {
   for i in 0..resolver.modules.len() {
@@ -157,14 +65,14 @@ fn dependency_file(resolver: view Resolver, dep: view String) -> String {
   return path.join(resolver.cache, source)
 }
 
-fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<AstNode>, decl: Int) {
-  let dep = name_at(tree, decl, 0)
-  let rename = child(tree, decl, 1)
+fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>, decl: Int) {
+  let dep = ast.name_at(tree, decl, 0)
+  let rename = ast.child(tree, decl, 1)
   var alias = String.new()
   if tree.at(rename).tag == "_" {
     let segments = dep.split(".")
     alias = String.from(segments.at(segments.len() - 1))
-  } else { alias = decoded_name(tree, rename) }
+  } else { alias = ast.decoded_name(tree, rename) }
 
   if alias_module(ctx, alias) >= 0 {
     issue(resolver, ctx.module_id, "duplicate-alias:{alias}:{dep}")
@@ -188,12 +96,12 @@ fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<A
   ctx.aliases.push(Alias { name: move alias, module_id: id })
 }
 
-fn collect_symbol(symbols: mut List<Symbol>, tree: view List<AstNode>, item: Int, decl: Int) {
+fn collect_symbol(symbols: mut List<Symbol>, tree: view List<ast.AstNode>, item: Int, decl: Int) {
   let tag = String.from(tree.at(decl).tag)
   if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" { return }
-  let name = name_at(tree, decl, 0)
+  let name = ast.name_at(tree, decl, 0)
   let old = symbol_index(symbols, name)
-  let public = tree.at(child(tree, item, 0)).tag == "true"
+  let public = tree.at(ast.child(tree, item, 0)).tag == "true"
   let symbol = Symbol { name: move name, is_function: tag == "Fn", public: public }
   if old < 0 { symbols.push(move symbol) }
   else { symbols.set(old, move symbol) }
@@ -252,33 +160,33 @@ fn resolve_path(resolver: mut Resolver, ctx: view FileContext, name: view String
   } else { resolve_name(resolver, ctx, name, use_kind) }
 }
 
-fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<AstNode>, index: Int) {
+fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>, index: Int) {
   let tag = String.from(tree.at(index).tag)
   var first = index + 1
   if tag == "Field" || tag == "Method" {
-    let recv = child(tree, index, 0)
+    let recv = ast.child(tree, index, 0)
     if tree.at(recv).tag == "Var" {
-      let alias = name_at(tree, recv, 0)
-      let member = name_at(tree, index, 1)
+      let alias = ast.name_at(tree, recv, 0)
+      let member = ast.name_at(tree, index, 1)
       if resolve_qualified(resolver, ctx, alias, member) {
         first = tree.at(recv).end
       }
     }
   } else if tag == "Type" || tag == "DynType" || tag == "StructLit" {
-    resolve_path(resolver, ctx, name_at(tree, index, 0), "type")
+    resolve_path(resolver, ctx, ast.name_at(tree, index, 0), "type")
   } else if tag == "GenericMember" || tag == "Variant" {
-    resolve_path(resolver, ctx, name_at(tree, index, 0), "value")
+    resolve_path(resolver, ctx, ast.name_at(tree, index, 0), "value")
   } else if tag == "Generic" {
-    let bounds = child(tree, index, 1)
+    let bounds = ast.child(tree, index, 1)
     for i in bounds + 1..tree.at(bounds).end {
-      resolve_path(resolver, ctx, decoded_name(tree, i), "value")
+      resolve_path(resolver, ctx, ast.decoded_name(tree, i), "value")
     }
   } else if tag == "Call" {
-    resolve_name(resolver, ctx, name_at(tree, index, 0), "function")
+    resolve_name(resolver, ctx, ast.name_at(tree, index, 0), "function")
   } else if tag == "Var" || tag == "Move" {
-    resolve_name(resolver, ctx, name_at(tree, index, 0), "value")
+    resolve_name(resolver, ctx, ast.name_at(tree, index, 0), "value")
   } else if tag == "Let" {
-    let name = name_at(tree, index, 0)
+    let name = ast.name_at(tree, index, 0)
     if alias_module(ctx, name) >= 0 {
       issue(resolver, ctx.module_id, "alias-shadow:{name}")
       ctx.shadowed.push(move name)
@@ -292,12 +200,12 @@ fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<AstNode>,
   }
 }
 
-fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<AstNode>) {
-  let items = child(tree, 0, 0)
+fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>) {
+  let items = ast.child(tree, 0, 0)
   let end = tree.at(items).end
   var start = items + 1
   while start < end {
-    let decl = child(tree, start, 2)
+    let decl = ast.child(tree, start, 2)
     if tree.at(decl).tag != "Import" { break }
     import_module(resolver, ctx, tree, decl)
     start = tree.at(start).end
@@ -305,7 +213,7 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<As
 
   var i = start
   while i < end {
-    let decl = child(tree, i, 2)
+    let decl = ast.child(tree, i, 2)
     if tree.at(decl).tag == "Import" {
       issue(resolver, ctx.module_id, String.from("late-import"))
       break
@@ -317,10 +225,10 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<As
   var symbols = List<Symbol>.new()
   var scanned = start
   while scanned < end {
-    let decl = child(tree, scanned, 2)
+    let decl = ast.child(tree, scanned, 2)
     let tag = String.from(tree.at(decl).tag)
     if tag == "Test" {
-      if tree.at(child(tree, scanned, 0)).tag == "true" {
+      if tree.at(ast.child(tree, scanned, 0)).tag == "true" {
         issue(resolver, ctx.module_id, String.from("public-test"))
       }
     } else {
@@ -341,7 +249,7 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<As
 
   i = start
   while i < scanned {
-    let decl = child(tree, i, 2)
+    let decl = ast.child(tree, i, 2)
     if tree.at(decl).tag != "Test" {
       ctx.shadowed = List<String>.new()
       visit(resolver, ctx, tree, decl)
@@ -359,7 +267,7 @@ fn load_module(resolver: mut Resolver, key: view String, owner: view String, fil
   match fs.read_to_string(file) {
     Err(e) => { print("could not read {file}: {e.message}"); env.exit(2) }
     Ok(source) => {
-      let tree = decode(move source)
+      let tree = ast.decode(move source)
       var ctx = FileContext { module_id: module_id, aliases: List<Alias>.new(), shadowed: List<String>.new() }
       module_items(resolver, ctx, tree.nodes)
     }
@@ -371,20 +279,20 @@ fn load_module(resolver: mut Resolver, key: view String, owner: view String, fil
 fn main() {
   let args = env.args()
   if args.len() != 3 {
-    artifact_error("usage: resolve AST_ROOT ENTRY.yx")
+    ast.artifact_error("usage: resolve AST_ROOT ENTRY.yx")
     return
   }
   let entry = String.from(args.at(2))
   if path.is_absolute(entry) {
-    artifact_error("ENTRY.yx must be relative to AST_ROOT")
+    ast.artifact_error("ENTRY.yx must be relative to AST_ROOT")
     return
   }
   let cache = String.from(args.at(1))
-  let ast = path.join(cache, entry)
+  let input = path.join(cache, entry)
   let key = path.stem(entry)
   var resolver = Resolver {
     cache: move cache, root: path.parent(entry), modules: List<Module>.new(), errors: 0,
   }
-  let id = load_module(resolver, key, String.from("@"), ast)
+  let id = load_module(resolver, key, String.from("@"), input)
   if resolver.errors > 0 { env.exit(1) }
 }

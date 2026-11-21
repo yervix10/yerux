@@ -1,0 +1,4 @@
+fn consume(n: Int) { print(n) }
+fn main() {
+    let n = consume(1)
+}

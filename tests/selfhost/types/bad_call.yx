@@ -1,0 +1,5 @@
+fn accepts(ok: Bool) -> Bool { return ok }
+fn main() {
+    let n = accepts('a')
+    print(n)
+}

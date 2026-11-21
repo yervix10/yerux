@@ -1,0 +1,25 @@
+struct Point { x: Int, visible: Bool }
+struct Pair { left: Point, right: Point }
+
+fn main() {
+    let value = 7
+    var state: Int = value
+    let byte: UInt8 = 255
+    let signed = -128i8
+    let large = 18446744073709551615u64
+    let scale: Float32 = 2.5
+    let rate = 1.5
+    let ch = 'ñ'
+    let greeting = "hello"
+    let owned: String = "world"
+    state = value + 2
+    let p = point(state)
+    let q = Point { visible: !p.visible, x: p.x }
+    let pair = Pair { left: p, right: q }
+    let answer = pair.right.x
+    print(answer)
+}
+
+fn point(x: Int) -> Point {
+    return Point { x: x, visible: true }
+}

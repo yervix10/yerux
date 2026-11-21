@@ -1,0 +1,94 @@
+import std.env
+
+// A flat syntax tree. Children immediately follow their parent; end skips a subtree.
+pub struct AstNode { tag: String, end: Int }
+pub struct AstReader { source: String, cursor: Int, nodes: List<AstNode> }
+
+pub fn artifact_error(message: Text) {
+  print(message)
+  env.exit(2)
+}
+
+fn delimiter(b: Int) -> Bool {
+  return b == 40 || b == 41 || b == 91 || b == 93 || b == 44 || b == 10 || b == 13
+}
+
+fn tree_byte(reader: view AstReader) -> Int {
+  if reader.cursor >= reader.source.len() { return -1 }
+  return reader.source.byte(reader.cursor)
+}
+
+fn read_node(reader: mut AstReader) {
+  let start = reader.cursor
+  var close = 0
+  var label = String.from("[")
+  if tree_byte(reader) == 91 {
+    close = 93
+    reader.cursor = reader.cursor + 1
+  } else {
+    while tree_byte(reader) >= 0 && !delimiter(tree_byte(reader)) {
+      reader.cursor = reader.cursor + 1
+    }
+    label = reader.source.slice(start, reader.cursor)
+    if tree_byte(reader) == 40 {
+      close = 41
+      reader.cursor = reader.cursor + 1
+    }
+  }
+
+  let index = reader.nodes.len()
+  reader.nodes.push(AstNode { tag: move label, end: index + 1 })
+  if close == 0 { return }
+
+  if tree_byte(reader) != close {
+    read_node(reader)
+    while tree_byte(reader) == 44 {
+      reader.cursor = reader.cursor + 1
+      read_node(reader)
+    }
+  }
+  if tree_byte(reader) != close {
+    artifact_error("invalid source AST delimiter")
+    return
+  }
+  reader.cursor = reader.cursor + 1
+  reader.nodes.at(index).end = reader.nodes.len()
+}
+
+pub fn decode(source: String) -> AstReader {
+  var reader = AstReader { source: move source, cursor: 0, nodes: List<AstNode>.new() }
+  read_node(reader)
+  let next = tree_byte(reader)
+  if reader.nodes.at(0).tag != "File" || !(next == -1 || next == 10 || next == 13) {
+    artifact_error("expected a File AST")
+  }
+  return move reader
+}
+
+pub fn child(tree: view List<AstNode>, parent: Int, offset: Int) -> Int {
+  var i = parent + 1
+  for j in 0..offset {
+    if i >= tree.at(parent).end { artifact_error("invalid source AST node arity"); return parent }
+    i = tree.at(i).end
+  }
+  if i >= tree.at(parent).end { artifact_error("invalid source AST node arity"); return parent }
+  return i
+}
+
+fn nibble(b: Int) -> Int {
+  if b >= 97 { return b - 87 }
+  return b - 48
+}
+
+pub fn decoded_name(tree: view List<AstNode>, index: Int) -> String {
+  let text = String.from(tree.at(index).tag)
+  var out = String.new()
+  for i in 0..text.len() / 2 {
+    out.push_byte(nibble(text.byte(i * 2)) * 16 + nibble(text.byte(i * 2 + 1)))
+  }
+  return out
+}
+
+pub fn name_at(tree: view List<AstNode>, parent: Int, offset: Int) -> String {
+  return decoded_name(tree, child(tree, parent, offset))
+}

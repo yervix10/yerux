@@ -143,6 +143,7 @@ if [ $BLESS -eq 0 ]; then bash tests/tokens_dump.sh >"$TMP/td.out" 2>&1 || { cat
 if [ $BLESS -eq 0 ]; then bash tests/selfhost_lexer.sh >"$TMP/shlex.out" 2>&1 || { cat "$TMP/shlex.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/selfhost_parser.sh >"$TMP/shparser.out" 2>&1 || { cat "$TMP/shparser.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/selfhost_resolve.sh >"$TMP/shresolve.out" 2>&1 || { cat "$TMP/shresolve.out"; fails=$((fails+1)); }; fi
+if [ $BLESS -eq 0 ]; then bash tests/selfhost_types.sh >"$TMP/shtypes.out" 2>&1 || { cat "$TMP/shtypes.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then python3 tests/fuzz_parse.py --edge-only -j 2 >"$TMP/fp.out" 2>&1 || { cat "$TMP/fp.out"; fails=$((fails+1)); }; fi
 echo "failures: $fails"
 [ $fails -eq 0 ]

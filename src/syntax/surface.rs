@@ -1,5 +1,5 @@
 // Source AST before module loading, name resolution and constant folding.
-use super::*;
+use super::{lexical::Lexical, *};
 
 #[derive(Default)]
 pub(super) struct Surface {
@@ -9,6 +9,7 @@ pub(super) struct Surface {
     lengths: Vec<String>,
     structs: HashSet<String>,
     imports: HashSet<String>,
+    lexical: Option<Lexical>,
 }
 
 fn node(tag: &str, fields: impl IntoIterator<Item = String>) -> String {
@@ -31,6 +32,14 @@ fn name(s: &str) -> String {
 }
 
 pub fn dump(src: &str) -> PR<String> {
+    source(src, false)
+}
+
+pub fn dump_locals(src: &str) -> PR<String> {
+    source(src, true)
+}
+
+fn source(src: &str, lexical: bool) -> PR<String> {
     let mut p = Parser::new_raw(lex(src)?);
     let structs =
         p.t.windows(2)
@@ -41,13 +50,18 @@ pub fn dump(src: &str) -> PR<String> {
             .collect();
     p.surface = Some(Surface {
         structs,
+        lexical: lexical.then(Lexical::default),
         ..Surface::default()
     });
     let mut items = Vec::new();
     while !matches!(p.peek(), Tok::Eof) {
         items.push(p.source_item()?);
     }
-    Ok(node("File", [list(items)]))
+    if let Some(lexical) = p.surface.unwrap().lexical {
+        Ok(lexical.rows.join("\n"))
+    } else {
+        Ok(node("File", [list(items)]))
+    }
 }
 
 impl Parser {
@@ -256,6 +270,7 @@ impl Parser {
         let generics = self.source_generics()?;
         self.expect_sym("(")?;
         let mut first = true;
+        let mut param_names = Vec::new();
         let params = self.source_list(")", |p| {
             if external && !first && p.eat_sym("..") {
                 p.expect_sym(".")?;
@@ -273,9 +288,12 @@ impl Parser {
             if receiver {
                 let mode = p.source_mode();
                 p.bump();
+                param_names.push("self".into());
                 return Ok(node("Self", [mode_name(mode).into()]));
             }
-            let n = name(&p.ident()?.0);
+            let param = p.ident()?.0;
+            let n = name(&param);
+            param_names.push(param);
             p.expect_sym(":")?;
             let mode = p.source_mode();
             let ty = p.ty()?;
@@ -287,6 +305,9 @@ impl Parser {
         let ret = self.source_ret()?;
         let block = if body {
             let block = self.block()?;
+            if let Some(lexical) = &mut self.surface.as_mut().unwrap().lexical {
+                lexical.function(param_names, &block);
+            }
             self.source_block(&block)
         } else {
             self.eat_sym(";");
@@ -320,6 +341,9 @@ impl Parser {
         } else if self.source_eat_kw("test") {
             let n = self.source_string()?;
             let body = self.block()?;
+            if let Some(lexical) = &mut self.surface.as_mut().unwrap().lexical {
+                lexical.function([], &body);
+            }
             node("Test", [n, self.source_block(&body)])
         } else if self.source_eat_kw("link") {
             node("Link", [self.source_string()?])
@@ -342,6 +366,9 @@ impl Parser {
             };
             self.expect_sym("=")?;
             let value = self.expr()?;
+            if let Some(lexical) = &mut self.surface.as_mut().unwrap().lexical {
+                lexical.expr(&value);
+            }
             self.eat_sym(";");
             node("Const", [n, ty, self.source_expr(&value)])
         } else if self.source_eat_kw("type") {

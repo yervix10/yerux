@@ -1,0 +1,4 @@
+struct Point { x: Int, label: Text, valid: Bool }
+fn main() {
+    let p = Point { x: false, x: 2, label: "ok", extra: 3 }
+}
