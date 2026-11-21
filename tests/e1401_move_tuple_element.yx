@@ -1,0 +1,10 @@
+// moving one element out of an owned tuple: the message names `.0` (not the internal `_0`) and suggests the fix
+fn pair() -> (String, String) {
+  return (String.from("a"), String.from("b"))
+}
+
+fn main() {
+  let p = pair()
+  let first = p.0
+  print(first)
+}

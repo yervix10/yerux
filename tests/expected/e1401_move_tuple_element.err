@@ -1,0 +1,8 @@
+error: cannot move 'p.0' out of its struct
+ --> tests/e1401_move_tuple_element.yx:8:15
+  |
+8 |   let first = p.0
+  |               ^^^
+  = help: take the whole tuple apart instead: `let (a, b) = move t` (each name then owns its element), or borrow the element (call a method on it, or pass it to a `view`/`mut` parameter)
+
+1 error(s). Nothing was generated.

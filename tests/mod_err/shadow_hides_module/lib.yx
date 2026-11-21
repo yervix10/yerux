@@ -1,0 +1,9 @@
+pub fn twice(n: Int) -> Int {
+  return n * 2
+}
+
+pub fn label(s: view String) -> String {
+  var r = String.from("lib:")
+  r.push_str(s)
+  return r
+}

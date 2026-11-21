@@ -1,0 +1,22 @@
+// io.run_status lets real_main's destructors and defers run, then ends the process with the status it returned
+import std.io
+
+struct Guard { name: String }
+
+impl Drop for Guard {
+  fn drop(mut self) {
+    print("drop {self.name}")
+  }
+}
+
+fn real_main() -> Int {
+  let g = Guard { name: String.from("inner") }
+  defer print("deferred")
+  print("working")
+  return 3
+}
+
+// run_status as the only statement of main: nothing is left alive in main when the process ends
+fn main() {
+  io.run_status(real_main)
+}

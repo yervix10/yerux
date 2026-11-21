@@ -307,3 +307,37 @@ the first one outside any nested literal (inside a nested literal braces still f
 - **`io.exit` does not run destructors or flush**, so subcommand runners return a status up to `main` and exit
   there (as done here); worth a sentence in the std.io docs next to `exit`.
 
+## Fixed: calls nested into `view` arguments and chained on call results
+
+`s.push_str(args.help_line(..))` ("pass a variable here") and `d.len().show()` / `a.min(b).as_millis()` /
+`time.now().since(t)` ("expected a variable or a field here") now compile. Owned `String` temporaries given to a
+`view String` parameter of the built-in String methods (`push_str`, `starts_with`, `find`, `contains`, `==`
+arguments, ...) are bound to a hidden variable that lives for the call (the mechanism user functions already had),
+and a Copy receiver that is not a place (Int, Float, Bool, small structs and enums) is bound to a hidden
+variable like an Option/Result receiver was. Char and `Ptr` receivers keep their built-in handling. Test:
+`tests/chain_temps.yx` (C, native, ASan, leakcheck).
+
+## Fixed: locals named like an imported module
+
+`let path = ..`, `fn f(path: String)` and `for path in ..` used to be rejected ("'path' is already the name of an
+imported module", or "module has no item called 'len'" for a parameter) when `std.path` was imported. The module
+loader now tracks such declarations by block: inside the scope the name is the variable, after it (and in the
+initializer of the declaring `let`) it is the module again. Closure parameters and tuple/match patterns that bind a
+module name are not tracked yet (rename them or import with `as`). Tests: `tests/mod_ok/shadow_module`,
+`tests/mod_err/shadow_hides_module` (the module is hidden inside the scope: the error is the ordinary "no method"). The
+self-hosted resolver (`selfhost/resolve.yx`) follows the same scoping (`tests/selfhost_resolve.sh`, 0 mismatches).
+
+## Fixed: moving a tuple element named the internal field
+
+`let first = p.0` on an owned tuple reported `cannot move 'p._0' out of its struct` with generic advice. Tuple
+elements are now printed as `p.0` in every place diagnostic, and the note suggests the fix that works:
+`let (a, b) = move p`. Test: `tests/e1401_move_tuple_element.yx`. (The goldens of `e33` and `e35` were refreshed:
+`Clone`, added to the known traits list by the derive work, was missing from them.)
+
+## Documented: `io.exit` skips destructors and defers
+
+The language has no unwinding, so `io.exit` cannot run the cleanup of its callers. It is now documented in
+[STDLIB_IO.md](STDLIB_IO.md#ending-the-process-exit-exit_clean-run_status), with two additions: `io.exit_clean` (same
+call, explicit name) and `io.run_status(f)`, which runs `f: fn() -> Int` to completion (destructors and defers run)
+and then exits with its status. Tests `io_exit_drop`, `io_exit_skips_drop`. Not done: an `exit` that unwinds.
+

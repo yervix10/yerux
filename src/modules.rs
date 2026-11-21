@@ -506,11 +506,54 @@ impl Loader {
         imported: &HashMap<String, (String, Kind)>,
         toks: &[Token],
     ) -> Vec<Token> {
-        let mut shadowed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Local names that hide an imported module alias: `let path = ..`, `for path in ..`, a parameter `path: ..`.
+        // A shadow is active from the next line (let/var: its own initializer may still name the module) or from
+        // the body block (parameters, loop variables) until the block that declared it closes.
+        struct Shadow {
+            name: String,
+            level: i32,
+            line: usize,
+            active: bool,
+        }
+        let mut shadows: Vec<Shadow> = vec![];
+        let mut lvl: Vec<i32> = Vec::with_capacity(toks.len());
+        {
+            let mut d = 0i32;
+            for t in toks {
+                if is_sym(t, "}") {
+                    d -= 1;
+                }
+                lvl.push(d);
+                if is_sym(t, "{") {
+                    d += 1;
+                }
+            }
+        }
+        let mut fn_header = false;
+        let mut paren = 0i32;
         let mut out: Vec<Token> = Vec::with_capacity(toks.len());
         let mut j = 0;
         while j < toks.len() {
             let t = &toks[j];
+            let l = lvl[j];
+            shadows.retain(|s| if s.active { l >= s.level } else { l >= s.level - 1 });
+            for s in shadows.iter_mut() {
+                if !s.active && l >= s.level && t.pos.line > s.line {
+                    s.active = true;
+                }
+            }
+            if is_id(t, "fn") {
+                shadows.retain(|s| s.active);
+                fn_header = true;
+                paren = 0;
+            } else if fn_header && is_sym(t, "(") {
+                paren += 1;
+            } else if fn_header && is_sym(t, ")") {
+                paren -= 1;
+                if paren == 0 {
+                    fn_header = false;
+                }
+            }
             let after_dot = j > 0 && is_sym(&toks[j - 1], ".");
             let x = match &t.t {
                 Tok::Id(x) if !after_dot => x.clone(),
@@ -521,6 +564,36 @@ impl Loader {
                 }
             };
             let next = toks.get(j + 1);
+            // a declaration of a local that hides the module alias `x`
+            if aliases.contains_key(&x) {
+                let prev = if j > 0 { Some(&toks[j - 1]) } else { None };
+                let prev2 = if j > 1 { Some(&toks[j - 2]) } else { None };
+                let is_let = matches!(prev, Some(p) if is_id(p, "let") || is_id(p, "var"));
+                let is_for = matches!(prev, Some(p) if is_id(p, "for"))
+                    || (matches!(prev, Some(p) if is_id(p, "mut"))
+                        && matches!(prev2, Some(p) if is_id(p, "for")));
+                let is_param = fn_header
+                    && paren == 1
+                    && matches!(next, Some(n) if is_sym(n, ":"))
+                    && matches!(prev, Some(p) if is_sym(p, "(") || is_sym(p, ",") || is_id(p, "view") || is_id(p, "mut"));
+                if is_let || is_for || is_param {
+                    shadows.push(Shadow {
+                        name: x.clone(),
+                        level: if is_let { l } else { l + 1 },
+                        line: if is_let { t.pos.line } else { 0 },
+                        active: false,
+                    });
+                    out.push(t.clone());
+                    j += 1;
+                    continue;
+                }
+            }
+            let hidden = shadows.iter().any(|s| s.active && s.name == x);
+            if hidden {
+                out.push(t.clone());
+                j += 1;
+                continue;
+            }
             if let Some(dep) = aliases.get(&x) {
                 if matches!(next, Some(n) if is_sym(n, "."))
                     && toks.get(j + 2).is_some_and(|n| matches!(n.t, Tok::Id(_)))
@@ -595,9 +668,7 @@ impl Loader {
                     j += 3;
                     continue;
                 }
-                if !shadowed.contains(&x)
-                    && !matches!(next, Some(n) if is_sym(n, ":") || is_sym(n, "="))
-                {
+                if !matches!(next, Some(n) if is_sym(n, ":") || is_sym(n, "=")) {
                     self.trace(file, "error", &["module-value", &x]);
                     self.report(
                         file,
@@ -686,20 +757,6 @@ impl Loader {
                     j += 1;
                     continue;
                 }
-            }
-            if (x == "let" || x == "var")
-                && matches!(next.map(|n| &n.t), Some(Tok::Id(v)) if aliases.contains_key(v))
-            {
-                let n = next.unwrap();
-                if let Tok::Id(v) = &n.t {
-                    shadowed.insert(v.clone());
-                    self.trace(file, "error", &["alias-shadow", v]);
-                }
-                self.report(
-                    file,
-                    diag(format!("'{}' is already the name of an imported module", match &n.t { Tok::Id(v) => v.as_str(), _ => "" }), n.pos)
-                        .note("help: pick another variable name, or import the module with `as`: `import path.name as other`"),
-                );
             }
             out.push(t.clone());
             j += 1;

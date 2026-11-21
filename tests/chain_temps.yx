@@ -1,0 +1,52 @@
+// temporaries as receivers and as `view` arguments: a call result can be chained or passed on directly
+import std.time
+import std.fmt
+
+struct Pt { x: Int, y: Int }
+
+impl Pt {
+  fn sum(view self) -> Int { return self.x + self.y }
+  fn scaled(view self, k: Int) -> Pt { return Pt { x: self.x * k, y: self.y * k } }
+}
+
+fn make(x: Int, y: Int) -> Pt { return Pt { x: x, y: y } }
+
+fn greeting(name: view String) -> String {
+  var s = String.from("hello ")
+  s.push_str(name)
+  return s
+}
+
+fn shout(s: view String) -> String {
+  return s.to_upper()
+}
+
+fn main() {
+  // Copy receivers
+  print(make(2, 3).sum())
+  print(make(2, 3).scaled(10).scaled(2).sum())
+  let items = List<Int>.new()
+  print(items.len().show())
+  let n = 12345
+  print(n.abs().show().len())
+  let d = time.millis(1500)
+  print(time.as_millis(d.min(time.seconds(2))))
+  print(d.max(time.millis(5)).as_secs())
+  print(time.now().since(time.now()).as_nanos() <= 0)
+
+  // String temporaries lent to view parameters of built-in String methods
+  var out = String.new()
+  out.push_str(greeting("world"))
+  out.push_str(shout(greeting("abc")))
+  out.push_str(fmt.pad_left("7", 3, '0'))
+  print(out)
+  print(out.starts_with(shout("he")))
+  print(out.contains(greeting("w")))
+  print(out.find(greeting("world")))
+  print(out == greeting("world"))
+
+  // nested calls into view parameters of user functions
+  print(shout(greeting(shout("x"))))
+  print(fmt.pad_left(fmt.hex(255), 6, ' '))
+  print(fmt.pad_right(shout(greeting("a")), 12, '.'))
+}

@@ -166,3 +166,13 @@ All arguments are plain `Int`s, so the checker needs nothing special beyond arit
 ## Not done yet
 
 Non-blocking I/O and `epoll`, sockets, threads and a lock around the stdin buffer, time zones, a Windows and an aarch64 implementation. (File handles, binary data, links, `chmod`, `env.set` and `Duration` are done: [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md).)
+
+## Ending the process: `exit`, `exit_clean`, `run_status`
+
+`io.exit(code)` is the `exit_group` system call: it ends the process at once, so **`defer` statements and
+destructors (`Drop`, owned `String`/`List` memory) of every live frame do not run**. Output is not lost: `print` and
+`write_stdout` are unbuffered natively and the C backend flushes C's `stdout` before every raw syscall.
+`io.exit_clean(code)` is the same call under a name that says so at the call site. To have the program's cleanup run,
+let `main` return normally: write the real program as `fn real_main() -> Int` (returning the status) and make `main`
+only `io.run_status(real_main)`, which calls it, lets everything it owns drop, and only then exits with a non-zero
+status. Tests: `tests/io_exit_drop.yx`, `tests/io_exit_skips_drop.yx`, `tests/io_exit.yx`.

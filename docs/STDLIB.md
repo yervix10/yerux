@@ -545,7 +545,7 @@ struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
 
 `import std.text` makes the functions available as `text.name(..)` (the alias is the last path segment). Every module is written in Yerux; there are no hidden intrinsics. Rules that follow from the language and apply to every call below:
 
-- Arguments documented as `s: view String` must be variables (or places such as `l.at(i)`), not temporaries: store a call result with `let` first. A literal (`"abc"`) is accepted.
+- Arguments documented as `s: view String` may be variables, places such as `l.at(i)`, literals (`"abc"`) or call results (`out.push_str(fmt.pad_left(s, 5, ' '))`): a temporary is kept in a hidden variable for the call and dropped right after it.
 - Results are fresh owned values (`String`, `List`); the arguments are only borrowed (unless noted).
 - Function arguments are `view fn(..)`: write the closure in place (`|x: view Int| -> Int { return x + 1 }`) or pass a variable holding a function; it may capture local variables.
 - Offsets are byte offsets and always on character boundaries.
@@ -673,7 +673,7 @@ Textual paths with `/` as the separator (nothing touches the file system). `join
 
 ### Language limits met while writing these modules
 - Methods cannot be added to `String` / `List` from a module, so the helpers are free functions (`text.split(s, ",")`, not `s.split(",")`).
-- Temporaries cannot be passed to `view` parameters; bind them with `let` first.
+- (Fixed) Temporaries can be passed to `view` parameters, also of the built-in String methods, and methods can be chained on call results (`d.len().show()`, `make().scaled(2).sum()`): `tests/chain_temps.yx`.
 - A generic function's closure parameter is `view fn(..)`; a plain `fn(..)` parameter is owned and cannot be forwarded to another call without `move`.
 - Static methods of a module's struct (`time.Stopwatch.start()`) cannot be called; the modules use constructor functions (`time.stopwatch()`).
 

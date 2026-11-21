@@ -682,6 +682,25 @@ pub fn exit(code: Int) {
     let r = __syscall(231, code, 0, 0, 0, 0, 0)
 }
 
+// Like `exit`, for call sites that want to say "everything written so far is delivered": `print`, `write_stdout` and
+// `eprint` are unbuffered natively, and the C backend flushes C's `stdout` before every raw syscall, so nothing is
+// lost by `exit` either. It still skips `defer` and destructors: use `run_status` to have those run.
+pub fn exit_clean(code: Int) {
+    let r = __syscall(231, code, 0, 0, 0, 0, 0)
+}
+
+// Run `f` (the real `main` of the program) and then end the process with the status it returns, unless it is 0.
+// Everything `f` owns is dropped and its `defer`s ran before it returned, which `exit` called from inside cannot do.
+//
+//   fn real_main() -> Int { ... return 1 }
+//   fn main() { io.run_status(real_main) }
+pub fn run_status(f: view fn() -> Int) {
+    let code = f()
+    if code != 0 {
+        exit(code)
+    }
+}
+
 pub fn process_id() -> Int {
     return __syscall(39, 0, 0, 0, 0, 0, 0)
 }

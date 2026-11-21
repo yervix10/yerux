@@ -1,8 +1,0 @@
-error: 'lib' is already the name of an imported module
- --> tests/mod_err/shadow_alias/main.yx:4:7
-  |
-4 |   let lib = 3
-  |       ^^^
-  = help: pick another variable name, or import the module with `as`: `import path.name as other`
-
-1 error(s). Nothing was generated.

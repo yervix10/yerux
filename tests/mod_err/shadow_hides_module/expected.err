@@ -1,0 +1,8 @@
+error: type Int has no method 'twice'
+ --> tests/mod_err/shadow_hides_module/main.yx:5:9
+  |
+5 |   print(lib.twice(4))
+  |         ^^^^^^^^^^^^
+  = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,18 @@
+// io.exit and io.exit_clean end the process at once: no destructors, no defers, output already written is kept
+import std.io
+
+struct Guard { name: String }
+
+impl Drop for Guard {
+  fn drop(mut self) {
+    print("drop {self.name}")
+  }
+}
+
+fn main() {
+  let g = Guard { name: String.from("never dropped") }
+  defer print("never deferred")
+  print("before exit")
+  io.exit_clean(4)
+  print("not reached")
+}
