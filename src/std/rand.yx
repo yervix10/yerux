@@ -1,0 +1,36 @@
+// std.rand: deterministic 32-bit LCG; system() seeds from wall-clock nanoseconds.
+// This is for simulation/testing, not cryptographic use.
+import std.time
+
+pub struct Rng { state: Int }
+
+pub fn new(seed: Int) -> Rng {
+  var value = seed % 4294967296
+  if value < 0 { value = value + 4294967296 }
+  return Rng { state: value }
+}
+
+/// A reproducible generator initialized from the current system clock.
+pub fn system() -> Rng {
+  return new(time.unix_nanos())
+}
+
+/// Next unsigned 32-bit value represented by a non-negative Int.
+pub fn next(rng: mut Rng) -> Int {
+  rng.state = (rng.state * 1664525 + 1013904223) % 4294967296
+  return rng.state
+}
+
+/// Next value in [lo, hi). Panics for an empty or reversed interval.
+/// Modulo reduction has a small bias unless the interval divides 2^32.
+pub fn range(rng: mut Rng, lo: Int, hi: Int) -> Int {
+  if hi <= lo { panic("rand.range requires hi > lo") }
+  return lo + next(rng) % (hi - lo)
+}
+
+/// Reseed an existing generator.
+pub fn reseed(rng: mut Rng, seed: Int) {
+  var value = seed % 4294967296
+  if value < 0 { value = value + 4294967296 }
+  rng.state = value
+}
