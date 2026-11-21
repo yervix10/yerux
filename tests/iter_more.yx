@@ -1,0 +1,50 @@
+struct Counter { n: Int, max: Int }
+
+impl Counter {
+  fn next(mut self) -> Option<Int> {
+    if self.n >= self.max { return None }
+    self.n = self.n + 1
+    return Some(self.n)
+  }
+}
+
+struct Words { parts: List<String>, i: Int }
+
+impl Words {
+  fn next(mut self) -> Option<String> {
+    if self.i >= self.parts.len() { return None }
+    let s = String.from(self.parts.at(self.i))
+    self.i = self.i + 1
+    return Some(move s)
+  }
+}
+
+fn make(m: Int) -> Counter { return Counter { n: 0, max: m } }
+
+fn main() {
+  print(Iter<Int>.range(0, 10).step_by(3).to_list().show())
+  print(Iter<Int>.range(0, 7).max_by(|x, y| (x % 4) - (y % 4)).show())
+  print(Iter<Int>.range(0, 7).min_by(|x, y| (x % 4) - (y % 4)).show())
+  print(Iter<Int>.range(1, 4).flat_map(|i| Iter<Int>.range(0, i)).to_list().show())
+  let fm = Iter<Int>.range(0, 6).filter_map(|i| {
+    if i % 2 == 0 { return Some(i * i) }
+    return Option<Int>.None
+  }).to_list()
+  print(fm.show())
+  // adapters directly on user iterators
+  print(make(5).map(|x| x * 3).filter(|x| x % 2 == 1).to_list().show())
+  print(make(4).sum())
+  let c = make(3)
+  print(c.into_iter().count())
+  var d = make(6)
+  for x in move d.into_iter().skip(4) { print(x) }
+  var parts = List<String>.new()
+  parts.push(String.from("a"))
+  parts.push(String.from("bb"))
+  parts.push(String.from("ccc"))
+  let w = Words { parts: move parts, i: 0 }
+  print(w.map(|s| s.len()).to_list().show())
+  var e = make(0)
+  print(e.next().show())
+  print(make(0).sum())
+}

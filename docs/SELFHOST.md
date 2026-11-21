@@ -146,9 +146,37 @@ replacement, and scope cleanup.
 `resolve --link AST_ROOT ENTRY.yx` combines cached source ASTs, validates
 imports and visibility, and gives declarations unique module names before
 type checking. The linked compiler builds `std.path` from source. Bootstrap
-bindings in the C runtime provide the command-line, whole-file, and
-standard-stream operations used by the stages from `std.env`, `std.fs`,
-and `std.io`.
+bindings in the C runtime provide the command-line, file, standard-stream,
+and subprocess operations used by the stages from `std.env`, `std.fs`,
+`std.io`, and `std.process`. Other standard modules can be linked from source
+when their dependencies and constructs are supported.
+
+### The `yerux-self` driver
+
+From the repository root, build and install the self-hosted binaries on Linux.
+
+```bash
+bash selfhost/bootstrap.sh target/selfhost
+target/selfhost/yerux-self build examples/12_modules/main.yx -o /tmp/hello
+/tmp/hello
+target/selfhost/yerux-self build examples/project
+examples/project/target/hello-project
+```
+
+The installed driver invokes its sibling `lexer`, `parser`, `resolve`, and
+`codegen` binaries, then invokes `cc` and publishes the executable when the
+build succeeds. The resolver loads local imports relative to the entry file's
+directory and standard modules from the installed `runtime` directory. Pass
+`--runtime DIRECTORY` to use another runtime directory, or `--emit-ast` to
+write the linked AST. The driver uses the Linux process and filesystem
+environment and expects `cc`, `mkdir`, `mktemp`, `mv`, and `rm` on PATH.
+
+File builds default to the source filename with its `.yx` suffix removed.
+Project builds accept the project directory or its `yerux.toml` and default
+to the current directory when no input is supplied. The supported manifest
+uses `[package]` with a double-quoted `name` and an optional empty
+`[dependencies]` table. The driver builds `src/main.yx` into `target/NAME`.
+A failed build leaves any previous output in place.
 
 Build the stages from the repository root and feed the positioned tokens
 to the parser. Compile the emitted C with GCC or Clang on Linux.
@@ -170,7 +198,7 @@ artifact or invocation error, and 3 for an unsupported construct.
 
 Run `bash tests/selfhost_codegen.sh` to bootstrap the compiler. It first
 uses the Rust compiler to build seed binaries, then feeds the source for
-all six executables in `selfhost/` through the seed lexer, parser, linker
+all seven executables in `selfhost/` through the seed lexer, parser, linker
 and checker/emitter. It compiles their C with `cc` and uses those binaries to
 build the same executables again. The two generations must emit
 byte-identical C. The rebuilt stages run the lexer, parser, resolver and
@@ -178,9 +206,50 @@ type parity suites. The harness also compares formatter output against
 the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
-The bootstrap rebuilds 6 of 6 executables with identical C. At this
-milestone the program comparison matches 126 of 327 candidates, including
-61 runtime panics, with two expected rejections and zero discrepancies.
+The bootstrap rebuilds 7 of 7 executables with identical C. The current
+program comparison matches 149 of 351 candidates (42.5%), including 63
+runtime panics, with two expected rejections and zero discrepancies.
+The corpus now includes module entry points. On the original 327 candidates,
+the count rose from 126 to 140 identical executions.
+
+The harness groups the 200 remaining candidates by their first rejection.
+The largest groups are other lowering gaps (25), modules and standard
+library (24), generics and traits (22), type inference and method checking
+(21), range types and aliases (20), and numeric lowering (17). Set
+`SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
+and category for every rejected file.
+
+### Compile time
+
+```bash
+cargo build --release
+bash selfhost/bootstrap.sh target/selfhost
+python3 bench/selfhost.py target/selfhost/yerux-self
+```
+
+On Debian 13, GCC 14.2.0, and an AMD Ryzen 5 4600H, each row is the median of
+five wall-clock builds per compiler after one warmup. The benchmark alternates
+compiler order and measures an entire build through the `cc -O2` invocation,
+excluding compiler bootstrap and execution. The Rust compiler was built in
+release mode and the self-hosted stages were bootstrapped with `cc -O0`.
+The ten examples are the first ten numbered programs in `examples/`.
+
+| Program | Rust (ms) | Self-hosted (ms) |
+| --- | ---: | ---: |
+| `01_lists.yx` | 106.6 | 104.2 |
+| `02_fast.yx` | 99.0 | 96.1 |
+| `03_conditional_move.yx` | 99.1 | 95.7 |
+| `04_shapes.yx` | 95.9 | 94.8 |
+| `05_owned_struct.yx` | 110.1 | 103.9 |
+| `06_string.yx` | 132.3 | 133.6 |
+| `07_generic_list.yx` | 135.8 | 134.4 |
+| `08_owned_elements.yx` | 162.8 | 172.6 |
+| `09_owned_in_structs.yx` | 156.9 | 164.2 |
+| `10_growth_and_aliasing.yx` | 164.4 | 168.6 |
+| **Sum** | **1262.9** | **1268.0** |
+
+The sum of the medians was 1.263 s for Rust and 1.268 s for the self-hosted
+driver, a difference of 0.4% in this run.
 
 ## Remaining work
 
@@ -192,10 +261,13 @@ file. The dumps omit AST spans, and parser diagnostic messages and notes have
 yet to be ported.
 
 The self-hosted compiler covers the sources required to rebuild its
-stages. Full language and standard-library parity still requires general
-trait and bound resolution, closure lowering and capture modes, defer
-lifetimes, precise loans for nested calls and projections, owned arrays,
-recursive heap types, and richer pattern matching and range flow.
+stages. Unbounded inherent generic impls, structural `derive Clone`, captureless
+closures with concrete signatures, and iteration through a user type's
+`next(mut self) -> Option<T>` are supported. Full parity still requires
+general trait and bound resolution, other derives, closure captures and
+generic function values, lazy `Iter<T>` adapters, defer lifetimes, precise
+loans for nested calls and projections, owned arrays, recursive heap types,
+and richer pattern matching and range flow.
 Compile-time evaluation, full diagnostic spans and notes, and replacing
 the bootstrap C bindings with compiled standard-library implementations
 also remain open.

@@ -11,6 +11,7 @@ struct Parser {
   failed: Bool,
   error_line: Int,
   legacy: Bool,
+  build: Bool,
 }
 
 fn hex(s: view String) -> String {
@@ -903,6 +904,13 @@ fn item(p: mut Parser) -> String {
     }
     let semi = eat(p, ";")
     out = node2("Import", module_path, alias)
+  } else if p.build && eat_kw(p, "derive") {
+    var traits = String.from("[")
+    append(traits, path(p))
+    while eat(p, ",") { append(traits, path(p)) }
+    finish(traits)
+    if !eat_kw(p, "for") { p.failed = true }
+    out = node2("Derive", ident(p), traits)
   } else if eat_kw(p, "test") {
     let n = str_value(p)
     out = node2("Test", n, block(p))
@@ -947,7 +955,17 @@ fn item(p: mut Parser) -> String {
 fn parse_file(p: mut Parser) -> String {
   var out = String.from("[")
   while !p.failed && !kind(p, "Eof") {
-    append(out, item(p))
+    if eat_kw(p, "derive") {
+      // `derive Clone, Equal for Name` generates impls in the real compiler; it adds no item to the AST
+      let first = ident(p)
+      while eat(p, ",") {
+        let more = ident(p)
+      }
+      if !eat_kw(p, "for") { p.failed = true }
+      let target = ident(p)
+    } else {
+      append(out, item(p))
+    }
   }
   finish(out)
   return node1("File", out)
@@ -959,13 +977,20 @@ fn main() {
     Some(path) => {
       match fs.read_to_string(path) {
         Err(e) => { print("could not read token dump: {e.message}"); env.exit(2) }
-        Ok(source) => { run(source) }
+        Ok(source) => {
+          var build = false
+          match env.arg(2) {
+            Some(flag) => { build = flag == "--build" }
+            None => {}
+          }
+          run(source, build)
+        }
       }
     }
   }
 }
 
-fn run(source: view String) {
+fn run(source: view String, build: Bool) {
   var tokens = List<Token>.new()
   var legacy = true
   for row in source.split("\n") {
@@ -1001,7 +1026,7 @@ fn run(source: view String) {
   }
   var p = Parser {
     tokens: move tokens, structs: move structs, imports: List<String>.new(),
-    i: 0, failed: false, error_line: 0, legacy: legacy,
+    i: 0, failed: false, error_line: 0, legacy: legacy, build: build,
   }
   var ast = String.new()
   if legacy {

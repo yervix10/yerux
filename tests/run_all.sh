@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 # Regression runner for the Yerux compiler.
-#   tests/run_all.sh          build + run everything, compare against goldens
-#   tests/run_all.sh --bless  (re)generate goldens from the current C backend
+#   tests/run_all.sh                 full suite (pre-push): every program + every auxiliary script
+#   tests/run_all.sh --fast          representative subset, a couple of minutes (day-to-day use)
+#   tests/run_all.sh PATTERN...      only programs whose name matches one of the regexes (e.g. 'iter_|^e10')
+#                                    and auxiliary scripts whose name matches
+#   tests/run_all.sh --bless [PAT..] (re)generate goldens from the current C backend
+#   Options: -j N / JOBS=N  parallel jobs (default: a third of the CPUs, at least 2)
+#            --times        print the per-row and per-script time table (slowest first)
+#            --serial       one job (debugging)
 #   Concurrent runs queue on /tmp/yerux-run_all.lock; RUN_ALL_NOLOCK=1 skips the lock.
-# Checks per program:
+# Checks per program (tests/run_one.sh):
 #   C      : C backend stdout + exit code vs tests/expected/<name>.out/.code
 #   NATIVE : same on --native (SKIP when "native backend: ..." rejects it)
 #   Runtime stderr is checked against tests/expected/<name>.stderr when supplied.
 #   ASAN   : C output built with -fsanitize=address,undefined, must be clean
-#   ERR    : examples/e*.yx must fail `check` with stderr == <name>.err
+#   ERR    : e*.yx must fail `check` with stderr == <name>.err
+# Timeouts scale with the load average (per CPU); a timed-out run is repeated once with twice the time.
+# Programs are independent, so they run in parallel; output is printed in a fixed order afterwards.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 2
@@ -21,144 +29,158 @@ if [ "${RUN_ALL_NOLOCK:-0}" != "1" ] && [ -z "${RUN_ALL_LOCKED:-}" ] && command 
   fi
   export RUN_ALL_LOCKED=1
 fi
-BLESS=0
-[ "${1:-}" = "--bless" ] && BLESS=1
+
+BLESS=0; FAST=0; TIMES=0
+NCPU="$(nproc 2>/dev/null || echo 4)"
+JOBS="${JOBS:-$(( NCPU / 3 > 2 ? NCPU / 3 : 2 ))}"
+PATS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bless) BLESS=1;;
+    --fast) FAST=1;;
+    --times) TIMES=1;;
+    --serial) JOBS=1;;
+    -j) shift; JOBS="$1";;
+    -j*) JOBS="${1#-j}";;
+    -h|--help) sed -n 2,19p "$0"; exit 0;;
+    *) PATS+=("$1");;
+  esac
+  shift
+done
+T_START=$SECONDS
 cargo build --release 2>&1 | tail -n 2 || exit 2
 Y="$ROOT/target/release/yerux"
 [ -x "$Y" ] || { echo "no yerux binary"; exit 2; }
 EXP=tests/expected
 mkdir -p "$EXP"
-TMP="$(mktemp -d /tmp/yerux_runall.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
-TO=30
+RES="$(mktemp -d /tmp/yerux_runall.XXXXXX)"
+trap 'rm -rf "$RES"' EXIT
 
-fails=0
-rows=()
-row() { rows+=("$(printf '%-28s %-6s %-6s %-6s %-6s' "$1" "$2" "$3" "$4" "$5")"); }
+# timeout per run: 30s, scaled by the load average per CPU (other agents share this machine)
+LOAD="$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo 0)"
+TO="$(awk -v l="$LOAD" -v n="$NCPU" 'BEGIN { f = l / n; if (f < 1) f = 1; printf "%d", 30 * f + 0.999 }')"
+export Y EXP RES TO BLESS
+[ "$FAST" = 1 ] && export NO_ASAN=0
 
-# run <exe>  -> sets OUT/ERR files and CODE
-# Optional per-test inputs (backward compatible: absent files change nothing):
-#   tests/<name>.stdin  is the program's standard input (default /dev/null)
-#   tests/<name>.args   command-line arguments, one per line
-# YX_IO_TEST is always exported (tests/io_basic.yx reads it through std.io).
-export YX_IO_TEST=hello_env
-CUR=""
-run_exe() {
-  local in=/dev/null
-  local -a av=()
-  [ -n "$CUR" ] && [ -f "tests/$CUR.stdin" ] && in="tests/$CUR.stdin"
-  [ -n "$CUR" ] && [ -f "tests/$CUR.args" ] && mapfile -t av <"tests/$CUR.args"
-  timeout $TO "$1" "${av[@]}" >"$TMP/stdout" 2>"$TMP/stderr" <"$in"
-  CODE=$?
+matches() { # name -> 0 when no pattern is given or one matches
+  [ ${#PATS[@]} -eq 0 ] && return 0
+  local p
+  for p in "${PATS[@]}"; do [[ "$1" =~ $p ]] && return 0; done
+  return 1
 }
 
+# ---- programs ----
+progs=()
+all=()
 for f in examples/*.yx examples/real/*.yx examples/real/minilang/minilang.yx tests/*.yx; do
-  [ -e "$f" ] || continue
+  [ -e "$f" ] && all+=("$f")
+done
+i=0
+for f in "${all[@]}"; do
   name="$(basename "$f" .yx)"
-  CUR="$name"
-  case "$name" in
-    e[0-9]*)
-      # ---- error program: golden stderr ----
-      "$Y" check "$f" >"$TMP/stdout" 2>"$TMP/stderr"; rc=$?
-      res=PASS
-      if [ $rc -eq 0 ]; then res=FAIL
-      elif [ $BLESS -eq 1 ]; then cp "$TMP/stderr" "$EXP/$name.err"
-      elif [ ! -f "$EXP/$name.err" ]; then res=NOGOLD
-      elif ! cmp -s "$TMP/stderr" "$EXP/$name.err"; then
-        res=FAIL; diff "$EXP/$name.err" "$TMP/stderr" | head -n 10
-      fi
-      [ "$res" = PASS ] || fails=$((fails+1))
-      row "$name" "-" "-" "-" "$res"
-      continue;;
-  esac
-  # ---- normal program ----
-  c_res=PASS; n_res=PASS; a_res=PASS; e_res="-"
-  if ! "$Y" build "$f" -o "$TMP/c.bin" >/dev/null 2>"$TMP/buildc.err"; then
-    c_res=FAIL; n_res=SKIP; a_res=SKIP
-    echo "== $name: C build failed"; head -n 5 "$TMP/buildc.err"
-  else
-    run_exe "$TMP/c.bin"
-    if [ $BLESS -eq 1 ]; then
-      cp "$TMP/stdout" "$EXP/$name.out"; echo "$CODE" >"$EXP/$name.code"
-    elif [ ! -f "$EXP/$name.out" ] || [ ! -f "$EXP/$name.code" ]; then
-      c_res=NOGOLD
-    elif ! cmp -s "$TMP/stdout" "$EXP/$name.out" || [ "$CODE" != "$(cat "$EXP/$name.code")" ]; then
-      c_res=FAIL; echo "== $name: C backend differs from golden (code $CODE)"
-      diff "$EXP/$name.out" "$TMP/stdout" | head -n 6
-    fi
-    if [ -f "$EXP/$name.stderr" ] && ! cmp -s "$TMP/stderr" "$EXP/$name.stderr"; then
-      c_res=FAIL; echo "== $name: C stderr differs from golden"
-      diff "$EXP/$name.stderr" "$TMP/stderr" | head -n 6
-    fi
-    gold_out="$EXP/$name.out"; gold_code="$(cat "$EXP/$name.code" 2>/dev/null || echo "$CODE")"
-    [ -f "$gold_out" ] || gold_out="$TMP/stdout"
-
-    # ---- native ----
-    native_flags=(--native)
-    # Keep the short-circuit blocks that exercise the delayed prologue.
-    if [ "$name" = ra_shrinkwrap ]; then native_flags+=(--no-opt); fi
-    if "$Y" build "$f" "${native_flags[@]}" -o "$TMP/n.bin" >/dev/null 2>"$TMP/buildn.err"; then
-      run_exe "$TMP/n.bin"
-      if ! cmp -s "$TMP/stdout" "$gold_out" || [ "$CODE" != "$gold_code" ]; then
-        n_res=FAIL; echo "== $name: native differs from golden (code $CODE, want $gold_code)"
-        diff "$gold_out" "$TMP/stdout" | head -n 6
-      fi
-      if [ -f "$EXP/$name.stderr" ] && ! cmp -s "$TMP/stderr" "$EXP/$name.stderr"; then
-        n_res=FAIL; echo "== $name: native stderr differs from golden"
-        diff "$EXP/$name.stderr" "$TMP/stderr" | head -n 6
-      fi
-    elif grep -q "native backend:" "$TMP/buildn.err"; then
-      n_res=SKIP
-    else
-      n_res=FAIL; echo "== $name: native build failed"; head -n 5 "$TMP/buildn.err"
-    fi
-
-    # ---- ASan + UBSan on the C output ----
-    "$Y" c "$f" >"$TMP/a.c" 2>/dev/null
-    if cc -g -O1 -w -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-         -fno-math-errno -ffp-contract=off -pthread -o "$TMP/asan.bin" "$TMP/a.c" -lm 2>"$TMP/asanbuild.err"; then
-      run_exe "$TMP/asan.bin"
-      if grep -qE "AddressSanitizer|LeakSanitizer|runtime error" "$TMP/stderr"; then
-        a_res=FAIL; echo "== $name: sanitizer report"; head -n 8 "$TMP/stderr"
-      elif [ "$CODE" != "$gold_code" ]; then
-        a_res=FAIL; echo "== $name: ASan build exit code $CODE, want $gold_code"
-      fi
-    else
-      a_res=FAIL; echo "== $name: ASan build failed"; head -n 5 "$TMP/asanbuild.err"
+  i=$((i + 1))
+  matches "$name" || continue
+  if [ "$FAST" = 1 ] && [ ${#PATS[@]} -eq 0 ]; then
+    # representative subset: every example, every 7th test, plus the hand-picked list
+    if [[ "$f" != examples/* ]] && [ $((i % 7)) -ne 0 ] && ! grep -qx "$name" tests/fast.list 2>/dev/null; then
+      continue
     fi
   fi
-  for r in "$c_res" "$n_res" "$a_res"; do
-    case "$r" in FAIL|NOGOLD) fails=$((fails+1));; esac
-  done
-  row "$name" "$c_res" "$n_res" "$a_res" "-"
+  progs+=("$f")
 done
 
+# ---- auxiliary scripts: name|command (slowest first so the pool stays busy) ----
+AUX=(
+  "fuzz_parse|python3 tests/fuzz_parse.py --edge-only -j 2"
+  "selfhost_fmt|bash tests/selfhost_fmt.sh"
+  "selfhost_types|bash tests/selfhost_types.sh"
+  "selfhost_resolve|bash tests/selfhost_resolve.sh"
+  "selfhost_parser|bash tests/selfhost_parser.sh"
+  "selfhost_lexer|bash tests/selfhost_lexer.sh"
+  "http|bash tests/http.sh"
+  "lsp_cargo|cargo test -q --test lsp"
+  "modules|bash tests/modules.sh"
+  "json|bash tests/json.sh"
+  "ffi_native|bash tests/ffi_native.sh"
+  "stack_overflow|bash tests/stack_overflow.sh"
+  "fmt|bash tests/fmt.sh"
+  "sumtool|bash tests/sumtool.sh"
+  "minimake_errors|bash tests/minimake_errors.sh"
+  "io_targets|bash tests/io_targets.sh"
+  "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
+  "lsp_vscode|bash tests/lsp_vscode.sh"
+  "tokens_dump|bash tests/tokens_dump.sh"
+  "range_ir|bash tests/range_ir.sh"
+  "inline_ir|bash tests/inline_ir.sh"
+)
+FAST_AUX=" range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
+aux=()
+if [ "$BLESS" = 0 ]; then
+  for a in "${AUX[@]}"; do
+    n="${a%%|*}"
+    if [ ${#PATS[@]} -gt 0 ]; then matches "$n" || continue
+    elif [ "$FAST" = 1 ] && [[ "$FAST_AUX" != *" $n "* ]]; then continue; fi
+    aux+=("$a")
+  done
+fi
+
+echo "run_all: ${#progs[@]} programs + ${#aux[@]} scripts, $JOBS jobs, timeout ${TO}s (load $LOAD on $NCPU CPUs)$([ "$FAST" = 1 ] && echo ', --fast')"
+
+# ---- run everything in one pool: scripts first (they are the long ones), then programs ----
+{
+  for a in "${aux[@]}"; do printf 'A\t%s\t%s\n' "${a%%|*}" "${a#*|}"; done
+  for f in "${progs[@]}"; do printf 'P\t%s\n' "$f"; done
+} | xargs -d '\n' -P "$JOBS" -I{} bash -c '
+  IFS=$'"'"'\t'"'"' read -r kind a b <<<"$1"
+  if [ "$kind" = A ]; then tests/run_aux.sh "$a" bash -c "$b"; else tests/run_one.sh "$a"; fi' _ {}
+
+# ---- report (fixed order) ----
 echo
 printf '%-28s %-6s %-6s %-6s %-6s\n' PROGRAM C NATIVE ASAN ERR
-printf '%s\n' "${rows[@]}"
+fails=0
+failed=()
+for f in "${progs[@]}"; do
+  n="$(basename "$f" .yx)"
+  if [ ! -f "$RES/$n.row" ]; then
+    printf '%-28s %s\n' "$n" "NO RESULT (the job died)"; fails=$((fails+1)); failed+=("$n"); continue
+  fi
+  cat "$RES/$n.row"
+  k="$(cat "$RES/$n.fails" 2>/dev/null || echo 1)"
+  if [ "$k" != 0 ]; then fails=$((fails + k)); failed+=("$n"); fi
+done
 echo
-if [ $BLESS -eq 1 ]; then echo "goldens (re)generated in $EXP"; fi
-if [ $BLESS -eq 0 ]; then bash tests/range_ir.sh >"$TMP/rir.out" 2>&1 || { cat "$TMP/rir.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/inline_ir.sh >"$TMP/iir.out" 2>&1 || { cat "$TMP/iir.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/modules.sh >"$TMP/mod.out" 2>&1 || { cat "$TMP/mod.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/json.sh >"$TMP/json.out" 2>&1 || { cat "$TMP/json.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/http.sh >"$TMP/http.out" 2>&1 || { cat "$TMP/http.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/io_targets.sh >"$TMP/iot.out" 2>&1 || { cat "$TMP/iot.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/minimake_errors.sh >"$TMP/mme.out" 2>&1 || { cat "$TMP/mme.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/sumtool.sh >"$TMP/sumt.out" 2>&1 || { cat "$TMP/sumt.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/fmt.sh >"$TMP/fmt.out" 2>&1 || { cat "$TMP/fmt.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/selfhost_fmt.sh >"$TMP/shfmt.out" 2>&1 || { cat "$TMP/shfmt.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/noopt_shortcircuit.sh >"$TMP/nsc.out" 2>&1 || { cat "$TMP/nsc.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/stack_overflow.sh >"$TMP/so.out" 2>&1 || { cat "$TMP/so.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/ffi_native.sh >"$TMP/ffi.out" 2>&1 || { cat "$TMP/ffi.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/tokens_dump.sh >"$TMP/td.out" 2>&1 || { cat "$TMP/td.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/lsp_vscode.sh >"$TMP/lspvs.out" 2>&1 || { cat "$TMP/lspvs.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then cargo test -q --test lsp >"$TMP/lsp.out" 2>&1 || { cat "$TMP/lsp.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/selfhost_lexer.sh >"$TMP/shlex.out" 2>&1 || { cat "$TMP/shlex.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/selfhost_parser.sh >"$TMP/shparser.out" 2>&1 || { cat "$TMP/shparser.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/selfhost_resolve.sh >"$TMP/shresolve.out" 2>&1 || { cat "$TMP/shresolve.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/selfhost_types.sh >"$TMP/shtypes.out" 2>&1 || { cat "$TMP/shtypes.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then bash tests/selfhost_codegen.sh >"$TMP/shcodegen.out" 2>&1 || { cat "$TMP/shcodegen.out"; fails=$((fails+1)); }; fi
-if [ $BLESS -eq 0 ]; then python3 tests/fuzz_parse.py --edge-only -j 2 >"$TMP/fp.out" 2>&1 || { cat "$TMP/fp.out"; fails=$((fails+1)); }; fi
+for f in "${progs[@]}"; do
+  n="$(basename "$f" .yx)"
+  [ -s "$RES/$n.log" ] && [ "$(cat "$RES/$n.fails" 2>/dev/null || echo 1)" != 0 ] && cat "$RES/$n.log"
+done
+if [ ${#aux[@]} -gt 0 ]; then
+  echo "scripts:"
+  for a in "${aux[@]}"; do
+    n="${a%%|*}"
+    if [ ! -f "$RES/aux_$n.row" ]; then printf '%-28s %s\n' "$n" "NO RESULT"; fails=$((fails+1)); failed+=("$n"); continue; fi
+    cat "$RES/aux_$n.row"
+    if [ "$(cat "$RES/aux_$n.fails")" != 0 ]; then
+      fails=$((fails+1)); failed+=("$n"); echo "---- output of $n:"; cat "$RES/aux_$n.log"; echo "----"
+    fi
+  done
+fi
+if [ "$BLESS" = 1 ]; then echo "goldens (re)generated in $EXP"; fi
+
+if [ "$TIMES" = 1 ]; then
+  echo
+  echo "time table (seconds, slowest first):"
+  for s in "$RES"/*.secs; do
+    n="$(basename "$s" .secs)"; printf '%8.1f  %s\n' "$(LC_ALL=C awk -v ms="$(cat "$s")" 'BEGIN { print ms / 1000 }')" "$n"
+  done | sort -rn | head -n 40
+fi
+
+SUM_MS=0
+for s in "$RES"/*.secs; do [ -e "$s" ] && SUM_MS=$((SUM_MS + $(cat "$s"))); done
+echo "total: $((SECONDS - T_START))s wall, $((SUM_MS / 1000))s of work (what a serial run would take), $JOBS jobs"
+if [ ${#failed[@]} -gt 0 ]; then
+  echo "FAILED (${#failed[@]}): ${failed[*]}"
+  pat="$(IFS='|'; echo "${failed[*]}")"
+  echo "repeat with: tests/run_all.sh '^(${pat})\$'"
+fi
 echo "failures: $fails"
-[ $fails -eq 0 ]
+[ "$fails" -eq 0 ]

@@ -5,37 +5,11 @@ export LC_ALL=C
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-cargo build -q
+source selfhost/bootstrap.sh
 rust=target/debug/yerux
-stages=(lexer parser resolve types codegen fmt)
-for stage in "${stages[@]}"; do
-  "$rust" build "selfhost/$stage.yx" -o "$tmp/$stage" >/dev/null
-done
-
-compile_generation() {
-  local compiler=$1 output=$2 source stage
-  mkdir -p "$output/cache/selfhost" "$output/cache/src/std"
-  for source in selfhost/*.yx src/std/path.yx; do
-    "$compiler/lexer" "$source" --positioned >"$output/tokens"
-    "$compiler/parser" "$output/tokens" >"$output/cache/$source"
-  done
-  for stage in "${stages[@]}"; do
-    source=selfhost/$stage.yx
-    "$compiler/resolve" --link "$output/cache" "$source" >"$output/$stage.ast"
-    "$compiler/codegen" "$output/$stage.ast" >"$output/$stage.c"
-    if [[ $output == "$tmp/rebuilt" ]]; then
-      cmp "$tmp/bootstrap/$stage.c" "$output/$stage.c"
-    fi
-    if ! cc -std=gnu11 -O0 -I src "$output/$stage.c" -o "$output/$stage" -pthread -lm 2>"$output/cc.err"; then
-      printf 'selfhost bootstrap: C compilation failed for %s\n' "$source" >&2
-      head -n 20 "$output/cc.err" >&2
-      return 1
-    fi
-  done
-}
-
-compile_generation "$tmp" "$tmp/bootstrap"
-compile_generation "$tmp/bootstrap" "$tmp/rebuilt"
+seed_selfhost "$tmp"
+compile_selfhost "$tmp" "$tmp/bootstrap"
+compile_selfhost "$tmp/bootstrap" "$tmp/rebuilt" "$tmp/bootstrap"
 for suite in lexer parser resolve types; do
   SELFHOST_BIN_DIR="$tmp/rebuilt" bash "tests/selfhost_$suite.sh"
 done
@@ -45,18 +19,49 @@ for source in selfhost/ast.yx examples/06_string.yx tests/selfhost/codegen/*.yx;
   cmp "$tmp/rust-fmt" "$tmp/self-fmt"
 done
 printf 'selfhost bootstrap: %d/%d executables rebuilt with byte-identical C and verified against the seed\n' \
-  "${#stages[@]}" "${#stages[@]}"
+  "${#selfhost_stages[@]}" "${#selfhost_stages[@]}"
+
+driver="$tmp/rebuilt/yerux-self"
+cp -R examples/project "$tmp/project"
+"$driver" "$tmp/project/yerux.toml"
+"$tmp/project/target/hello-project" >"$tmp/project.out"
+"$rust" build "$tmp/project/src/main.yx" -o "$tmp/project-rust" >/dev/null
+"$tmp/project-rust" >"$tmp/project-rust.out"
+cmp "$tmp/project-rust.out" "$tmp/project.out"
+printf 'fn main() { print( }\n' >"$tmp/invalid.yx"
+printf 'existing output\n' >"$tmp/invalid"
+if "$driver" "$tmp/invalid.yx" 2>"$tmp/invalid.err"; then
+  printf 'selfhost driver accepted invalid syntax\n' >&2
+  exit 1
+fi
+rg -q 'parsing .*invalid.yx' "$tmp/invalid.err"
+printf 'existing output\n' | cmp - "$tmp/invalid"
+printf 'import absent\nfn main() {}\n' >"$tmp/missing.yx"
+if "$driver" "$tmp/missing.yx" 2>"$tmp/missing.err"; then
+  printf 'selfhost driver accepted a missing module\n' >&2
+  exit 1
+fi
+rg -q 'resolving absent: source file not found' "$tmp/missing.err"
 
 source_ast() {
-  "$tmp/rebuilt/lexer" "$1" --positioned >"$tmp/tokens" &&
-    "$tmp/rebuilt/parser" "$tmp/tokens" >"$tmp/ast"
+  : >"$tmp/source.err"
+  "$tmp/rebuilt/lexer" "$1" --positioned >"$tmp/tokens" 2>"$tmp/source.err" || return
+  "$tmp/rebuilt/parser" "$tmp/tokens" --build >"$tmp/ast" || {
+    cp "$tmp/ast" "$tmp/source.err"
+    return 1
+  }
+  if [[ $(<"$tmp/ast") == *',Import('* ]]; then
+    "$tmp/rebuilt/yerux-self" --emit-ast "$1" -o "$tmp/ast" 2>"$tmp/source.err"
+  fi
 }
 
 required() {
   case "$1" in
-    tests/selfhost/codegen/*|examples/06_string.yx|tests/agg_struct_by_value.yx|tests/agg_nested_structs.yx|\
+    tests/selfhost/codegen/*|examples/12_modules/main.yx|examples/project/src/main.yx|examples/06_string.yx|tests/agg_struct_by_value.yx|tests/agg_nested_structs.yx|\
     tests/agg_string_ops.yx|tests/opt_shortcircuit.yx|tests/n2_overflow.yx|\
-    tests/num_panic_u64_div0.yx|tests/own_enum_basic.yx|tests/agg_list_ops.yx|    tests/slice_edge_oob_range.yx|tests/drop_basic.yx|tests/selfhost/types/methods_generics.yx|    tests/selfhost/types/enums_result_option.yx) return 0 ;;
+    tests/num_panic_u64_div0.yx|tests/own_enum_basic.yx|tests/agg_list_ops.yx|\
+    tests/slice_edge_oob_range.yx|tests/drop_basic.yx|tests/selfhost/types/methods_generics.yx|\
+    tests/selfhost/types/enums_result_option.yx) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -72,12 +77,49 @@ identical=0
 panics=0
 skipped=0
 rejections=0
+declare -A reasons=()
+if [[ -n ${SELFHOST_REJECTIONS:-} ]]; then
+  : >"$SELFHOST_REJECTIONS"
+fi
+record_rejection() {
+  local diagnostic category
+  diagnostic=$(head -n 1 "$1")
+  case "$diagnostic" in
+    *Closure*|*"function values"*|*"type FnType"*|*__spawn_owned*|*"expected fn("*) category="closures and function values" ;;
+    *Import*|*missing-module*|*unknown-item*|*source\ file\ not\ found*|*bootstrap\ call\ std__*) category="modules and standard library" ;;
+    *"generic impl"*|*"trait impl"*|*"declaration Trait"*|*clone*|*generic*) category="generics and traits" ;;
+    *pattern*|*"variant"*|*"enum"*) category="enums and patterns" ;;
+    *sequence*|*"slice "*|*"iteration "*|*"array "*) category="sequences and iteration" ;;
+    SyntaxError:*|UnsupportedCharacter:*) category="syntax" ;;
+    *"type Range"*|*"declaration Alias"*|*"explicit range step"*) category="range types and aliases" ;;
+    *"statement Defer"*) category="defer" ;;
+    *"type Box"*) category="heap types" ;;
+    codegen:*Float*|codegen:*numeric*|codegen:*to_int*|codegen:*to_uint*|codegen:*sqrt*) category="numeric lowering" ;;
+    codegen:*String.*|codegen:*Char*) category="text lowering" ;;
+    codegen:*) category="other lowering" ;;
+    *"is moved"*|*"cannot move"*|*"function borrows"*|*"is not copied"*) category="ownership checking" ;;
+    *"cannot infer"*|*"no method"*|*"does not implement"*) category="type inference and method checking" ;;
+    *"expected "*|*"cannot compare"*) category="type checking" ;;
+    *) category="other checking or source errors" ;;
+  esac
+  reasons["$category"]=$(( ${reasons["$category"]:-0} + 1 ))
+  if [[ -n ${SELFHOST_REJECTIONS:-} ]]; then
+    printf '%s\t%s\t%s\n' "$file" "$category" "$diagnostic" >>"$SELFHOST_REJECTIONS"
+  fi
+}
 for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
-    tests/selfhost/types/{methods_generics,enums_result_option}.yx; do
+    tests/selfhost/types/{methods_generics,enums_result_option}.yx \
+    examples/12_modules/main.yx examples/project/src/main.yx tests/mod_ok/*/main.yx; do
   case "${file##*/}" in e[0-9]*) continue ;; esac
   total=$((total + 1))
   if ! source_ast "$file"; then
-    if required "$file"; then fail "source AST rejected"; else skipped=$((skipped + 1)); fi
+    if required "$file"; then
+      fail "source AST rejected"
+      cat "$tmp/source.err" >&2
+    else
+      skipped=$((skipped + 1))
+      record_rejection "$tmp/source.err"
+    fi
     continue
   fi
   status=0
@@ -105,6 +147,7 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
   if [[ $status != 0 ]]; then
     if [[ ($status == 1 || $status == 3) ]] && ! required "$file"; then
       skipped=$((skipped + 1))
+      record_rejection "$tmp/codegen.err"
     else
       fail "generator exited $status"
       cat "$tmp/codegen.err" >&2
@@ -121,10 +164,14 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
     head -n 12 "$tmp/build.err" >&2
     continue
   fi
+  stdin=${file%.yx}.stdin
+  if [[ ! -f $stdin ]]; then stdin=/dev/null; fi
+  args=()
+  if [[ -f ${file%.yx}.args ]]; then mapfile -t args <"${file%.yx}.args"; fi
   rust_rc=0
   self_rc=0
-  timeout 10 "$tmp/rust" >"$tmp/rust.out" 2>"$tmp/rust.err" || rust_rc=$?
-  timeout 10 "$tmp/self" >"$tmp/self.out" 2>"$tmp/self.err" || self_rc=$?
+  timeout 10 bash -c 'exe=$1; shift; exec -a candidate "$exe" "$@"' _ "$tmp/rust" "${args[@]}" <"$stdin" >"$tmp/rust.out" 2>"$tmp/rust.err" || rust_rc=$?
+  timeout 10 bash -c 'exe=$1; shift; exec -a candidate "$exe" "$@"' _ "$tmp/self" "${args[@]}" <"$stdin" >"$tmp/self.out" 2>"$tmp/self.err" || self_rc=$?
   if [[ $rust_rc != "$self_rc" || $rust_rc == 124 ]] ||
       ! cmp -s "$tmp/rust.out" "$tmp/self.out" || ! cmp -s "$tmp/rust.err" "$tmp/self.err"; then
     fail "execution mismatch (Rust $rust_rc, Yerux $self_rc)"
@@ -137,4 +184,10 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
 done
 printf 'selfhost codegen: %d/%d identical executions (%d panics), %d outside subset, %d expected rejections, %d mismatches\n' \
   "$identical" "$total" "$panics" "$skipped" "$rejections" "$failures"
-[[ $identical -ge 8 && $panics -ge 2 && $rejections == 2 && $failures == 0 ]]
+if ((skipped > 0)); then
+  printf 'Rejections by category (first diagnostic per candidate):\n'
+  for category in "${!reasons[@]}"; do
+    printf '%4d  %s\n' "${reasons[$category]}" "$category"
+  done | sort -k1,1nr -k2
+fi
+[[ $identical -ge 149 && $panics -ge 2 && $rejections == 2 && $failures == 0 ]]

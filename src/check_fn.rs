@@ -299,6 +299,15 @@ impl<'a> Checker<'a> {
                 let f = self.types.fns[i].clone();
                 f.params.iter().any(|(_, t)| self.mentions_free(*t)) || self.mentions_free(f.ret)
             }
+            // `Option<U>`, `Pair<T, U>`, tuples: an instance of a generic type mentions its type arguments
+            Ty::Enum(i) => match self.types.enums[i].origin.clone() {
+                Some((_, args)) => args.iter().any(|a| self.mentions_free(*a)),
+                None => false,
+            },
+            Ty::Struct(i) => match self.types.structs[i].origin.clone() {
+                Some((_, args)) => args.iter().any(|a| self.mentions_free(*a)),
+                None => false,
+            },
             _ => false,
         }
     }

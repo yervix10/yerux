@@ -718,6 +718,7 @@ fn main() {
 - An owned operand is consumed: write `(move value)?` to propagate an owned local variable.
 - `?` cannot be used inside a deferred statement.
 - Prelude methods: `is_some`, `is_none`, `is_ok`, `is_err`, `unwrap_or(default)`, `unwrap()`, `expect(msg)`, `or`, `ok()`, `err()`, and the function `ok_or(option, error)`. `unwrap` and `expect` panic on `None` / `Err` (section 19).
+- In a function that returns `Result<_, String>`, `?` also accepts any error type that implements `Show` (it becomes the message). `r.context("while reading")` prefixes the message (`while reading: cause`); `opt.context("missing")` turns `None` into an `Err`. See docs/ERRORS.md.
 - Use `match` (not `?`) to inspect a *borrowed* Option or Result.
 
 ```yx
