@@ -182,3 +182,7 @@ status. Tests: `tests/io_exit_drop.yx`, `tests/io_exit_skips_drop.yx`, `tests/io
 `path.relative(from, to)` lexically normalizes both inputs and returns the relative path from one directory to the other (`.` when equal). Absolute and relative paths cannot be mixed and produce `Err(String)`. No filesystem access or symlink resolution occurs. Covered by `tests/std_path_complete.yx`.
 
 `std.time` calendar helpers also expose `day_of_year(dt)` (1-based, leap-year aware) and `weekday(dt)` (ISO Monday=1 through Sunday=7). See `tests/std_time_calendar.yx`.
+
+## `std.log`
+
+`log.debug/info/warn/error(message)` write `[LEVEL] message` lines to stderr. Logging is best effort and does not return write errors. See `tests/std_log.yx`.
