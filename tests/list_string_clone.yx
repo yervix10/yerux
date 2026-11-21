@@ -1,0 +1,14 @@
+fn main() {
+  var a = List<String>.new()
+  a.push(String.from("x"))
+  a.push(String.from("yy"))
+  var b = a.clone()
+  b.push(String.from("z"))
+  a.set(0, String.from("changed"))
+  for s in a { print(s) }
+  for s in b { print(s) }
+  print(a.len())
+  print(b.len())
+  var e = List<String>.new()
+  print(e.clone().len())
+}
