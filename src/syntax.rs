@@ -2,6 +2,9 @@
 use crate::numeric::{self, Nk};
 use std::collections::{HashMap, HashSet};
 
+mod surface;
+pub use surface::dump as dump_file_source;
+
 // ───────────────────────── Diagnostics ─────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -1473,6 +1476,7 @@ pub struct FnHeader {
 }
 
 pub struct Parser {
+    surface: Option<surface::Surface>, // only used by ast-file, before module loading
     t: Vec<Token>,
     i: usize,
     names: HashMap<String, Ty>, // user type names (collected in a pre-scan so order does not matter)
@@ -1596,6 +1600,7 @@ impl Parser {
             }
         }
         Parser {
+            surface: None,
             t,
             i: 0,
             names,
@@ -1760,12 +1765,19 @@ impl Parser {
 
     fn ty(&mut self) -> PR<Ty> {
         self.enter()?;
-        let r = self.ty_inner();
+        let r = if self.surface.is_some() {
+            self.source_type()
+        } else {
+            self.ty_inner()
+        };
         self.leave();
         r
     }
     /// The type of a `view`/`mut` parameter: anything `indirect_ty` accepts, plus a slice `[T]`.
     fn param_ty(&mut self) -> PR<Ty> {
+        if self.surface.is_some() {
+            return self.ty();
+        }
         if self.is_sym("[") {
             self.enter()?;
             let r = self.bracket_ty(true);
@@ -2274,6 +2286,9 @@ impl Parser {
     }
     /// An array length: an integer literal, an Int const or a const parameter.
     fn array_len(&mut self, what: &str) -> PR<i64> {
+        if self.surface.is_some() {
+            return self.source_length();
+        }
         let npos = self.pos();
         match self.peek().clone() {
             Tok::Num(n) => {
@@ -3169,7 +3184,7 @@ impl Parser {
             }
             let e = self.expr()?;
             let inner = if self.eat_sym("=") {
-                let bracket = self.bracket_target();
+                let bracket = self.surface.is_none() && self.bracket_target();
                 let v = self.expr()?;
                 Self::assign(e, v, bracket)
             } else {
@@ -3182,7 +3197,7 @@ impl Parser {
         } else {
             let e = self.expr()?;
             if self.eat_sym("=") {
-                let bracket = self.bracket_target();
+                let bracket = self.surface.is_none() && self.bracket_target();
                 let v = self.expr()?;
                 Self::assign(e, v, bracket)
             } else {
@@ -3335,7 +3350,7 @@ impl Parser {
             let body = self.block()?;
             self.eat_sym(",");
             // plain `Variant(a, b)` / `_` arms keep the original representation
-            let plain = guard.is_none()
+            let plain = self.surface.is_none() && guard.is_none()
                 && match &pat {
                     Pat::Wild(_) => true,
                     Pat::Variant(_, subs, _) => subs
@@ -3525,7 +3540,14 @@ impl Parser {
                 }
                 if self.eat_sym(".") {
                     // qualified pattern: Shape.Circle(r)
-                    name = self.ident()?.0;
+                    let variant = self.ident()?.0;
+                    if self.surface.is_some() {
+                        name.push('.');
+                        name.push_str(&variant);
+                        self.source_path_tail(&mut name)?;
+                    } else {
+                        name = variant;
+                    }
                     let subs = self.pat_args()?;
                     return Ok(Pat::Variant(name, subs, span(pos, self.t[self.i - 1].pos)));
                 }
@@ -3562,7 +3584,7 @@ impl Parser {
             let apos = self.bump().pos;
             let tp = self.pos();
             let ty = self.ty()?;
-            if !matches!(ty, Ty::Range(..)) {
+            if self.surface.is_none() && !matches!(ty, Ty::Range(..)) {
                 return Err(diag("`as` converts an integer into a range type", tp)
                     .note("help: write `x as Int<0..255>` (checked, panics when x does not fit) or `x as Int<0..255> else { return }`"));
             }
@@ -3923,7 +3945,7 @@ impl Parser {
                 "true" => Ok(mk(EK::Bool(true), pos)),
                 "false" => Ok(mk(EK::Bool(false), pos)),
                 "spawn" => {
-                    if self.thread_scopes == 0 {
+                    if self.surface.is_none() && self.thread_scopes == 0 {
                         return Err(diag("spawn can only be used inside a scope block", pos));
                     }
                     if !self.is_kw("move") {
@@ -4029,7 +4051,7 @@ impl Parser {
             if self.is_sym("=") {
                 // `|x| total = total + x`: an assignment is a statement, the closure returns nothing
                 self.bump();
-                let bracket = self.bracket_target();
+                let bracket = self.surface.is_none() && self.bracket_target();
                 let v = self.expr()?;
                 let end = v.pos;
                 (
@@ -4080,6 +4102,9 @@ impl Parser {
     }
 
     fn after_name(&mut self, x: String, pos: Pos) -> PR<Expr> {
+        if self.surface.is_some() {
+            return self.source_after_name(x, pos);
+        }
         if self.is_sym("(") {
             let (args, end) = self.args()?;
             return self.postfix(mk(EK::Call(x, args), span(pos, end)));

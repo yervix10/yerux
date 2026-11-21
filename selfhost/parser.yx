@@ -1,179 +1,964 @@
-// Expression parser over the canonical token rows emitted by lexer.yx.
-// The Rust side provides the AST-shape oracle via `yerux ast-expr`.
+// Source parser over the token rows emitted by lexer.yx.
 import std.env
 import std.fs
 
-struct Token { kind: String, value: String }
-struct Parser { tokens: List<Token>, i: Int }
-
-fn token_kind(p: view Parser) -> Int {
-  if p.tokens.at(p.i).kind == "Eof" { return 0 }
-  if p.tokens.at(p.i).kind == "Id" { return 1 }
-  if p.tokens.at(p.i).kind == "Num" { return 2 }
-  if p.tokens.at(p.i).kind == "Float" { return 3 }
-  if p.tokens.at(p.i).kind == "Str" { return 4 }
-  if p.tokens.at(p.i).kind == "Char" { return 5 }
-  if p.tokens.at(p.i).kind == "Sym" { return 6 }
-  return 7
+struct Token { kind: String, value: String, text: String, line: Int }
+struct Parser {
+  tokens: List<Token>,
+  structs: List<String>,
+  imports: List<String>,
+  i: Int,
+  failed: Bool,
+  error_line: Int,
+  legacy: Bool,
 }
 
-fn is_sym(p: view Parser, encoded: Text) -> Bool {
-  return p.tokens.at(p.i).kind == "Sym" && p.tokens.at(p.i).value == encoded
+fn hex(s: view String) -> String {
+  let digits = String.from("0123456789abcdef")
+  var out = String.new()
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    out.push_byte(digits.byte(b / 16))
+    out.push_byte(digits.byte(b % 16))
+  }
+  return out
+}
+
+fn nibble(b: Int) -> Int {
+  if b >= 97 { return b - 87 }
+  return b - 48
+}
+
+fn unhex(s: view String) -> String {
+  var out = String.new()
+  for i in 0..s.len() / 2 {
+    out.push_byte(nibble(s.byte(i * 2)) * 16 + nibble(s.byte(i * 2 + 1)))
+  }
+  return out
+}
+
+fn current(p: view Parser, offset: Int) -> Int {
+  return min(p.i + offset, p.tokens.len() - 1)
+}
+
+fn kind(p: view Parser, k: Text) -> Bool {
+  return p.tokens.at(p.i).kind == k
+}
+
+fn sym_at(p: view Parser, offset: Int, s: Text) -> Bool {
+  let i = current(p, offset)
+  return p.tokens.at(i).kind == "Sym" && p.tokens.at(i).text == s
+}
+
+fn kw_at(p: view Parser, offset: Int, s: Text) -> Bool {
+  let i = current(p, offset)
+  return p.tokens.at(i).kind == "Id" && p.tokens.at(i).text == s
+}
+
+fn sym(p: view Parser, s: Text) -> Bool { return sym_at(p, 0, s) }
+fn kw(p: view Parser, s: Text) -> Bool { return kw_at(p, 0, s) }
+
+fn reserved(n: view String) -> Bool {
+  return n == "fn" || n == "let" || n == "var" || n == "if" || n == "else" ||
+    n == "while" || n == "return" || n == "move" || n == "view" || n == "mut" ||
+    n == "true" || n == "false" || n == "struct" || n == "enum" || n == "match" ||
+    n == "defer" || n == "trait" || n == "dyn" || n == "impl" || n == "for" ||
+    n == "in" || n == "break" || n == "continue" || n == "unsafe" ||
+    n == "spawn" || n == "parallel" || n == "scope"
+}
+
+fn is_name(p: view Parser, offset: Int) -> Bool {
+  let i = current(p, offset)
+  return p.tokens.at(i).kind == "Id" && !reserved(p.tokens.at(i).text)
+}
+
+fn bump(p: mut Parser) -> String {
+  let value = String.from(p.tokens.at(p.i).value)
+  if !kind(p, "Eof") { p.i = p.i + 1 }
+  return value
+}
+
+fn eat(p: mut Parser, s: Text) -> Bool {
+  if !sym(p, s) { return false }
+  p.i = p.i + 1
+  return true
+}
+
+fn eat_kw(p: mut Parser, s: Text) -> Bool {
+  if !kw(p, s) { return false }
+  p.i = p.i + 1
+  return true
+}
+
+fn expect(p: mut Parser, s: Text) {
+  if !eat(p, s) { p.failed = true }
+}
+
+fn ident(p: mut Parser) -> String {
+  if !is_name(p, 0) { p.failed = true; return String.new() }
+  return bump(p)
+}
+
+fn at_close(p: mut Parser, close: Text) -> Bool {
+  if kind(p, "Eof") { p.failed = true }
+  return p.failed || sym(p, close)
+}
+
+fn same_line(p: view Parser) -> Bool {
+  return p.i > 0 && p.tokens.at(p.i - 1).line == p.tokens.at(p.i).line
+}
+
+fn node1(tag: Text, a: view String) -> String { return "{tag}({a})" }
+fn node2(tag: Text, a: view String, b: view String) -> String { return "{tag}({a},{b})" }
+fn node3(tag: Text, a: view String, b: view String, c: view String) -> String { return "{tag}({a},{b},{c})" }
+fn missing() -> String { return String.from("_") }
+fn empty_list() -> String { return String.from("[]") }
+
+fn append(out: mut String, item: view String) {
+  if out.len() > 1 { out.push_str(",") }
+  out.push_str(item)
+}
+
+fn finish(out: mut String) { out.push_str("]") }
+
+fn unary(p: view Parser, op: view String, value: view String) -> String {
+  if p.legacy { return "Un({op}, {value})" }
+  return node2("Un", op, value)
+}
+
+fn call(p: view Parser, name: view String, args: view String) -> String {
+  if p.legacy { return "Call({name}, {args})" }
+  return node2("Call", name, args)
+}
+
+fn path_tail(p: mut Parser, path: mut String) {
+  while sym(p, ".") && is_name(p, 1) {
+    p.i = p.i + 1
+    path.push_str("2e")
+    let segment = ident(p)
+    path.push_str(segment)
+  }
+}
+
+fn path(p: mut Parser) -> String {
+  var out = ident(p)
+  path_tail(p, out)
+  return out
+}
+
+fn mode(p: mut Parser) -> String {
+  if eat_kw(p, "view") { return String.from("View") }
+  if eat_kw(p, "mut") { return String.from("Mut") }
+  return String.from("Own")
+}
+
+fn length(p: mut Parser) -> String {
+  if kind(p, "Num") { return node1("Int", bump(p)) }
+  return node1("Var", ident(p))
+}
+
+fn int_bound(p: mut Parser) -> String {
+  let neg = eat(p, "-")
+  var value = String.new()
+  if kind(p, "Num") { value = bump(p) }
+  else if kind(p, "NumT") {
+    let raw = bump(p)
+    if raw.byte(raw.len() - 1) == 58 { value = raw.slice(0, raw.len() - 1) }
+    else { p.failed = true }
+  } else { p.failed = true }
+  if neg { return "-{value}" }
+  return value
+}
+
+fn type_args(p: mut Parser, name: view String) -> String {
+  if !eat(p, "<") { return empty_list() }
+  if name == "496e74" {
+    var lo = missing()
+    var hi = missing()
+    if !sym(p, "..") { lo = int_bound(p) }
+    expect(p, "..")
+    if !sym(p, ">") { hi = int_bound(p) }
+    expect(p, ">")
+    return "[Range({lo},{hi})]"
+  }
+  return types(p, ">")
+}
+
+fn types(p: mut Parser, close: Text) -> String {
+  var items = String.from("[")
+  while !at_close(p, close) {
+    let item = parse_type(p)
+    append(items, item)
+    if !eat(p, ",") { break }
+  }
+  expect(p, close)
+  finish(items)
+  return items
+}
+
+fn return_type(p: mut Parser) -> String {
+  if eat(p, "->") { return parse_type(p) }
+  return missing()
+}
+
+fn parse_type(p: mut Parser) -> String {
+  if eat_kw(p, "fn") {
+    expect(p, "(")
+    var params = String.from("[")
+    while !at_close(p, ")") {
+      let m = mode(p)
+      let t = parse_type(p)
+      append(params, node2("TypeParam", m, t))
+      if !eat(p, ",") { break }
+    }
+    expect(p, ")")
+    finish(params)
+    return node2("FnType", params, return_type(p))
+  }
+  if eat_kw(p, "dyn") { return node1("DynType", path(p)) }
+  if eat(p, "[") {
+    let item = parse_type(p)
+    var len = missing()
+    if eat(p, ";") { len = length(p) }
+    expect(p, "]")
+    return node2("BracketType", item, len)
+  }
+  if eat(p, "(") { return node1("TupleType", types(p, ")")) }
+  let name = path(p)
+  return node2("Type", name, type_args(p, name))
 }
 
 fn precedence(p: view Parser) -> Int {
-  if is_sym(p, "7c7c") { return 1 }
-  if is_sym(p, "2626") { return 2 }
-  if is_sym(p, "3d3d") || is_sym(p, "213d") { return 3 }
-  if is_sym(p, "3c") || is_sym(p, "3e") || is_sym(p, "3c3d") || is_sym(p, "3e3d") { return 4 }
-  if is_sym(p, "2b") || is_sym(p, "2d") { return 5 }
-  if is_sym(p, "2a") || is_sym(p, "2f") || is_sym(p, "25") { return 6 }
+  if sym(p, "||") { return 1 }
+  if sym(p, "&&") { return 2 }
+  if sym(p, "==") || sym(p, "!=") { return 3 }
+  if sym(p, "<") || sym(p, ">") || sym(p, "<=") || sym(p, ">=") { return 4 }
+  if sym(p, "+") || sym(p, "-") { return 5 }
+  if sym(p, "*") || sym(p, "/") || sym(p, "%") { return 6 }
   return 0
 }
 
-fn atom(tag: Text, value: view String) -> String {
-  var out = String.from(tag)
-  out.push_str("(")
-  out.push_str(value)
-  out.push_str(")")
-  return out
-}
-
-fn unary(op: view String, x: view String) -> String {
-  var out = String.from("Un(")
-  out.push_str(op)
-  out.push_str(", ")
-  out.push_str(x)
-  out.push_str(")")
-  return out
-}
-
-fn binary(op: view String, left: view String, right: view String) -> String {
-  var out = String.from("Bin(")
-  out.push_str(op)
-  out.push_str(", ")
-  out.push_str(left)
-  out.push_str(", ")
-  out.push_str(right)
-  out.push_str(")")
-  return out
-}
-
-fn call(name: view String, args: view String) -> String {
-  var out = String.from("Call(")
-  out.push_str(name)
-  out.push_str(", ")
-  out.push_str(args)
-  out.push_str(")")
-  return out
-}
-
-fn parse_primary(p: mut Parser) -> String {
-  let kind = token_kind(p)
-  if kind == 2 {
-    let value = String.from(p.tokens.at(p.i).value)
-    p.i = p.i + 1
-    return atom("Int", value)
+fn args(p: mut Parser) -> String {
+  expect(p, "(")
+  var out = String.from("[")
+  while !at_close(p, ")") {
+    let arg = parse_expr(p)
+    append(out, arg)
+    if !eat(p, ",") { break }
   }
-  if kind == 3 {
-    let value = String.from(p.tokens.at(p.i).value)
-    let colon = value.find(":")
-    var text = String.from(value)
-    if colon >= 0 { text = text.slice(0, colon) }
-    p.i = p.i + 1
-    return atom("Float", text)
+  expect(p, ")")
+  finish(out)
+  return out
+}
+
+fn fields(p: mut Parser) -> String {
+  expect(p, "{{")
+  var out = String.from("[")
+  while !at_close(p, "}}") {
+    let field = ident(p)
+    expect(p, ":")
+    append(out, node2("FieldInit", field, parse_expr(p)))
+    if !eat(p, ",") { break }
   }
-  if kind == 4 { let value = String.from(p.tokens.at(p.i).value); p.i = p.i + 1; return atom("Text", value) }
-  if kind == 5 { let value = String.from(p.tokens.at(p.i).value); p.i = p.i + 1; return atom("Char", value) }
-  if kind == 1 {
-    let name = String.from(p.tokens.at(p.i).value)
-    p.i = p.i + 1
-    if name == "74727565" { return atom("Bool", String.from("true")) }
-    if name == "66616c7365" { return atom("Bool", String.from("false")) }
-    if is_sym(p, "28") {
-      p.i = p.i + 1
-      var args = String.from("[")
-      var first = true
-      while !is_sym(p, "29") && token_kind(p) != 0 {
-        if !first { args.push_str(",") }
-        let arg = parse_expr(p, 1)
-        args.push_str(arg)
-        first = false
-        if is_sym(p, "2c") { p.i = p.i + 1 }
-        else { break }
-      }
-      if is_sym(p, "29") { p.i = p.i + 1 }
-      args.push_str("]")
-      return call(name, args)
+  expect(p, "}}")
+  finish(out)
+  return out
+}
+
+fn uppercase(s: view String) -> Bool {
+  if s.len() == 0 { return false }
+  let b = s.byte(0)
+  return b >= 65 && b <= 90
+}
+
+fn constructor_name(p: view Parser, start: Int, end: Int) -> Bool {
+  if start == end { return p.structs.contains(p.tokens.at(start - 1).value) }
+  // An imported constructor can have a single module qualifier.
+  return end == start + 2 && p.imports.contains(p.tokens.at(start - 1).value) &&
+    uppercase(p.tokens.at(end - 1).text)
+}
+
+fn after_name(p: mut Parser, name: view String) -> String {
+  let start = p.i
+  var full_path = String.from(name)
+  path_tail(p, full_path)
+  let angle = p.i
+  var generic = missing()
+  if sym(p, "<") {
+    generic = type_args(p, full_path)
+    if p.failed || !(sym(p, ".") || sym(p, "{{")) {
+      p.i = angle
+      p.failed = false
+      p.error_line = 0
+      generic = missing()
     }
-    return atom("Var", name)
   }
-  if is_sym(p, "2d") || is_sym(p, "21") {
-    let op = String.from(p.tokens.at(p.i).value)
-    p.i = p.i + 1
-    let x = parse_expr(p, 7)
-    return unary(op, x)
+  let has_fields = is_name(p, 1) && sym_at(p, 2, ":") && !kw_at(p, 3, "while") && !kw_at(p, 3, "for")
+  let empty_literal = sym_at(p, 1, "}}") && (generic != "_" || constructor_name(p, start, angle))
+  if sym(p, "{{") && (has_fields || empty_literal) {
+    return node3("StructLit", full_path, generic, fields(p))
   }
-  if is_sym(p, "28") {
-    p.i = p.i + 1
-    let value = parse_expr(p, 1)
-    if is_sym(p, "29") { p.i = p.i + 1 }
-    return value
+  if generic != "_" {
+    expect(p, ".")
+    let member = ident(p)
+    var values = empty_list()
+    if sym(p, "(") { values = args(p) }
+    return "GenericMember({full_path},{generic},{member},{values})"
   }
-  p.i = p.i + 1
-  return String.from("Unsupported")
+  p.i = start
+  if sym(p, "(") {
+    let values = args(p)
+    return call(p, name, values)
+  }
+  return node1("Var", name)
 }
 
-fn parse_expr(p: mut Parser, min_prec: Int) -> String {
-  var left = parse_primary(p)
-  while precedence(p) >= min_prec {
-    let op = String.from(p.tokens.at(p.i).value)
-    let prec = precedence(p)
+fn tuple_or_group(p: mut Parser) -> String {
+  let line = p.tokens.at(p.i - 1).line
+  let first = parse_expr(p)
+  if !sym(p, ",") {
+    expect(p, ")")
+    return first
+  }
+  var n = 1
+  var out = String.from("[")
+  append(out, node2("FieldInit", String.from("5f30"), first))
+  while eat(p, ",") && !at_close(p, ")") {
+    let field = "_{n}"
+    append(out, node2("FieldInit", hex(field), parse_expr(p)))
+    n = n + 1
+  }
+  expect(p, ")")
+  if !p.failed && (n < 2 || n > 6) { p.failed = true; p.error_line = line }
+  finish(out)
+  let tuple = "Tuple{n}"
+  return node3("StructLit", hex(tuple), missing(), out)
+}
+
+fn array(p: mut Parser) -> String {
+  let first = parse_expr(p)
+  if eat(p, ";") {
+    let len = length(p)
+    expect(p, "]")
+    return node2("ArrayFill", first, len)
+  }
+  var out = String.from("[")
+  append(out, first)
+  while eat(p, ",") && !at_close(p, "]") {
+    append(out, parse_expr(p))
+  }
+  expect(p, "]")
+  finish(out)
+  return node1("Array", out)
+}
+
+fn assignment_or_expr(p: mut Parser, value: view String, wrap: Bool) -> String {
+  if eat(p, "=") {
+    let right = parse_expr(p)
+    return node2("Assign", value, right)
+  }
+  if wrap { return node1("Expr", value) }
+  return node1("Return", value)
+}
+
+fn closure(p: mut Parser, moved: Bool, worker: Bool) -> String {
+  var params = String.from("[")
+  if !eat(p, "||") {
+    expect(p, "|")
+    var names = List<String>.new()
+    while !at_close(p, "|") {
+      let line = p.tokens.at(p.i).line
+      let name = ident(p)
+      if names.contains(name) {
+        p.failed = true
+        p.error_line = line
+        break
+      }
+      names.push(String.from(name))
+      var m = String.from("Own")
+      var t = missing()
+      if eat(p, ":") { m = mode(p); t = parse_type(p) }
+      append(params, node3("Param", name, m, t))
+      if !eat(p, ",") { break }
+    }
+    expect(p, "|")
+  }
+  finish(params)
+  let ret = return_type(p)
+  let expr_body = !sym(p, "{{")
+  var body = String.new()
+  if expr_body {
+    if ret != "_" { p.failed = true }
+    let value = parse_expr(p)
+    let statement = assignment_or_expr(p, value, false)
+    body = "Block([{statement}])"
+  } else { body = block(p) }
+  return "Closure({moved},{expr_body},false,{worker},{params},{ret},{body})"
+}
+
+fn primary(p: mut Parser) -> String {
+  if p.failed { return String.new() }
+  if kind(p, "Num") { return node1("Int", bump(p)) }
+  if kind(p, "NumT") {
+    let raw = bump(p)
+    let split = raw.find(":")
+    return node2("NumT", raw.slice(0, split), raw.slice(split + 1, raw.len()))
+  }
+  if kind(p, "Float") {
+    let raw = bump(p)
+    let split = raw.find(":")
+    let value = raw.slice(0, split)
+    if p.legacy { return node1("Float", value) }
+    return node2("Float", value, raw.slice(split + 1, raw.len()))
+  }
+  if kind(p, "Str") { return node1("Text", bump(p)) }
+  if kind(p, "Char") { return node1("Char", bump(p)) }
+  if eat_kw(p, "true") { return String.from("Bool(true)") }
+  if eat_kw(p, "false") { return String.from("Bool(false)") }
+  if eat(p, "(") { return tuple_or_group(p) }
+  if eat(p, "[") { return array(p) }
+  if sym(p, "|") || sym(p, "||") { return closure(p, false, false) }
+  if eat_kw(p, "move") {
+    if sym(p, "|") || sym(p, "||") { return closure(p, true, false) }
+    return node1("Move", ident(p))
+  }
+  if eat_kw(p, "spawn") {
+    if !eat_kw(p, "move") { p.failed = true; return String.new() }
+    var worker = String.new()
+    if sym(p, "{{") {
+      let body = block(p)
+      worker = "Closure(true,false,false,true,[],_,{body})"
+    } else { worker = closure(p, true, true) }
+    return "Call(5f5f737061776e5f6f776e6564,[{worker}])"
+  }
+  if is_name(p, 0) {
+    let name = ident(p)
+    return after_name(p, name)
+  }
+  p.failed = true
+  return String.new()
+}
+
+fn postfix(p: mut Parser, base: String) -> String {
+  var out = move base
+  while !p.failed {
+    if sym(p, "(") && same_line(p) &&
+        (out.starts_with("Call(") || out.starts_with("CallFn(") || out.starts_with("Method(")) {
+      let values = args(p)
+      out = node2("CallFn", out, values)
+    } else if sym(p, "[") && same_line(p) {
+      p.i = p.i + 1
+      var lo = missing()
+      if !sym(p, "..") { lo = parse_expr(p) }
+      if eat(p, "..") {
+        var hi = missing()
+        if !sym(p, "]") { hi = parse_expr(p) }
+        expect(p, "]")
+        out = node3("Slice", out, lo, hi)
+      } else {
+        expect(p, "]")
+        out = "Method({out},6174,[{lo}])"
+      }
+    } else if eat(p, "?") {
+      out = unary(p, String.from("3f"), out)
+    } else if eat(p, ".") {
+      if kind(p, "Num") {
+        let index = bump(p)
+        let field = "_{index}"
+        out = node2("Field", out, hex(field))
+      } else {
+        let member = ident(p)
+        if sym(p, "(") {
+          let values = args(p)
+          out = node3("Method", out, member, values)
+        } else { out = node2("Field", out, member) }
+      }
+    } else { break }
+  }
+  return out
+}
+
+fn parse_unary(p: mut Parser) -> String {
+  if p.failed { return String.new() }
+  if sym(p, "!") || sym(p, "-") {
+    let op = bump(p)
+    let value = parse_unary(p)
+    return unary(p, op, value)
+  }
+  if eat(p, "*") {
+    let value = parse_unary(p)
+    return "Method({value},676574,[])"
+  }
+  if kw(p, "comptime") && (p.tokens.at(current(p, 1)).kind == "Id" ||
+      p.tokens.at(current(p, 1)).kind == "Num" || p.tokens.at(current(p, 1)).kind == "Char" ||
+      sym_at(p, 1, "(") || sym_at(p, 1, "-") || sym_at(p, 1, "!")) {
     p.i = p.i + 1
-    let right = parse_expr(p, prec + 1)
-    left = binary(op, left, right)
+    let value = parse_unary(p)
+    return "Call(5f5f636f6d7074696d65,[{value}])"
+  }
+  let base = primary(p)
+  return postfix(p, move base)
+}
+
+fn binary(p: mut Parser, minimum: Int) -> String {
+  var left = parse_unary(p)
+  while !p.failed && precedence(p) >= minimum {
+    let next = precedence(p) + 1
+    let op = bump(p)
+    let right = binary(p, next)
+    if p.legacy { left = "Bin({op}, {left}, {right})" }
+    else { left = node3("Bin", op, left, right) }
   }
   return left
 }
 
-fn parse_stmt(p: mut Parser) -> String {
-  if token_kind(p) == 1 && (p.tokens.at(p.i).value == "6c6574" || p.tokens.at(p.i).value == "766172") {
-    let mutable = p.tokens.at(p.i).value == "766172"
-    p.i = p.i + 1
-    let name = String.from(p.tokens.at(p.i).value)
-    p.i = p.i + 1
-    if is_sym(p, "3d") { p.i = p.i + 1 }
-    let value = parse_expr(p, 1)
-    var out = String.from("Let(")
-    out.push_str(name)
-    if mutable { out.push_str(", true, ") }
-    else { out.push_str(", false, ") }
-    out.push_str(value)
-    out.push_str(")")
-    return out
+fn parse_expr(p: mut Parser) -> String {
+  let value = binary(p, 1)
+  if !same_line(p) || !eat_kw(p, "as") { return value }
+  let ty = parse_type(p)
+  var otherwise = missing()
+  if eat_kw(p, "else") { otherwise = block(p) }
+  return node3("Cast", value, ty, otherwise)
+}
+
+fn pattern_bound(p: mut Parser, value: mut Int, char: mut Bool) -> Bool {
+  let neg = sym(p, "-")
+  var offset = 0
+  if neg { offset = 1 }
+  let i = current(p, offset)
+  let is_char = p.tokens.at(i).kind == "Char"
+  if p.tokens.at(i).kind != "Num" && (!is_char || neg) { return false }
+  char = is_char
+  p.i = p.i + offset
+  let number = bump(p)
+  if !number.parse_int(value) { p.failed = true }
+  if neg { value = 0 - value }
+  return true
+}
+
+fn pat_range(p: mut Parser, lower: view String, is_char: Bool, inclusive: Bool) -> String {
+  var hi = 0
+  var char = false
+  var upper = missing()
+  var range_char = is_char
+  if pattern_bound(p, hi, char) {
+    if lower == "_" { range_char = char }
+    else if char != is_char { p.failed = true }
+    if !inclusive {
+      if hi == -9223372036854775807 - 1 { p.failed = true }
+      else { hi = hi - 1 }
+    }
+    var lo = 0
+    if lower.parse_int(lo) && lo > hi { p.failed = true }
+    upper = "{hi}"
+  } else if inclusive { p.failed = true }
+  return "PatRange({range_char},{lower},{upper})"
+}
+
+fn pattern_atom(p: mut Parser) -> String {
+  if p.failed { return String.new() }
+  if eat(p, "..=") { return pat_range(p, missing(), false, true) }
+  var number = 0
+  var char = false
+  if pattern_bound(p, number, char) {
+    let value = "{number}"
+    if eat(p, "..=") { return pat_range(p, value, char, true) }
+    if eat(p, "..") { return pat_range(p, value, char, false) }
+    if char { return node1("Char", value) }
+    return node1("Int", value)
   }
-  if token_kind(p) == 1 && p.tokens.at(p.i).value == "72657475726e" {
-    p.i = p.i + 1
-    if token_kind(p) == 0 { return String.from("Return(None)") }
-    let value = parse_expr(p, 1)
-    var out = String.from("Return(")
-    out.push_str(value)
-    out.push_str(")")
-    return out
+  if eat(p, "(") {
+    let first = pattern(p)
+    if !sym(p, ",") {
+      expect(p, ")")
+      return first
+    }
+    var out = String.from("[")
+    append(out, first)
+    var count = 1
+    while eat(p, ",") && !at_close(p, ")") {
+      append(out, pattern(p))
+      count = count + 1
+    }
+    expect(p, ")")
+    if count < 2 || count > 6 { p.failed = true }
+    finish(out)
+    return node1("TuplePat", out)
   }
-  let value = parse_expr(p, 1)
-  var out = String.from("Expr(")
-  out.push_str(value)
-  out.push_str(")")
+  if eat_kw(p, "true") { return String.from("Bool(true)") }
+  if eat_kw(p, "false") { return String.from("Bool(false)") }
+  if eat_kw(p, "_") { return String.from("Wild()") }
+  let upper = uppercase(p.tokens.at(p.i).text)
+  var name = ident(p)
+  if eat(p, "@") { return node2("Bind", name, pattern_atom(p)) }
+  let qualified = eat(p, ".")
+  if qualified {
+    let tail = ident(p)
+    name.push_str("2e")
+    name.push_str(tail)
+    path_tail(p, name)
+  }
+  if qualified || upper || sym(p, "(") {
+    var items = String.from("[")
+    if eat(p, "(") {
+      while !at_close(p, ")") {
+        append(items, pattern(p))
+        if !eat(p, ",") { break }
+      }
+      expect(p, ")")
+    }
+    finish(items)
+    return node2("Variant", name, items)
+  }
+  return node2("Bind", name, missing())
+}
+
+fn pattern(p: mut Parser) -> String {
+  let first = pattern_atom(p)
+  if !sym(p, "|") { return first }
+  var out = String.from("[")
+  append(out, first)
+  while !p.failed && eat(p, "|") {
+    append(out, pattern_atom(p))
+  }
+  finish(out)
+  return node1("Or", out)
+}
+
+fn unpack(p: mut Parser, mutable: Bool) -> String {
+  if !eat(p, "(") {
+    let n = ident(p)
+    return "UnpackBind({n},{mutable})"
+  }
+  var out = String.from("[")
+  var count = 0
+  while !at_close(p, ")") {
+    append(out, unpack(p, mutable))
+    count = count + 1
+    if !eat(p, ",") { break }
+  }
+  expect(p, ")")
+  if count < 2 { p.failed = true }
+  finish(out)
+  return node1("UnpackTuple", out)
+}
+
+fn block(p: mut Parser) -> String {
+  expect(p, "{{")
+  var out = String.from("[")
+  while !at_close(p, "}}") {
+    append(out, statement(p))
+  }
+  expect(p, "}}")
+  finish(out)
+  return node1("Block", out)
+}
+
+fn binding(p: mut Parser, mutable: Bool) -> String {
+  if sym(p, "(") {
+    let pat = unpack(p, mutable)
+    expect(p, "=")
+    return node2("Unpack", pat, parse_expr(p))
+  }
+  let n = ident(p)
+  var ty = missing()
+  if eat(p, ":") { ty = parse_type(p) }
+  expect(p, "=")
+  var value = parse_expr(p)
+  if ty != "_" { value = node2("Ascribe", ty, value) }
+  if p.legacy { return "Let({n}, {mutable}, {value})" }
+  return "Let({n},{mutable},{value})"
+}
+
+fn if_stmt(p: mut Parser) -> String {
+  let cond = parse_expr(p)
+  let yes = block(p)
+  var no = missing()
+  if eat_kw(p, "else") {
+    if eat_kw(p, "if") {
+      let inner = if_stmt(p)
+      no = "Block([{inner}])"
+    } else { no = block(p) }
+  }
+  return node3("If", cond, yes, no)
+}
+
+fn loop_stmt(p: mut Parser, label: view String, is_parallel: Bool) -> String {
+  if !is_parallel && eat_kw(p, "while") {
+    let cond = parse_expr(p)
+    return node3("While", label, cond, block(p))
+  }
+  if !eat_kw(p, "for") { p.failed = true; return String.new() }
+  let mutable = eat_kw(p, "mut")
+  let n = ident(p)
+  if !eat_kw(p, "in") { p.failed = true }
+  let first = parse_expr(p)
+  var end = missing()
+  var inclusive = false
+  var iter = String.from(first)
+  if sym(p, "..") || sym(p, "..=") {
+    inclusive = sym(p, "..=")
+    p.i = p.i + 1
+    end = parse_expr(p)
+    iter = "IterRange({first},{end},{inclusive})"
+  }
+  var step = missing()
+  if eat_kw(p, "step") { step = parse_expr(p) }
+  let body = block(p)
+  if is_parallel {
+    if mutable || step != "_" { p.failed = true }
+    if end != "_" {
+      let closure = "Closure(false,false,true,false,[Param({n},Own,Type(496e74,[]))],_,{body})"
+      return "Expr(Call(5f5f706172616c6c656c5f72616e6765,[{first},{end},Bool({inclusive}),{closure}]))"
+    }
+    let closure = "Closure(false,false,true,false,[Param({n},View,_)],_,{body})"
+    return "Expr(Call(5f5f706172616c6c656c5f6c697374,[{first},{closure}]))"
+  }
+  return "For({label},{n},{mutable},{iter},{step},{body})"
+}
+
+fn match_stmt(p: mut Parser) -> String {
+  let mutable = eat_kw(p, "mut")
+  var value = parse_expr(p)
+  if mutable { value = node2("Un", String.from("6d7574"), value) }
+  expect(p, "{{")
+  var arms = String.from("[")
+  while !at_close(p, "}}") {
+    let pat = pattern(p)
+    var guard = missing()
+    if eat_kw(p, "if") { guard = parse_expr(p) }
+    expect(p, "=>")
+    let body = block(p)
+    append(arms, node3("Arm", pat, guard, body))
+    let comma = eat(p, ",")
+  }
+  expect(p, "}}")
+  finish(arms)
+  return node2("Match", value, arms)
+}
+
+fn statement(p: mut Parser) -> String {
+  var out = String.new()
+  if kw(p, "let") || kw(p, "var") {
+    let mutable = kw(p, "var")
+    p.i = p.i + 1
+    out = binding(p, mutable)
+  } else if eat_kw(p, "return") {
+    var value = missing()
+    if !(sym(p, "}}") || sym(p, ";") || (p.legacy && kind(p, "Eof"))) { value = parse_expr(p) }
+    if p.legacy && value == "_" { value = String.from("None") }
+    out = node1("Return", value)
+  } else if eat_kw(p, "unsafe") {
+    out = node1("Unsafe", block(p))
+  } else if eat_kw(p, "scope") {
+    out = node1("Scope", block(p))
+  } else if eat_kw(p, "if") {
+    return if_stmt(p)
+  } else if eat_kw(p, "match") {
+    return match_stmt(p)
+  } else if eat_kw(p, "parallel") {
+    out = loop_stmt(p, missing(), true)
+  } else if kw(p, "while") || kw(p, "for") {
+    return loop_stmt(p, missing(), false)
+  } else if is_name(p, 0) && sym_at(p, 1, ":") && (kw_at(p, 2, "while") || kw_at(p, 2, "for")) {
+    let label = ident(p)
+    expect(p, ":")
+    return loop_stmt(p, label, false)
+  } else if kw(p, "break") || kw(p, "continue") {
+    let breaking = eat_kw(p, "break")
+    if !breaking { p.i = p.i + 1 }
+    var label = missing()
+    if same_line(p) && is_name(p, 0) { label = ident(p) }
+    if breaking { out = node1("Break", label) }
+    else { out = node1("Continue", label) }
+  } else if eat_kw(p, "defer") {
+    let value = parse_expr(p)
+    out = node1("Defer", assignment_or_expr(p, value, true))
+  } else {
+    let value = parse_expr(p)
+    out = assignment_or_expr(p, value, true)
+  }
+  let semi = eat(p, ";")
   return out
+}
+
+fn generics(p: mut Parser) -> String {
+  if !eat(p, "<") { return empty_list() }
+  var out = String.from("[")
+  while !at_close(p, ">") {
+    let constant = kw(p, "const") && p.tokens.at(current(p, 1)).kind == "Id"
+    if constant { p.i = p.i + 1 }
+    let n = ident(p)
+    if constant {
+      expect(p, ":")
+      append(out, node2("ConstParam", n, parse_type(p)))
+    } else {
+      var bounds = String.from("[")
+      if eat(p, ":") {
+        append(bounds, path(p))
+        while !p.failed && eat(p, "+") { append(bounds, path(p)) }
+      }
+      finish(bounds)
+      append(out, node2("Generic", n, bounds))
+    }
+    if !eat(p, ",") { break }
+  }
+  expect(p, ">")
+  finish(out)
+  return out
+}
+
+fn function(p: mut Parser, body: Bool, method: Bool, external: Bool) -> String {
+  if !eat_kw(p, "fn") { p.failed = true; return String.new() }
+  let n = ident(p)
+  let generic = generics(p)
+  expect(p, "(")
+  var params = String.from("[")
+  while !at_close(p, ")") {
+    let first = params.len() == 1
+    if external && !first && eat(p, "..") {
+      expect(p, ".")
+      if !sym(p, ")") { p.failed = true }
+      append(params, String.from("Variadic()"))
+      break
+    }
+    var at = 0
+    if kw(p, "view") || kw(p, "mut") { at = 1 }
+    if first && method && kw_at(p, at, "self") && (sym_at(p, at + 1, ",") || sym_at(p, at + 1, ")")) {
+      let m = mode(p)
+      p.i = p.i + 1
+      append(params, node1("Self", m))
+    } else {
+      let param = ident(p)
+      expect(p, ":")
+      let m = mode(p)
+      append(params, node3("Param", param, m, parse_type(p)))
+    }
+    if !eat(p, ",") { break }
+  }
+  expect(p, ")")
+  finish(params)
+  let ret = return_type(p)
+  var statements = missing()
+  if body { statements = block(p) }
+  else { let semi = eat(p, ";") }
+  return "Fn({n},{generic},{params},{ret},{statements})"
+}
+
+fn functions(p: mut Parser, body: Bool, method: Bool, external: Bool) -> String {
+  expect(p, "{{")
+  var out = String.from("[")
+  while !at_close(p, "}}") {
+    append(out, function(p, body, method, external))
+  }
+  expect(p, "}}")
+  finish(out)
+  return out
+}
+
+fn str_value(p: mut Parser) -> String {
+  if !kind(p, "Str") { p.failed = true; return String.new() }
+  return bump(p)
+}
+
+fn aggregate(p: mut Parser, is_struct: Bool) -> String {
+  let n = ident(p)
+  let generic = generics(p)
+  expect(p, "{{")
+  var entries = String.from("[")
+  while !at_close(p, "}}") {
+    let entry = ident(p)
+    if is_struct {
+      expect(p, ":")
+      append(entries, node2("FieldDef", entry, parse_type(p)))
+    } else {
+      var payload = empty_list()
+      if eat(p, "(") { payload = types(p, ")") }
+      append(entries, node2("VariantDef", entry, payload))
+    }
+    if !eat(p, ",") { break }
+  }
+  expect(p, "}}")
+  finish(entries)
+  if is_struct { return node3("Struct", n, generic, entries) }
+  return node3("Enum", n, generic, entries)
+}
+
+fn item(p: mut Parser) -> String {
+  let public = eat_kw(p, "pub")
+  var attribute = missing()
+  if eat(p, "@") { attribute = ident(p) }
+  var out = String.new()
+  if kw(p, "fn") {
+    out = function(p, true, false, false)
+  } else if eat_kw(p, "import") {
+    let module_path = path(p)
+    let last = p.i - 1
+    var alias = missing()
+    if eat_kw(p, "as") {
+      alias = ident(p)
+      p.imports.push(String.from(alias))
+    } else {
+      p.imports.push(String.from(p.tokens.at(last).value))
+    }
+    let semi = eat(p, ";")
+    out = node2("Import", module_path, alias)
+  } else if eat_kw(p, "test") {
+    let n = str_value(p)
+    out = node2("Test", n, block(p))
+  } else if eat_kw(p, "link") {
+    out = node1("Link", str_value(p))
+  } else if eat_kw(p, "extern") {
+    let abi = str_value(p)
+    out = node2("Extern", abi, functions(p, false, false, true))
+  } else if eat_kw(p, "const") {
+    let n = ident(p)
+    var ty = missing()
+    if eat(p, ":") { ty = parse_type(p) }
+    expect(p, "=")
+    out = node3("Const", n, ty, parse_expr(p))
+    let semi = eat(p, ";")
+  } else if eat_kw(p, "type") {
+    let n = ident(p)
+    expect(p, "=")
+    out = node2("Alias", n, parse_type(p))
+    let semi = eat(p, ";")
+  } else if eat_kw(p, "struct") {
+    out = aggregate(p, true)
+  } else if eat_kw(p, "enum") {
+    out = aggregate(p, false)
+  } else if eat_kw(p, "trait") {
+    let n = ident(p)
+    out = node2("Trait", n, functions(p, false, true, false))
+  } else if eat_kw(p, "impl") {
+    let generic = generics(p)
+    var target = parse_type(p)
+    var trait_type = missing()
+    if eat_kw(p, "for") {
+      trait_type = String.from(target)
+      target = parse_type(p)
+    }
+    let methods = functions(p, true, true, false)
+    out = "Impl({generic},{trait_type},{target},{methods})"
+  } else { p.failed = true }
+  return "Item({public},{attribute},{out})"
+}
+
+fn parse_file(p: mut Parser) -> String {
+  var out = String.from("[")
+  while !p.failed && !kind(p, "Eof") {
+    append(out, item(p))
+  }
+  finish(out)
+  return node1("File", out)
 }
 
 fn main() {
   match env.arg(1) {
-    None => { print("usage: parser.yx token-dump.txt"); return }
+    None => { print("usage: parser.yx token-dump.txt"); env.exit(2) }
     Some(path) => {
       match fs.read_to_string(path) {
-        Err(e) => { print("could not read token dump: {e.message}"); return }
+        Err(e) => { print("could not read token dump: {e.message}"); env.exit(2) }
         Ok(source) => { run(source) }
       }
     }
@@ -181,17 +966,53 @@ fn main() {
 }
 
 fn run(source: view String) {
-  let lines = source.split("\n")
   var tokens = List<Token>.new()
-  for line in lines {
-    if line.len() > 0 {
-      let colon = line.find(":")
-      if colon < 0 { tokens.push(Token { kind: String.from(line), value: String.new() }) }
-      else { tokens.push(Token { kind: line.slice(0, colon), value: line.slice(colon + 1, line.len()) }) }
+  var legacy = true
+  for row in source.split("\n") {
+    if row.len() == 0 { continue }
+    var line = 0
+    var start = 0
+    let colon = row.find(":")
+    if colon >= 0 && row.slice(0, colon).parse_int(line) {
+      legacy = false
+      start = colon + 1
+    }
+    let rest = row.slice(start, row.len())
+    let split = rest.find(":")
+    var tag = String.from(rest)
+    var value = String.new()
+    var decoded = String.new()
+    if split >= 0 {
+      tag = rest.slice(0, split)
+      value = rest.slice(split + 1, rest.len())
+      if tag == "Id" || tag == "Sym" { decoded = unhex(value) }
+    }
+    tokens.push(Token { kind: move tag, value: move value, text: move decoded, line: line })
+  }
+  if tokens.len() == 0 || tokens.at(tokens.len() - 1).kind != "Eof" {
+    print("invalid token dump")
+    env.exit(2)
+  }
+  var structs = List<String>.new()
+  for i in 0..tokens.len() - 1 {
+    if tokens.at(i).kind == "Id" && tokens.at(i).text == "struct" && tokens.at(i + 1).kind == "Id" {
+      structs.push(String.from(tokens.at(i + 1).value))
     }
   }
-  var p = Parser { tokens: move tokens, i: 0 }
-  if token_kind(p) == 1 && (p.tokens.at(p.i).value == "6c6574" || p.tokens.at(p.i).value == "766172" || p.tokens.at(p.i).value == "72657475726e") {
-    print(parse_stmt(p))
-  } else { print(parse_expr(p, 1)) }
+  var p = Parser {
+    tokens: move tokens, structs: move structs, imports: List<String>.new(),
+    i: 0, failed: false, error_line: 0, legacy: legacy,
+  }
+  var ast = String.new()
+  if legacy {
+    if kw(p, "let") || kw(p, "var") || kw(p, "return") { ast = statement(p) }
+    else { ast = parse_expr(p) }
+  } else { ast = parse_file(p) }
+  if p.failed || !kind(p, "Eof") {
+    var line = p.error_line
+    if line == 0 { line = p.tokens.at(p.i).line }
+    print("SyntaxError:{line}")
+    env.exit(1)
+  }
+  print(ast)
 }
