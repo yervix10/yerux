@@ -8,10 +8,12 @@ The x86-64 Linux backend has internal thread start and wait operations. Each
 worker gets a 2 MiB stack with a guard page, a TLS base, and a task record.
 Start transfers the closure environment to the worker, which drops it after
 the call. Wait uses the kernel's clear-child-tid futex notification, reads the
-result, and unmaps the worker stack and task record. The allocator serializes
-small-block arena and free-list operations with a futex-backed mutex in
-programs that start workers. Allocation counters use atomic
-increments. The C oracle uses pthreads and C11 atomics.
+result, and unmaps the worker stack and task record. Small blocks use a
+one-entry-per-size-class cache in each thread's TLS; cache hits avoid the
+global allocator lock. Cache misses and spills use the shared arena/free lists
+under a futex-backed mutex. A worker returns its cache to the shared lists
+under one lock when it exits. Allocation counters use atomic increments. The
+C oracle uses pthreads and C11 atomics.
 
 The reserved runtime intrinsics are `__thread_start(fn() -> Int) -> Int` and
 `__thread_wait(Int) -> Int`. The returned integer is an opaque handle that the

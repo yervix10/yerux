@@ -57,6 +57,30 @@ machine. Use the recorded uptime load averages to interpret wall-time changes.
 The benchmark includes result locking, startup, and shutdown rather than
 timing only the recurrence.
 
+### Allocation-heavy pool callbacks
+
+`python3 bench/concurrency_alloc.py --runs 5` measures four batches of 5,000
+callbacks, each creating and dropping 100 short strings. Before the TLS cache,
+on a host with 12 CPUs and uptime load averages 4.43 / 3.89 / 4.35, five timed
+runs after warm-up measured serial at 0.0315 s wall / 0.0310 s user / 0.000 s
+system, and the four-worker pool at 0.2004 s wall / 0.4241 s user / 0.4460 s
+system (6.37x slower). The high system CPU came from threads contending on the
+global futex allocator lock for each small allocation and free.
+
+The runtime now keeps one cached block per size class in each thread's TLS.
+Allocations and frees that reuse a cached block do not take the global lock;
+cache misses and overflow still use the shared lists and arena. Worker exit
+returns cached blocks to the shared lists under one lock, so the cache does not
+strand its blocks after the worker TLS is discarded. Repeating the same
+benchmark on that host with load averages 3.60 / 6.04 / 5.68 measured serial
+at 0.0311 s wall / 0.0307 s user / 0.000 s system and pool at 0.0098 s wall /
+0.0448 s user / 0.000 s system (3.16x faster than serial). The system-time
+counter rounded to 0.000000 s after the change, down from 0.4460 s before;
+pool wall time changed from 6.37x slower to 0.32x serial. Background load
+differed between runs; re-run both scripts under similar `uptime` load for
+comparisons. These numbers include allocation, callback dispatch, result
+writes, pool startup, and shutdown.
+
 ## fib - fib(40) recursion (spec asked 38; raised so the run is not ~0.1 s)
 
 | Language | best s | median s | spread | x C (best) | x C (median) | RSS MB |
