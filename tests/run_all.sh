@@ -145,6 +145,7 @@ if [ $BLESS -eq 0 ]; then bash tests/json.sh >"$TMP/json.out" 2>&1 || { cat "$TM
 if [ $BLESS -eq 0 ]; then bash tests/http.sh >"$TMP/http.out" 2>&1 || { cat "$TMP/http.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/io_targets.sh >"$TMP/iot.out" 2>&1 || { cat "$TMP/iot.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/minimake_errors.sh >"$TMP/mme.out" 2>&1 || { cat "$TMP/mme.out"; fails=$((fails+1)); }; fi
+if [ $BLESS -eq 0 ]; then bash tests/sumtool.sh >"$TMP/sumt.out" 2>&1 || { cat "$TMP/sumt.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/fmt.sh >"$TMP/fmt.out" 2>&1 || { cat "$TMP/fmt.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/selfhost_fmt.sh >"$TMP/shfmt.out" 2>&1 || { cat "$TMP/shfmt.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/noopt_shortcircuit.sh >"$TMP/nsc.out" 2>&1 || { cat "$TMP/nsc.out"; fails=$((fails+1)); }; fi

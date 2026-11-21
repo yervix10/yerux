@@ -1,0 +1,16 @@
+// string interpolation may contain string literals: "{f("x")}"
+import std.fmt
+
+fn tag(s: view String) -> String {
+  return "<{s}>"
+}
+
+fn main() {
+  let n = 42
+  print("{fmt.pad_left("ab", 5, '.')}|{fmt.pad_right("cd", 4, '_')}|")
+  print("name: {tag("quoted")} {{literal}} {n}")
+  print("{tag("a}}b")} and {tag("{{")}")
+  print("[{n.show()}]")
+  let w = "{tag("x")}"
+  print(w)
+}

@@ -98,7 +98,22 @@ fn print_interp_arg(src: view String, end: Int) -> Bool {
     if src.byte(j) == 92 { j = j + 2 }
     else if src.byte(j) == 123 && j + 1 < src.len() {
       if src.byte(j + 1) == 123 { j = j + 2 }
-      else { interp = true; j = j + 1 }
+      else {
+        interp = true
+        j = j + 1
+        var scanning = true
+        while scanning && j < src.len() && src.byte(j) != 125 && src.byte(j) != 10 {
+          if src.byte(j) == 34 {
+            j = j + 1
+            while j < src.len() && src.byte(j) != 34 && src.byte(j) != 10 {
+              if src.byte(j) == 92 { j = j + 2 } else { j = j + 1 }
+            }
+            if j >= src.len() || src.byte(j) != 34 { scanning = false }
+          }
+          if scanning { j = j + 1 }
+        }
+        if j < src.len() && src.byte(j) == 125 { j = j + 1 }
+      }
     }
     else { j = j + 1 }
   }
@@ -280,7 +295,17 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
           report_error(src, "a lone `}}` in a string", i, 1, "write `}}}}` for a literal brace, or `{{name}}` to insert a value", "")
         } else if src.byte(i) == 123 {
           var j = i + 1
-          while j < n && src.byte(j) != 125 && src.byte(j) != 34 && src.byte(j) != 10 { j = j + 1 }
+          var scanning = true
+          while scanning && j < n && src.byte(j) != 125 && src.byte(j) != 10 {
+            if src.byte(j) == 34 {
+              j = j + 1
+              while j < n && src.byte(j) != 34 && src.byte(j) != 10 {
+                if src.byte(j) == 92 { j = j + 2 } else { j = j + 1 }
+              }
+              if j >= n || src.byte(j) != 34 { scanning = false }
+            }
+            if scanning { j = j + 1 }
+          }
           if j < n && src.byte(j) == 125 {
             let expression = src.slice(i + 1, j)
             if expression.trim().len() == 0 { report_error(src, "empty `{{}}` in a string", i, 1, "write `{{}}` for literal braces, or put a value inside: \\\"x = {{x}}\\\"", "") }
@@ -292,7 +317,7 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
             interpolated = true
             i = j + 1
           } else {
-            report_error(src, "this `{{` in a string is never closed", i, 1, "string interpolation looks like \"x = {{x}}\"; the expression cannot contain a quote (store the value in a variable first)", "write `{{{{` for a literal brace")
+            report_error(src, "this `{{` in a string is never closed", i, 1, "string interpolation looks like \"x = {{x}}\"; the expression may contain string literals but must end with `}}` on the same line", "write `{{{{` for a literal brace")
           }
         } else {
           value.push_byte(src.byte(i))

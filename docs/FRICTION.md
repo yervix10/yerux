@@ -272,3 +272,38 @@ Found while writing a small `make`. Open unless marked.
   inherit stdout therefore interleave correctly only because `nx_syscall` flushes before each raw syscall.
   Worth documenting as a guarantee of `std.process`.
 
+## sumtool (`examples/real/sumtool.yx`: std.args, std.hash, std.hex, std.base64, std.fmt, std.fs, std.path)
+
+### Fixed: string literals inside an interpolation
+
+```yx
+print("{fmt.pad_left("ab", 5, '.')}|")   // was: this `{` in a string is never closed
+```
+
+An interpolation may now contain plain string literals; the scanner skips them as a whole, so the closing `}` is
+the first one outside any nested literal (inside a nested literal braces still follow the normal rules: write
+`"a}}b"`). Changed in the Rust lexer (`syntax.rs`), the formatter's lexer (`fmt.rs`) and the self-hosted lexer
+(`selfhost/lexer.yx`, incl. its `print(".."{..}..)` detection); tests `interp_quotes`, `e1400_interp_unclosed_nested`,
+`tests/selfhost_lexer.sh` (622 files, 0 mismatches).
+
+### Still open
+
+- **A variable cannot have the name of an imported module** (`path` with `import std.path`): the message
+  (`'path' is a module, not a value`) is clear, but common names (`path`, `text`, `time`, `hash`, `env`, `args`)
+  are exactly what programs want as variables; the workaround is `file`/`source`/`h`. An `import std.path as p` is
+  the other way out.
+- **Calls cannot be chained or nested into `view` arguments**: `args.help_line(..)` passed straight to
+  `push_str`, `d.len().show()`, `time.now().since(..)` all need a `let`. In report-style code this doubles the
+  line count (about 10 extra `let`s in sumtool).
+- **A pair out of an `Option<(A, B)>` pattern is not movable field by field** (`let want = pair.0` fails with "cannot
+  move 'pair._0' out of its struct"); `let (want, name) = move pair` works but the error text names the internal
+  field `_0` and does not suggest it.
+- **`std.hash` / `std.hex` work on `String`**, so a binary file has to be turned into a String byte by byte
+  (`push_byte`) after `fs.read_bytes`; there is no `view [UInt8]` overload. It works (tested against `sha256sum`
+  on 300 KB of random bytes) but copies the data twice.
+- **Closures cannot be passed where a named function would do without a signature**: `each_file(files, sha_line)`
+  needs `sha_line` declared with exactly `view String` parameters, and the nested-quote limitation made inline
+  closures with interpolation impractical until the fix above.
+- **`io.exit` does not run destructors or flush**, so subcommand runners return a status up to `main` and exit
+  there (as done here); worth a sentence in the std.io docs next to `exit`.
+

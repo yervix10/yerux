@@ -1,0 +1,270 @@
+// sumtool: checksums and encodings of files, in the style of sha256sum / cksum / base64, built on std.hash,
+// std.hex, std.base64, std.args, std.fmt, std.fs and std.path.
+//
+//   sumtool sha256 FILE...        digest and name, like `sha256sum`
+//   sumtool crc32 FILE...         crc32 (hex), size and name
+//   sumtool fnv FILE...           32-bit FNV-1a (hex) and name
+//   sumtool check [-q] SUMFILE    verify a file of `sha256sum` lines; -q prints failures only
+//   sumtool hex FILE              the bytes of FILE as hexadecimal
+//   sumtool base64 FILE           FILE encoded; with --decode, the decoded bytes of the (text) FILE
+//   sumtool stat FILE...          a table: name, size, crc32
+//   sumtool --help                this text
+// Exit status: 0 ok, 1 an unreadable file or a failed check, 2 a usage error.
+import std.args
+import std.base64
+import std.fmt
+import std.fs
+import std.hash
+import std.hex
+import std.io
+import std.path
+import std.text
+
+fn usage() -> String {
+  var s = String.new()
+  let head = args.help_line("sumtool", "<command> [options] FILE...")
+  s.push_str(head)
+  s.push_str("\n\n")
+  s.push_str("commands:\n")
+  s.push_str("  sha256 FILE...      sha256sum-style digest and name\n")
+  s.push_str("  crc32 FILE...       crc32 (hex), size and name\n")
+  s.push_str("  fnv FILE...         32-bit FNV-1a (hex) and name\n")
+  s.push_str("  check [-q] SUMFILE  verify `digest  name` lines\n")
+  s.push_str("  hex FILE            bytes as hexadecimal\n")
+  s.push_str("  base64 [--decode] FILE\n")
+  s.push_str("  stat FILE...        name, size and crc32 as a table\n")
+  return s
+}
+
+fn fail(code: Int, msg: view String) -> Int {
+  io.eprintln("sumtool: {msg}")
+  return code
+}
+
+// The exact bytes of a file as a String (not validated as UTF-8: hashes work on bytes).
+fn read_bytes_string(file: view String) -> Result<String, io.IoError> {
+  let bytes = fs.read_bytes(file)?
+  var s = String.new()
+  for b in bytes {
+    s.push_byte(b.to_int())
+  }
+  return Ok(move s)
+}
+
+fn report_unreadable(file: view String, e: view io.IoError) {
+  io.eprintln("sumtool: {file}: {e.message}")
+}
+
+// One line per file with `f(content, file)`; the status is 1 when any file could not be read.
+fn each_file(files: view List<String>, f: view fn(view String, view String) -> String) -> Int {
+  var status = 0
+  for file in files {
+    match read_bytes_string(file) {
+      Ok(data) => {
+        print(f(data, file))
+      }
+      Err(e) => {
+        report_unreadable(file, e)
+        status = 1
+      }
+    }
+  }
+  return status
+}
+
+fn sha_line(d: view String, name: view String) -> String {
+  let digest = hash.sha256(d)
+  return "{digest}  {name}"
+}
+
+fn crc_line(d: view String, name: view String) -> String {
+  let crc = crc_hex(d)
+  let n = d.len()
+  let ns = n.show()
+  let size = fmt.pad_left(ns, 10, ' ')
+  return "{crc} {size} {name}"
+}
+
+fn fnv_line(d: view String, name: view String) -> String {
+  let h = fmt.hex_padded(hash.fnv1a32(d), 8)
+  return "{h}  {name}"
+}
+
+fn need_files(p: view args.Parsed, cmd: Text) -> Bool {
+  if p.positionals.len() == 0 {
+    io.eprintln("sumtool: {cmd} needs at least one FILE")
+    return false
+  }
+  return true
+}
+
+fn crc_hex(data: view String) -> String {
+  return fmt.hex_padded(hash.crc32(data), 8)
+}
+
+// `digest  name` lines
+fn check(sumfile: view String, quiet: Bool) -> Int {
+  match fs.read_lines(sumfile) {
+    Ok(lines) => {
+      var ok = 0
+      var bad = 0
+      var missing = 0
+      for line in lines {
+        if line.trim().len() == 0 {
+          continue
+        }
+        match text.split_once(line, "  ") {
+          Some(pair) => {
+            let (want, name) = move pair
+            match read_bytes_string(name) {
+              Ok(data) => {
+                let got = hash.sha256(data)
+                if got == want {
+                  ok = ok + 1
+                  if !quiet {
+                    print("{name}: OK")
+                  }
+                } else {
+                  bad = bad + 1
+                  print("{name}: FAILED")
+                }
+              }
+              Err(e) => {
+                missing = missing + 1
+                print("{name}: FAILED open or read")
+              }
+            }
+          }
+          None => {
+            io.eprintln("sumtool: {sumfile}: improperly formatted line: {line}")
+            bad = bad + 1
+          }
+        }
+      }
+      if bad + missing > 0 {
+        io.eprintln("sumtool: WARNING: {bad} computed checksums did NOT match, {missing} listed files could not be read")
+        return 1
+      }
+      if !quiet {
+        print("{ok} files verified")
+      }
+      return 0
+    }
+    Err(e) => {
+      report_unreadable(sumfile, e)
+      return 1
+    }
+  }
+}
+
+fn stat_table(files: view List<String>) -> Int {
+  var status = 0
+  var rows = List < (String, String, String) >.new()
+  var name_w = 4
+  for file in files {
+    match read_bytes_string(file) {
+      Ok(data) => {
+        let name = path.file_name(file)
+        if name.char_count() > name_w {
+          name_w = name.char_count()
+        }
+        rows.push((move name, fmt.bytes_human(data.len()), crc_hex(data)))
+      }
+      Err(e) => {
+        report_unreadable(file, e)
+        status = 1
+      }
+    }
+  }
+  let h_name = fmt.pad_right("name", name_w, ' ')
+  let h_size = fmt.pad_left("size", 9, ' ')
+  print("{h_name}  {h_size}  crc32")
+  for r in rows {
+    let c_name = fmt.pad_right(r.0, name_w, ' ')
+    let c_size = fmt.pad_left(r.1, 9, ' ')
+    print("{c_name}  {c_size}  {r.2}")
+  }
+  return status
+}
+
+fn run() -> Int {
+  let p = args.parse_process()
+  if p.help || p.subcommand == "help" {
+    print(usage())
+    return 0
+  }
+  if p.subcommand.len() == 0 {
+    io.eprintln(usage())
+    return 2
+  }
+  if p.subcommand == "sha256" {
+    if !need_files(p, "sha256") {
+      return 2
+    }
+    return each_file(p.positionals, sha_line)
+  }
+  if p.subcommand == "crc32" {
+    if !need_files(p, "crc32") {
+      return 2
+    }
+    return each_file(p.positionals, crc_line)
+  }
+  if p.subcommand == "fnv" {
+    if !need_files(p, "fnv") {
+      return 2
+    }
+    return each_file(p.positionals, fnv_line)
+  }
+  if p.subcommand == "stat" {
+    if !need_files(p, "stat") {
+      return 2
+    }
+    return stat_table(p.positionals)
+  }
+  if p.subcommand == "check" {
+    if p.positionals.len() != 1 {
+      return fail(2, "check takes exactly one SUMFILE")
+    }
+    return check(p.positionals.at(0), args.has_flag(p, "q") || args.has_flag(p, "quiet"))
+  }
+  if p.subcommand == "hex" || p.subcommand == "base64" {
+    if p.positionals.len() != 1 {
+      return fail(2, "{p.subcommand} takes exactly one FILE")
+    }
+    match read_bytes_string(p.positionals.at(0)) {
+      Ok(data) => {
+        if p.subcommand == "hex" {
+          print(hex.encode(data))
+          return 0
+        }
+        if args.has_flag(p, "decode") {
+          match base64.decode(data.trim()) {
+            Ok(raw) => {
+              match io.write_stdout(raw) {
+                Ok(n) => { return 0 }
+                Err(e) => { return fail(1, e.message) }
+              }
+            }
+            Err(msg) => { return fail(1, "invalid base64: {msg}") }
+          }
+        }
+        print(base64.encode(data))
+        return 0
+      }
+      Err(e) => {
+        report_unreadable(p.positionals.at(0), e)
+        return 1
+      }
+    }
+  }
+  io.eprintln("sumtool: unknown command '{p.subcommand}'")
+  io.eprintln(usage())
+  return 2
+}
+
+fn main() {
+  let code = run()
+  if code != 0 {
+    io.exit(code)
+  }
+}

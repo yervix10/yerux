@@ -1,0 +1,9 @@
+error: this `{` in a string is never closed
+ --> tests/e1400_interp_unclosed_nested.yx:7:10
+  |
+7 |   print("{tag("x") ")
+  |          ^
+  = string interpolation looks like "x = {x}"; the expression may contain string literals but must end with `}` on the same line
+  = write `{{` for a literal brace
+
+1 error(s). Nothing was generated.
