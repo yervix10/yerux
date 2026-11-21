@@ -506,6 +506,23 @@ fn thread_pool_new(count: Int) -> ThreadPool {
     return ThreadPool { state: move state, threads: move threads, worker_count: n }
 }
 
+// Run indexed tasks over a persistent pool and collect owned results in input
+// order. Returning is a join point: all callbacks have finished.
+fn thread_pool_map<T>(pool: view ThreadPool, first: Int, end: Int, body: view fn(Int) -> T) -> List<T> {
+    var slots = List<Option<T>>.new()
+    for _ in first..end { slots.push(Option<T>.None) }
+    let results = Shared.new(Locked.new(move slots))
+    pool.parallel_for(first, end, |index| {
+        results.get().with(|items| items.set(index - first, Some(body(index))))
+    })
+    return results.get().with(|items| {
+        var output = List<T>.new()
+        while items.len() > 0 { output.push(items.pop().unwrap()) }
+        output.reverse()
+        return output
+    })
+}
+
 
 // Own the replacement before a failing index can transfer control back to join.
 fn __worker_list_set<T>(items: mut List<T>, index: Int, value: T) {

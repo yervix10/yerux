@@ -3,5 +3,7 @@ fn main() {
   var pool = thread_pool_new(4)
   pool.parallel_for(0, 1000, |i| total.get().add(i))
   print(total.get().load())
+  let squares = thread_pool_map(pool, 1, 5, |i| i * i)
+  for square in squares { print(square) }
   pool.close()
 }

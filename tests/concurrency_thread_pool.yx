@@ -6,5 +6,8 @@ fn main() {
   total.get().store(0)
   pool.parallel_for(0, 1000, |i| total.get().add(i))
   print(total.get().load())
+  let squares = thread_pool_map(pool, 10, 15, |i| i * i)
+  print(squares.len())
+  print(squares.get(0) + squares.get(4))
   pool.close()
 }

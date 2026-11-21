@@ -153,6 +153,13 @@ waits for the submitted range to finish. Call `pool.close()` to stop and join
 the workers. Shutdown is explicit. See `examples/thread_pool.yx` and
 `tests/concurrency_thread_pool.yx`.
 
+`thread_pool_map(pool, start, end, callback)` runs the same indexed task shape
+and returns a `List<T>` of owned results in index order. It waits for every
+callback before returning, so it is a join point. For a single result-bearing
+task, `spawn move { ... }` returns `JoinHandle<T>` and `join()` yields
+`Result<T, ThreadPanic>`. A `scope { ... }` joins any handle not explicitly
+joined before the block exits.
+
 ```yerux
 let pool = thread_pool_new(4)
 pool.parallel_for(0, 100, |i| { print(i) })
