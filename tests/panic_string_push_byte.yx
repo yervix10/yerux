@@ -1,4 +1,4 @@
-// push_byte takes 0..255; 256 panics.
+// push_byte takes 0..255; 256 panics with the byte-range message (not "index out of range").
 fn main() {
   var s = String.new()
   s.push_byte(0)

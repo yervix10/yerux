@@ -1,1 +1,1 @@
-panic: index out of range
+panic: byte value out of range (0..255)

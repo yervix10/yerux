@@ -1399,8 +1399,12 @@ impl<'a> L<'a> {
             }
             "push_byte" => {
                 let x = pre_x.unwrap();
-                let n256 = self.konst(256);
-                self.emit(Inst::Check(x, n256));
+                let k0 = self.konst(0);
+                let ge = self.bin(Op::Ge, x, k0);
+                self.assert_message(ge, "byte value out of range (0..255)")?;
+                let k255 = self.konst(255);
+                let le = self.bin(Op::Le, x, k255);
+                self.assert_message(le, "byte value out of range (0..255)")?;
                 // a static table with the 256 byte values: the byte to append is one entry of it
                 let table: Vec<u8> = (0..=255u8).collect();
                 let id = match self.texts.iter().position(|t| *t == table) {

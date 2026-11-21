@@ -186,7 +186,7 @@ s.trim()  s.trim_start()  s.trim_end()   (ASCII whitespace)        s.to_upper() 
 s.parse_int(out) -> Bool         (`var n = 0; if s.parse_int(n) { .. }`: optional sign, digits only, checked against overflow; `out` is written only on success)
 a < b   a == b   a.cmp(b)   a + b
 ```
-`push_byte` (0..255) and `push_slice` (bytes `[from, to)` of a Text or another String; out of range panics) are the two primitives everything else is built from. `p`, `sep`, `from`, `to` accept a Text (see above).
+`push_byte` (0..255; another value panics with "byte value out of range (0..255)") and `push_slice` (bytes `[from, to)` of a Text or another String; out of range panics) are the two primitives everything else is built from. `p`, `sep`, `from`, `to` accept a Text (see above).
 
 An owned temporary can be used as a method receiver (`String.from("x").to_upper()`). The temporary is kept alive for the call and dropped with the surrounding expression scope.
 
