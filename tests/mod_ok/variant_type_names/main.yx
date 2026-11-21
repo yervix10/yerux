@@ -1,0 +1,11 @@
+import shapes
+fn main() {
+  let f = shapes.File { name: String.from("notes.txt") }
+  let d = shapes.File { name: String.from("src/") }
+  let kf = shapes.kind_of(f)
+  let kd = shapes.kind_of(d)
+  print(shapes.label(kf))
+  print(shapes.label(kd))
+  print(shapes.shout(f))
+  print(f.twice())
+}

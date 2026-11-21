@@ -523,8 +523,10 @@ impl Loader {
             }
             if let Some((alias, kind)) = imported.get(&x) {
                 let prev = if j > 0 { Some(&toks[j - 1]) } else { None };
+                // `fn read_line(` (a method definition) and `x.read_line(` (a method call) are not uses
+                let method = matches!(prev, Some(p) if is_id(p, "fn") || is_sym(p, "."));
                 let flag = match kind {
-                    Kind::Func => matches!(next, Some(n) if is_sym(n, "(")),
+                    Kind::Func => !method && matches!(next, Some(n) if is_sym(n, "(")),
                     Kind::Type => {
                         matches!(next, Some(n) if is_sym(n, "{"))
                             || matches!(prev, Some(p) if is_sym(p, ":") || is_sym(p, "->") || is_sym(p, "<") || is_id(p, "dyn"))
@@ -540,7 +542,37 @@ impl Loader {
                     );
                 }
             }
-            if let Some(it) = own.get(&x) {
+            // after a `.` a name is a field, method or variant (`FileKind.File`, `f.read_to_string()`), never an item
+            let after_dot = j > 0 && is_sym(&toks[j - 1], ".");
+            // an enum variant that shares its name with a type of the module (`enum Kind { File }` next to
+            // `struct File`): its declaration (`{ File,` at paren depth 0 inside an enum) and match arms
+            // (`File =>`, `File | Dir =>`) keep the name
+            let variant_here = {
+                let prev = if j > 0 { Some(&toks[j - 1]) } else { None };
+                let in_enum = toks
+                    .iter()
+                    .take(2)
+                    .any(|f| is_id(f, "enum"));
+                let mut depth = 0i32;
+                for k in toks.iter().take(j) {
+                    if is_sym(k, "(") {
+                        depth += 1;
+                    } else if is_sym(k, ")") {
+                        depth -= 1;
+                    }
+                }
+                let decl = in_enum
+                    && depth == 0
+                    && matches!(prev, Some(p) if is_sym(p, "{") || is_sym(p, ","));
+                let arm = matches!(next, Some(n) if is_sym(n, "=>"))
+                    || (matches!(next, Some(n) if is_sym(n, "|"))
+                        && !matches!(prev, Some(p) if is_sym(p, ":") || is_sym(p, "<") || is_sym(p, ">") || is_sym(p, "->") || is_id(p, "view") || is_id(p, "mut")));
+                decl || arm
+            };
+            if let Some(it) = own
+                .get(&x)
+                .filter(|it| !after_dot && !(it.kind == Kind::Type && variant_here))
+            {
                 let prev_fn = j > 0 && is_id(&toks[j - 1], "fn");
                 // `fn name<T>(..)`: the definition of a generic function; methods inside `impl`/`trait`
                 // blocks are looked up by type, so their names stay as written
