@@ -7,11 +7,12 @@
 // `view`/`mut` parameter, so all the usual ownership rules apply inside it unchanged.
 use super::*;
 
-/// Names that a closure body mentions (in order of first use), names it declares itself, and how it uses them.
+/// Names mentioned by a closure and free uses that must be supplied by its environment.
 #[derive(Default)]
 pub(super) struct Scan {
     pub used: Vec<String>,
-    pub declared: HashSet<String>,
+    free: Vec<String>,
+    scopes: Vec<HashSet<String>>,
     /// root of an assignment target (`n = ..`, `p.x = ..`)
     pub assigned: HashSet<String>,
     /// root of a method receiver or of a call argument (may be modified by a `mut` parameter)
@@ -33,11 +34,25 @@ impl Scan {
         if !self.used.iter().any(|u| u == n) {
             self.used.push(n.to_string());
         }
+        if !self.bound(n) && !self.free.iter().any(|u| u == n) {
+            self.free.push(n.to_string());
+        }
+    }
+    fn bound(&self, n: &str) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(n))
+    }
+    fn declare(&mut self, n: &str) {
+        self.scopes.last_mut().unwrap().insert(n.to_string());
+    }
+    fn touch(&mut self, n: String) {
+        if !self.bound(&n) {
+            self.touched.insert(n);
+        }
     }
     fn pat(&mut self, p: &Pat) {
         match p {
             Pat::Bind(n, sub, _) => {
-                self.declared.insert(n.clone());
+                self.declare(n);
                 if let Some(s) = sub {
                     self.pat(s);
                 }
@@ -51,7 +66,7 @@ impl Scan {
     fn unpack(&mut self, p: &UnpackPat) {
         match p {
             UnpackPat::Bind(n, ..) => {
-                self.declared.insert(n.clone());
+                self.declare(n);
             }
             UnpackPat::Tuple(items, _) => items.iter().for_each(|i| self.unpack(i)),
         }
@@ -60,7 +75,7 @@ impl Scan {
         for a in args {
             self.expr(a);
             if let Some(r) = root_name(a) {
-                self.touched.insert(r);
+                self.touch(r);
             }
         }
     }
@@ -69,7 +84,7 @@ impl Scan {
             EK::Var(n, _) => self.use_(n),
             EK::Move(n, _) => {
                 self.use_(n);
-                self.touched.insert(n.clone());
+                self.touch(n.clone());
             }
             EK::Field(b, _)
             | EK::Un(_, b)
@@ -98,7 +113,7 @@ impl Scan {
                 self.methods.insert(m.clone());
                 self.expr(recv);
                 if let Some(r) = root_name(recv) {
-                    self.touched.insert(r);
+                    self.touch(r);
                 }
                 self.args(args);
             }
@@ -106,10 +121,9 @@ impl Scan {
                 fields.iter().for_each(|(_, f)| self.expr(f))
             }
             EK::Closure { params, body, .. } => {
-                for p in params {
-                    self.declared.insert(p.name.clone());
-                }
+                self.scopes.push(params.iter().map(|p| p.name.clone()).collect());
                 self.stmts(body);
+                self.scopes.pop();
             }
             EK::MkClosure { caps, .. } => caps.iter().for_each(|c| self.expr(c)),
             EK::DynBox { value, .. } => self.expr(value),
@@ -127,7 +141,7 @@ impl Scan {
             EK::SliceOf(b, lo, hi) => {
                 self.expr(b);
                 if let Some(r) = root_name(b) {
-                    self.touched.insert(r);
+                    self.touch(r);
                 }
                 lo.iter().chain(hi).for_each(|a| self.expr(a));
             }
@@ -135,13 +149,15 @@ impl Scan {
         }
     }
     pub fn stmts(&mut self, b: &[Stmt]) {
+        self.scopes.push(HashSet::new());
         b.iter().for_each(|s| self.stmt(s));
+        self.scopes.pop();
     }
     fn stmt(&mut self, s: &Stmt) {
         match &s.k {
             SK::Let(n, _, e, _) => {
                 self.expr(e);
-                self.declared.insert(n.clone());
+                self.declare(n);
             }
             SK::Assign(a, b) => {
                 self.expr(b);
@@ -151,9 +167,9 @@ impl Scan {
                     _ => vec![a],
                 };
                 for t in targets {
-                    if let Some(r) = root_name(t) {
+                    if let Some(r) = root_name(t).filter(|r| !self.bound(r)) {
                         self.assigned.insert(r.clone());
-                        self.touched.insert(r);
+                        self.touch(r);
                     }
                 }
             }
@@ -179,7 +195,7 @@ impl Scan {
             }
             SK::Bind(n, _, e, _) => {
                 self.expr(e);
-                self.declared.insert(n.clone());
+                self.declare(n);
             }
             SK::For(h, body) => {
                 match &h.iter {
@@ -191,7 +207,7 @@ impl Scan {
                         self.expr(e);
                         if h.mutable {
                             if let Some(r) = root_name(e) {
-                                self.touched.insert(r);
+                                self.touch(r);
                             }
                         }
                     }
@@ -199,8 +215,9 @@ impl Scan {
                 if let Some(s) = &h.step {
                     self.expr(s);
                 }
-                self.declared.insert(h.var.clone());
+                self.scopes.push(HashSet::from([h.var.clone()]));
                 self.stmts(body);
+                self.scopes.pop();
             }
             SK::Return(e) => {
                 if let Some(e) = e {
@@ -210,8 +227,9 @@ impl Scan {
             SK::Match(e, arms) => {
                 self.expr(e);
                 for a in arms {
+                    self.scopes.push(HashSet::new());
                     for (n, _) in &a.binds {
-                        self.declared.insert(n.clone());
+                        self.declare(n);
                     }
                     if let Some(p) = &a.pat {
                         self.pat(p);
@@ -220,6 +238,7 @@ impl Scan {
                         self.expr(g);
                     }
                     self.stmts(&a.body);
+                    self.scopes.pop();
                 }
             }
             SK::Defer(s) => self.stmt(s),
@@ -649,10 +668,10 @@ impl<'a> Checker<'a> {
         }
 
         // ── captures ──
-        let mut sc = Scan::default();
-        for p in &params {
-            sc.declared.insert(p.name.clone());
-        }
+        let mut sc = Scan {
+            scopes: vec![params.iter().map(|p| p.name.clone()).collect()],
+            ..Scan::default()
+        };
         sc.stmts(&body);
         if locking
             && (sc.used.iter().any(|n| {
@@ -689,10 +708,7 @@ impl<'a> Checker<'a> {
         }
         let mut caps: Vec<Cap> = vec![];
         let mut bad = false;
-        for n in sc.used.clone() {
-            if sc.declared.contains(&n) {
-                continue;
-            }
+        for n in sc.free {
             let Some(outer) = self.lookup(&n) else {
                 continue;
             };
