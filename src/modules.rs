@@ -541,6 +541,12 @@ impl Loader {
                                 .unwrap_or_default();
                             let mut d =
                                 diag(format!("module '{}' has no item called '{}'", dep, y), p);
+                            if crate::syntax::KW.contains(&y.as_str()) {
+                                d = d.note(format!(
+                                    "'{}' is a reserved word, so no module can export an item with that name",
+                                    y
+                                ));
+                            }
                             if pubs.is_empty() {
                                 d = d.note(format!("module '{}' has no `pub` items", dep));
                             } else {

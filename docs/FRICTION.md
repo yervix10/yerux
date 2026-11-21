@@ -262,8 +262,7 @@ Found while writing a small `make`. Open unless marked.
 - **A call result cannot be an argument to a `view` parameter** (`out.push_str(deps.join(" "))` needs a `let`
   first), and a method cannot be chained on a call result (`time.now().since(..)` earlier, `a.min(b).as_millis()`).
 - **`spawn` is a reserved word**, so a module cannot export a function called `spawn` (`std.process.start`
-  instead); the module loader drops it silently from the public item list ("module has no item called
-  'spawn'") instead of saying the name is a keyword. Same for any keyword used as an item name.
+  instead); the error now says the name is reserved (fixed).
 - **Methods named like a stdlib module alias** (`c.env(..)`) are avoided on purpose (`set_env`): unqualified
   names are rewritten per file, and the rules are subtle (see the `modules.rs` fixes for `FileKind.File`).
 - **No early `return` value from `match` arms inside `for`** is fine, but a `let` of a *statement* `match` result
