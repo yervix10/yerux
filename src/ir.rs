@@ -2741,29 +2741,50 @@ impl<'a> L<'a> {
                 self.emit(Inst::Mov(x, 1));
                 let zero = self.konst(0);
                 let neg = self.bin(Op::Lt, x, zero);
+                // Keep the working value nonpositive, including INT64_MIN.
+                let positive = self.bin(Op::Gt, x, zero);
+                self.if_then(positive, |l| {
+                    l.emit(Inst::Neg(x, x));
+                    Ok(())
+                })?;
+                let table = self.v();
+                let digits = (0..100).flat_map(|n| [b'0' + n / 10, b'0' + n % 10]).collect();
+                self.emit(Inst::Text(table, self.texts.len()));
+                self.texts.push(digits);
+                let pairs = self.at(table, 8);
                 let (body, exit) = (self.block(), self.block());
                 self.term(Term::Jmp(body));
                 self.switch(body);
-                // truncated division keeps every remainder in -9..=9, so INT64_MIN needs no special case
-                // quotient first, remainder = x - q*10 (one magic-number division per digit; no overflow possible)
-                let q = self.bink(Op::Div, x, 10);
-                let k10 = self.konst(10);
-                let q10 = self.bin(Op::MulU, q, k10);
-                let d = self.bin(Op::SubU, x, q10);
-                self.if_then(neg, |l| {
-                    l.emit(Inst::Neg(d, d));
-                    Ok(())
-                })?;
-                let ch = self.bink(Op::Add, d, 48);
-                let p1 = self.bink(Op::Sub, pos, 1);
-                self.emit(Inst::Mov(pos, p1));
+                // With x <= 0, q*100 - x is the next pair's value (0..=99).
+                let q = self.bink(Op::Div, x, 100);
+                let hundred = self.konst(100);
+                let scaled = self.bin(Op::MulU, q, hundred);
+                let pair = self.bin(Op::SubU, scaled, x);
+                let digits = self.v();
+                self.emit(Inst::LeaX(digits, pairs, pair, 2));
+                let tens = self.v();
+                let ones = self.v();
+                self.emit(Inst::Load8(tens, digits, 0));
+                self.emit(Inst::Load8(ones, digits, 1));
+                // At most ten pairs fit in the 24-byte buffer.
+                let p2 = self.bink(Op::SubU, pos, 2);
+                self.emit(Inst::Mov(pos, p2));
                 let addr = self.v();
                 self.emit(Inst::LeaX(addr, buf, pos, 1));
-                self.emit(Inst::Store8(addr, 0, ch));
+                self.emit(Inst::Store8(addr, 0, tens));
+                self.emit(Inst::Store8(addr, 1, ones));
                 self.emit(Inst::Mov(x, q));
                 let more = self.bin(Op::Ne, x, zero);
                 self.term(Term::Br(more, body, exit));
                 self.switch(exit);
+                // Skip the padding zero of a single-digit leading pair.
+                let ten = self.konst(10);
+                let single = self.bin(Op::Lt, pair, ten);
+                self.if_then(single, |l| {
+                    let p1 = l.bink(Op::Add, pos, 1);
+                    l.emit(Inst::Mov(pos, p1));
+                    Ok(())
+                })?;
                 self.if_then(neg, |l| {
                     let p1 = l.bink(Op::Sub, pos, 1);
                     l.emit(Inst::Mov(pos, p1));
