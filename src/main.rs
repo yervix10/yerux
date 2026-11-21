@@ -129,7 +129,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
 
@@ -216,6 +216,16 @@ fn real_main() {
         match args[1].as_str() {
             "tokens" | "tokens-positioned" => {
                 return dump_tokens(&args[2], args[1] == "tokens-positioned");
+            }
+            "resolve-file" => {
+                let (rows, ok) = modules::resolution_trace(&args[2]);
+                for row in rows {
+                    println!("{row}");
+                }
+                if !ok {
+                    exit(1);
+                }
+                return;
             }
             "ast-file" => return dump_ast(&args[2], syntax::dump_file_source),
             "ast-expr" => return dump_ast(&args[2], syntax::dump_expr_source),
