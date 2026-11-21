@@ -1,0 +1,11 @@
+// List.slice with from > to panics even though both ends are in range.
+fn main() {
+  var l = List<Int>.new()
+  l.push(1)
+  l.push(2)
+  l.push(3)
+  let ok = l.slice(1, 3)
+  print(ok.len())
+  let bad = l.slice(2, 1)
+  print(bad.len())
+}
