@@ -1,0 +1,13 @@
+import std.collections
+fn main() {
+  var m = List<(Int, Int)>.new()
+  collections.btree_insert(m, 5, 50)
+  collections.btree_insert(m, 1, 10)
+  collections.btree_insert(m, 3, 30)
+  collections.btree_insert(m, 3, 31)
+  print(m.len())
+  collections.btree_for_each(m, |k: view Int, v: view Int| { print(k * 10 + v) })
+  print(collections.btree_find(m, 3))
+  print(collections.btree_find(m, 8))
+  match collections.btree_get(m, 1) { Some(v) => { print(v) } None => { print(-1) } }
+}

@@ -70,4 +70,34 @@ pub fn heap_for_each<T>(h: view List<T>, f: view fn(view T)) {
   while i < h.len() { f(h.at(i)); i = i + 1 }
 }
 
+// Sorted map represented by a List of key/value pairs. Lookup is O(log n), insertion O(n).
+pub fn btree_find<K: Ordered, V>(m: view List<(K, V)>, key: view K) -> Int {
+  var lo = 0
+  var hi = m.len()
+  while lo < hi {
+    let mid = lo + (hi - lo) / 2
+    let cmp = m.at(mid).0.cmp(key)
+    if cmp < 0 { lo = mid + 1 } else { hi = mid }
+  }
+  if lo < m.len() && m.at(lo).0.cmp(key) == 0 { return lo }
+  return -lo - 1
+}
+pub fn btree_insert<K: Ordered, V>(m: mut List<(K, V)>, key: K, value: V) {
+  let i = btree_find(m, key)
+  if i >= 0 {
+    m.set(i, (move key, move value))
+  } else {
+    m.insert(-i - 1, (move key, move value))
+  }
+}
+pub fn btree_get<K: Ordered, V: Copy>(m: view List<(K, V)>, key: view K) -> Option<V> {
+  let i = btree_find(m, key)
+  if i < 0 { return None }
+  return Some(m.at(i).1)
+}
+pub fn btree_for_each<K, V>(m: view List<(K, V)>, f: view fn(view K, view V)) {
+  var i = 0
+  while i < m.len() { f(m.at(i).0, m.at(i).1); i = i + 1 }
+}
+
 
