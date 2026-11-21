@@ -174,7 +174,9 @@ if [ "$TIMES" = 1 ]; then
   done | sort -rn | head -n 40
 fi
 
-echo "total: $((SECONDS - T_START))s"
+SUM_MS=0
+for s in "$RES"/*.secs; do [ -e "$s" ] && SUM_MS=$((SUM_MS + $(cat "$s"))); done
+echo "total: $((SECONDS - T_START))s wall, $((SUM_MS / 1000))s of work (what a serial run would take), $JOBS jobs"
 if [ ${#failed[@]} -gt 0 ]; then
   echo "FAILED (${#failed[@]}): ${failed[*]}"
   pat="$(IFS='|'; echo "${failed[*]}")"
