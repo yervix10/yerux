@@ -1,0 +1,8 @@
+error: cannot compare [Int; 2] with [Int; 3]
+ --> tests/e1021_array_compare_lengths.yx:4:9
+  |
+4 |   print(a == b)
+  |         ^^^^^^
+  = arrays are compared element by element and must have the same type; lend them as slices (`view [T]`) to compare different lengths
+
+1 error(s). Nothing was generated.

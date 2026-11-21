@@ -1,0 +1,94 @@
+// std.time Duration: construction, conversions, arithmetic, comparison, formatting, Result errors
+import std.time
+
+fn show_opt(o: Option<time.Duration>) {
+  match o {
+    Some(d) => { print("Some({d.show()})") }
+    None => { print("None") }
+  }
+}
+
+fn main() {
+  let a = time.millis(1500)
+  let b = time.seconds(2)
+  print(a.as_nanos())
+  print(a.as_micros())
+  print(a.as_millis())
+  print(a.as_secs())
+  print(a.as_secs_float())
+  print(a.as_millis_float())
+  print(a.subsec_nanos())
+  let c = a.add(b)
+  print(c.show())
+  let d = a.sub(b)
+  print(d.show())
+  print(d.is_negative())
+  print(time.as_millis(d.abs()))
+  let n = d.neg()
+  print(n.show())
+  let m = a.mul(3)
+  print(m.show())
+  let q = b.div(4)
+  print(q.show())
+  print(b.ratio(q))
+  print(time.as_millis(a.min(b)))
+  print(time.as_millis(a.max(b)))
+  let z = time.zero()
+  print(z.is_zero())
+  print("{a} {b} {z}")            // Show in interpolation
+
+  // comparisons (Equal + Ordered)
+  print(a < b)
+  print(a == time.micros(1500000))
+  print(a != b)
+  print(b >= a)
+  print(a.cmp(b))
+  var ds = List<time.Duration>.new()
+  ds.push(time.seconds(3))
+  ds.push(time.nanos(7))
+  ds.push(time.minutes(1))
+  ds.push(time.millis(2))
+  ds.sort()
+  for x in ds { print(x.show()) }
+
+  // formatting across units
+  let units = [time.nanos(850), time.micros(12), time.millis(3), time.seconds(1), time.seconds(125), time.hours(2)]
+  for u in units { print(time.format(u)) }
+
+  // free-function forms take temporaries
+  print(time.as_secs(time.minutes(2)))
+  print(time.as_millis(time.seconds(3)))
+  print(time.as_nanos(time.hours(1)))
+
+  // checked arithmetic and float seconds: errors are values
+  show_opt(time.checked_add(time.seconds(1), time.seconds(2)))
+  show_opt(time.checked_add(time.nanos(9223372036854775807), time.nanos(1)))
+  show_opt(time.checked_add(time.nanos(-9223372036854775807), time.nanos(-2)))
+  match time.from_secs_float(0.25) {
+    Ok(x) => { print(x.show()) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match time.from_secs_float(1.0e30) {
+    Ok(x) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+  let nan = 0.0 / 0.0
+  match time.from_secs_float(nan) {
+    Ok(x) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+
+  // clocks hand out Durations
+  var w = time.stopwatch()
+  time.sleep(time.millis(2))
+  let el = w.elapsed()
+  print(el >= time.millis(2))
+  let took = time.measure(|| { time.sleep(time.millis(1)) })
+  print(took >= time.millis(1))
+  let t0 = time.now()
+  let t1 = t0.add(time.millis(1))
+  print(time.as_nanos(t1.since(t0)))
+  let ep = time.since_epoch()
+  print(ep.as_secs() > 1700000000)
+  time.sleep(time.millis(-5))      // negative: returns at once
+}

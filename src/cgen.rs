@@ -36,15 +36,23 @@ static inline void nx_cleanup_push(NxCleanup *slot, bool *live, void *value, voi
 }
 static inline void nx_cleanup_pop(void) { nx_cleanup_head = nx_cleanup_head->previous; }
 static _Thread_local bool nx_unwinding;
+static _Thread_local bool nx_in_destructor;
 static void nx_try_worker_panic(void) {
-  if (!nx_worker_panic) return;
+  if (nx_unwinding) {
+    fputs("panic: second panic during worker cleanup\n", stderr);
+    exit(101);
+  }
+  if (!nx_worker_panic || nx_in_destructor) return;
   jmp_buf *target = nx_worker_panic;
   nx_worker_panic = NULL;
   nx_unwinding = true;
   while (nx_cleanup_head) {
     NxCleanup *slot = nx_cleanup_head;
     nx_cleanup_pop();
-    if (*slot->live) slot->drop(slot->value);
+    if (*slot->live) {
+      *slot->live = false;
+      slot->drop(slot->value);
+    }
   }
   longjmp(*target, 1);
 }
@@ -84,8 +92,8 @@ static void *nx_thread_entry(void *arg) {
   task->result = ((int64_t (*)(void *))task->entry.code)(task->entry.env);
 cleanup:
   nx_worker_panic = NULL;
-  nx_unwinding = false;
   nx_drop_fn(&task->entry);
+  nx_unwinding = false;
   return NULL;
 }
 static inline int64_t nx_thread_start(NxFn entry, bool recover) {
@@ -353,6 +361,18 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
             _ => g.line(&format!("static void nx_drop_{c}({c} *s);")),
         }
     }
+    // `impl Drop` functions are called by the drop functions of their structs
+    let mut user_drops: Vec<(usize, String)> = g
+        .types
+        .user_drop
+        .iter()
+        .map(|(s, f)| (*s, f.clone()))
+        .collect();
+    user_drops.sort();
+    for (sid, f) in user_drops {
+        let c = g.types.cty(Ty::Struct(sid));
+        g.line(&format!("static void nx_f_{f}({c} *);"));
+    }
     // components of mutually recursive heap nodes are dropped with a worklist (one shared function each)
     let mut sccs: Vec<Vec<HeapNode>> = vec![];
     for t in &owned_tys {
@@ -516,6 +536,7 @@ impl Gen<'_> {
 
     fn plain_struct(&self, sid: usize) -> bool {
         !self.types.is_lock_guard(sid)
+            && !self.types.user_drop.contains_key(&sid)
             && self.types.join_payload(sid).is_none()
             && self.types.runtime_struct(sid, "Shared").is_none()
             && !self.types.structs[sid].cname.starts_with("Env__")
@@ -707,7 +728,10 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 self.line(&format!(
                     "static inline int64_t nx_len_{c}({c} *a) {{ (void)a; return {n}; }}"
                 ));
-                self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ *nx_at_{c}(a, i) = v; }}"));
+                if !self.types.owned(el) {
+                    // (with owned elements `nx_set_` drops the old value: emitted with the drop functions)
+                    self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ *nx_at_{c}(a, i) = v; }}"));
+                }
                 self.line(&format!("static inline void nx_swap_{c}({c} *a, int64_t i, int64_t j) {{ {et} *x = nx_at_{c}(a, i); {et} *y = nx_at_{c}(a, j); {et} t = *x; *x = *y; *y = t; }}"));
             }
             Ty::Struct(i) => {
@@ -824,12 +848,28 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                     self.line(&format!("static inline void nx_free_{c}({c} *l) {{ nx_clear_{c}(l); free(l->d); l->d = 0; l->cap = 0; }}"));
                 }
             }
+            Ty::Struct(i) if self.types.arrays.contains_key(&i) => {
+                if !self.types.owned(t) {
+                    return; // Copy elements: the helpers are emitted with the struct body
+                }
+                // `[T; N]` with owned elements: drop every element; `set` drops the old one
+                let (el, n) = self.types.arrays[&i];
+                let et = self.types.cty(el);
+                let c = &cname;
+                let d = self.drop_call(el, "&s->e[i]");
+                self.line(&format!("static void nx_drop_{c}({c} *s) {{ for (int64_t i = 0; i < {n}; i++) {{ {d}; }} }}"));
+                let dp = self.drop_call(el, "p");
+                self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ {et} *p = nx_at_{c}(a, i); {dp}; *p = v; }}"));
+            }
             Ty::Struct(i) => {
                 let def = self.types.structs[i].clone();
                 if self.types.owned(t) {
                     let mut b = format!("static void nx_drop_{}({} *s) {{", cname, cname);
                     if self.types.is_lock_guard(i) {
                         b += " nx_unlock(s->f_address);";
+                    }
+                    if let Some(f) = self.types.user_drop.get(&i) {
+                        b += &format!(" bool in_destructor = nx_in_destructor; nx_in_destructor = true; nx_f_{f}(s); nx_in_destructor = in_destructor;");
                     }
                     if let Some(payload) = self.types.join_payload(i) {
                         b += " if (!s->f_thread_word) return; void *p = (void *)(intptr_t)nx_thread_wait(s->f_thread_word); if (p) {";
@@ -845,7 +885,7 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                         }
                         b += " free(s->f_cell); }";
                     } else {
-                        for (n, f) in &def.fields {
+                        for (n, f) in def.fields.iter().rev() {
                             if self.types.owned(*f) {
                                 if let Some(flag) = self.types.capture_live_field(i, n) {
                                     b += &format!(" if (s->f_{flag})");
@@ -1014,7 +1054,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             ""
         };
         let drop = self.drop_call(*ty, &format!("&{name}"));
-        format!("{pop}if ({name}_live) {drop};")
+        format!("{pop}if ({name}_live) {{ {name}_live = false; {drop}; }}")
     }
 
     /// Bind every leaf of a tuple pattern to a variable holding that part of the temporary `path`.
@@ -1136,12 +1176,12 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                         EK::Var(_, id) if self.capture_flags.contains(id) => {
                             let live = format!("(*{}_live)", self.vars[id].0);
                             self.line(&format!(
-                                "{{ {c} t_ = {e}; if ({live}) {drop}; {pc} = t_; {live} = true; }}"
+                                "{{ {c} t_ = {e}; if ({live}) {{ {live} = false; {drop}; }} {pc} = t_; {live} = true; }}"
                             ));
                         }
                         EK::Var(_, id) if !self.vars[id].1 => {
                             let n = self.vars[id].0.clone();
-                            self.line(&format!("{{ {c} t_ = {e}; if ({n}_live) {drop}; {pc} = t_; {n}_live = true; }}"));
+                            self.line(&format!("{{ {c} t_ = {e}; if ({n}_live) {{ {n}_live = false; {drop}; }} {pc} = t_; {n}_live = true; }}"));
                         }
                         _ => {
                             let drop = self.drop_call(val.ty, "p_");
@@ -1260,6 +1300,14 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                         self.place_c(env)
                     ));
                     self.capture_flags.insert(*id);
+                }
+                if matches!(place.k, EK::SliceOf(..)) {
+                    // a slice header (by value) that lives for the rest of this C block
+                    let c = self.ex(place);
+                    self.line(&format!("{} {}_s = {};", self.types.cty(place.ty), n, c));
+                    self.line(&format!("{} *{} = &{}_s;", self.types.cty(place.ty), n, n));
+                    self.vars.insert(*id, (n.clone(), true, place.ty));
+                    return;
                 }
                 let pc = self.place_c(place);
                 self.vars.insert(*id, (n.clone(), true, place.ty));

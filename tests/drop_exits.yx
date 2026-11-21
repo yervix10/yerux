@@ -1,0 +1,50 @@
+struct Tag { id: Int, buffer: String }
+impl Drop for Tag {
+  fn drop(mut self) {
+    self.buffer.push_str("!")
+    print("{self.id} {self.buffer}")
+  }
+}
+fn tag(id: Int) -> Tag { return Tag { id: id, buffer: String.from("drop") } }
+fn conditional(take: Bool) {
+  var item = tag(1)
+  if take { let destination = move item }
+  print("replace")
+  item = tag(2)
+}
+fn stop() -> Option<Int> { return None }
+fn fallible() -> Option<Int> {
+  let item = tag(3)
+  defer print("defer before ?")
+  return Some(stop()?)
+}
+fn early() -> Tag {
+  let result = tag(4)
+  let local = tag(5)
+  defer print("defer before return")
+  return result
+}
+fn main() {
+  conditional(false)
+  conditional(true)
+  assert(fallible().is_none())
+  let returned = early()
+  var list = List<Tag>.new()
+  list.push(tag(6))
+  list.set(0, tag(7))
+  let moved = list.pop()
+  list.push(tag(8))
+  list.clear()
+  let b = Box.new(tag(9))
+  let unboxed = b.take()
+  let captured = tag(10)
+  let closure = move || { print(captured.id) }
+  closure()
+  print("loop")
+  while true {
+    let item = tag(11)
+    defer print("defer before break")
+    break
+  }
+  print("end")
+}

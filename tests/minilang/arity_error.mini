@@ -1,0 +1,2 @@
+fn id(a) { return a; }
+print id();

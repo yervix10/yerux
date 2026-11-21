@@ -1,0 +1,7 @@
+error: `Drop` is not object-safe: its method is called by the compiler
+ --> tests/e1206_drop_dyn.yx:4:19
+  |
+4 |   let handle: Box<dyn Drop> = Box.new(Resource { id: 1 })
+  |                   ^^^
+
+1 error(s). Nothing was generated.

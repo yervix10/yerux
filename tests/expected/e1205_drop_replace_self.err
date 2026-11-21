@@ -1,0 +1,15 @@
+error: cannot replace or mutably lend all of `self` during Drop
+ --> tests/e1205_drop_replace_self.yx:5:5
+  |
+5 |     self = Resource { id: 1 }
+  |     ^^^^
+  = help: mutate or lend its individual fields instead
+
+error: cannot replace or mutably lend all of `self` during Drop
+ --> tests/e1205_drop_replace_self.yx:6:13
+  |
+6 |     replace(self)
+  |             ^^^^
+  = help: mutate or lend its individual fields instead
+
+2 error(s). Nothing was generated.

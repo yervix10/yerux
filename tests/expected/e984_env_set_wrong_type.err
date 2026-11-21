@@ -1,0 +1,14 @@
+error: a Result<Int, io.IoError> is created and immediately discarded (memory leak)
+ --> tests/e984_env_set_wrong_type.yx:5:3
+  |
+5 |   env.set("KEY", 5)
+  |   ^^^^^^^^^^^^^^^^^
+  = help: store it with `let` or `var`
+
+error: expected String but this is Int
+ --> tests/e984_env_set_wrong_type.yx:5:18
+  |
+5 |   env.set("KEY", 5)
+  |                  ^
+
+2 error(s). Nothing was generated.

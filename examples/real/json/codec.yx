@@ -1,0 +1,339 @@
+// JSON numbers retain their original spelling and precision.
+pub enum Value {
+  Null, Boolean(Bool), Number(String), Str(String),
+  Array(List<Box<Value>>), Object(Members),
+}
+
+pub struct Member { key: String, value: Box<Value> }
+// Preserve duplicates and their order for formatting. The index gives a
+// conventional last-occurrence lookup to callers of the parser.
+pub struct Members {
+  entries: List<Member>,
+  last: Map<String, Int>,
+}
+
+pub struct Issue { offset: Int, message: Text }
+
+fn issue(offset: Int, message: Text) -> Issue {
+  return Issue { offset: offset, message: message }
+}
+
+fn peek(src: view String, pos: Int) -> Int {
+  if pos == src.len() { return -1 }
+  return src.byte(pos)
+}
+
+fn digit(b: Int) -> Bool {
+  return b >= '0'.to_int() && b <= '9'.to_int()
+}
+
+fn whitespace(src: view String, pos: mut Int) {
+  while true {
+    let b = peek(src, pos)
+    if b != 32 && b != 9 && b != 10 && b != 13 { return }
+    pos = pos + 1
+  }
+}
+
+fn eat(src: view String, pos: mut Int, expected: Char) -> Bool {
+  if peek(src, pos) != expected.to_int() { return false }
+  pos = pos + 1
+  return true
+}
+
+fn literal(src: view String, pos: mut Int, spelling: Text) -> Result<Bool, Issue> {
+  let word = String.from(spelling)
+  for i in 0..word.len() {
+    if peek(src, pos) != word.byte(i) {
+      return Err(issue(pos, "invalid literal"))
+    }
+    pos = pos + 1
+  }
+  return Ok(true)
+}
+
+fn hex_digit(b: Int) -> Int {
+  if digit(b) { return b - '0'.to_int() }
+  if b >= 'a'.to_int() && b <= 'f'.to_int() { return b - 'a'.to_int() + 10 }
+  if b >= 'A'.to_int() && b <= 'F'.to_int() { return b - 'A'.to_int() + 10 }
+  return -1
+}
+
+fn hex_quad(src: view String, pos: mut Int) -> Result<Int, Issue> {
+  var n = 0
+  for i in 0..4 {
+    let d = hex_digit(peek(src, pos))
+    if d < 0 { return Err(issue(pos, "expected four hexadecimal digits in Unicode escape")) }
+    n = n * 16 + d
+    pos = pos + 1
+  }
+  return Ok(n)
+}
+
+fn unicode_escape(src: view String, pos: mut Int) -> Result<Char, Issue> {
+  let start = pos - 2
+  let hi = hex_quad(src, pos)?
+  if hi >= 55296 && hi <= 56319 {
+    let low_start = pos
+    if !eat(src, pos, '\\') || !eat(src, pos, 'u') {
+      return Err(issue(low_start, "expected low surrogate after high surrogate"))
+    }
+    let lo = hex_quad(src, pos)?
+    if lo < 56320 || lo > 57343 {
+      return Err(issue(low_start, "expected low surrogate after high surrogate"))
+    }
+    return Ok(Char.from_int(65536 + (hi - 55296) * 1024 + (lo - 56320)))
+  }
+  if hi >= 56320 && hi <= 57343 {
+    return Err(issue(start, "low surrogate without a high surrogate"))
+  }
+  return Ok(Char.from_int(hi))
+}
+
+fn escaped(src: view String, pos: mut Int) -> Result<Char, Issue> {
+  let start = pos
+  let b = peek(src, pos)
+  if b < 0 { return Err(issue(pos, "unterminated string escape")) }
+  pos = pos + 1
+  match Char.from_int(b) {
+    '"' => { return Ok('"') }
+    '\\' => { return Ok('\\') }
+    '/' => { return Ok('/') }
+    'b' => { return Ok('\u{8}') }
+    'f' => { return Ok('\u{C}') }
+    'n' => { return Ok('\n') }
+    'r' => { return Ok('\r') }
+    't' => { return Ok('\t') }
+    'u' => { return unicode_escape(src, pos) }
+    _ => { return Err(issue(start, "invalid string escape")) }
+  }
+}
+
+fn parse_string(src: view String, pos: mut Int) -> Result<String, Issue> {
+  // The opening quote is already known to be present.
+  pos = pos + 1
+  var start = pos
+  var out = String.new()
+  while pos < src.len() {
+    let b = src.byte(pos)
+    if b == '"'.to_int() {
+      out.push_slice(src, start, pos)
+      pos = pos + 1
+      return Ok(move out)
+    }
+    if b < 32 { return Err(issue(pos, "unescaped control character in string")) }
+    if b == '\\'.to_int() {
+      out.push_slice(src, start, pos)
+      pos = pos + 1
+      let c = escaped(src, pos)?
+      out.push_char(c)
+      start = pos
+    } else {
+      pos = pos + 1
+    }
+  }
+  return Err(issue(pos, "unterminated string"))
+}
+
+fn require_digits(src: view String, pos: mut Int, message: Text) -> Result<Bool, Issue> {
+  if !digit(peek(src, pos)) { return Err(issue(pos, message)) }
+  while digit(peek(src, pos)) { pos = pos + 1 }
+  return Ok(true)
+}
+
+fn parse_number(src: view String, pos: mut Int) -> Result<Value, Issue> {
+  let start = pos
+  let negative = eat(src, pos, '-')
+  if eat(src, pos, '0') {
+    if digit(peek(src, pos)) { return Err(issue(pos, "leading zero in number")) }
+  } else {
+    let integer = require_digits(src, pos, "expected integer digits")?
+  }
+  if eat(src, pos, '.') {
+    let fraction = require_digits(src, pos, "expected digits after decimal point")?
+  }
+  if eat(src, pos, 'e') || eat(src, pos, 'E') {
+    if !eat(src, pos, '+') { let minus = eat(src, pos, '-') }
+    let exponent = require_digits(src, pos, "expected exponent digits")?
+  }
+  return Ok(Value.Number(src.slice(start, pos)))
+}
+
+fn parse_array(src: view String, pos: mut Int, depth: Int) -> Result<Value, Issue> {
+  pos = pos + 1
+  var items = List<Box<Value>>.new()
+  whitespace(src, pos)
+  if eat(src, pos, ']') { return Ok(Value.Array(move items)) }
+  while true {
+    let value = parse_value(src, pos, depth + 1)?
+    items.push(Box.new(move value))
+    whitespace(src, pos)
+    if eat(src, pos, ']') { return Ok(Value.Array(move items)) }
+    if !eat(src, pos, ',') { return Err(issue(pos, "expected ',' or ']' after array element")) }
+  }
+}
+
+fn parse_object(src: view String, pos: mut Int, depth: Int) -> Result<Value, Issue> {
+  pos = pos + 1
+  var object = Members { entries: List<Member>.new(), last: Map<String, Int>.new() }
+  whitespace(src, pos)
+  if eat(src, pos, '}') { return Ok(Value.Object(move object)) }
+  while true {
+    whitespace(src, pos)
+    if peek(src, pos) != '"'.to_int() {
+      return Err(issue(pos, "expected quoted object member name"))
+    }
+    let key = parse_string(src, pos)?
+    whitespace(src, pos)
+    if !eat(src, pos, ':') { return Err(issue(pos, "expected ':' after object member name")) }
+    let value = parse_value(src, pos, depth + 1)?
+    object.last.insert(String.from(key), object.entries.len())
+    object.entries.push(Member { key: move key, value: Box.new(move value) })
+    whitespace(src, pos)
+    if eat(src, pos, '}') { return Ok(Value.Object(move object)) }
+    if !eat(src, pos, ',') { return Err(issue(pos, "expected ',' or '}}' after object member")) }
+  }
+}
+
+fn parse_value(src: view String, pos: mut Int, depth: Int) -> Result<Value, Issue> {
+  whitespace(src, pos)
+  let b = peek(src, pos)
+  if b < 0 { return Err(issue(pos, "expected JSON value")) }
+  if b == '['.to_int() || b == '{'.to_int() {
+    if depth >= 128 { return Err(issue(pos, "JSON nesting exceeds 128 containers")) }
+    if b == '['.to_int() { return parse_array(src, pos, depth) }
+    return parse_object(src, pos, depth)
+  }
+  if b == '-'.to_int() || digit(b) { return parse_number(src, pos) }
+  match Char.from_int(b) {
+    '"' => {
+      let s = parse_string(src, pos)?
+      return Ok(Value.Str(move s))
+    }
+    't' => {
+      let matched = literal(src, pos, "true")?
+      return Ok(Value.Boolean(true))
+    }
+    'f' => {
+      let matched = literal(src, pos, "false")?
+      return Ok(Value.Boolean(false))
+    }
+    'n' => {
+      let matched = literal(src, pos, "null")?
+      return Ok(Value.Null)
+    }
+    _ => { return Err(issue(pos, "expected JSON value")) }
+  }
+}
+
+pub fn parse(src: view String) -> Result<Value, Issue> {
+  var pos = 0
+  let value = parse_value(src, pos, 0)?
+  whitespace(src, pos)
+  if pos != src.len() { return Err(issue(pos, "unexpected content after JSON value")) }
+  return Ok(move value)
+}
+
+// The returned index is valid until the members change; -1 means missing.
+pub fn find_member(members: view Members, key: view String) -> Int {
+  return members.last.get_or(key, -1)
+}
+
+fn write_string(out: mut String, text: view String) {
+  out.push_char('"')
+  let hex = String.from("0123456789abcdef")
+  for c in text.chars() {
+    match c {
+      '"' => { out.push_str("\\\"") }
+      '\\' => { out.push_str("\\\\") }
+      '\u{8}' => { out.push_str("\\b") }
+      '\u{C}' => { out.push_str("\\f") }
+      '\n' => { out.push_str("\\n") }
+      '\r' => { out.push_str("\\r") }
+      '\t' => { out.push_str("\\t") }
+      _ => {
+        let n = c.to_int()
+        if n < 32 {
+          out.push_str("\\u00")
+          out.push_byte(hex.byte(n / 16))
+          out.push_byte(hex.byte(n % 16))
+        } else {
+          out.push_char(c)
+        }
+      }
+    }
+  }
+  out.push_char('"')
+}
+
+fn indent(out: mut String, depth: Int) {
+  out.push_char('\n')
+  for i in 0..depth { out.push_str("  ") }
+}
+
+// Share punctuation and indentation between arrays and objects. Each
+// callback borrows its item while the output buffer grows.
+fn sequence<T>(items: view List<T>, out: mut String, pretty: Bool, depth: Int,
+               emit: view fn(view T, mut String, Bool, Int)) {
+  for i in 0..items.len() {
+    if i > 0 { out.push_char(',') }
+    if pretty { indent(out, depth + 1) }
+    emit(items.at(i), out, pretty, depth + 1)
+  }
+  if pretty && !items.is_empty() { indent(out, depth) }
+}
+
+fn write_value(value: view Value, out: mut String, pretty: Bool, depth: Int) {
+  match value {
+    Null => { out.push_str("null") }
+    Boolean(b) => {
+      if b { out.push_str("true") } else { out.push_str("false") }
+    }
+    Number(n) => { out.push_str(n) }
+    Str(s) => { write_string(out, s) }
+    Array(items) => {
+      out.push_char('[')
+      sequence(items, out, pretty, depth, |item, buf, layout, level| {
+        write_value(item.get(), buf, layout, level)
+      })
+      out.push_char(']')
+    }
+    Object(members) => {
+      out.push_char('{')
+      sequence(members.entries, out, pretty, depth, |member, buf, layout, level| {
+        write_string(buf, member.key)
+        buf.push_char(':')
+        if layout { buf.push_char(' ') }
+        write_value(member.value.get(), buf, layout, level)
+      })
+      out.push_char('}')
+    }
+  }
+}
+
+pub fn format(value: view Value, pretty: Bool) -> String {
+  var out = String.new()
+  write_value(value, out, pretty, 0)
+  return out
+}
+
+pub fn location(src: view String, offset: Int) -> (Int, Int) {
+  var line = 1
+  var col = 1
+  var i = 0
+  while i < offset {
+    let c = src.char_at(i)
+    if c == '\r' {
+      line = line + 1
+      col = 1
+      if i + 1 < offset && src.byte(i + 1) == 10 { i = i + 1 }
+    } else if c == '\n' {
+      line = line + 1
+      col = 1
+    } else {
+      col = col + 1
+    }
+    i = i + c.utf8_len()
+  }
+  return (line, col)
+}

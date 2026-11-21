@@ -1,0 +1,231 @@
+import lexer
+
+// Nodes are Copy. Child and sibling indices refer into one growable arena.
+// In a sequence, -1 marks the end. A node belongs to at most one sequence.
+pub enum Form {
+  Number(Int), Str(Int, Int), Name(Int, Int),
+  Unary(lexer.Kind, Int), Binary(lexer.Kind, Int, Int), Call(Int, Int, Int),
+  Let(Int, Int, Int), Assign(Int, Int, Int),
+  If(Int, Int, Int), While(Int, Int),
+  Function(Int, Int, Int, Int), Print(Int), Return(Int), Discard(Int),
+}
+
+pub struct Node { form: Form, offset: Int, next: Int }
+struct Sequence { first: Int, last: Int }
+
+fn empty() -> Sequence { return Sequence { first: -1, last: -1 } }
+
+fn add(nodes: mut List<Node>, form: Form, offset: Int) -> Int {
+  let i = nodes.len()
+  nodes.push(Node { form: form, offset: offset, next: -1 })
+  return i
+}
+
+fn append(nodes: mut List<Node>, seq: mut Sequence, node: Int) {
+  if seq.last < 0 {
+    seq.first = node
+  } else {
+    nodes.at(seq.last).next = node
+  }
+  seq.last = node
+}
+
+fn at(ts: view [lexer.Token], pos: Int, kind: lexer.Kind) -> Bool {
+  return lexer.same(ts[pos].kind, kind)
+}
+
+fn accept(ts: view [lexer.Token], pos: mut Int, kind: lexer.Kind) -> Bool {
+  if !at(ts, pos, kind) { return false }
+  pos = pos + 1
+  return true
+}
+
+fn expect(ts: view [lexer.Token], pos: mut Int, kind: lexer.Kind, label: Text) -> Result<lexer.Token, lexer.Issue> {
+  let tok = ts[pos]
+  if !accept(ts, pos, kind) {
+    return Err(lexer.Issue { offset: tok.start, message: label })
+  }
+  return Ok(tok)
+}
+
+fn priority(kind: lexer.Kind) -> Int {
+  match kind {
+    Eq | Ne => { return 1 }
+    Lt | Le | Gt | Ge => { return 2 }
+    Plus | Minus => { return 3 }
+    Star | Slash | Percent => { return 4 }
+    _ => { return 0 }
+  }
+}
+
+fn prefix(ts: view [lexer.Token], src: view String, pos: mut Int, nodes: mut List<Node>, depth: Int) -> Result<Int, lexer.Issue> {
+  let tok = ts[pos]
+  if depth >= 128 {
+    return Err(lexer.Issue { offset: tok.start, message: "syntax nested too deeply" })
+  }
+  match tok.kind {
+    Number => {
+      pos = pos + 1
+      let digits = src.slice(tok.start, tok.end)
+      var n = 0
+      if !digits.parse_int(n) || n > 1000000000 {
+        return Err(lexer.Issue { offset: tok.start, message: "integer literal out of range" })
+      }
+      return Ok(add(nodes, Form.Number(n), tok.start))
+    }
+    Str => {
+      pos = pos + 1
+      return Ok(add(nodes, Form.Str(tok.start + 1, tok.end - 1), tok.start))
+    }
+    Name => {
+      pos = pos + 1
+      if !accept(ts, pos, lexer.Kind.LParen) {
+        return Ok(add(nodes, Form.Name(tok.start, tok.end), tok.start))
+      }
+      var args = empty()
+      if !at(ts, pos, lexer.Kind.RParen) {
+        while true {
+          let value = expression(ts, src, pos, nodes, 1, depth + 1)?
+          append(nodes, args, value)
+          if !accept(ts, pos, lexer.Kind.Comma) { break }
+        }
+      }
+      let close = expect(ts, pos, lexer.Kind.RParen, "expected ')' after arguments")?
+      return Ok(add(nodes, Form.Call(tok.start, tok.end, args.first), tok.start))
+    }
+    Minus | Not => {
+      pos = pos + 1
+      let value = prefix(ts, src, pos, nodes, depth + 1)?
+      return Ok(add(nodes, Form.Unary(tok.kind, value), tok.start))
+    }
+    LParen => {
+      pos = pos + 1
+      let value = expression(ts, src, pos, nodes, 1, depth + 1)?
+      let close = expect(ts, pos, lexer.Kind.RParen, "expected ')' after expression")?
+      return Ok(value)
+    }
+    _ => { return Err(lexer.Issue { offset: tok.start, message: "expected expression" }) }
+  }
+}
+
+fn expression(ts: view [lexer.Token], src: view String, pos: mut Int, nodes: mut List<Node>, min_power: Int, depth: Int) -> Result<Int, lexer.Issue> {
+  var lhs = prefix(ts, src, pos, nodes, depth)?
+  while true {
+    let op = ts[pos]
+    let power = priority(op.kind)
+    if power < min_power { return Ok(lhs) }
+    pos = pos + 1
+    let rhs = expression(ts, src, pos, nodes, power + 1, depth + 1)?
+    lhs = add(nodes, Form.Binary(op.kind, lhs, rhs), op.start)
+  }
+}
+
+fn terminated_expression(ts: view [lexer.Token], src: view String, pos: mut Int, nodes: mut List<Node>) -> Result<Int, lexer.Issue> {
+  let value = expression(ts, src, pos, nodes, 1, 0)?
+  let semi = expect(ts, pos, lexer.Kind.Semi, "expected ';' after statement")?
+  return Ok(value)
+}
+
+fn block(ts: view [lexer.Token], src: view String, pos: mut Int, nodes: mut List<Node>, depth: Int, in_function: Bool) -> Result<Int, lexer.Issue> {
+  let open = expect(ts, pos, lexer.Kind.LBrace, "expected '{{' to open block")?
+  var body = empty()
+  while !accept(ts, pos, lexer.Kind.RBrace) {
+    if at(ts, pos, lexer.Kind.End) {
+      return Err(lexer.Issue { offset: ts[pos].start, message: "expected '}}' to close block" })
+    }
+    let node = statement(ts, src, pos, nodes, depth, in_function)?
+    append(nodes, body, node)
+  }
+  return Ok(body.first)
+}
+
+fn function_def(ts: view [lexer.Token], src: view String, pos: mut Int, nodes: mut List<Node>, offset: Int) -> Result<Int, lexer.Issue> {
+  let name = expect(ts, pos, lexer.Kind.Name, "expected function name")?
+  let open = expect(ts, pos, lexer.Kind.LParen, "expected '(' after function name")?
+  var params = empty()
+  if !at(ts, pos, lexer.Kind.RParen) {
+    while true {
+      let param = expect(ts, pos, lexer.Kind.Name, "expected parameter name")?
+      let node = add(nodes, Form.Name(param.start, param.end), param.start)
+      append(nodes, params, node)
+      if !accept(ts, pos, lexer.Kind.Comma) { break }
+    }
+  }
+  let close = expect(ts, pos, lexer.Kind.RParen, "expected ')' after parameters")?
+  let body = block(ts, src, pos, nodes, 1, true)?
+  return Ok(add(nodes, Form.Function(name.start, name.end, params.first, body), offset))
+}
+
+fn statement(ts: view [lexer.Token], src: view String, pos: mut Int, nodes: mut List<Node>, depth: Int, in_function: Bool) -> Result<Int, lexer.Issue> {
+  let tok = ts[pos]
+  if depth >= 128 {
+    return Err(lexer.Issue { offset: tok.start, message: "blocks nested too deeply" })
+  }
+  match tok.kind {
+    Let => {
+      pos = pos + 1
+      let name = expect(ts, pos, lexer.Kind.Name, "expected variable name")?
+      let equals = expect(ts, pos, lexer.Kind.Assign, "expected '=' after variable name")?
+      let value = terminated_expression(ts, src, pos, nodes)?
+      return Ok(add(nodes, Form.Let(name.start, name.end, value), tok.start))
+    }
+    Fn => {
+      if depth != 0 {
+        return Err(lexer.Issue { offset: tok.start, message: "function declarations must be at the top level" })
+      }
+      pos = pos + 1
+      return function_def(ts, src, pos, nodes, tok.start)
+    }
+    If => {
+      pos = pos + 1
+      let cond = expression(ts, src, pos, nodes, 1, 0)?
+      let yes = block(ts, src, pos, nodes, depth + 1, in_function)?
+      var no = -1
+      if accept(ts, pos, lexer.Kind.Else) {
+        no = block(ts, src, pos, nodes, depth + 1, in_function)?
+      }
+      return Ok(add(nodes, Form.If(cond, yes, no), tok.start))
+    }
+    While => {
+      pos = pos + 1
+      let cond = expression(ts, src, pos, nodes, 1, 0)?
+      let body = block(ts, src, pos, nodes, depth + 1, in_function)?
+      return Ok(add(nodes, Form.While(cond, body), tok.start))
+    }
+    Return => {
+      if !in_function {
+        return Err(lexer.Issue { offset: tok.start, message: "return is only allowed in a function" })
+      }
+      pos = pos + 1
+      let value = terminated_expression(ts, src, pos, nodes)?
+      return Ok(add(nodes, Form.Return(value), tok.start))
+    }
+    Print => {
+      pos = pos + 1
+      let value = terminated_expression(ts, src, pos, nodes)?
+      return Ok(add(nodes, Form.Print(value), tok.start))
+    }
+    Name if at(ts, pos + 1, lexer.Kind.Assign) => {
+      pos = pos + 2
+      let value = terminated_expression(ts, src, pos, nodes)?
+      return Ok(add(nodes, Form.Assign(tok.start, tok.end, value), tok.start))
+    }
+    _ => {
+      let value = terminated_expression(ts, src, pos, nodes)?
+      return Ok(add(nodes, Form.Discard(value), tok.start))
+    }
+  }
+}
+
+pub struct Program { nodes: List<Node>, first: Int }
+
+pub fn parse(ts: view [lexer.Token], src: view String) -> Result<Program, lexer.Issue> {
+  var nodes = List<Node>.new()
+  var top = empty()
+  var pos = 0
+  while !at(ts, pos, lexer.Kind.End) {
+    let node = statement(ts, src, pos, nodes, 0, false)?
+    append(nodes, top, node)
+  }
+  return Ok(Program { nodes: move nodes, first: top.first })
+}

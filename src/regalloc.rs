@@ -186,14 +186,6 @@ impl Bits {
     }
 }
 
-struct Iv {
-    v: V,
-    start: usize,
-    end: usize,
-    weight: u64,
-    hint: Option<V>,
-}
-
 pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
     let nv = f.nvregs;
     let nb = f.blocks.len();
@@ -593,7 +585,6 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
     struct Iv {
         v: V,
         start: usize,
-        end: usize,
         weight: u64,
         hint: Option<V>,
     }
@@ -602,7 +593,6 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
         .map(|v| Iv {
             v,
             start: ranges[v][0].0,
-            end: ranges[v].last().unwrap().1,
             weight: weight[v],
             hint: hint[v],
         })
@@ -697,10 +687,12 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
                 // evict the cheapest set of conflicting intervals if they are cheaper than us
                 let mut best: Option<(u64, u8)> = None;
                 for r in 0..32u8 {
-                    if mask >> r & 1 == 1 && conflict_w[r as usize] != u64::MAX
-                        && best.is_none_or(|(w, _)| conflict_w[r as usize] < w) {
-                            best = Some((conflict_w[r as usize], r));
-                        }
+                    if mask >> r & 1 == 1
+                        && conflict_w[r as usize] != u64::MAX
+                        && best.is_none_or(|(w, _)| conflict_w[r as usize] < w)
+                    {
+                        best = Some((conflict_w[r as usize], r));
+                    }
                 }
                 match best {
                     Some((w, r)) if w < cw && !(mask >> 16 != 0 && false) => {

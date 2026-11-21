@@ -1,0 +1,51 @@
+// Arrays of owned elements: String / List elements are moved in, borrowed with `a[i]`, replaced with `a[i] = x` (the old one is dropped) and dropped with the array.
+struct Person { name: String, tags: [String; 2] }
+
+fn longest(xs: view [String]) -> Int {
+  var n = 0
+  for s in xs { if s.len() > n { n = s.len() } }
+  return n
+}
+
+fn shout(xs: mut [String]) {
+  for mut s in xs { s.push_str("!") }
+}
+
+fn make() -> [String; 3] {
+  return [String.from("x"), String.from("yy"), String.from("zzz")]
+}
+
+fn main() {
+  var a: [String; 3] = ["one", "two", "three"]
+  print(a[2])
+  print(a[0].len())
+  a[1] = String.from("deux")
+  a[1].push_str("!")
+  print(a)
+  print(longest(a))
+  shout(a[..2])
+  print(a)
+  a.swap(0, 2)
+  print("{a}")
+  let b = make()
+  print(b == make())
+  var p = Person { name: String.from("ana"), tags: [String.from("a"), String.from("b")] }
+  p.tags[0].push_str("dmin")
+  print(p.tags)
+  var l = List<[String; 2]>.new()
+  l.push([String.from("k"), String.from("v")])
+  print(l.at(0)[1])
+  let moved = move a
+  print(moved[0])
+  var big: [List<Int>; 6] = [List<Int>.new(), List<Int>.new(), List<Int>.new(), List<Int>.new(), List<Int>.new(), List<Int>.new()]
+  for mut xs in big { xs.push(1) }
+  big[5].push(2)
+  var t = 0
+  for xs in big { t = t + xs.len() }
+  print(t)
+  let o: Option<[String; 1]> = Some(["opt"])
+  print("{o}")
+  var c = 0
+  for s in move b { c = c + s.len() }
+  print(c)
+}

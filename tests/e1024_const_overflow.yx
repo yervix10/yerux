@@ -1,0 +1,4 @@
+const A = 9223372036854775807
+const B = A + 1
+
+fn main() {}

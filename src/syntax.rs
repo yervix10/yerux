@@ -191,6 +191,12 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                                 return Err(bad("unterminated \\u{..} escape", i - start));
                             }
                             i += 1;
+                            if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                                return Err(bad(
+                                    "expected hexadecimal digits in \\u{..} escape",
+                                    i - start,
+                                ));
+                            }
                             match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
                                 Some(c) => c,
                                 None => {
@@ -655,12 +661,24 @@ pub struct Types {
     /// List indices that are slices `[T]` (a `view`/`mut` borrow of a run of elements): same header as a
     /// List, but they never own or grow their buffer.
     pub slices: HashSet<usize>,
+    /// `const NAME: T = expr` items (Int, Bool or Char), folded by the parser: value (Bool 0/1, Char code), type.
+    pub consts: HashMap<String, (i64, Ty)>,
+    /// Structs with a user `impl Drop`: struct id -> name of the `drop` function (run before the fields drop).
+    pub user_drop: HashMap<usize, String>,
 }
+
+/// The pseudo-bound that marks a `const N: Int` parameter of a generic function.
+pub const CONST_BOUND: &str = "$const";
+/// Array lengths at or above this stand for the const parameter `len - CONST_LEN` (in generic templates).
+pub const CONST_LEN: usize = 1 << 60;
 
 /// Largest fixed-size array (in bytes of the native layout): bigger buffers belong on the heap (`List<T>`).
 pub const MAX_ARRAY_BYTES: usize = 1 << 20;
 
 pub fn check_array_len(types: &Types, elem: Ty, n: i64, pos: Pos) -> Result<(), Diag> {
+    if n as usize >= CONST_LEN {
+        return Ok(()); // a const parameter: checked in every instance
+    }
     if n < 1 {
         return Err(diag("an array needs at least one element", pos)
             .note("help: use `List<T>.new()` for a collection that may be empty"));
@@ -773,9 +791,14 @@ impl Types {
         if let Some(s) = self.array_ids.get(&(elem, n)) {
             return Ty::Struct(*s);
         }
-        let name = format!("[{}; {}]", self.name(elem), n);
+        let len = if n >= CONST_LEN {
+            self.params[n - CONST_LEN].name.clone()
+        } else {
+            n.to_string()
+        };
+        let name = format!("[{}; {}]", self.name(elem), len);
         let cname = format!("Arr__{}__{}", self.mangle(elem), n);
-        let generic = self.has_param(elem);
+        let generic = self.has_param(elem) || n >= CONST_LEN;
         self.structs.push(StructDef {
             name,
             cname,
@@ -847,6 +870,7 @@ impl Types {
             Ty::List(_) | Ty::String | Ty::Box(_) | Ty::Fn(_) | Ty::Dyn(_) => true,
             Ty::Struct(i) => {
                 self.is_lock_guard(i)
+                    || self.user_drop.contains_key(&i)
                     || self.join_payload(i).is_some()
                     || self.structs[i].fields.iter().any(|(_, f)| self.owned(*f))
             }
@@ -1220,7 +1244,7 @@ pub struct Loop {
 #[derive(Clone)]
 pub enum UnpackPat {
     /// name (`_` for a discarded element), mutable, variable id (set by the checker), position
-    Bind(String, bool, usize, Pos),
+    Bind(String, bool, usize, #[allow(dead_code)] Pos), // the position is kept for future diagnostics
     Tuple(Vec<UnpackPat>, Pos),
 }
 
@@ -1395,6 +1419,7 @@ pub struct Parser {
     pub traits: Vec<TraitDef>,
     pub impls: Vec<ImplDef>,
     tparams: HashMap<String, Ty>, // type parameters in scope while (re-)parsing a generic definition
+    const_names: HashSet<String>, // `const N: Int` parameters of the generic header being read first
     self_ty: Option<Ty>,          // `Self` inside an impl or a trait
     in_extern: bool,              // parsing a header inside `extern "C" { }`: `...` is allowed
     saw_variadic: bool,           // set by `fn_header_rest` when the header ended in `...`
@@ -1443,6 +1468,8 @@ pub const PRELUDE: &str = concat!(
 
 pub fn impl_fn_name(types: &Types, trait_name: Option<&str>, ty: Ty, m: &str) -> String {
     match trait_name {
+        // Keep compiler-only destructor functions out of the source identifier namespace.
+        Some("Drop") => format!("$Drop__{}__{}", types.mangle(ty), m),
         Some(t) => format!("{}__{}__{}", t, types.mangle(ty), m),
         None => format!("{}__{}", types.mangle(ty), m),
     }
@@ -1502,6 +1529,7 @@ impl Parser {
             traits: vec![],
             impls: vec![],
             tparams: HashMap::new(),
+            const_names: HashSet::new(),
             in_extern: false,
             saw_variadic: false,
             self_ty: None,
@@ -1690,17 +1718,7 @@ impl Parser {
             return Err(diag("expected `;` or `]` in an array type", self.pos())
                 .note("help: `[Int; 4]` is an array of 4 Ints, `view [Int]` a slice parameter"));
         }
-        let npos = self.pos();
-        let n = match self.peek().clone() {
-            Tok::Num(n) => {
-                self.bump();
-                n
-            }
-            _ => {
-                return Err(diag("the length of an array type must be an integer literal", npos)
-                    .note("help: write the number itself, e.g. `[Int; 16]`; for a length known only at run time use `List<T>`"))
-            }
-        };
+        let n = self.array_len("of an array type")?;
         let close = self.expect_sym("]")?;
         check_array_len(&self.types, elem, n, span(open, close))?;
         Ok(self.types.intern_array(elem, n as usize, span(open, close)))
@@ -1971,7 +1989,34 @@ impl Parser {
         self.expect_sym("<")?;
         let mut v: Vec<TParam> = vec![];
         while !self.is_sym(">") {
+            // `const N: Int`: a length parameter (inferred from the length of an array argument)
+            let is_const = matches!(self.peek(), Tok::Id(k) if k == "const")
+                && matches!(self.peek_at(1), Tok::Id(_));
+            if is_const {
+                self.bump();
+            }
             let (name, np) = self.ident()?;
+            if is_const {
+                self.expect_sym(":")?;
+                let (t, tp) = self.ident()?;
+                if t != "Int" {
+                    return Err(diag("a const parameter must be an Int: `const N: Int`", tp));
+                }
+                if v.iter().any(|p| p.name == name) {
+                    return Err(diag(
+                        format!("type parameter '{}' is declared twice", name),
+                        np,
+                    ));
+                }
+                v.push(TParam {
+                    name,
+                    bounds: vec![(CONST_BOUND.into(), np)],
+                });
+                if !self.eat_sym(",") {
+                    break;
+                }
+                continue;
+            }
             if v.iter().any(|p| p.name == name) {
                 return Err(diag(
                     format!("type parameter '{}' is declared twice", name),
@@ -2003,9 +2048,189 @@ impl Parser {
         Ok(v)
     }
 
+    /// `const NAME: T = expr` (the word `const` is next). With `register`, the value is folded and recorded
+    /// (pass 1); otherwise the item is only read again (pass 2).
+    fn const_item(&mut self, register: bool) -> PR<()> {
+        self.bump();
+        let (name, npos) = self.ident()?;
+        let ty = if self.eat_sym(":") {
+            Some(self.ty()?)
+        } else {
+            None
+        };
+        self.expect_sym("=")?;
+        let e = self.expr()?;
+        self.eat_sym(";");
+        if !register {
+            return Ok(());
+        }
+        if self.types.consts.contains_key(&name) {
+            return Err(diag(format!("const '{}' is defined twice", name), npos));
+        }
+        let (v, t) = self.fold_const(&e)?;
+        let t = match ty {
+            None => t,
+            Some(want) if want == t => t,
+            Some(Ty::Range(lo, hi)) if t == Ty::Int => {
+                if v < lo || v > hi {
+                    return Err(diag(
+                        format!(
+                            "{} does not fit in {}",
+                            v,
+                            self.types.name(Ty::Range(lo, hi))
+                        ),
+                        e.pos,
+                    ));
+                }
+                Ty::Range(lo, hi)
+            }
+            Some(want) if matches!(want, Ty::Int | Ty::Bool | Ty::Char) => {
+                return Err(diag(
+                    format!(
+                        "expected {} but this is {}",
+                        self.types.name(want),
+                        self.types.name(t)
+                    ),
+                    e.pos,
+                ))
+            }
+            Some(want) => {
+                return Err(diag(
+                    format!(
+                        "a const of type {} is not supported yet",
+                        self.types.name(want)
+                    ),
+                    npos,
+                )
+                .note("consts are Int (also `Int<lo..hi>`), Bool or Char for now"))
+            }
+        };
+        self.types.consts.insert(name, (v, t));
+        Ok(())
+    }
+    /// The value of a const expression: literals, earlier consts, arithmetic, comparisons and logic.
+    fn fold_const(&self, e: &Expr) -> PR<(i64, Ty)> {
+        let ovf = || {
+            diag("this overflows while evaluating the constant", e.pos)
+                .note("const arithmetic is checked like run-time arithmetic")
+        };
+        let int = |x: &Expr| -> PR<i64> {
+            match self.fold_const(x)? {
+                (v, Ty::Int) => Ok(v),
+                (_, t) => Err(diag(
+                    format!("expected Int but this is {}", self.types.name(t)),
+                    x.pos,
+                )),
+            }
+        };
+        let boolean = |x: &Expr| -> PR<bool> {
+            match self.fold_const(x)? {
+                (v, Ty::Bool) => Ok(v != 0),
+                (_, t) => Err(diag(
+                    format!("expected Bool but this is {}", self.types.name(t)),
+                    x.pos,
+                )),
+            }
+        };
+        Ok(match &e.k {
+            EK::Int(v) if matches!(e.ty, Ty::Unit) => (*v, Ty::Int),
+            EK::Bool(b) => (*b as i64, Ty::Bool),
+            EK::Char(c) => (*c, Ty::Char),
+            EK::Var(n, _) => match self.types.consts.get(n) {
+                Some((v, t)) => (*v, if matches!(t, Ty::Range(..)) { Ty::Int } else { *t }),
+                None => {
+                    return Err(diag(format!("unknown const '{}'", n), e.pos)
+                        .note("a const is computed from literals and consts defined above it"))
+                }
+            },
+            EK::Un("-", x) => (int(x)?.checked_neg().ok_or_else(ovf)?, Ty::Int),
+            EK::Un("!", x) => (!boolean(x)? as i64, Ty::Bool),
+            EK::Bin(op @ ("&&" | "||"), a, b) => {
+                let (a, b) = (boolean(a)?, boolean(b)?);
+                ((if *op == "&&" { a && b } else { a || b }) as i64, Ty::Bool)
+            }
+            EK::Bin(op, a, b) => {
+                let (x, y) = (int(a)?, int(b)?);
+                let r = match *op {
+                    "+" => x.checked_add(y),
+                    "-" => x.checked_sub(y),
+                    "*" => x.checked_mul(y),
+                    "/" | "%" if y == 0 => {
+                        return Err(diag("division by zero while evaluating the constant", e.pos))
+                    }
+                    "/" => x.checked_div(y),
+                    "%" => x.checked_rem(y),
+                    "==" => return Ok(((x == y) as i64, Ty::Bool)),
+                    "!=" => return Ok(((x != y) as i64, Ty::Bool)),
+                    "<" => return Ok(((x < y) as i64, Ty::Bool)),
+                    "<=" => return Ok(((x <= y) as i64, Ty::Bool)),
+                    ">" => return Ok(((x > y) as i64, Ty::Bool)),
+                    ">=" => return Ok(((x >= y) as i64, Ty::Bool)),
+                    _ => None,
+                };
+                (r.ok_or_else(ovf)?, Ty::Int)
+            }
+            _ => {
+                return Err(diag(
+                    "a const must be computed from literals, other consts and arithmetic",
+                    e.pos,
+                )
+                .note("function calls are not allowed here yet; use `let x = comptime f(..)` inside a function"))
+            }
+        })
+    }
+    /// A const parameter in scope: its value in an instance, `CONST_LEN + pid` in a template (a length
+    /// placeholder), 1 while a generic header is first read.
+    fn const_param(&self, n: &str) -> Option<i64> {
+        match self.tparams.get(n)? {
+            Ty::Range(v, w) if v == w => Some(*v),
+            Ty::Param(p)
+                if self.types.params[*p]
+                    .bounds
+                    .iter()
+                    .any(|b| b == CONST_BOUND) =>
+            {
+                Some((CONST_LEN + *p) as i64)
+            }
+            Ty::Err if self.const_names.contains(n) => Some(1),
+            _ => None,
+        }
+    }
+    /// An array length: an integer literal, an Int const or a const parameter.
+    fn array_len(&mut self, what: &str) -> PR<i64> {
+        let npos = self.pos();
+        match self.peek().clone() {
+            Tok::Num(n) => {
+                self.bump();
+                Ok(n)
+            }
+            Tok::Id(n) if self.const_param(&n).is_some() => {
+                self.bump();
+                Ok(self.const_param(&n).unwrap())
+            }
+            Tok::Id(n)
+                if matches!(self.types.consts.get(&n), Some((_, Ty::Int | Ty::Range(..)))) =>
+            {
+                self.bump();
+                Ok(self.types.consts[&n].0)
+            }
+            _ => Err(diag(
+                format!("the length {} must be an integer literal or an Int const", what),
+                npos,
+            )
+            .note("help: write the number itself (`[Int; 16]`) or declare `const N = 16`; for a length known only at run time use `List<T>`")),
+        }
+    }
+
     /// Pass 1: find the generic structs/enums so their uses can be parsed in any order.
     fn register_generics(&mut self) -> PR<()> {
         while !matches!(self.peek(), Tok::Eof) {
+            if matches!(self.peek(), Tok::Id(k) if k == "const")
+                && matches!(self.peek_at(1), Tok::Id(_))
+            {
+                self.const_item(true)?;
+                continue;
+            }
             if self.eat_sym("@") {
                 let (attribute, pos) = self.ident()?;
                 if attribute != "thread_bound" || !(self.is_kw("struct") || self.is_kw("enum")) {
@@ -2073,6 +2298,12 @@ impl Parser {
             self.inst_type(&n, args, pos)?;
         }
         while !matches!(self.peek(), Tok::Eof) {
+            if matches!(self.peek(), Tok::Id(k) if k == "const")
+                && matches!(self.peek_at(1), Tok::Id(_))
+            {
+                self.const_item(false)?;
+                continue;
+            }
             if matches!(self.peek(), Tok::Id(n) if n == "type") {
                 self.bump();
                 let (name, pos) = self.ident()?;
@@ -2608,9 +2839,15 @@ impl Parser {
         for n in &added {
             self.tparams.insert(n.clone(), Ty::Err);
         }
+        for g in &generics {
+            if g.bounds.iter().any(|b| b.0 == CONST_BOUND) {
+                self.const_names.insert(g.name.clone());
+            }
+        }
         let r = self.fn_header_rest(name, npos, generics);
         for n in &added {
             self.tparams.remove(n);
+            self.const_names.remove(n);
         }
         r
     }
@@ -3531,17 +3768,7 @@ impl Parser {
                 }
                 let first = self.expr()?;
                 if self.eat_sym(";") {
-                    let npos = self.pos();
-                    let n = match self.peek().clone() {
-                        Tok::Num(n) => {
-                            self.bump();
-                            n
-                        }
-                        _ => {
-                            return Err(diag("the length in `[value; N]` must be an integer literal", npos)
-                                .note("help: write the number itself, e.g. `[0; 16]`; for a length known only at run time use a List"))
-                        }
-                    };
+                    let n = self.array_len("in `[value; N]`")?;
                     let close = self.expect_sym("]")?;
                     if n < 1 {
                         return Err(diag(
@@ -3609,6 +3836,12 @@ impl Parser {
                 }
                 self.expect_sym(")")?;
                 self.postfix(e)
+            }
+            // a const parameter used as a value: its length (a placeholder while checking the template)
+            Tok::Id(x) if self.const_param(&x).is_some() => {
+                let v = self.const_param(&x).unwrap();
+                let v = if v as usize >= CONST_LEN { 1 } else { v };
+                self.postfix(mk(EK::Int(v), pos))
             }
             Tok::Id(x) => match x.as_str() {
                 "true" => Ok(mk(EK::Bool(true), pos)),

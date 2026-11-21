@@ -1,0 +1,6 @@
+// std.env: set takes a String value (convert numbers with interpolation) and returns a Result
+import std.env
+
+fn main() {
+  env.set("KEY", 5)
+}

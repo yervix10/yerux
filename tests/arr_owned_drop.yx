@@ -1,0 +1,35 @@
+// Owned arrays through early returns, moves into calls, enum payloads, closures and loops: every String is freed exactly once.
+enum Msg { Names([String; 2]), Empty }
+
+fn pick(flag: Bool) -> Int {
+  let a = [String.from("p"), String.from("q")]
+  if flag { return 1 }
+  let b = move a
+  return b[0].len()
+}
+
+fn consume(a: [String; 2]) -> Int { return a[0].len() + a[1].len() }
+
+fn main() {
+  var a = [String.from("ab"), String.from("c")]
+  if pick(true) == 1 { print(consume(move a)) }
+  print(pick(false))
+  let m = Msg.Names([String.from("x"), String.from("y")])
+  match m {
+    Names(ns) => { print(ns[1]) }
+    Empty => {}
+  }
+  let s = String.from("moved in")
+  let arr = [move s, String.from("lit")]
+  let f = move || arr[0].len()
+  print(f())
+  var many: [String; 40] = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+  many[39].push_str("zz")
+  print(many[39])
+  var k = 0
+  while k < 3 {
+    let tmp = [String.from("loop"), String.from("x")]
+    k = k + tmp[1].len()
+  }
+  print(k)
+}

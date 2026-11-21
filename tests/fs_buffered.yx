@@ -1,0 +1,173 @@
+// std.fs buffered Reader / Writer: lines, bytes, big writes, flush on drop, errors as values
+import std.fs
+import std.io
+
+fn report(what: Text, r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => { print("{what}: ok {n}") }
+    Err(e) => { print("{what}: error {e.code}") }
+  }
+}
+
+fn write_many(path: view String) -> Result<Int, io.IoError> {
+  var w = fs.create_writer(path)?
+  var total = 0
+  for i in 0..20000 {
+    let line = "line {i}"
+    total = total + w.write_line(line)?
+  }
+  let crlf = "windows\r\n"
+  total = total + w.write_str(crlf)?
+  total = total + w.write_byte(122u8)?
+  return fs.finish(move w)
+}
+
+fn read_many(path: view String) -> Result<Int, io.IoError> {
+  var r = fs.open_reader(path)?
+  var count = 0
+  var last = String.new()
+  var first = String.new()
+  while true {
+    match r.read_line()? {
+      Some(l) => {
+        if count == 0 { first = move l } else { last = move l }
+        count = count + 1
+      }
+      None => { break }
+    }
+  }
+  print("{count} lines, first '{first}', last '{last}'")
+  return Ok(count)
+}
+
+fn main() {
+  let dir = "/tmp/yerux_fs_buffered_{io.process_id()}"
+  report("mkdir", fs.create_dir(dir))
+  let a = "{dir}/a.txt"
+  report("write_many", write_many(a))
+  match fs.file_size(a) {
+    Ok(n) => { print("size {n}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  report("read_many", read_many(a))
+
+  // byte-level reading and lines()
+  let b = "{dir}/b.txt"
+  report("write", fs.write(b, "ab\ncd\r\n\nlast"))
+  match fs.open_reader(b) {
+    Ok(r0) => {
+      var r = move r0
+      match r.read_byte() {
+        Ok(Some(x)) => { print(x) }
+        Ok(None) => { print("eof") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      var buf = [0u8; 2]
+      match r.read(buf) {
+        Ok(n) => { print("read {n}: {buf[0]} {buf[1]}") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      match r.lines() {
+        Ok(ls) => {
+          print(ls.len())
+          for l in ls { print("<{l}>") }
+        }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      match r.read_byte() {
+        Ok(Some(x)) => { print(x) }
+        Ok(None) => { print("eof") }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      report("close reader", fs.close_reader(move r))
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.open_reader(b) {
+    Ok(r0) => {
+      var r = move r0
+      match r.read_to_string() {
+        Ok(t) => { print(t.len()) }
+        Err(e) => { print("unexpected: {e}") }
+      }
+      let cl = fs.close_reader(move r)
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // without Drop nothing flushes behind our back: buffered data is written by flush() / fs.finish()
+  let c = "{dir}/c.txt"
+  match fs.create_writer(c) {
+    Ok(w0) => {
+      var w = move w0
+      report("buffered", w.write_str("kept by flush"))
+      var data = List<UInt8>.new()
+      data.push(33u8)
+      report("bytes", w.write(data))
+      report("finish", fs.finish(move w))
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_to_string(c) {
+    Ok(t) => { print(t) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // one write bigger than the buffer goes straight through
+  var big = String.new()
+  for i in 0..70000 { big.push_byte(65 + i % 26) }
+  let d = "{dir}/d.txt"
+  match fs.create_writer(d) {
+    Ok(w0) => {
+      var w = move w0
+      report("small", w.write_str("<"))
+      report("big", w.write_str(big))
+      report("flush", w.flush())
+      report("flush empty", w.flush())
+      report("finish", fs.finish(move w))
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_to_string(d) {
+    Ok(t) => { print(t.len()) print(t.starts_with("<AB")) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // invalid UTF-8 in a line is an error value
+  let e = "{dir}/e.bin"
+  var raw = List<UInt8>.new()
+  raw.push(104u8)
+  raw.push(255u8)
+  raw.push(10u8)
+  report("raw", fs.write_bytes(e, raw))
+  match fs.open_reader(e) {
+    Ok(r0) => {
+      var r = move r0
+      match r.read_line() {
+        Ok(l) => { print("unexpected success") }
+        Err(err) => { print(err.kind == io.IoErrorKind.InvalidData) }
+      }
+      let cl = fs.close_reader(move r)
+    }
+    Err(err) => { print("unexpected: {err}") }
+  }
+  match fs.open_reader("{dir}/missing") {
+    Ok(r) => { print("unexpected success") }
+    Err(err) => { print(err.kind == io.IoErrorKind.NotFound) }
+  }
+  match fs.create_writer("{dir}/no/such/dir") {
+    Ok(r) => { print("unexpected success") }
+    Err(err) => { print(err.kind == io.IoErrorKind.NotFound) }
+  }
+  // a Writer over a read-only file: the error shows on flush
+  match fs.open(b) {
+    Ok(f) => {
+      var w = fs.writer(move f)
+      report("buffer", w.write_str("x"))
+      report("flush read-only", w.flush())
+      report("finish read-only", fs.finish(move w))
+    }
+    Err(err) => { print("unexpected: {err}") }
+  }
+  report("cleanup", fs.remove_dir_all(dir))
+}

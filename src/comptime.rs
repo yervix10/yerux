@@ -13,10 +13,12 @@ const STEP_BUDGET: u64 = 20_000_000;
 const MAX_DEPTH: usize = 1000;
 pub const MARKER: &str = "__comptime";
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum V {
     I(i64),
     B(bool),
+    /// a fixed-size array of compile-time values (arrays of scalars, nested arrays)
+    A(Vec<V>),
     U,
 }
 
@@ -32,6 +34,7 @@ type R<T> = Result<T, Diag>;
 
 struct Interp<'a> {
     funcs: &'a HashMap<String, &'a Func>,
+    types: &'a Types,
     steps: u64,
     chain: Vec<(String, Pos)>,
 }
@@ -60,6 +63,11 @@ fn add_chain(mut d: Diag, chain: &[(String, Pos)]) -> Diag {
 
 fn scalar_ty(t: Ty) -> bool {
     matches!(t, Ty::Int | Ty::Range(..) | Ty::Char | Ty::Bool)
+}
+
+/// The values comptime code may hold: scalars and arrays of them.
+fn value_ty(types: &Types, t: Ty) -> bool {
+    scalar_ty(t) || types.array_of(t).is_some_and(|(e, _)| value_ty(types, e))
 }
 
 impl<'a> Interp<'a> {
@@ -166,15 +174,107 @@ impl<'a> Interp<'a> {
         }
     }
 
+    /// `a.at(i).at(j)..` on a variable: its id and the evaluated (index, position) path.
+    fn path(&mut self, e: &Expr, env: &mut Env) -> R<(usize, Vec<(i64, Pos)>)> {
+        match &e.k {
+            EK::Var(n, id) => {
+                if !env.contains_key(id) {
+                    return Err(unsupported(&format!("the run-time variable `{}`", n), e.pos, &self.chain)
+                        .note("its value is not known while compiling; only variables defined inside the comptime code are"));
+                }
+                Ok((*id, vec![]))
+            }
+            EK::Method { recv, m, args } if m == "at" && args.len() == 1 => {
+                let (id, mut p) = self.path(recv, env)?;
+                let i = self.int(&args[0], env)?;
+                p.push((i, args[0].pos));
+                Ok((id, p))
+            }
+            _ => Err(unsupported("this place", e.pos, &self.chain)),
+        }
+    }
+    /// The element `path` leads to inside the value of variable `id`.
+    fn slot<'v>(&self, v: &'v mut V, path: &[(i64, Pos)]) -> R<&'v mut V> {
+        let mut cur = v;
+        for (i, pos) in path {
+            cur = match cur {
+                V::A(items) => {
+                    let n = items.len();
+                    if *i < 0 || *i as usize >= n {
+                        return Err(self.fail("index out of range", *pos));
+                    }
+                    &mut items[*i as usize]
+                }
+                _ => return Err(unsupported("indexing this value", *pos, &self.chain)),
+            };
+        }
+        Ok(cur)
+    }
+    fn place_mut<'v>(&mut self, e: &Expr, env: &'v mut Env) -> R<&'v mut V> {
+        let (id, path) = self.path(e, env)?;
+        let v = env.get_mut(&id).expect("checked by `path`");
+        self.slot(v, &path)
+    }
+
     fn expr(&mut self, e: &Expr, env: &mut Env) -> R<V> {
         self.tick(e.pos)?;
-        if !scalar_ty(e.ty) && e.ty != Ty::Unit {
+        if !value_ty(self.types, e.ty) && e.ty != Ty::Unit {
             return Err(unsupported("a value of this type", e.pos, &self.chain));
         }
         match &e.k {
             EK::Int(i) | EK::Char(i) => Ok(V::I(*i)),
             EK::Bool(b) => Ok(V::B(*b)),
-            EK::Var(n, id) | EK::Move(n, id) => env.get(id).copied().ok_or_else(|| {
+            EK::ArrayLit(items) => {
+                let mut vs = vec![];
+                for it in items {
+                    vs.push(self.expr(it, env)?);
+                }
+                Ok(V::A(vs))
+            }
+            EK::ArrayFill(x, n) => {
+                let v = self.expr(x, env)?;
+                Ok(V::A(vec![v; *n]))
+            }
+            EK::Method { recv, m, args } if self.types.array_of(recv.ty).is_some() => {
+                let n = self.types.array_of(recv.ty).unwrap().1;
+                match m.as_str() {
+                    "len" => Ok(V::I(n as i64)),
+                    "at" | "get" if args.len() == 1 => {
+                        let (id, mut p) = self.path(recv, env)?;
+                        let i = self.int(&args[0], env)?;
+                        p.push((i, args[0].pos));
+                        let v = env.get_mut(&id).expect("checked by `path`");
+                        Ok(self.slot(v, &p)?.clone())
+                    }
+                    "set" if args.len() == 2 => {
+                        let i = self.int(&args[0], env)?;
+                        let x = self.expr(&args[1], env)?;
+                        let ipos = args[0].pos;
+                        let a = self.place_mut(recv, env)?;
+                        let mut tmp = std::mem::replace(a, V::U);
+                        let r = self.slot(&mut tmp, &[(i, ipos)]).map(|s| *s = x);
+                        *self.place_mut(recv, env)? = tmp;
+                        r.map(|_| V::U)
+                    }
+                    "swap" if args.len() == 2 => {
+                        let i = self.int(&args[0], env)?;
+                        let j = self.int(&args[1], env)?;
+                        let (ip, jp) = (args[0].pos, args[1].pos);
+                        let a = self.place_mut(recv, env)?;
+                        let mut tmp = std::mem::replace(a, V::U);
+                        let r = (|| -> R<()> {
+                            let x = self.slot(&mut tmp, &[(i, ip)])?.clone();
+                            let y = std::mem::replace(self.slot(&mut tmp, &[(j, jp)])?, x);
+                            *self.slot(&mut tmp, &[(i, ip)])? = y;
+                            Ok(())
+                        })();
+                        *self.place_mut(recv, env)? = tmp;
+                        r.map(|_| V::U)
+                    }
+                    _ => Err(unsupported("this array method", e.pos, &self.chain)),
+                }
+            }
+            EK::Var(n, id) | EK::Move(n, id) => env.get(id).cloned().ok_or_else(|| {
                 unsupported(&format!("the run-time variable `{}`", n), e.pos, &self.chain)
                     .note("its value is not known while compiling; only variables defined inside the comptime code are")
             }),
@@ -269,10 +369,10 @@ impl<'a> Interp<'a> {
             .get(name)
             .ok_or_else(|| unsupported(&format!("a call to `{}`", name), e.pos, &self.chain))?;
         if f.pos.line >= PRELUDE_LINE
-            || (!scalar_ty(f.ret) && f.ret != Ty::Unit)
+            || (!value_ty(self.types, f.ret) && f.ret != Ty::Unit)
             || f.params
                 .iter()
-                .any(|p| p.mode != Mode::Own || !scalar_ty(p.ty))
+                .any(|p| p.mode != Mode::Own || !value_ty(self.types, p.ty))
         {
             return Err(unsupported(
                 &format!("a call to `{}`", name),
@@ -472,13 +572,14 @@ pub fn run(prog: &mut Program) -> Result<(), Vec<Diag>> {
         }
         let mut body = std::mem::take(&mut f.body);
         // `comptime assert(c)` as a statement: checked now, then removed
-        remove_asserts(&mut body, &table, &mut errs);
+        remove_asserts(&mut body, &table, &prog.types, &mut errs);
         let r = walk_stmts(&mut body, &mut |x| {
             if !is_marker(x) {
                 return Ok(false);
             }
             let mut it = Interp {
                 funcs: &table,
+                types: &prog.types,
                 steps: 0,
                 chain: vec![],
             };
@@ -489,6 +590,7 @@ pub fn run(prog: &mut Program) -> Result<(), Vec<Diag>> {
             match v {
                 Ok(V::I(i)) => x.k = if x.ty == Ty::Char { EK::Char(i) } else { EK::Int(i) },
                 Ok(V::B(v)) => x.k = EK::Bool(v),
+                Ok(V::A(_)) => errs.push(unsupported("an array as the result of `comptime`", x.pos, &[])),
                 Ok(V::U) => errs.push(unsupported("a `comptime` expression with no value (use `comptime assert(..)` as a statement)", x.pos, &[])),
                 Err(d) => errs.push(d),
             }
@@ -504,7 +606,12 @@ pub fn run(prog: &mut Program) -> Result<(), Vec<Diag>> {
     }
 }
 
-fn remove_asserts(b: &mut Vec<Stmt>, table: &HashMap<String, &Func>, errs: &mut Vec<Diag>) {
+fn remove_asserts(
+    b: &mut Vec<Stmt>,
+    table: &HashMap<String, &Func>,
+    types: &Types,
+    errs: &mut Vec<Diag>,
+) {
     for s in b.iter_mut() {
         let is_assert = matches!(&s.k, SK::ExprS(e) if is_marker(e) && e.ty == Ty::Unit);
         if is_assert {
@@ -512,6 +619,7 @@ fn remove_asserts(b: &mut Vec<Stmt>, table: &HashMap<String, &Func>, errs: &mut 
                 if let EK::Call(_, a) = &e.k {
                     let mut it = Interp {
                         funcs: table,
+                        types,
                         steps: 0,
                         chain: vec![],
                     };
@@ -525,19 +633,19 @@ fn remove_asserts(b: &mut Vec<Stmt>, table: &HashMap<String, &Func>, errs: &mut 
         }
         match &mut s.k {
             SK::If(_, a, c) => {
-                remove_asserts(a, table, errs);
+                remove_asserts(a, table, types, errs);
                 if let Some(c) = c {
-                    remove_asserts(c, table, errs);
+                    remove_asserts(c, table, types, errs);
                 }
             }
             SK::While(_, body, lp) => {
-                remove_asserts(body, table, errs);
-                remove_asserts(&mut lp.step, table, errs);
+                remove_asserts(body, table, types, errs);
+                remove_asserts(&mut lp.step, table, types, errs);
             }
-            SK::Block(body, _) | SK::Unsafe(body) => remove_asserts(body, table, errs),
+            SK::Block(body, _) | SK::Unsafe(body) => remove_asserts(body, table, types, errs),
             SK::Match(_, arms) => {
                 for a in arms {
-                    remove_asserts(&mut a.body, table, errs);
+                    remove_asserts(&mut a.body, table, types, errs);
                 }
             }
             _ => {}

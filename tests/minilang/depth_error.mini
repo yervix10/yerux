@@ -1,0 +1,2 @@
+fn forever() { return forever(); }
+forever();

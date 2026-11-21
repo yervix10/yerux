@@ -1,9 +1,9 @@
-error: the elements of an array must be Copy, but String owns memory
+error: an array cannot hold Box<Int> values
  --> tests/e1001_array_owned_elem.yx:2:11
   |
-2 |   let a = [String.from("a"), String.from("b")]
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  = fixed-size arrays hold plain values (numbers, Bool, Char, Text, Copy structs, other arrays)
-  = help: use `List<String>` for owned elements
+2 |   let a = [Box.new(1), Box.new(2)]
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^
+  = array elements are Copy values or owned values without heap indirection: String, List<T>, and structs, enums and tuples of those
+  = help: use `List<Box<Int>>` for Box, closures, dyn values or recursive types
 
 1 error(s). Nothing was generated.

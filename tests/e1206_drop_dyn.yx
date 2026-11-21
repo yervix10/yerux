@@ -1,0 +1,5 @@
+struct Resource { id: Int }
+impl Drop for Resource { fn drop(mut self) {} }
+fn main() {
+  let handle: Box<dyn Drop> = Box.new(Resource { id: 1 })
+}

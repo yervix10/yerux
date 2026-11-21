@@ -1,0 +1,6 @@
+// std.time: a Duration is not an Int; build one with time.millis(..) and friends
+import std.time
+
+fn main() {
+  time.sleep(5)
+}

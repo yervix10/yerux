@@ -1,0 +1,9 @@
+error: a `comptime` expression must be an Int, Char or Bool, found [Int; 2] [E-K3]
+ --> tests/e1028_comptime_array_result.yx:4:20
+  |
+4 |   let t = comptime table()
+  |                    ^^^^^^^
+  = why: for now only scalar values can leave compile time
+  = fix: use comptime for the number or the condition, and build the aggregate at run time
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,8 @@
+error: `Drop` can only be implemented for a struct, not for E
+ --> tests/e1201_drop_enum.yx:3:6
+  |
+3 | impl Drop for E {
+  |      ^^^^
+  = help: wrap the value in a struct and implement Drop for that struct
+
+1 error(s). Nothing was generated.

@@ -42,7 +42,7 @@ run_exe() {
   CODE=$?
 }
 
-for f in examples/*.yx examples/real/*.yx tests/*.yx; do
+for f in examples/*.yx examples/real/*.yx examples/real/minilang/minilang.yx tests/*.yx; do
   [ -e "$f" ] || continue
   name="$(basename "$f" .yx)"
   CUR="$name"
@@ -131,6 +131,7 @@ if [ $BLESS -eq 1 ]; then echo "goldens (re)generated in $EXP"; fi
 if [ $BLESS -eq 0 ]; then bash tests/range_ir.sh >"$TMP/rir.out" 2>&1 || { cat "$TMP/rir.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/inline_ir.sh >"$TMP/iir.out" 2>&1 || { cat "$TMP/iir.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/modules.sh >"$TMP/mod.out" 2>&1 || { cat "$TMP/mod.out"; fails=$((fails+1)); }; fi
+if [ $BLESS -eq 0 ]; then bash tests/json.sh >"$TMP/json.out" 2>&1 || { cat "$TMP/json.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/io_targets.sh >"$TMP/iot.out" 2>&1 || { cat "$TMP/iot.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/fmt.sh >"$TMP/fmt.out" 2>&1 || { cat "$TMP/fmt.out"; fails=$((fails+1)); }; fi
 if [ $BLESS -eq 0 ]; then bash tests/noopt_shortcircuit.sh >"$TMP/nsc.out" 2>&1 || { cat "$TMP/nsc.out"; fails=$((fails+1)); }; fi

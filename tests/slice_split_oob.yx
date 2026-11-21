@@ -1,0 +1,6 @@
+// `split_at(k, f)` with `k` outside 0..=len panics (the halves are ordinary checked slices).
+fn main() {
+  let a = [1, 2, 3]
+  a.split_at(3, |x, y| print(x.len() * 10 + y.len()))
+  a.split_at(4, |x, y| print(x.len()))
+}

@@ -15,6 +15,7 @@ impl Types {
     /// A struct whose drop is the plain field-by-field drop (no guard, handle, shared cell or closure environment).
     pub fn plain_struct_drop(&self, sid: usize) -> bool {
         !self.is_lock_guard(sid)
+            && !self.user_drop.contains_key(&sid)
             && self.join_payload(sid).is_none()
             && self.runtime_struct(sid, "Shared").is_none()
             && !self.structs[sid].cname.starts_with("Env__")

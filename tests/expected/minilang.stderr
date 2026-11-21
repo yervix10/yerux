@@ -1,0 +1,15 @@
+tests/minilang/lex_error.mini:1:11: invalid string escape
+tests/minilang/parse_error.mini:3:1: expected ';' after statement
+tests/minilang/runtime_error.mini:2:12: division by zero
+tests/minilang/arity_error.mini:2:7: wrong number of arguments
+tests/minilang/scope_error.mini:2:7: unknown variable
+tests/minilang/param_error.mini:1:17: duplicate parameter name
+tests/minilang/type_error.mini:1:13: '+' requires two integers or two strings
+tests/minilang/range_error.mini:1:18: integer result out of range
+tests/minilang/step_error.mini:1:7: execution step limit exceeded
+tests/minilang/depth_error.mini:1:16: evaluation nested too deeply
+tests/minilang/return_error.mini:1:1: return is only allowed in a function
+tests/minilang/missing_return.mini:2:1: function ended without returning a value
+tests/minilang/assignment_error.mini:1:1: cannot assign to an unknown variable
+tests/minilang/duplicate_function.mini:2:4: duplicate function name
+tests/minilang/unknown_function.mini:1:1: unknown function

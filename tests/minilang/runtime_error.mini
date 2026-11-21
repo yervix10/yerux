@@ -1,0 +1,4 @@
+fn fail(x) {
+  return x / 0;
+}
+print fail(3);

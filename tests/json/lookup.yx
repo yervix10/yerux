@@ -1,0 +1,20 @@
+import codec
+
+fn main() {
+  let result = codec.parse("{{\"x\": 1, \"x\": 2, \"y\": 3}}")
+  match move result {
+    Ok(value) => {
+      match move value {
+        Object(members) => {
+          let index = codec.find_member(members, "x")
+          print(index)
+          let found = codec.format(members.entries.at(index).value.get(), false)
+          print(found)
+          print(codec.find_member(members, "missing"))
+        }
+        _ => { panic("expected an object") }
+      }
+    }
+    Err(e) => { panic(e.message) }
+  }
+}

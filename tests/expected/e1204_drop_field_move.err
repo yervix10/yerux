@@ -1,0 +1,9 @@
+error: cannot move 'item.field' out of 'item': a field cannot be moved out of an owned Resource
+ --> tests/e1204_drop_field_move.yx:5:15
+  |
+5 |   let field = move item.field
+  |               ^^^^^^^^^^^^^^^
+  = `move` takes a whole variable; moving one field would leave the struct half freed
+  = help: borrow the field instead (pass 'item.field' as `view`/`mut`, or call a method on it), or move all of 'item'
+
+1 error(s). Nothing was generated.
