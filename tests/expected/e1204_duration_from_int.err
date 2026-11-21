@@ -1,0 +1,7 @@
+error: expected time.Duration but this is Int
+ --> tests/e1204_duration_from_int.yx:5:14
+  |
+5 |   time.sleep(5)
+  |              ^
+
+1 error(s). Nothing was generated.

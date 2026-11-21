@@ -1,0 +1,7 @@
+error: expected Int but this is time.Duration
+ --> tests/e1205_duration_plus.yx:7:11
+  |
+7 |   let c = a + b
+  |           ^
+
+1 error(s). Nothing was generated.
