@@ -1,0 +1,30 @@
+import std.args
+import std.fmt
+
+fn p(x: view String) { print("[{x}]") }
+
+fn main() {
+  var argv = List<String>.new()
+  argv.push(String.from("tool"))
+  argv.push(String.from("--verbose"))
+  argv.push(String.from("--count=12"))
+  argv.push(String.from("-abc"))
+  argv.push(String.from("serve"))
+  argv.push(String.from("file.txt"))
+  argv.push(String.from("--help"))
+  let parsed = args.parse(argv)
+  print(args.has_flag(parsed, "verbose"))
+  print(args.has_flag(parsed, "b"))
+  print(parsed.help)
+  p(parsed.subcommand)
+  p(parsed.positionals.at(0))
+  match args.option(parsed, "count") {
+    Some(v) => { p(v) }
+    None => { p("missing") }
+  }
+  p(args.help_line("tool", "[OPTIONS] <COMMAND>"))
+  p(fmt.format_int_precision(7, 10, 3))
+  p(fmt.format_int_precision(0, 10, 0))
+  p(fmt.format_int_width(-5, 10, 5, '.', true))
+  p(fmt.fixed_width(1.25, 1, 6, '0', false))
+}
