@@ -45,6 +45,10 @@ fn tokenize(src: view String) -> List<T> {
           i = i + 1
           while i < src.len() && is_alnum(src.byte(i)) { i = i + 1 }
         }
+        if i > start && i < src.len() && (src.byte(i - 1) == 101 || src.byte(i - 1) == 69) && (src.byte(i) == 43 || src.byte(i) == 45) && i + 1 < src.len() && is_digit(src.byte(i + 1)) {
+          i = i + 2
+          while i < src.len() && is_digit(src.byte(i)) { i = i + 1 }
+        }
         tok(out, K.Num, src, start, i, before_nl, start_line)
       } else if b == 34 || b == 39 {
         i = i + 1
@@ -53,12 +57,15 @@ fn tokenize(src: view String) -> List<T> {
         }
         if i < src.len() && src.byte(i) == b { i = i + 1 }
         tok(out, K.Str, src, start, i, before_nl, start_line)
+      } else if b >= 128 {
+        i = i + src.char_size(i)
+        tok(out, K.Sym, src, start, i, before_nl, start_line)
       } else {
         var n = 1
         var three = String.new()
-        if i + 2 < src.len() { three = src.slice(i, i + 3) }
+        if i + 2 < src.len() && src.byte(i + 1) < 128 && src.byte(i + 2) < 128 { three = src.slice(i, i + 3) }
         if i + 2 < src.len() && same(three, "..=") { n = 3 }
-        else if i + 1 < src.len() {
+        else if i + 1 < src.len() && src.byte(i + 1) < 128 {
           let two = src.slice(i, i + 2)
           if same(two, "==") || same(two, "!=") || same(two, "<=") || same(two, ">=") || same(two, "&&") || same(two, "||") || same(two, "->") || same(two, "=>") || same(two, "..") { n = 2 }
         }
@@ -76,6 +83,26 @@ fn kw(s: view String) -> Bool {
   return s == "fn" || s == "let" || s == "var" || s == "if" || s == "else" || s == "while" || s == "return" || s == "move" || s == "view" || s == "mut" || s == "struct" || s == "enum" || s == "match" || s == "defer" || s == "import" || s == "pub" || s == "test" || s == "as" || s == "impl" || s == "trait" || s == "dyn" || s == "for" || s == "in" || s == "break" || s == "continue"
 }
 fn binop(s: view String) -> Bool { return s == "+" || s == "-" || s == "*" || s == "/" || s == "%" || s == "==" || s == "!=" || s == "<" || s == ">" || s == "<=" || s == ">=" || s == "&&" || s == "||" || s == "=" }
+fn matching_brace(src: view String, ts: view List<T>, open: Int) -> Int {
+  var depth = 0
+  var i = open
+  while i < ts.len() {
+    if sym(src, ts.at(i), "{{") { depth = depth + 1 }
+    else if sym(src, ts.at(i), "}}") { depth = depth - 1; if depth == 0 { return i } }
+    i = i + 1
+  }
+  return ts.len()
+}
+fn is_struct_name(src: view String, ts: view List<T>, at: Int) -> Bool {
+  if at < 0 || ts.at(at).k != K.Word { return false }
+  let name = val(src, ts.at(at))
+  var i = 0
+  while i + 1 < ts.len() {
+    if same(val(src, ts.at(i)), "struct") && val(src, ts.at(i + 1)).eq(name) { return true }
+    i = i + 1
+  }
+  return false
+}
 fn is_gen_token(src: view String, ts: view List<T>, at: Int) -> Bool {
   var i = 1
   while i < ts.len() {
@@ -142,6 +169,7 @@ fn space(src: view String, ts: view List<T>, pi: Int, ti: Int, p: T, t: T) -> Bo
   if sym(src, t, "|") && !closure_open(src, ts, ti) && closure_bar(src, ts, ti) { return false }
   if sym(src, p, "..") || sym(src, p, "..=") || sym(src, t, "..") || sym(src, t, "..=") { return false }
   if sym(src, p, "(") || sym(src, p, ".") || sym(src, p, "[") || sym(src, p, "!") { return false }
+  if sym(src, p, "-") && unary_at(src, ts, pi) { return false }
   if (sym(src, p, "<") && pgen) || (sym(src, t, "<") && tgen) || (sym(src, t, ">") && tgen) { return false }
   if sym(src, t, ",") || sym(src, t, ")") || sym(src, t, ";") || sym(src, t, ".") || sym(src, t, ":") || sym(src, t, "?") || sym(src, t, "]") { return false }
   if sym(src, t, "(") { if p.k == K.Word { return kw(ps) && !same(ps, "fn") } if p.k == K.Sym { return !sym(src, p, ")") && !(sym(src, p, ">") && pgen) } return false }
@@ -162,10 +190,13 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
   var line_start = true
   var prev = -1
   var pending_semi = false
+  var pending_hard = false
   var prev_comment = false
   var in_import = false
   var top_end = false
   var just_open = false
+  var last_closed = false
+  var last_closed_lit = false
   var cont = false
   var pd = 0
   var i = 0
@@ -186,21 +217,27 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
       }
       prev_comment = true; pending_semi = false; just_open = false; top_end = false; in_import = false; i = i + 1; continue
     }
-    if sym(src, t, ";") && pd == 0 { pending_semi = true; i = i + 1; continue }
+    if sym(src, t, ";") && pd == 0 { if stack.len() > 0 && !stack.at(stack.len()-1).multi { pending_semi = true } else { pending_hard = true } i = i + 1; continue }
     let close = sym(src, t, "}}")
     let multi_close = close && stack.len() > 0 && stack.at(stack.len()-1).multi
     var hard = false
     var blank = false
     if in_import && (same(value, "import") || same(value, "type")) { hard = true; in_import = false }
     else if in_import && t.nl > 0 { hard = true; blank = true; in_import = false }
-    if !hard && (multi_close || just_open || pending_semi || top_end || (prev_comment && pd == 0) || (stack.len() > 0 && stack.at(stack.len()-1).multi && stack.at(stack.len()-1).decl && prev >= 0 && sym(src, ts.at(prev), ",") && pd == 0)) { hard = true; blank = top_end || (prev_comment && t.nl >= 2) || (stack.len() > 0 && stack.at(stack.len()-1).multi && prev >= 0 && sym(src, ts.at(prev), ",") && t.nl >= 2) }
-    if !hard && t.nl > 0 && out.len() > 0 && pd == 0 && !is_gen_token(src, ts, i) {
-      if sym(src, t, ".") || (prev >= 0 && binop(val(src, ts.at(prev)))) || (t.k == K.Word && same(val(src, t), "else")) || sym(src, t, "{{") { }
+    if !hard && (multi_close || just_open || pending_hard || top_end || (prev_comment && pd == 0) || (stack.len() > 0 && stack.at(stack.len()-1).multi && stack.at(stack.len()-1).decl && prev >= 0 && sym(src, ts.at(prev), ",") && pd == 0)) { hard = true; blank = top_end || (prev_comment && t.nl >= 2) || (stack.len() > 0 && stack.at(stack.len()-1).multi && prev >= 0 && sym(src, ts.at(prev), ",") && t.nl >= 2) }
+    if !hard && last_closed && !last_closed_lit && stack.len() > 0 && stack.at(stack.len()-1).multi && !close && !sym(src, t, ",") && !sym(src, t, ")") && !sym(src, t, ".") && !(t.k == K.Word && same(value, "else")) { hard = true; blank = t.nl >= 2 }
+    var continuation = false
+    if !hard && t.nl > 0 && out.len() > 0 && pd == 0 {
+      let prev_is_generic_close = prev >= 0 && sym(src, ts.at(prev), ">") && is_gen_token(src, ts, prev)
+      if is_gen_token(src, ts, i) || sym(src, t, ".") || (t.k == K.Word && same(value, "else")) || sym(src, t, "{{") { }
+      else if prev >= 0 && binop(val(src, ts.at(prev))) && !prev_is_generic_close { hard = true; continuation = true }
       else { hard = true; blank = t.nl >= 2 }
     }
+    if !hard && t.nl > 0 && t.k == K.Word && same(value, "fn") && stack.len() > 0 && stack.at(stack.len()-1).multi { hard = true }
     if close && stack.len() > 0 && stack.at(stack.len()-1).multi { hard = true }
-    if close && stack.len() > 0 { let o = stack.pop(); if o.multi { depth = depth - 1 } pd = o.pd }
-    if hard { cont = false }
+    var closed_lit = false
+    if close && stack.len() > 0 { let o = stack.pop(); if o.multi { depth = depth - 1 } pd = o.pd; closed_lit = o.lit }
+    if hard { cont = continuation }
     if hard {
       while out.len() > 0 && out.byte(out.len()-1) == 32 { out = out.slice(0, out.len() - 1) }
       if out.len() > 0 && out.byte(out.len()-1) != 10 { out.push_byte(10); if blank { out.push_byte(10) } }
@@ -211,22 +248,26 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
     }
     if line_start { indent(depth + bool_int(cont), out); line_start = false }
     out.push_str(value)
-    prev_comment = false; pending_semi = false; just_open = false; top_end = false
+    prev_comment = false; pending_semi = false; pending_hard = false; just_open = false; top_end = false
     if t.k == K.Word && (same(val(src, t), "import") || same(val(src, t), "type")) && stack.len() == 0 { in_import = true }
     if sym(src, t, "(") || sym(src, t, "[") { pd = pd + 1 }
     if sym(src, t, ")") || sym(src, t, "]") { pd = pd - 1 }
     if sym(src, t, "{{") {
       let next_index = i + 1
+      let end = matching_brace(src, ts, i)
       var multi = false
       var j = next_index
-      while j < ts.len() && !sym(src, ts.at(j), "}}") { if ts.at(j).nl > 0 || ts.at(j).k == K.Comment { multi = true } j = j + 1 }
+      while j < end { if ts.at(j).nl > 0 || ts.at(j).k == K.Comment { multi = true } j = j + 1 }
       let decl = prev >= 1 && (same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum"))
-      let lit = false
+      var lit = prev >= 0 && is_struct_name(src, ts, prev) && !decl
+      if prev >= 1 && (same(val(src, ts.at(prev - 1)), "impl") || same(val(src, ts.at(prev - 1)), "for") || same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum")) { lit = false }
       stack.push(Open { multi: multi, decl: decl, lit: lit, pd: pd })
       if multi { depth = depth + 1 }
       just_open = multi; pd = 0
     }
     if close && stack.len() == 0 { top_end = true }
+    if close { last_closed = true; last_closed_lit = closed_lit }
+    else { last_closed = false; last_closed_lit = false }
     prev = i; i = i + 1
   }
   while out.len() > 0 && (out.byte(out.len()-1) == 10 || out.byte(out.len()-1) == 32) { out = out.slice(0, out.len() - 1) }

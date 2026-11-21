@@ -101,3 +101,8 @@ Latest measured formatter status after tuple/function generic disambiguation: 21
 byte-identical (89%) and 234/243 idempotent. The remaining 26 mismatches concentrate in
 multiline block classification, range-bound generic parameters, unary-minus spacing, and
 operator continuation.
+
+Current corpus run after semicolon handling, exponent tokenization, and UTF-8-safe token
+slicing: 237/243 dirty files (97%) are byte-identical, and 243/243 are idempotent.
+The six mismatches are limited to nested generic/range forms and a few multiline close-brace
+and closure-type spacing cases.
