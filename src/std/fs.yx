@@ -517,7 +517,9 @@ fn write_bytes_flags(path: view String, data: view [UInt8], flags: Int) -> Resul
 /// The whole file as bytes (any content).
 pub fn read_bytes(path: view String) -> Result<List<UInt8>, io.IoError> {
     var f = open(path)?
-    return f.read_to_end()
+    let r = f.read_to_end()
+    let c = close(move f)
+    return r
 }
 
 /// Create or truncate `path` (mode 0644) and write the bytes of `data` (a `List<UInt8>`, an array
@@ -616,20 +618,12 @@ pub fn hard_link(target: view String, link: view String) -> Result<Int, io.IoErr
 
 // ───────────────────────── file handles ─────────────────────────
 
-/// An open file. It owns its descriptor: dropping the File closes it (errors on that implicit close are
-/// ignored; call `fs.close(f)` to see them). Move-only like every value with a `Drop`.
+/// An open file. It owns its descriptor, but the language has no user-defined `Drop`: nothing closes it
+/// automatically. Call `fs.close(move f)` (consumes the handle, reports the error of close(2)) when done;
+/// a File that is merely dropped leaks its descriptor. Move-only (it holds a String).
 pub struct File {
     fd: Int,
     path: String,
-}
-
-impl Drop for File {
-    fn drop(mut self) {
-        if self.fd >= 0 {
-            let r = __syscall(3, self.fd, 0, 0, 0, 0, 0)
-            self.fd = -1
-        }
-    }
 }
 
 /// How `open_with` opens a file. Start from `fs.options()` (read only) and set the fields.
@@ -712,9 +706,14 @@ pub fn open_append(path: view String) -> Result<File, io.IoError> {
     return open_with(path, o)
 }
 
-/// Close a file and report the error of close(2) (dropping a File closes it silently).
+/// Close a file, consuming the handle, and report the error of close(2).
 pub fn close(f: File) -> Result<Int, io.IoError> {
     var g = move f
+    return close_in_place(g)
+}
+
+// close(2) the descriptor of a File that stays owned by its holder; fd becomes -1 (closing twice is Ok)
+fn close_in_place(g: mut File) -> Result<Int, io.IoError> {
     if g.fd < 0 {
         return Ok(0)
     }
@@ -920,24 +919,17 @@ impl File {
 
 // ───────────────────────── buffered reading and writing ─────────────────────────
 
-/// A File with a 64 KiB read buffer: lines and single bytes without one system call each.
+/// A File with a read buffer of up to 64 KiB (kept in an owned String, so it needs no release): lines and
+/// single bytes without one system call each. Close it with `fs.close_reader(move r)`.
 pub struct Reader {
     file: File,
-    buf: Int,
+    data: String,
     pos: Int,
-    end: Int,
 }
 
-impl Drop for Reader {
-    fn drop(mut self) {
-        __free(self.buf)
-        self.buf = 0
-    }
-}
-
-/// Buffered reading of an open file (takes it over; dropping the Reader closes it).
+/// Buffered reading of an open file (takes it over).
 pub fn reader(f: File) -> Reader {
-    return Reader { file: move f, buf: __alloc(65536), pos: 0, end: 0 }
+    return Reader { file: move f, data: String.new(), pos: 0 }
 }
 
 /// Open `path` for buffered reading.
@@ -946,16 +938,32 @@ pub fn open_reader(path: view String) -> Result<Reader, io.IoError> {
     return Ok(reader(move f))
 }
 
+/// Close the reader's file, consuming it.
+pub fn close_reader(r: Reader) -> Result<Int, io.IoError> {
+    var x = move r
+    return close_in_place(x.file)
+}
+
 impl Reader {
     // refill when empty; false at end of file
     fn fill(mut self) -> Result<Bool, io.IoError> {
-        if self.pos < self.end {
+        if self.pos < self.data.len() {
             return Ok(true)
         }
-        let n = read_raw(self.file, self.buf, 65536)?
-        self.pos = 0
-        self.end = n
-        return Ok(n > 0)
+        let tmp = __alloc(65536)
+        match read_raw(self.file, tmp, 65536) {
+            Ok(n) => {
+                self.data = String.new()
+                self.data.push_raw(tmp, n)
+                __free(tmp)
+                self.pos = 0
+                return Ok(n > 0)
+            }
+            Err(e) => {
+                __free(tmp)
+                return Err(move e)
+            }
+        }
     }
 
     /// The next byte; None at end of file.
@@ -964,7 +972,7 @@ impl Reader {
         if !more {
             return Ok(None)
         }
-        let b = __load8(self.buf + self.pos)
+        let b = self.data.byte(self.pos)
         self.pos = self.pos + 1
         return Ok(Some(b.to_uint8()))
     }
@@ -975,13 +983,13 @@ impl Reader {
         if !more {
             return Ok(0)
         }
-        var n = self.end - self.pos
+        var n = self.data.len() - self.pos
         if n > buf.len() {
             n = buf.len()
         }
         var i = 0
         while i < n {
-            buf[i] = __load8(self.buf + self.pos + i).to_uint8()
+            buf[i] = self.data.byte(self.pos + i).to_uint8()
             i = i + 1
         }
         self.pos = self.pos + n
@@ -999,15 +1007,15 @@ impl Reader {
             }
             got = true
             var i = self.pos
-            while i < self.end && __load8(self.buf + i) != 10 {
+            while i < self.data.len() && self.data.byte(i) != 10 {
                 i = i + 1
             }
-            line.push_raw(self.buf + self.pos, i - self.pos)
-            if i < self.end {
+            line.push_raw(self.data.raw_addr() + self.pos, i - self.pos)
+            if i < self.data.len() {
                 self.pos = i + 1
                 break
             }
-            self.pos = self.end
+            self.pos = self.data.len()
         }
         if !got {
             return Ok(None)
@@ -1045,35 +1053,23 @@ impl Reader {
             if !more {
                 break
             }
-            s.push_raw(self.buf + self.pos, self.end - self.pos)
-            self.pos = self.end
+            s.push_raw(self.data.raw_addr() + self.pos, self.data.len() - self.pos)
+            self.pos = self.data.len()
         }
         return io.checked_text(move s)
     }
 }
 
-/// A File with a 64 KiB write buffer. Dropping the Writer flushes what is left (errors ignored) and closes
-/// the file; call `flush()` or `fs.finish(w)` to see the errors.
+/// A File with a write buffer of up to 64 KiB (an owned String). There is no `Drop`: **data still in the
+/// buffer is lost unless you call `flush()` or, better, `fs.finish(move w)`** (flush + close, errors reported).
 pub struct Writer {
     file: File,
-    buf: Int,
-    len: Int,
-}
-
-impl Drop for Writer {
-    fn drop(mut self) {
-        if self.len > 0 {
-            let e = write_raw(self.file.fd, self.buf, self.len)
-            self.len = 0
-        }
-        __free(self.buf)
-        self.buf = 0
-    }
+    data: String,
 }
 
 /// Buffered writing to an open file (takes it over).
 pub fn writer(f: File) -> Writer {
-    return Writer { file: move f, buf: __alloc(65536), len: 0 }
+    return Writer { file: move f, data: String.new() }
 }
 
 /// Create or truncate `path` for buffered writing.
@@ -1085,18 +1081,20 @@ pub fn create_writer(path: view String) -> Result<Writer, io.IoError> {
 /// Flush, then close and report every error.
 pub fn finish(w: Writer) -> Result<Int, io.IoError> {
     var x = move w
-    let r = x.flush()?
-    let c = __syscall(3, x.file.fd, 0, 0, 0, 0, 0)
-    x.file.fd = -1
-    if c < 0 {
-        return Err(io.os_error("close", x.file.path, 0 - c))
+    match x.flush() {
+        Ok(n) => {
+            return close_in_place(x.file)
+        }
+        Err(e) => {
+            let c = close_in_place(x.file)
+            return Err(move e)
+        }
     }
-    return Ok(0)
 }
 
 impl Writer {
     fn put(mut self, p: Int, n: Int) -> Result<Int, io.IoError> {
-        if self.len + n > 65536 {
+        if self.data.len() + n > 65536 {
             let r = self.flush()?
         }
         if n >= 65536 {
@@ -1106,23 +1104,18 @@ impl Writer {
             }
             return Ok(n)
         }
-        var i = 0
-        while i < n {
-            __store8(self.buf + self.len + i, __load8(p + i))
-            i = i + 1
-        }
-        self.len = self.len + n
+        self.data.push_raw(p, n)
         return Ok(n)
     }
 
     /// Write out everything buffered.
     fn flush(mut self) -> Result<Int, io.IoError> {
-        if self.len == 0 {
+        if self.data.len() == 0 {
             return Ok(0)
         }
-        let n = self.len
-        self.len = 0
-        let err = write_raw(self.file.fd, self.buf, n)
+        let n = self.data.len()
+        let err = write_raw(self.file.fd, self.data.raw_addr(), n)
+        self.data = String.new()
         if err != 0 {
             return Err(io.os_error("write", self.file.path, err))
         }
@@ -1141,11 +1134,10 @@ impl Writer {
     }
 
     fn write_byte(mut self, b: UInt8) -> Result<Int, io.IoError> {
-        if self.len + 1 > 65536 {
+        if self.data.len() + 1 > 65536 {
             let r = self.flush()?
         }
-        __store8(self.buf + self.len, b.to_int())
-        self.len = self.len + 1
+        self.data.push_byte(b.to_int())
         return Ok(1)
     }
 

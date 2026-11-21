@@ -1,4 +1,4 @@
-// std.fs file handles: open/read/write/seek/close, Drop closes the descriptor, errors as values
+// std.fs file handles: open/read/write/seek/close, explicit close consumes the handle, errors as values
 import std.fs
 import std.io
 
@@ -141,6 +141,7 @@ fn main() {
       report("set_len", g.set_len(3))
       report("sync", g.sync())
       report_bytes("read past the end", g.read_bytes(4))
+      let cl = fs.close(move g)
     }
     Err(e) => { print("unexpected: {e}") }
   }
@@ -159,6 +160,7 @@ fn main() {
         Ok(t) => { print(t) }
         Err(e) => { print("unexpected: {e}") }
       }
+      let cl = fs.close(move g)
     }
     Err(e) => { print("unexpected: {e}") }
   }
@@ -180,6 +182,7 @@ fn main() {
       report("append", g.write_str("+"))
       report_bytes("write-only read", g.read_bytes(1))
       report("append seek", g.seek(0))
+      let cl = fs.close(move g)
     }
     Err(e) => { print("unexpected: {e}") }
   }
@@ -199,16 +202,20 @@ fn main() {
     Ok(f) => {
       var g = move f
       report_bytes("read dir handle", g.read_bytes(4))
+      let cl = fs.close(move g)
     }
     Err(e) => { print("unexpected: {e}") }
   }
 
-  // Drop closes: thousands of opens never run out of descriptors (the soft limit is usually 1024)
+  // explicit close releases the descriptor: thousands of open/close pairs never run out (soft limit ~1024)
   let before = open_fds()
   var ok = 0
   for i in 0..3000 {
     match fs.open(path) {
-      Ok(f) => { ok = ok + 1 }
+      Ok(f) => {
+        let cl = fs.close(move f)
+        ok = ok + 1
+      }
       Err(e) => { print("leak at {i}: {e}") break }
     }
   }
@@ -220,8 +227,11 @@ fn main() {
       Err(e) => { print("unexpected: {e}") }
     }
   }
-  print(open_fds() - before)
-  kept.clear()
+  print(open_fds() - before)          // 10 handles held, nothing closes them behind our back
+  while kept.len() > 0 {
+    let f = kept.pop()
+    let cl = fs.close(move f)
+  }
   print(open_fds() - before)
   match fs.open(path) {
     Ok(f) => {

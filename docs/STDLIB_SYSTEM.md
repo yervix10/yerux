@@ -5,44 +5,32 @@ x86-64 native backend and the C backend (oracle), raw syscalls, no libc on the n
 is an `io.IoError` value (`Result<T, io.IoError>`). `--target windows` / `aarch64` refuse these modules at
 compile time (`tests/io_targets.sh`).
 
-## Language: `impl Drop`
+## No user-defined `Drop`: handles are closed explicitly
 
-```
-struct Tag { id: Int }
-impl Drop for Tag {
-  fn drop(mut self) { print("tag {self.id}") }
-}
-```
+Yerux has no way for user code to run something when a value is dropped (no `Drop` trait; the drop glue
+only frees memory, joins threads and unlocks guards). So file handles follow the "explicit close that
+consumes the handle" pattern:
 
-- `trait Drop { fn drop(mut self) }` lives in the prelude. It can be implemented for a struct (not an enum,
-  array, closure environment or runtime type; not by a generic impl). The signature must be exactly
-  `fn drop(mut self)`.
-- A struct with a `Drop` is **owned** even when all its fields are Copy: it is moved, never copied
-  (`let u = t` needs `move t`).
-- `drop` runs exactly once per value, when the value is dropped (end of scope in reverse declaration order,
-  reassignment, an element of a list being cleared, an enum payload, a Box, a closure capture, ...), before
-  the fields are dropped, so the value is still whole inside `drop`. Moved-out values are not dropped (the
-  existing drop flags decide). Fields of an owned type cannot be moved out of any struct, so a Drop value is
-  never partly moved.
-- `x.drop()` is an error: to end a value early, move it into a function that takes it by value.
-- Implementation: `Types::user_drop` (struct id -> name of the `Drop__<T>__drop` function, instantiated in
-  `check_decls`); the struct's drop glue calls it first, then drops the fields (`ir.rs` `drop_value`,
-  C `nx_drop_<T>`). Such a struct is not "plain" for the iterative drop of recursive boxes (it is dropped by
-  its own glue; a self-recursive chain of Drop structs therefore uses stack per level).
-- A `drop` that panics during unwinding is not specially handled. `io.exit()` skips drops.
+- `fs.close(move f)` consumes the `File` and reports the error of `close(2)`; `fs.close_reader(move r)` and
+  `fs.finish(move w)` do the same for a `Reader` / `Writer` (the latter flushes first).
+- A handle that is simply dropped **leaks its file descriptor** (its memory is freed normally); a `Writer`
+  that is dropped **loses whatever is still buffered**. The compiler cannot warn about it. Move-only
+  ownership at least prevents closing twice or using a closed handle (`close` takes the value).
+- Functions that open a file internally (`read_bytes`, `write_bytes`, `copy`, `open_reader` ...) close it
+  before returning, on every path.
 
-Tests: `tests/drop_basic.yx`, `tests/drop_flow.yx`; errors `tests/e1200_drop_call`, `e1201_drop_enum`,
-`e1202_drop_signature`, `e1203_drop_not_copy`.
+(A first version of this work added a general `impl Drop`; it was removed on request. It is in the git
+history of this branch, commit 1b6b49f and its revert, if the language ever wants it.)
 
 ## `std.fs` file handles
 
 ```
 var f = fs.create("out.bin")?           // fs.File: owns the descriptor
 let n = f.write(bytes)?                 // bytes: List<UInt8>, [UInt8; N] or x[a..b]
-let r = fs.close(move f)?               // optional: reports the error of close(2)
+let r = fs.close(move f)?               // required: nothing closes it automatically
 ```
 
-`pub struct File { fd: Int, path: String }` with `impl Drop` = `close(fd)` (errors ignored). Opening:
+`pub struct File { fd: Int, path: String }` (owned: move-only, no automatic close). Opening:
 
 | Function | Result | Notes |
 |---|---|---|
@@ -50,7 +38,7 @@ let r = fs.close(move f)?               // optional: reports the error of close(
 | `create(path)` | | write, create, truncate (0644) |
 | `open_append(path)` | | append, create |
 | `options()` / `open_with(path, o)` | | `OpenOptions { read, write, append, create, truncate, create_new, mode }`; nonsense combinations are `InvalidInput`; `create_new` on an existing file is `AlreadyExists` |
-| `close(f)` | `Result<Int, IoError>` | explicit close |
+| `close(f)` | `Result<Int, IoError>` | explicit close, consumes the handle (`fs.close(move f)`) |
 
 Methods (`f` must be `var`): `read(buf: mut [UInt8]) -> Result<Int>` (0 at end), `read_bytes(max) ->
 Result<List<UInt8>>`, `read_to_end() -> Result<List<UInt8>>`, `read_to_string() -> Result<String>`,
@@ -67,14 +55,14 @@ block first and reads unpack them: O(n) extra copying.
 
 ### Buffered `Reader` / `Writer`
 
-- `reader(f: File) -> Reader`, `open_reader(path) -> Result<Reader>`: 64 KiB buffer; `read_line() ->
+- `reader(f: File) -> Reader`, `open_reader(path) -> Result<Reader>`, `close_reader(r)`: buffer of up to 64 KiB (an owned String, nothing to release); `read_line() ->
   Result<Option<String>>` (no `\n` / `\r\n`; `InvalidData` for a non-UTF-8 line), `lines()`, `read_byte() ->
   Result<Option<UInt8>>`, `read(buf: mut [UInt8])`, `read_to_string()`.
 - `writer(f: File) -> Writer`, `create_writer(path) -> Result<Writer>`: 64 KiB buffer; `write_str`,
   `write_line`, `write_byte`, `write(data: view [UInt8])`, `flush() -> Result<Int>`. A write bigger than the
-  buffer goes straight to the file. **Dropping a Writer flushes** what is left (errors ignored) and closes the
-  file; `fs.finish(w) -> Result<Int>` flushes and closes reporting errors.
-- Both own their File and a raw buffer, released by their own `impl Drop`.
+  buffer goes straight to the file. **Call `fs.finish(move w) -> Result<Int>`** (flush + close, errors
+  reported); a dropped Writer loses its buffered bytes.
+- Both own their File and keep their buffer in an owned String.
 
 ### Permissions and links
 
@@ -82,8 +70,8 @@ block first and reads unpack them: O(n) extra copying.
 `read_link(path) -> Result<String>` (`InvalidInput` when not a link; any length), `hard_link(target, link)`.
 `symlink_metadata` / `read_dir_entries` report links as `FileKind.Symlink`; `remove_dir_all` never follows them.
 
-Tests: `tests/fs_handles.yx` (includes 3000 opens in a loop with no descriptor leak, and counts
-`/proc/self/fd` before/after), `tests/fs_buffered.yx`, `tests/fs_links.yx`.
+Tests: `tests/fs_handles.yx` (3000 open/close pairs with no descriptor leak, `/proc/self/fd` counted
+before/after), `tests/fs_buffered.yx`, `tests/fs_links.yx`.
 
 ## `std.env` set / remove
 
@@ -122,6 +110,6 @@ reported as an unqualified use. Test: `tests/mod_ok/variant_type_names`.
 
 ## Not done
 
-Generic `impl<T> Drop`, Drop on enums, `drop` during panic unwinding semantics, `Duration` operators,
+Automatic close/flush on drop (needs a language-level `Drop`), `Duration` operators,
 byte-packed `List<UInt8>` (binary I/O copies), `readv`/`writev`, file locking, `mmap`, `Reader`/`Writer`
 over stdin/stdout, propagating `env.set` to child processes (no spawn API), Windows/aarch64 implementations.

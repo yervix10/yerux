@@ -79,6 +79,7 @@ fn main() {
         Ok(None) => { print("eof") }
         Err(e) => { print("unexpected: {e}") }
       }
+      report("close reader", fs.close_reader(move r))
     }
     Err(e) => { print("unexpected: {e}") }
   }
@@ -89,19 +90,21 @@ fn main() {
         Ok(t) => { print(t.len()) }
         Err(e) => { print("unexpected: {e}") }
       }
+      let cl = fs.close_reader(move r)
     }
     Err(e) => { print("unexpected: {e}") }
   }
 
-  // a Writer that is only dropped still flushes what it buffered
+  // without Drop nothing flushes behind our back: buffered data is written by flush() / fs.finish()
   let c = "{dir}/c.txt"
   match fs.create_writer(c) {
     Ok(w0) => {
       var w = move w0
-      report("buffered", w.write_str("kept by drop"))
+      report("buffered", w.write_str("kept by flush"))
       var data = List<UInt8>.new()
       data.push(33u8)
       report("bytes", w.write(data))
+      report("finish", fs.finish(move w))
     }
     Err(e) => { print("unexpected: {e}") }
   }
@@ -144,6 +147,7 @@ fn main() {
         Ok(l) => { print("unexpected success") }
         Err(err) => { print(err.kind == io.IoErrorKind.InvalidData) }
       }
+      let cl = fs.close_reader(move r)
     }
     Err(err) => { print("unexpected: {err}") }
   }
@@ -161,6 +165,7 @@ fn main() {
       var w = fs.writer(move f)
       report("buffer", w.write_str("x"))
       report("flush read-only", w.flush())
+      report("finish read-only", fs.finish(move w))
     }
     Err(err) => { print("unexpected: {err}") }
   }
