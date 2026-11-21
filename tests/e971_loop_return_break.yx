@@ -1,0 +1,21 @@
+fn direct(x: Bool) -> Int {
+  while true {
+    if x { break }
+    return 1
+  }
+}
+
+fn labeled(x: Bool) -> Int {
+  outer: while true {
+    while true {
+      if x { break outer }
+      return 1
+    }
+  }
+}
+
+fn conditional(x: Bool) -> Int {
+  while x { return 1 }
+}
+
+fn main() {}

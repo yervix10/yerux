@@ -101,6 +101,10 @@ fn always_returns(b: &[Stmt]) -> bool {
             k: SK::Block(_, exits),
             ..
         }) => *exits,
+        Some(Stmt {
+            k: SK::While(_, _, meta),
+            ..
+        }) => meta.no_fallthrough,
         _ => false,
     }
 }
@@ -268,6 +272,7 @@ fn s_while(
                 label,
                 id: 0,
                 step,
+                no_fallthrough: false,
                 freeze,
             },
         ),
@@ -3510,6 +3515,7 @@ impl<'a> Checker<'a> {
                     self.stmts(&mut meta.step);
                 }
                 let ctx = self.loops.pop().unwrap();
+                meta.no_fallthrough = matches!(c.k, EK::Bool(true)) && ctx.breaks.is_empty();
                 if !self.st.dead {
                     let mut late: Vec<(usize, Pos)> = self
                         .st
@@ -5356,7 +5362,22 @@ impl<'a> Checker<'a> {
                             m, g.name, b, an, b
                         );
                         if b == "Copy" {
-                            note += &format!("; a {} is owned, so it is moved, never copied (borrow with `at(i)` or move it out with `pop()`/`take`)", an);
+                            note += &format!("; {} values are owned and cannot be copied", an);
+                            match ty {
+                                Ty::List(_) => {
+                                    note += "\nhelp: borrow an element with `at(i)` or move it out with `pop()`";
+                                }
+                                Ty::Struct(id)
+                                    if self.types.structs[id]
+                                        .origin
+                                        .as_ref()
+                                        .is_some_and(|(name, _)| name == "Map")
+                                        && matches!(m, "get" | "get_or") =>
+                                {
+                                    note += "\nhelp: use `m.find(key)` and, if the index is nonnegative, borrow `m.vals.at(i)`; `m.take(key)` removes and returns an existing value";
+                                }
+                                _ => {}
+                            }
                         } else if matches!(a, Ty::Struct(_) | Ty::Enum(_)) {
                             note += &format!("\nhelp: add `impl {} for {} {{ .. }}`", b, an);
                         }
