@@ -1,0 +1,7 @@
+// std.time: Instant is not a duration (Int); the checker says so
+import std.time
+
+fn main() {
+  let t = time.now()
+  time.sleep_ms(t)
+}

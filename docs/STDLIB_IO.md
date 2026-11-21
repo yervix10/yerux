@@ -21,10 +21,10 @@ Errors are values: nothing in this module aborts (a panic can still come from ar
 
 ```
 pub enum IoErrorKind { NotFound, PermissionDenied, AlreadyExists, IsDirectory, NotDirectory,
-                       InvalidInput, InvalidData, BrokenPipe, OutOfSpace, Other }       // impl Equal
+                       InvalidInput, InvalidData, BrokenPipe, OutOfSpace, NotEmpty, Other }   // impl Equal
 pub struct IoError { kind: IoErrorKind, code: Int, message: String }                    // impl Show (= message)
 ```
-`code` is the positive `errno` (0 for errors that did not come from the kernel, e.g. invalid UTF-8). `message` reads like `open '/tmp/x': No such file or directory (os error 2)`.
+`code` is the positive `errno` (0 for errors that did not come from the kernel, e.g. invalid UTF-8). `NotEmpty` is `ENOTEMPTY` (removing a non-empty directory). `message` reads like `open '/tmp/x': No such file or directory (os error 2)`.
 
 | Function | Result | Notes |
 |---|---|---|
@@ -56,6 +56,85 @@ Rules worth knowing:
 - **Output ordering.** `print` and `write_stdout` are both unbuffered in the native backend. The C backend flushes C's `stdout` before every raw syscall, so the order of `print` and raw writes is the same in both.
 - Not thread-safe (there are no threads yet).
 
+## `std.fs`: the file system
+
+```
+import std.fs
+
+fn tidy(dir: view String) -> Result<Int, io.IoError> {   // also `import std.io` for the error type
+  let r = fs.create_dir_all("{dir}/logs")?
+  let names = fs.read_dir(dir)?                          // sorted, without . and ..
+  for n in names { print(n) }
+  return fs.remove_dir_all(dir)
+}
+```
+
+Same rules as `std.io` (raw syscalls, `view String` paths, NUL in a path is `InvalidInput`, `EINTR` retried) and the same error type, `io.IoError`. Nothing aborts.
+
+| Function | Result | Notes |
+|---|---|---|
+| `read_to_string(path)` | `Result<String, IoError>` | `= io.read_file`; `InvalidData` when not UTF-8. |
+| `read_lines(path)` | `Result<List<String>, IoError>` | Without `\n` / `\r\n`; a final newline adds no empty line. |
+| `write(path, data)`, `append(path, data)` | `Result<Int, IoError>` | `= io.write_file` / `io.append_file` (mode 0644, umask applies). |
+| `copy(from, to)` | `Result<Int, IoError>` | Byte copy (any content, not only UTF-8), `to` gets the permission bits of `from`; a directory is `IsDirectory`. Returns the bytes copied. |
+| `rename(from, to)` | `Result<Int, IoError>` | `rename(2)`: replaces a file `to`, same file system only. |
+| `remove_file(path)` | `Result<Int, IoError>` | A directory is `IsDirectory`. |
+| `create_dir(path)` | `Result<Int, IoError>` | Mode 0755; `AlreadyExists`, `NotFound` (missing parent). |
+| `create_dir_all(path)` | `Result<Int, IoError>` | Missing parents too; an existing directory is `Ok(0)`; a file on the way is `NotDirectory`/`AlreadyExists`; `""` is `InvalidInput`. |
+| `remove_dir(path)` | `Result<Int, IoError>` | Empty directory only (`NotEmpty`, `NotDirectory`). |
+| `remove_dir_all(path)` | `Result<Int, IoError>` | Recursive; symbolic links inside are removed, never followed; a non-directory `path` is `NotDirectory`. |
+| `read_dir(path)` | `Result<List<String>, IoError>` | Names (not full paths), sorted by bytes, no `.`/`..`. |
+| `read_dir_entries(path)` | `Result<List<DirEntry>, IoError>` | `DirEntry { name: String, kind: FileKind }`, same order; `kind` from `d_type` (falls back to `lstat` on file systems that leave it unknown). |
+| `metadata(path)`, `symlink_metadata(path)` | `Result<Metadata, IoError>` | `stat` / `lstat`: `Metadata { kind: FileKind, size: Int, mode: Int, modified_ns: Int }`; `mode` = permission bits (the low 12 bits of `st_mode`), `modified_ns` since the Unix epoch. |
+| `file_size(path)` | `Result<Int, IoError>` | |
+| `exists(path)`, `is_file(path)`, `is_dir(path)` | `Bool` | Follow symlinks; false on any error. |
+
+`pub enum FileKind { File, Dir, Symlink, Other }` has `impl Equal` and `impl Show` (`file`, `dir`, `symlink`, `other`). Directory names that are not valid UTF-8 are converted lossily like `args()` (every non-ASCII byte becomes `?`), so such a name cannot be opened again through the returned String. Syscalls: `open` (2, `O_DIRECTORY` for listings), `getdents64` (217), `stat` (4), `lstat` (6), `rename` (82), `mkdir` (83), `rmdir` (84), `unlink` (87).
+
+## `std.env`: the process environment
+
+| Function | Result | Notes |
+|---|---|---|
+| `args()` | `List<String>` | `= io.args()`. |
+| `arg_count()` | `Int` | Program name included. |
+| `arg(i)` | `Option<String>` | `None` out of range (also for `i < 0`). |
+| `get(name)` | `Option<String>` | `= io.env_var`. |
+| `get_or(name, default)` | `String` | |
+| `has(name)` | `Bool` | True for a variable set to `""`. |
+| `require(name)` | `Result<String, IoError>` | `NotFound` with message `environment variable 'NAME' is not set` (for `?`). |
+| `vars()` | `List<(String, String)>` | `(name, value)` pairs in environment order. |
+| `home_dir()` | `Option<String>` | `$HOME`. |
+| `temp_dir()` | `String` | `$TMPDIR` if set and non-empty, else `/tmp`. |
+| `current_dir()` | `Result<String, IoError>` | `getcwd` (79); grows its buffer on `ERANGE` up to 1 MiB. |
+| `set_current_dir(path)` | `Result<Int, IoError>` | `chdir` (80): every later relative path resolves from there. |
+| `current_exe()` | `Result<String, IoError>` | `readlink("/proc/self/exe")` (89). |
+| `pid()`, `exit(code)` | | `= io.process_id()`, `io.exit(code)`. |
+
+The environment is the read-only block the kernel put on the initial stack: there is no `set`/`remove` (they would need an owned copy of `envp` and would not reach `execve`d children without a process API). Not thread-safe with respect to `set_current_dir` (the working directory is per process).
+
+## `std.time`: clocks, sleep, UTC calendar
+
+`std.time` (docs/STDLIB.md) keeps durations as plain `Int` nanoseconds and adds, over the `std.io` clocks:
+
+| Item | Notes |
+|---|---|
+| `monotonic_ns()`, `unix_nanos()`, `unix_millis()`, `unix_secs()` | `CLOCK_MONOTONIC` / `CLOCK_REALTIME` (`clock_gettime`, 228). |
+| `sleep(d)`, `sleep_ms(ms)`, `sleep_until(t: Instant)` | `nanosleep` (35), restarted after a signal; past or `<= 0` returns at once. |
+| `struct Instant { ns: Int }`, `now()`, `deadline_in(d)` | Monotonic point; methods `elapsed()`, `since(earlier)`, `add(d)`, `is_before(other)`. Copy. |
+| `struct DateTime { year, month, day, hour, minute, second, nanos, weekday }` | UTC, proleptic Gregorian, no leap seconds; `weekday` 1 = Monday .. 7 = Sunday (ISO); `impl Show` = `format_iso`. |
+| `utc_from_unix(secs)`, `utc_from_unix_nanos(ns)`, `utc_now()` | Any `Int` of seconds (negative = before 1970), H. Hinnant's days-from-civil algorithm. |
+| `utc(y, mo, d, h, mi, s)` | `Result<DateTime, IoError>`: `InvalidInput` for Feb 30, month 13, hour 24, ... (years `-999999..=999999`). |
+| `to_unix(dt)` | Seconds since the epoch (`nanos` ignored). |
+| `format_iso(dt)` | `2026-11-21T09:05:03Z`. |
+| `parse_iso(s)` | `Result<DateTime, IoError>`: `YYYY-MM-DDTHH:MM:SSZ` (`T`/`t`/space, `Z`/`z`) or `YYYY-MM-DD`; anything else (offsets, fractions, short fields) is `InvalidInput`. |
+| `is_leap_year(y)`, `days_in_month(y, m)` | `days_in_month` is 0 for a month outside 1..12. |
+
+No time zones (that needs the tz database), no `strftime`-style patterns.
+
+## Shared helpers
+
+`std.fs`, `std.env` and `std.time` reuse a few functions of `std.io` that are public for that reason: `io.cpath(path)` (NUL-terminated copy, `InvalidInput` on an embedded NUL), `io.cstr(addr)` (lossy String from a C string), `io.os_error(op, what, errno)`, `io.custom_error(kind, message)`, `io.checked_text(s)` and `io.valid_utf8(s)`. They are building blocks for library code, not part of the stable API.
+
 ## The intrinsic mechanism
 
 The module is written in Yerux over eight builtin functions and two `String` methods. They are the whole unsafe surface; the compiler accepts them anywhere (there is no `unsafe` block yet, see FFI.md section 7), but they are reserved for the standard library: their names start with `__` and they may change.
@@ -80,8 +159,8 @@ All arguments are plain `Int`s, so the checker needs nothing special beyond arit
 
 ## Tests
 
-`tests/io_*.yx` run on both backends under `tests/run_all.sh`, which learned two optional inputs per test (nothing changes for tests without them): `tests/<name>.stdin` is fed to the program and `tests/<name>.args` holds its arguments, one per line; `YX_IO_TEST=hello_env` is always in the environment. Tests that touch files create their own temp files under `/tmp` (named with `process_id()`) and delete them. `tests/io_targets.sh` checks the compile-time errors of the other targets.
+`tests/io_*.yx` run on both backends under `tests/run_all.sh`, which learned two optional inputs per test (nothing changes for tests without them): `tests/<name>.stdin` is fed to the program and `tests/<name>.args` holds its arguments, one per line; `YX_IO_TEST=hello_env` is always in the environment. Tests that touch files create their own temp files under `/tmp` (named with `process_id()`) and delete them. `tests/fs_basic.yx`, `tests/env_basic.yx` (+ `.args`) and `tests/time_clock.yx` cover `std.fs`, `std.env` and `std.time` with every error kind they can produce (both backends + ASan); `tests/e980`..`e984` are the checker errors for misuse (unhandled `Result`, private helper, `?` in `main`, `Instant` where a duration goes, no `env.set`). `tests/io_targets.sh` checks the compile-time errors of the other targets (also for the three new modules).
 
 ## Not done yet
 
-Directories (`mkdir`, `readdir`, `rename`, `stat`), file handles (open/read/write/seek/close as a value with a `drop`), binary data (`List<UInt8>` read/write: waiting for the byte-buffer type of M2), non-blocking I/O and `epoll`, sockets, threads and a lock around the stdin buffer, `Duration`/`Instant` types, a Windows and an aarch64 implementation.
+Symbolic link creation/reading, permissions (`chmod`), file handles (open/read/write/seek/close as a value with a `drop`), binary data (`List<UInt8>` read/write: waiting for the byte-buffer type of M2), non-blocking I/O and `epoll`, sockets, threads and a lock around the stdin buffer, a `Duration` type (durations stay `Int` nanoseconds), time zones, setting environment variables, a Windows and an aarch64 implementation.

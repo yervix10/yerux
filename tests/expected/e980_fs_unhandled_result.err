@@ -1,0 +1,7 @@
+error: expected List<String> but this is Result<List<String>, io.IoError>
+ --> tests/e980_fs_unhandled_result.yx:5:29
+  |
+5 |   let names: List<String> = fs.read_dir("/tmp")
+  |                             ^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

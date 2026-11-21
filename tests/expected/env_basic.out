@@ -1,0 +1,34 @@
+3
+3
+Some(first arg)
+Some(second)
+None
+None
+true
+Some(hello_env)
+None
+None
+true
+false
+fallback
+hello_env
+require ok 9
+environment variable 'YX_IO_TEST_NOT_SET_ANYWHERE' is not set
+true
+vars: YX_IO_TEST=hello_env
+1
+true
+true
+home set
+mkdir ok
+true
+chdir ok
+true
+8
+true
+change directory '/tmp/yerux_env_definitely_missing': No such file or directory (os error 2)
+true
+back to /
+cleaned
+true
+true

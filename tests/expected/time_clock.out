@@ -1,0 +1,38 @@
+true
+true
+true
+true
+true
+true
+true
+true
+false
+1970-01-01T00:00:00Z
+1969-12-31T23:59:59Z
+2000-02-29T00:00:00Z
+2026-11-21T00:00:00Z
+2009-02-13T23:31:30Z 123456789 wd=5
+0001-01-01T00:00:00Z wd=1
+9999-12-31T23:59:59Z
+true
+false
+true
+28
+29
+0
+utc ok 2026-11-21T09:05:03Z
+utc ok 2024-02-29T00:00:00Z
+utc error: date: day out of range
+utc error: date: month out of range
+utc error: date: time of day out of range
+utc error: date: time of day out of range
+2026-11-21T09:05:03Z -> 2026-11-21T09:05:03Z wd=6 unix=1795251903
+1970-01-01 -> 1970-01-01T00:00:00Z wd=4 unix=0
+1969-12-31 23:59:59z -> 1969-12-31T23:59:59Z wd=3 unix=-1
+2000-02-29t12:00:00Z -> 2000-02-29T12:00:00Z wd=2 unix=951825600
+2026-02-30 -> error: date: day out of range
+2026-1-01 -> error: date: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ
+2026-11-21T09:05:03 -> error: date: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ
+2026-11-21T09:05:03+01 -> error: date: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ
+abcd-11-21 -> error: date: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ
+true

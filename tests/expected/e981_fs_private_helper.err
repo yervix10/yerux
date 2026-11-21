@@ -1,0 +1,8 @@
+error: 'cmp_bytes' is private in module 'std.fs'
+ --> tests/e981_fs_private_helper.yx:5:9
+  |
+5 |   print(fs.cmp_bytes("a", "b"))
+  |         ^^^^^^^^^^^^
+  = help: add `pub` before the function in std/fs.yx to share it: `pub fn cmp_bytes`
+
+1 error(s). Nothing was generated.

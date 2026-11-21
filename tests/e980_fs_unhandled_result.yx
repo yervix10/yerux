@@ -1,0 +1,7 @@
+// std.fs: a Result must be handled; using it as the value inside is a type error
+import std.fs
+
+fn main() {
+  let names: List<String> = fs.read_dir("/tmp")
+  print(names.len())
+}

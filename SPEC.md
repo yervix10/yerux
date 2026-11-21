@@ -349,7 +349,7 @@ import utils.shapes as sh   //                            used as  sh.area(x)   
 The [calculator and key-value CLI](examples/real/README.md) exercise recursive parsing, typed errors and owned collections. See [FRICTION.md](docs/FRICTION.md) for minimal examples and implementation notes.
 
 ## Standard-library modules
-Besides `std.io`, the compiler embeds `std.text`, `std.math`, `std.sort`, `std.iter`, `std.fmt`, `std.time` and `std.path` (plain Yerux in `src/std/`); their API is in [docs/STDLIB.md](docs/STDLIB.md).
+Besides `std.io`, the compiler embeds `std.text`, `std.math`, `std.sort`, `std.iter`, `std.fmt`, `std.time`, `std.path`, `std.fs` and `std.env` (plain Yerux in `src/std/`); their API is in [docs/STDLIB.md](docs/STDLIB.md). The system modules `std.fs` (directories, listings, metadata, copy/rename), `std.env` (arguments, variables, working directory) and the clock/calendar part of `std.time` (monotonic `Instant`, wall clock, `sleep_until`, UTC `DateTime` with ISO 8601) sit on the same raw syscalls as `std.io` and report every failure as `Result<T, io.IoError>`: [docs/STDLIB_IO.md](docs/STDLIB_IO.md).
 
 ## Standard I/O (`import std.io`)
 A module of the standard library, embedded in the compiler: `import std.io` (used as `io.read_line()`, `io.read_file(path)`, `io.args()`, `io.exit(code)`, `io.monotonic_ns()`, `io.sleep_ms(ms)`, ...). Every failure is a value: operations return `Result<T, io.IoError>` where `IoError { kind: IoErrorKind, code: Int, message: String }` (and `?` works as usual); `String`s read from the outside are validated as UTF-8 (`InvalidData` otherwise). Full API, rules and tests: [docs/STDLIB_IO.md](docs/STDLIB_IO.md).

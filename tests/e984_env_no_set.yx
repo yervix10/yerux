@@ -1,0 +1,6 @@
+// std.env: the environment is read-only, there is no env.set
+import std.env
+
+fn main() {
+  env.set("KEY", "value")
+}

@@ -1,0 +1,151 @@
+// std.fs: directories, listings, metadata, copy/rename, and the errors of each (all as values)
+import std.fs
+import std.io
+
+fn kind_name(k: io.IoErrorKind) -> Text {
+  if k == io.IoErrorKind.NotFound { return "NotFound" }
+  if k == io.IoErrorKind.AlreadyExists { return "AlreadyExists" }
+  if k == io.IoErrorKind.NotDirectory { return "NotDirectory" }
+  if k == io.IoErrorKind.IsDirectory { return "IsDirectory" }
+  if k == io.IoErrorKind.NotEmpty { return "NotEmpty" }
+  if k == io.IoErrorKind.InvalidInput { return "InvalidInput" }
+  if k == io.IoErrorKind.InvalidData { return "InvalidData" }
+  return "other"
+}
+
+fn report(what: Text, r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => { print("{what}: ok {n}") }
+    Err(e) => { print("{what}: {kind_name(e.kind)}") }
+  }
+}
+
+fn show_list(l: view List<String>) {
+  let s = l.join(",")
+  print("[{s}]")
+}
+
+fn build(root: view String) -> Result<Int, io.IoError> {
+  let deep = "{root}/a/b/c"
+  let r1 = fs.create_dir_all(deep)?
+  let r2 = fs.create_dir_all(deep)?          // existing directory is fine
+  let f1 = "{root}/zeta.txt"
+  let f2 = "{root}/alpha.txt"
+  let f3 = "{root}/a/b/c/inner.txt"
+  let w1 = fs.write(f1, "line one\r\nline two\nlast")?
+  let w2 = fs.write(f2, "")?
+  let w3 = fs.write(f3, "deep")?
+  let w4 = fs.append(f2, "appended\n")?
+  print(w1 + w2 + w3 + w4)
+  return Ok(0)
+}
+
+fn main() {
+  let root = "/tmp/yerux_fs_basic_{io.process_id()}"
+  print(fs.exists(root))
+  report("create_dir", fs.create_dir(root))
+  report("create_dir again", fs.create_dir(root))
+  report("build", build(root))
+
+  // listings are sorted and skip . and ..
+  match fs.read_dir(root) {
+    Ok(names) => { show_list(names) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_dir_entries(root) {
+    Ok(es) => {
+      for e in es {
+        print("{e.name} {e.kind.show()}")
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // metadata
+  let zeta = "{root}/zeta.txt"
+  match fs.metadata(zeta) {
+    Ok(m) => {
+      print(m.size)
+      print(m.kind == fs.FileKind.File)
+      print((m.mode / 256) % 2 == 1)   // owner may read (the rest depends on the umask)
+      print(m.modified_ns > 0)
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.file_size("{root}/a") {
+    Ok(n) => { print(n > 0) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  print(fs.is_file(zeta))
+  print(fs.is_dir(zeta))
+  let adir = "{root}/a"
+  print(fs.is_dir(adir))
+  print(fs.is_file("{root}/missing"))
+
+  // read_lines strips \n and \r\n, keeps a last line without newline
+  match fs.read_lines(zeta) {
+    Ok(ls) => {
+      print(ls.len())
+      show_list(ls)
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_to_string("{root}/alpha.txt") {
+    Ok(t) => { print(t.trim()) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // copy works on any bytes, rename moves
+  let bin = "{root}/bin.dat"
+  var raw = String.new()
+  raw.push_byte(0)
+  raw.push_byte(255)
+  raw.push_byte(10)
+  report("write bin", fs.write(bin, raw))
+  let bin2 = "{root}/a/bin2.dat"
+  report("copy", fs.copy(bin, bin2))
+  match fs.read_to_string(bin2) {
+    Ok(t) => { print("unexpected success") }
+    Err(e) => { print("read copied binary: {kind_name(e.kind)}") }
+  }
+  let moved = "{root}/moved.txt"
+  report("rename", fs.rename(zeta, moved))
+  print(fs.exists(zeta))
+  print(fs.exists(moved))
+
+  // errors are values
+  let missing = "{root}/nope"
+  report("copy missing", fs.copy(missing, bin))
+  report("copy dir", fs.copy(adir, bin))
+  report("rename missing", fs.rename(missing, bin))
+  report("remove_dir non-empty", fs.remove_dir(adir))
+  report("remove_dir file", fs.remove_dir(moved))
+  report("remove_file dir", fs.remove_file(adir))
+  report("remove_dir_all file", fs.remove_dir_all(moved))
+  report("create_dir_all over file", fs.create_dir_all("{moved}/x"))
+  report("create_dir no parent", fs.create_dir("{missing}/x"))
+  report("create_dir_all empty", fs.create_dir_all(""))
+  match fs.read_dir(missing) {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => { print("read_dir missing: {kind_name(e.kind)}") }
+  }
+  match fs.read_dir(moved) {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => { print("read_dir file: {kind_name(e.kind)}") }
+  }
+  match fs.metadata(missing) {
+    Ok(m) => { print("unexpected success") }
+    Err(e) => { print("metadata missing: {kind_name(e.kind)} {e.code}") }
+  }
+  var nul = String.from("bad")
+  nul.push_byte(0)
+  report("nul path", fs.create_dir(nul))
+  match fs.read_dir("/tmp/yerux_fs_definitely_missing") {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+
+  // clean up everything
+  report("remove_dir_all", fs.remove_dir_all(root))
+  print(fs.exists(root))
+}

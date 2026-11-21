@@ -1,0 +1,98 @@
+// std.time: monotonic and wall clocks, Instant, sleep, UTC calendar, ISO 8601 parse/format with Result errors
+import std.time
+
+fn show_parse(s: Text) {
+  match time.parse_iso(s) {
+    Ok(dt) => { print("{s} -> {dt.show()} wd={dt.weekday} unix={time.to_unix(dt)}") }
+    Err(e) => { print("{s} -> error: {e}") }
+  }
+}
+
+fn show_utc(y: Int, mo: Int, d: Int, h: Int, mi: Int, s: Int) {
+  match time.utc(y, mo, d, h, mi, s) {
+    Ok(dt) => { print("utc ok {dt.show()}") }
+    Err(e) => { print("utc error: {e}") }
+  }
+}
+
+fn iso(secs: Int) -> String {
+  let dt = time.utc_from_unix(secs)
+  return time.format_iso(dt)
+}
+
+fn main() {
+  // clocks
+  let a = time.monotonic_ns()
+  let b = time.monotonic_ns()
+  print(b >= a)
+  print(time.unix_secs() > 1700000000)      // after 2023-11
+  let ms = time.unix_millis()
+  let ns = time.unix_nanos()
+  print(ns / 1000000 >= ms)
+  print(time.utc_now().year >= 2023)
+
+  // Instant + sleep
+  let t0 = time.now()
+  time.sleep_ms(3)
+  let t1 = time.now()
+  print(t1.since(t0) >= time.millis(3))
+  print(t0.is_before(t1))
+  print(t0.elapsed() >= time.millis(3))
+  let later = t1.add(time.millis(2))
+  time.sleep_until(later)
+  let t2 = time.now()
+  print(t2.since(t1) >= time.millis(2))
+  time.sleep_until(t0)                       // already past: returns at once
+  time.sleep_ms(0)
+  time.sleep_ms(-5)
+  let dl = time.deadline_in(time.millis(1))
+  time.sleep_until(dl)
+  let t3 = time.now()
+  print(t3.is_before(dl))
+
+  // calendar
+  print(iso(0))
+  print(iso(-1))
+  print(iso(951782400))     // 2000-02-29
+  print(iso(1795219200))
+  let d = time.utc_from_unix_nanos(1234567890123456789)
+  print("{d.show()} {d.nanos} wd={d.weekday}")
+  let old = time.utc_from_unix(-62135596800)      // 0001-01-01
+  print("{old.show()} wd={old.weekday}")
+  print(iso(253402300799))  // 9999-12-31T23:59:59Z
+  print(time.is_leap_year(2000))
+  print(time.is_leap_year(1900))
+  print(time.is_leap_year(2024))
+  print(time.days_in_month(2023, 2))
+  print(time.days_in_month(2024, 2))
+  print(time.days_in_month(2024, 13))
+
+  show_utc(2026, 11, 21, 9, 5, 3)
+  show_utc(2024, 2, 29, 0, 0, 0)
+  show_utc(2023, 2, 29, 0, 0, 0)
+  show_utc(2023, 13, 1, 0, 0, 0)
+  show_utc(2023, 1, 1, 24, 0, 0)
+  show_utc(2023, 1, 1, 0, 60, 0)
+
+  show_parse("2026-11-21T09:05:03Z")
+  show_parse("1970-01-01")
+  show_parse("1969-12-31 23:59:59z")
+  show_parse("2000-02-29t12:00:00Z")
+  show_parse("2026-02-30")
+  show_parse("2026-1-01")
+  show_parse("2026-11-21T09:05:03")
+  show_parse("2026-11-21T09:05:03+01")
+  show_parse("abcd-11-21")
+
+  // round trip over a range of days, both sides of the epoch
+  var ok = true
+  var s = -5000000000
+  while s < 5000000000 {
+    let dt = time.utc_from_unix(s)
+    if time.to_unix(dt) != s {
+      ok = false
+    }
+    s = s + 123456789
+  }
+  print(ok)
+}

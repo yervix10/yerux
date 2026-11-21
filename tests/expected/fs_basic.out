@@ -1,0 +1,44 @@
+false
+create_dir: ok 0
+create_dir again: AlreadyExists
+36
+build: ok 0
+[a,alpha.txt,zeta.txt]
+a dir
+alpha.txt file
+zeta.txt file
+23
+true
+true
+true
+true
+true
+false
+true
+false
+3
+[line one,line two,last]
+appended
+write bin: ok 3
+copy: ok 3
+read copied binary: InvalidData
+rename: ok 0
+false
+true
+copy missing: NotFound
+copy dir: IsDirectory
+rename missing: NotFound
+remove_dir non-empty: NotEmpty
+remove_dir file: NotDirectory
+remove_file dir: IsDirectory
+remove_dir_all file: NotDirectory
+create_dir_all over file: NotDirectory
+create_dir no parent: NotFound
+create_dir_all empty: InvalidInput
+read_dir missing: NotFound
+read_dir file: NotDirectory
+metadata missing: NotFound 2
+nul path: InvalidInput
+open directory '/tmp/yerux_fs_definitely_missing': No such file or directory (os error 2)
+remove_dir_all: ok 0
+false
