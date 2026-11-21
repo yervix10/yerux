@@ -148,12 +148,10 @@ Pipeline: `AST -> Yerux IR -> machine code -> executable file`.
   the remaining concurrency design.
 
 ## Next
-- **N2 — speed (remaining).** Register arguments for calls, loop rotation, interval splitting / holes in the allocator.
-
-- **N2 — speed (remaining).** Range analysis to drop overflow checks, interval splitting / holes in the
-  allocator, memory operands for spilled values, shared spill slots.
-- **N3 — the whole language.** Stack aggregates for structs/enums/match; `view`/`mut` parameters
-  (pointers); own allocator over `mmap` for List and future String; drop glue in the IR.
+- **N2 — speed (remaining).** Interval splitting / holes in the allocator, memory operands for
+  spilled values, and shared spill slots.
+- **N3 — remaining language/runtime work.** Complete the language and runtime beyond the features
+  described above; track specific gaps in the relevant language and platform docs.
 - **N4 — more targets.** aarch64 (Linux done; Android, Apple), Windows PE, macOS Mach-O, WebAssembly.
   Only this layer changes; checker and IR stay the same.
 - **N5 — tooling.** Own linker/object format for modules, DWARF debug info, a disassembler to test
