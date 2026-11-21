@@ -616,7 +616,7 @@ Beyond interpolation. Widths count characters.
 | `bytes_human(n)` | `1.5 KiB`, `5.0 MiB` |
 
 ### `std.time`
-A duration is an `Int` of nanoseconds. `nanos` `micros` `millis` `seconds` `minutes` `hours` build one; `as_micros` `as_millis` `as_secs` `as_secs_float` `as_millis_float` convert; `format(d)` prints `850 ns`, `12.5 us`, `3.2 ms`, `1.5 s`, `2m 05s`, `1h 02m 03s`; `sleep(d)`; `measure(f: fn()) -> Int`. `stopwatch()` returns a `Stopwatch` (monotonic clock, from `std.io`) with methods `elapsed()`, `elapsed_ms()`, `lap()` (time since the previous lap, starts a new one) and `restart()`:
+A duration is an `Int` of nanoseconds. `nanos` `micros` `millis` `seconds` `minutes` `hours` build one; `as_micros` `as_millis` `as_secs` `as_secs_float` `as_millis_float` convert; `format(d)` prints `850 ns`, `12.5 us`, `3.2 ms`, `1.5 s`, `2m 05s`, `1h 02m 03s`; `sleep(d)`, `sleep_ms(ms)`; `measure(f: fn()) -> Int`. Clocks: `monotonic_ns()`, `unix_nanos()`, `unix_millis()`, `unix_secs()`; `now() -> Instant` (monotonic; `elapsed`, `since`, `add`, `is_before`), `deadline_in(d)`, `sleep_until(t)`. Calendar (UTC): `DateTime`, `utc_from_unix(secs)`, `utc_now()`, `utc(y, mo, d, h, mi, s) -> Result<DateTime, io.IoError>`, `to_unix`, `format_iso`, `parse_iso(s) -> Result<..>`, `is_leap_year`, `days_in_month` (details in [STDLIB_IO.md](STDLIB_IO.md#stdtime-clocks-sleep-utc-calendar)). `stopwatch()` returns a `Stopwatch` (monotonic clock, from `std.io`) with methods `elapsed()`, `elapsed_ms()`, `lap()` (time since the previous lap, starts a new one) and `restart()`:
 
 ```yx
 import std.time
@@ -626,6 +626,9 @@ fn main() {
   print(time.format(w.elapsed()))   // about 5.1 ms
 }
 ```
+
+### `std.fs` and `std.env`
+File system (`read_dir`, `create_dir_all`, `remove_dir_all`, `metadata`, `copy`, `rename`, ...) and process environment (`args`, `arg`, `get`, `require`, `vars`, `current_dir`, `set_current_dir`, ...), every failure an `io.IoError`: see [STDLIB_IO.md](STDLIB_IO.md#stdfs-the-file-system).
 
 ### `std.path`
 Textual paths with `/` as the separator (nothing touches the file system). `join(a, b)` (an absolute `b` replaces `a`) · `parent(p)` (`a/b/c.txt` -> `a/b`, `/c` -> `/`, `c` -> empty) · `file_name(p)` · `stem(p)` · `extension(p)` (without dot; a leading dot is not an extension) · `with_extension(p, ext)` · `is_absolute(p)` · `components(p)` · `normalize(p)` (`.`/`..`/repeated slashes; empty result is `.`).
