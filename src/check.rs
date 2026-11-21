@@ -271,6 +271,48 @@ fn pat_has_bind(p: &Pat) -> bool {
     }
 }
 
+/// Names bound by a pattern (an or-pattern contributes the names of its first alternative).
+fn pat_bound_names(p: &Pat, out: &mut Vec<String>) {
+    match p {
+        Pat::Bind(n, sub, _) => {
+            out.push(n.clone());
+            if let Some(s) = sub {
+                pat_bound_names(s, out);
+            }
+        }
+        Pat::Variant(_, s, _) | Pat::Tuple(s, _) => s.iter().for_each(|q| pat_bound_names(q, out)),
+        Pat::Or(alts, _) => {
+            if let Some(a) = alts.first() {
+                pat_bound_names(a, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// First or-pattern (at any depth) whose alternatives bind different names:
+/// (position, names of the first alternative, names of the offending one).
+fn pat_or_mismatch(p: &Pat) -> Option<(Pos, Vec<String>, Vec<String>)> {
+    match p {
+        Pat::Bind(_, Some(s), _) => pat_or_mismatch(s),
+        Pat::Variant(_, s, _) | Pat::Tuple(s, _) => s.iter().find_map(pat_or_mismatch),
+        Pat::Or(alts, pos) => {
+            if let Some(m) = alts.iter().find_map(pat_or_mismatch) {
+                return Some(m);
+            }
+            let names = |a: &Pat| {
+                let mut v = vec![];
+                pat_bound_names(a, &mut v);
+                v.sort();
+                v
+            };
+            let first = names(alts.first()?);
+            alts.iter().skip(1).map(names).find(|n| *n != first).map(|n| (*pos, first, n))
+        }
+        _ => None,
+    }
+}
+
 /// Or-patterns that bind names are split into one pattern per alternative (the arm is repeated).
 fn pat_expand(p: &Pat) -> Vec<Pat> {
     match p {
@@ -3353,6 +3395,17 @@ impl<'a> Checker<'a> {
                         Pat::Variant(arm.vname.clone(), arm.binds.iter().map(|b| if b.0 == "_" { Pat::Wild(arm.pos) } else { Pat::Bind(b.0.clone(), None, arm.pos) }).collect(), arm.pos)
                     }
                 });
+                let nerr_arm = self.errs.len();
+                // checked before expanding: once split, each alternative looks like its own arm
+                if let Some((pos, a, b)) = pat_or_mismatch(&pat) {
+                    let show = |v: &[String]| if v.is_empty() { "nothing".to_string() } else { v.iter().map(|n| format!("'{}'", n)).collect::<Vec<_>>().join(", ") };
+                    self.err(
+                        diag("every alternative of an or-pattern must bind the same names", pos)
+                            .note(format!("one alternative binds {} but another binds {}", show(&a), show(&b)))
+                            .note("help: use the same names in every alternative, or split them into separate arms"),
+                    );
+                }
+                let bad = self.errs.len() > nerr_arm;
                 let pats = pat_expand(&pat);
                 if pats.len() > 64 {
                     self.err(diag("this or-pattern expands to too many alternatives", arm.pos).note("help: split it into several arms"));
@@ -3361,7 +3414,9 @@ impl<'a> Checker<'a> {
                 for p in pats {
                     let mut names = vec![];
                     let rp = self.resolve_pat(&p, ty, &mut names);
-                    gs.push(G { rp, guard: arm.guard.clone(), body: arm.body.clone(), pos: arm.pos });
+                    // a bad or-pattern still counts for exhaustiveness; its body is not checked
+                    let body = if bad { vec![] } else { arm.body.clone() };
+                    gs.push(G { rp, guard: arm.guard.clone(), body, pos: arm.pos });
                 }
             }
             // exhaustiveness: only arms without a guard count

@@ -1,0 +1,14 @@
+enum E { A(Int), B(Int), C }
+fn main() {
+  let e = E.A(1)
+  match e {
+    E.A(x) | E.B(y) => { print(x) }
+    E.C => { print(0) }
+  }
+  let t = (1, 2)
+  match t {
+    (0, a) | (a, 0) => { print(a) }
+    (1, b) | (2, _) => { print(b) }
+    _ => { print(9) }
+  }
+}
