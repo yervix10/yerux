@@ -1,0 +1,4 @@
+trait Area {
+  fn area(view self) -> Int { return 0 }
+}
+fn main() { print(1) }

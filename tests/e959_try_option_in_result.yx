@@ -1,0 +1,6 @@
+fn g() -> Option<Int> { return None }
+fn f() -> Result<Int, String> {
+  let y = g()?
+  return Ok(y)
+}
+fn main() { print(1) }

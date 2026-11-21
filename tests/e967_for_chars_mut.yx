@@ -1,0 +1,6 @@
+fn main() {
+  var s = String.from("ab")
+  for mut c in s.chars() {
+    print(c)
+  }
+}

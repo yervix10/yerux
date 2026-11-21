@@ -1,0 +1,8 @@
+error: empty character literal
+ --> tests/e954_empty_char.yx:2:11
+  |
+2 |   let c = ''
+  |           ^^
+  = a Char literal holds exactly one Unicode character: 'a', 'é', '\n', '\u{1F600}'; use ".." for text
+
+1 error(s). Nothing was generated.

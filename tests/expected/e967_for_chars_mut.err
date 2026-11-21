@@ -1,0 +1,7 @@
+error: a `for` over `chars()` cannot be `mut`: characters are read-only
+ --> tests/e967_for_chars_mut.yx:3:11
+  |
+3 |   for mut c in s.chars() {
+  |           ^
+
+1 error(s). Nothing was generated.

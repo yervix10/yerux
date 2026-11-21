@@ -1,0 +1,7 @@
+error: duplicate parameter 'a'
+ --> tests/e952_duplicate_param.yx:1:14
+  |
+1 | fn f(a: Int, a: Int) -> Int { return a }
+  |              ^
+
+1 error(s). Nothing was generated.

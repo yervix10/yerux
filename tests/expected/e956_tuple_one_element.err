@@ -1,0 +1,8 @@
+error: a tuple needs at least two elements
+ --> tests/e956_tuple_one_element.yx:2:11
+  |
+2 |   let t = (1,)
+  |           ^^^^
+  = help: write the value itself, without parentheses and comma
+
+1 error(s). Nothing was generated.
