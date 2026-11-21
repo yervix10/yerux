@@ -930,6 +930,20 @@ impl<'a> Checker<'a> {
 
     fn expr_checked(&mut self, e: &mut Expr) -> Ty {
         let pos = e.pos;
+        // a `const` (not shadowed by a local): its folded value
+        if let EK::Var(n, _) = &e.k {
+            if self.lookup(n).is_none() {
+                if let Some(&(v, t)) = self.types.consts.get(n) {
+                    e.k = match t {
+                        Ty::Bool => EK::Bool(v != 0),
+                        Ty::Char => EK::Char(v),
+                        _ => EK::Int(v),
+                    };
+                    e.ty = t;
+                    return t;
+                }
+            }
+        }
         let hint = self.hint.take();
         // `let x: T = e`
         if matches!(e.k, EK::Ascribe(_)) {
@@ -2202,7 +2216,8 @@ impl<'a> Checker<'a> {
     /// Is `e` a place (a variable, a field, `l.at(i)`, or the cell of a Box)?
     fn isp(&self, e: &Expr) -> bool {
         match &e.k {
-            EK::Var(..) | EK::Field(..) => true,
+            EK::Var(n, _) => self.lookup(n).is_some() || !self.types.consts.contains_key(n),
+            EK::Field(..) => true,
             EK::Method { recv, m, .. } if m == "at" => {
                 !matches!(self.peek_ty(recv), Some(Ty::Dyn(_)) | Some(Ty::Box(_)))
             }
@@ -3130,6 +3145,21 @@ impl<'a> Checker<'a> {
                         self.place(&mut args[0]).map_or(Ty::Err, |p| p.ty)
                     } else {
                         self.expr(&mut args[0])
+                    };
+                    // an array value made by a call: kept in a hidden variable and shown element-wise
+                    let t = if !self.isp(&args[0]) && self.types.array_of(t).is_some() {
+                        let p = args[0].pos;
+                        let name = format!("tmp__{}", self.vars.len());
+                        let id = self.declare(&name, t, Mode::Own, false);
+                        let init = std::mem::replace(&mut args[0], sx(EK::Int(0), p));
+                        self.arg_temps.push(Stmt {
+                            k: SK::Let(name.clone(), false, init, id),
+                            pos: p,
+                        });
+                        args[0] = sx(EK::Call("std__seq_show".into(), vec![s_var(&name, p)]), p);
+                        self.expr(&mut args[0])
+                    } else {
+                        t
                     };
                     if t == Ty::String && !self.isp(&args[0]) {
                         // a temporary String: print it, then free it
@@ -5657,6 +5687,19 @@ fn unify(
         (Ty::Box(a), Ty::Box(b)) => unify(types, types.boxes[a], types.boxes[b], pids, bind),
         (Ty::Struct(_), Ty::Struct(_)) if types.array_of(pat).is_some() => {
             match (types.array_of(pat), types.array_of(conc)) {
+                (Some((e1, n1)), Some((e2, n2))) if n1 >= crate::syntax::CONST_LEN && n2 < crate::syntax::CONST_LEN => {
+                    // `[T; N]` with a const parameter N: bind N to the length (as the type `Int<n..n>`)
+                    let p = n1 - crate::syntax::CONST_LEN;
+                    let len = Ty::Range(n2 as i64, n2 as i64);
+                    if let Some(k) = pids.iter().position(|x| *x == p) {
+                        match bind[k] {
+                            None => bind[k] = Some(len),
+                            Some(b) if b == len => {}
+                            Some(b) => return Err(Some(b)),
+                        }
+                    }
+                    unify(types, e1, e2, pids, bind)
+                }
                 (Some((e1, n1)), Some((e2, n2))) if n1 == n2 => unify(types, e1, e2, pids, bind),
                 _ => Err(None),
             }
@@ -7382,7 +7425,7 @@ impl<'a> Checker<'a> {
         for g in self.ps.gfns.clone() {
             for tp in &g.tparams {
                 for (b, bp) in &tp.bounds {
-                    if !tnames.contains(b) {
+                    if !tnames.contains(b) && b != crate::syntax::CONST_BOUND {
                         self.err(
                             diag(format!("unknown trait '{}' in the bound of {}", b, tp.name), *bp)
                                 .note(format!("known traits: {}", known()))

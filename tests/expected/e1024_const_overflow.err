@@ -1,0 +1,8 @@
+error: this overflows while evaluating the constant
+ --> tests/e1024_const_overflow.yx:2:11
+  |
+2 | const B = A + 1
+  |           ^^^^^
+  = const arithmetic is checked like run-time arithmetic
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,8 @@
+error: the length in `[value; N]` must be an integer literal or an Int const
+ --> tests/e1025_array_len_variable.yx:3:15
+  |
+3 |   let a = [0; n]
+  |               ^
+  = help: write the number itself (`[Int; 16]`) or declare `const N = 16`; for a length known only at run time use `List<T>`
+
+1 error(s). Nothing was generated.

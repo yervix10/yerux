@@ -1,0 +1,7 @@
+error: expected [Int; K] but this is [Int; 3]
+ --> tests/e1023_const_generic_lengths.yx:4:21
+  |
+4 |   print(dot([1, 2], [1, 2, 3]))
+  |                     ^^^^^^^^^
+
+1 error(s). Nothing was generated.
