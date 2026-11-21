@@ -3,7 +3,7 @@ error: this `{` in a string is never closed
   |
 3 |   print("x = {x")
   |              ^
-  = string interpolation looks like "x = {x}"; the expression cannot contain a quote (store the value in a variable first)
+  = string interpolation looks like "x = {x}"; the expression may contain string literals but must end with `}` on the same line
   = write `{{` for a literal brace
 
 1 error(s). Nothing was generated.

@@ -4,5 +4,5 @@ fn tag(s: view String) -> String {
 }
 
 fn main() {
-  print("{tag("x")")
+  print("{tag("x") ")
 }
