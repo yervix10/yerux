@@ -2453,7 +2453,7 @@ impl<'a> L<'a> {
         }
         // phase 2: borrowed element addresses, bounds-checked, right before the call
         let mut writeback = vec![];
-        for (i, (a, p)) in args.iter().zip(pre.into_iter()).enumerate() {
+        for (i, (a, p)) in args.iter().zip(pre).enumerate() {
             match p {
                 Arg::Val(v) => vs.push(v),
                 Arg::Ref(idx) => {
@@ -2830,7 +2830,7 @@ impl<'a> L<'a> {
                     }
                     let (fo, _) = self.field_off(key, n);
                     let flag = self.types.capture_live_field(key, n);
-                    let mut body = |l: &mut Self| -> LR<()> {
+                    let body = |l: &mut Self| -> LR<()> {
                         if matches!(f, Ty::Fn(_)) {
                             // no worklist (v1 == 0, the worker thread's exit path): drop the closure right here
                             let z = l.konst(0);

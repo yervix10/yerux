@@ -1003,12 +1003,11 @@ fn refine(st: &mut RState, op: Op, a: V, b: V) -> bool {
         }
         _ => {
             // Ne: only a constant at the end of the other interval can be peeled off
-            if xl == xh {
-                if yl == xl && !narrow(st, b, xl + 1, yh) || yh == xl && !narrow(st, b, yl, xl - 1)
+            if xl == xh
+                && (yl == xl && !narrow(st, b, xl + 1, yh) || yh == xl && !narrow(st, b, yl, xl - 1))
                 {
                     return false;
                 }
-            }
             if yl == yh {
                 let (x, c) = (st.r[a], yl);
                 if x.0 as i128 == c && !narrow(st, a, c + 1, x.1 as i128)
@@ -1312,7 +1311,7 @@ fn state_widen(
             continue;
         }
         cnt[k] = cnt[k].saturating_add(1);
-        if cnt[k] <= DELAY || only.map_or(false, |o| !o[k]) {
+        if cnt[k] <= DELAY || only.is_some_and(|o| !o[k]) {
             continue;
         }
         // jump to the next program constant (or the type bound) instead of straight to infinity

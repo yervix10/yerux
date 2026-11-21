@@ -2093,7 +2093,7 @@ impl Parser {
         self.inst_type(name, args, pos)
     }
     pub fn generic_is_enum(&self, name: &str) -> bool {
-        self.gtypes.get(name).map_or(false, |g| g.is_enum)
+        self.gtypes.get(name).is_some_and(|g| g.is_enum)
     }
     pub fn generic_type_params(&self, name: &str) -> Vec<String> {
         self.gtypes
@@ -3022,7 +3022,7 @@ impl Parser {
                     let subs = self.pat_args()?;
                     return Ok(Pat::Variant(name, subs, span(pos, self.t[self.i - 1].pos)));
                 }
-                let upper = name.chars().next().map_or(false, |c| c.is_ascii_uppercase());
+                let upper = name.chars().next().is_some_and(|c| c.is_ascii_uppercase());
                 if upper || self.is_sym("(") {
                     let subs = self.pat_args()?;
                     return Ok(Pat::Variant(name, subs, span(pos, self.t[self.i - 1].pos)));
@@ -3621,7 +3621,7 @@ impl Parser {
             _ => {}
         }
         // variable, then any chain of .field / .method(...)
-        let mut e = mk(EK::Var(x, 0), pos);
+        let e = mk(EK::Var(x, 0), pos);
         self.postfix(e)
     }
 }

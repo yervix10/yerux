@@ -709,10 +709,10 @@ impl<'a> Checker<'a> {
 
     fn call_mut_arg(&self, name: &str, i: usize) -> bool {
         if let Some(sig) = self.sigs.get(name) {
-            return sig.params.get(i).map_or(false, |p| p.0 == Mode::Mut);
+            return sig.params.get(i).is_some_and(|p| p.0 == Mode::Mut);
         }
         if let Some(g) = self.ps.gfns.iter().find(|g| g.name == name) {
-            return g.params.get(i).map_or(false, |p| p.0 == Mode::Mut);
+            return g.params.get(i).is_some_and(|p| p.0 == Mode::Mut);
         }
         if matches!(
             name,
@@ -729,7 +729,7 @@ impl<'a> Checker<'a> {
             return false;
         }
         if let Some(modes) = self.lazy_modes.get(name) {
-            return modes.get(i).map_or(false, |m| *m == Mode::Mut);
+            return modes.get(i).is_some_and(|m| *m == Mode::Mut);
         }
         self.unknown_calls.borrow_mut().insert(name.to_string());
         true // unknown callee (lazy library function, function value): assume the worst

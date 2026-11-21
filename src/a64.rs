@@ -206,7 +206,7 @@ impl Asm {
 
     // --- memory. `mem` picks scaled-unsigned, unscaled-signed (ldur/stur) or an x16-computed address.
     fn mem(&mut self, scaled_op: u32, unscaled_op: u32, scale: u32, rt: u32, rn: u32, off: i32) {
-        if off >= 0 && off as u32 % scale == 0 && (off as u32 / scale) < 4096 {
+        if off >= 0 && (off as u32).is_multiple_of(scale) && (off as u32 / scale) < 4096 {
             self.emit(scaled_op | (off as u32 / scale) << 10 | rn << 5 | rt);
         } else if (-256..256).contains(&off) {
             self.emit(unscaled_op | ((off as u32) & 0x1FF) << 12 | rn << 5 | rt);
@@ -433,14 +433,14 @@ impl Asm {
             match kind {
                 Fix::B26 => {
                     assert!(
-                        words >= -(1 << 25) && words < (1 << 25),
+                        (-(1 << 25)..(1 << 25)).contains(&words),
                         "branch out of range"
                     );
                     w |= (words as u32) & 0x03FF_FFFF;
                 }
                 Fix::B19 => {
                     assert!(
-                        words >= -(1 << 18) && words < (1 << 18),
+                        (-(1 << 18)..(1 << 18)).contains(&words),
                         "conditional branch out of range"
                     );
                     w |= ((words as u32) & 0x7FFFF) << 5;
@@ -460,7 +460,7 @@ impl Asm {
             let pc = base + p as u64;
             let pages = ((target >> 12) as i64) - ((pc >> 12) as i64);
             assert!(
-                pages >= -(1 << 20) && pages < (1 << 20),
+                (-(1 << 20)..(1 << 20)).contains(&pages),
                 "adrp out of range"
             );
             let imm = (pages as u32) & 0x1F_FFFF;
@@ -1536,14 +1536,14 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     }
 
     // lay out: code, padding to 16, then data blobs (each 8-aligned)
-    while a.code.len() % 16 != 0 {
+    while !a.code.len().is_multiple_of(16) {
         a.code.push(0);
     }
     let data_start = a.code.len();
     let mut offs = vec![];
     let mut blob: Vec<u8> = vec![];
     for d in &data {
-        while blob.len() % 8 != 0 {
+        while !blob.len().is_multiple_of(8) {
             blob.push(0);
         }
         offs.push(blob.len());

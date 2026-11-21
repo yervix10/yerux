@@ -1980,7 +1980,7 @@ impl Gen<'_> {
         }
     }
 
-    fn num_bin(&self, op: &str, a: &Expr, b: &Expr, args: Vec<Arg>) -> String {
+    fn num_bin(&self, op: &str, a: &Expr, _b: &Expr, args: Vec<Arg>) -> String {
         use crate::numeric::*;
         let t = a.ty;
         if is_float(t) {

@@ -412,7 +412,7 @@ impl<'a> Checker<'a> {
     /// (declared in the current scope, created right before the statement), which then is lent like any
     /// variable. A closure literal given here may borrow the caller's variables for the call.
     pub(super) fn hoist_fn_arg(&mut self, arg: &mut Expr, mode: Mode, pty: Ty) -> Option<Ty> {
-        let pos = arg.pos;
+        let _pos = arg.pos;
         let t = if matches!(arg.k, EK::Closure { is_move: false, .. }) {
             self.closure_expr(arg, Some(pty), true, false, false)
         } else {

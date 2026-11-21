@@ -454,7 +454,7 @@ impl Loader {
             let next = toks.get(j + 1);
             if let Some(dep) = aliases.get(&x) {
                 if matches!(next, Some(n) if is_sym(n, "."))
-                    && toks.get(j + 2).map_or(false, |n| matches!(n.t, Tok::Id(_)))
+                    && toks.get(j + 2).is_some_and(|n| matches!(n.t, Tok::Id(_)))
                 {
                     let y = match &toks[j + 2].t {
                         Tok::Id(y) => y.clone(),
@@ -546,7 +546,7 @@ impl Loader {
                 // blocks are looked up by type, so their names stay as written
                 let methods_here = toks
                     .first()
-                    .map_or(false, |f| is_id(f, "impl") || is_id(f, "trait"));
+                    .is_some_and(|f| is_id(f, "impl") || is_id(f, "trait"));
                 if prev_fn && methods_here {
                     out.push(t.clone());
                     j += 1;
@@ -717,7 +717,7 @@ impl Loaded {
                         let found = self
                             .exports
                             .get(dep)
-                            .map_or(false, |v| v.iter().any(|(n, _)| n == name));
+                            .is_some_and(|v| v.iter().any(|(n, _)| n == name));
                         if found {
                             notes.push(format!(
                                 "help: '{}' is defined in module '{}': write `{}.{}`",

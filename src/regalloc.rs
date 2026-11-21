@@ -169,7 +169,7 @@ fn is_cmp(op: Op) -> bool {
 struct Bits(Vec<u64>);
 impl Bits {
     fn new(n: usize) -> Bits {
-        Bits(vec![0; (n + 63) / 64])
+        Bits(vec![0; n.div_ceil(64)])
     }
     fn set(&mut self, i: usize) {
         self.0[i / 64] |= 1 << (i % 64);
@@ -697,11 +697,10 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
                 // evict the cheapest set of conflicting intervals if they are cheaper than us
                 let mut best: Option<(u64, u8)> = None;
                 for r in 0..32u8 {
-                    if mask >> r & 1 == 1 && conflict_w[r as usize] != u64::MAX {
-                        if best.map_or(true, |(w, _)| conflict_w[r as usize] < w) {
+                    if mask >> r & 1 == 1 && conflict_w[r as usize] != u64::MAX
+                        && best.is_none_or(|(w, _)| conflict_w[r as usize] < w) {
                             best = Some((conflict_w[r as usize], r));
                         }
-                    }
                 }
                 match best {
                     Some((w, r)) if w < cw && !(mask >> 16 != 0 && false) => {

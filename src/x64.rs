@@ -2365,7 +2365,7 @@ fn early_blocks(f: &IrFunc, al: &Alloc) -> Vec<bool> {
         match &b.term {
             Term::Jmp(_) | Term::Unreachable => true,
             Term::Br(c, ..) => ok(*c),
-            Term::Ret(v) => v.map_or(true, |v| ok(v)),
+            Term::Ret(v) => v.is_none_or(&ok),
         }
     };
     let mut preds: Vec<Vec<usize>> = vec![vec![]; nb];
@@ -3464,7 +3464,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     }
 
     // lay out: code, padding to 16, then data blobs
-    while a.code.len() % 16 != 0 {
+    while !a.code.len().is_multiple_of(16) {
         a.code.push(0x90);
     }
     let mut offs = vec![];
@@ -3487,7 +3487,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
     }
     for bits in a.pool.clone() {
-        while blob.len() % 8 != 0 {
+        while !blob.len().is_multiple_of(8) {
             blob.push(0);
         }
         offs.push(blob.len());

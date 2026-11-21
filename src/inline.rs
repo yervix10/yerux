@@ -311,7 +311,7 @@ pub fn run(p: &mut IrProgram, optf: &mut dyn FnMut(&mut IrFunc)) {
                     // same permutation as inline_at: [..=bi] [callee blocks] [continuation] [rest]
                     let tail = fresh.split_off(bi + 1);
                     let inherit = fresh[bi];
-                    fresh.extend(std::iter::repeat(true).take(cn));
+                    fresh.extend(std::iter::repeat_n(true, cn));
                     fresh.push(inherit);
                     fresh.extend(tail);
                     did = true;

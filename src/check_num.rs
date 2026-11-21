@@ -90,8 +90,8 @@ impl<'a> Checker<'a> {
     pub(super) fn num_mismatch_notes(&mut self, d: Diag, got: Ty, want: Ty, pos: Pos) -> Diag {
         let (g, w) = (self.tn(got), self.tn(want));
         let name = self.pos_names.get(&(pos.line, pos.col)).cloned();
-        let lit = name.as_ref().map_or(false, |n| {
-            n.chars().next().map_or(false, |c| c.is_ascii_digit())
+        let lit = name.as_ref().is_some_and(|n| {
+            n.chars().next().is_some_and(|c| c.is_ascii_digit())
         });
         let mut d = d.note(format!(
             "{} and {} are different types: numbers are never converted implicitly",
@@ -288,7 +288,7 @@ impl<'a> Checker<'a> {
 
     fn int_lit(&mut self, v: i64, cur: Ty, hint: Option<Ty>, neg: bool, pos: Pos) -> (Ty, i64) {
         let big = cur == Ty::Err; // more than i64::MAX, no suffix
-        let from_hint = !is_int(cur) && hint.map_or(false, is_int);
+        let from_hint = !is_int(cur) && hint.is_some_and(is_int);
         if from_hint && matches!(hint, Some(Ty::Range(..))) && !big {
             // a literal is the singleton range of its value; whether it fits is the business of the context
             let v = if neg { v.wrapping_neg() } else { v };
@@ -359,7 +359,7 @@ impl<'a> Checker<'a> {
     fn float_lit(&mut self, txt: &str, cur: Ty, hint: Option<Ty>, pos: Pos) -> (Ty, f64) {
         let t = if is_float(cur) {
             cur
-        } else if hint.map_or(false, is_float) {
+        } else if hint.is_some_and(is_float) {
             hint.unwrap()
         } else {
             Ty::Num(Nk::F64)

@@ -109,7 +109,7 @@ fn native_build(
     if optimize {
         opt::run(&mut ir);
     }
-    if target != "" && target != "linux" {
+    if !target.is_empty() && target != "linux" {
         if let Some(what) = ir::os_intrinsics_error(&ir) {
             eprintln!("error: native backend: {} is not supported on the {} target yet (available on x86-64 Linux)", what, target);
             exit(1);
@@ -289,7 +289,7 @@ fn collect_test_files(dir: &std::path::Path, out: &mut Vec<String>) {
                 collect_test_files(&p, out);
             }
         } else if name.ends_with(".yx")
-            && fs::read_to_string(&p).map_or(false, |s| s.contains("test \""))
+            && fs::read_to_string(&p).is_ok_and(|s| s.contains("test \""))
         {
             out.push(p.to_string_lossy().trim_start_matches("./").to_string());
         }
@@ -414,7 +414,7 @@ fn run_tests(args: &[String]) -> i32 {
         let wanted: Vec<(usize, &String)> = names
             .iter()
             .enumerate()
-            .filter(|(_, n)| filter.as_ref().map_or(true, |x| n.contains(x.as_str())))
+            .filter(|(_, n)| filter.as_ref().is_none_or(|x| n.contains(x.as_str())))
             .collect();
         if wanted.is_empty() {
             continue;

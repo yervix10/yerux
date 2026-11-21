@@ -1050,7 +1050,7 @@ impl<'a> Checker<'a> {
                     .is_some()
             {
                 let original = std::mem::replace(recv, Box::new(s_var("$shared", pos)));
-                *recv = Box::new(s_meth(*original, "get", vec![], pos));
+                **recv = s_meth(*original, "get", vec![], pos);
             }
         }
         // `s.cb(args)` where `cb` is a field of function type: call the stored function value
@@ -1092,14 +1092,14 @@ impl<'a> Checker<'a> {
                 {
                     let pos = recv.pos;
                     let inner = std::mem::replace(recv, Box::new(s_var("$dyn", pos)));
-                    *recv = Box::new(sx(
+                    **recv = sx(
                         EK::Method {
                             recv: inner,
                             m: "get".into(),
                             args: vec![],
                         },
                         pos,
-                    ));
+                    );
                     Some(self.types.boxes[i])
                 }
                 _ => rt,
@@ -4014,14 +4014,12 @@ impl<'a> Checker<'a> {
             RP::Or(alts) => {
                 let mut acc: Option<Expr> = None;
                 for a in alts {
-                    match self.pat_test(a, subj, ty, pos) {
-                        None => return None,
-                        Some(t) => {
-                            acc = Some(match acc {
-                                None => t,
-                                Some(x) => s_bin("||", x, t, pos),
-                            })
-                        }
+                    {
+                        let t = self.pat_test(a, subj, ty, pos)?;
+                        acc = Some(match acc {
+                            None => t,
+                            Some(x) => s_bin("||", x, t, pos),
+                        })
                     }
                 }
                 acc
@@ -5616,7 +5614,7 @@ impl<'a> Checker<'a> {
         if let Ty::Param(i) = ty {
             let bounds = self.types.params[i].bounds.clone();
             for b in bounds {
-                if only.map_or(false, |o| o != b) {
+                if only.is_some_and(|o| o != b) {
                     continue;
                 }
                 if let Some(h) = self.trait_header(&b, m, ty) {
@@ -5635,7 +5633,7 @@ impl<'a> Checker<'a> {
                 if (pass == 0) != im.trait_name.is_none() {
                     continue;
                 }
-                if only.map_or(false, |o| im.trait_name.as_deref() != Some(o)) {
+                if only.is_some_and(|o| im.trait_name.as_deref() != Some(o)) {
                     continue;
                 }
                 let k = match im.methods.iter().position(|x| x.name == m) {

@@ -14,7 +14,7 @@ fn put64(v: &mut Vec<u8>, n: u64) {
     v.extend_from_slice(&n.to_le_bytes());
 }
 fn align(v: &mut Vec<u8>, n: usize) {
-    while v.len() % n != 0 {
+    while !v.len().is_multiple_of(n) {
         v.push(0);
     }
 }

@@ -74,7 +74,7 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
         } else if c.is_ascii_digit() {
             let after_dot = out
                 .last()
-                .map_or(false, |t: &T| t.k == K::Sym && t.s == ".");
+                .is_some_and(|t: &T| t.k == K::Sym && t.s == ".");
             let scan = |i: &mut usize| {
                 while *i < cs.len() && (cs[*i].is_ascii_alphanumeric() || cs[*i] == '_') {
                     *i += 1;
@@ -82,7 +82,7 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
             };
             scan(&mut i);
             let dec = |t: &[char]| t.iter().all(|c| c.is_ascii_digit() || *c == '_');
-            let next_digit = |j: usize| cs.get(j).map_or(false, |c| c.is_ascii_digit());
+            let next_digit = |j: usize| cs.get(j).is_some_and(|c| c.is_ascii_digit());
             // float literals: `1.5`, `1e-3`, `2.5e+10f32` (hex / binary literals have no fractions or exponents)
             if !after_dot && dec(&cs[start..i]) && cs.get(i) == Some(&'.') && next_digit(i + 1) {
                 i += 1;
@@ -251,7 +251,7 @@ fn generics(toks: &[T]) -> Vec<bool> {
             continue;
         }
         let pw = &toks[i - 1].s;
-        let upper = pw.chars().next().map_or(false, |c| c.is_ascii_uppercase());
+        let upper = pw.chars().next().is_some_and(|c| c.is_ascii_uppercase());
         let decl = pw == "impl"
             || (i >= 2
                 && toks[i - 2].k == K::Word
@@ -324,7 +324,7 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
                 && toks[i + 1..mb[i]]
                     .iter()
                     .any(|t| t.nl > 0 || t.k == K::Comment)
-                || toks.get(i + 1).map_or(false, |t| t.k == K::Comment);
+                || toks.get(i + 1).is_some_and(|t| t.k == K::Comment);
         }
     }
     let struct_names: Vec<&str> = toks
@@ -402,7 +402,7 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
     let mut last_closed: Option<(Br, bool)> = None; // kind of the `}` just written
 
     for (i, t) in toks.iter().enumerate() {
-        let ctx_multi = f.stack.last().map_or(true, |o| o.multi);
+        let ctx_multi = f.stack.last().is_none_or(|o| o.multi);
         let ctx_kind = f.stack.last().map(|o| o.kind);
 
         // ── comments ──
@@ -464,7 +464,7 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
             }
         }
         if b == B::None {
-            if is_close && f.stack.last().map_or(false, |o| o.multi) {
+            if is_close && f.stack.last().is_some_and(|o| o.multi) {
                 b = B::Hard(false);
             } else if pending_hard {
                 b = B::Hard(src_blank);
@@ -481,7 +481,7 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
             } else if f.pd == 0
                 && matches!(ctx_kind, Some(Br::Decl) | Some(Br::Lit))
                 && ctx_multi
-                && p.map_or(false, |p| is_sym(p, ","))
+                && p.is_some_and(|p| is_sym(p, ","))
             {
                 b = B::Hard(src_blank); // one field / variant / initializer per line
             } else if let Some((kind, _)) = last_closed {
@@ -499,20 +499,20 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
             if f.pd > 0 {
                 // join
             } else if ctx_kind == Some(Br::Lit) {
-                if pt.map_or(false, |p| is_sym(p, ",")) {
+                if pt.is_some_and(|p| is_sym(p, ",")) {
                     b = B::Hard(src_blank);
                 }
             } else if t.k == K::Word && t.s == "else" || is_sym(t, "{") {
                 // join
             } else if is_sym(t, ".") {
                 b = B::Cont;
-            } else if pt.map_or(false, |p| {
+            } else if pt.is_some_and(|p| {
                 p.k == K::Sym
                     && BINOPS.contains(&p.s.as_str())
-                    && !(p.s == ">" && prev.map_or(false, |j| gen[j]))
+                    && !(p.s == ">" && prev.is_some_and(|j| gen[j]))
             }) {
                 b = B::Cont;
-            } else if pt.map_or(false, |p| {
+            } else if pt.is_some_and(|p| {
                 p.k == K::Sym && matches!(p.s.as_str(), "->" | "=>" | ".")
             }) {
                 // join
@@ -552,15 +552,15 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
                         None => false,
                         // inside closure bars: `|x, y|`
                         Some(_) if bar_close[i] => false,
-                        Some(_) if prev.map_or(false, |j| bar_open[j]) => false,
+                        Some(_) if prev.is_some_and(|j| bar_open[j]) => false,
                         Some(p) => space(
                             p,
                             t,
-                            prev.map_or(false, |j| gen[j]),
+                            prev.is_some_and(|j| gen[j]),
                             gen[i],
                             unary[prev.unwrap_or(0)],
                             is_close,
-                            closing.as_ref().map_or(false, |o| o.multi),
+                            closing.as_ref().is_some_and(|o| o.multi),
                         ),
                     };
                     if sp {
@@ -602,11 +602,11 @@ fn format_tokens(toks: &[T]) -> Result<String, String> {
                 let kind = if decl_pending && f.pd == 0 {
                     Br::Decl
                 } else {
-                    let lit = p.map_or(false, |p| {
+                    let lit = p.is_some_and(|p| {
                         p.k == K::Word && struct_names.contains(&p.s.as_str()) && {
                             let pp =
                                 prev.and_then(|j| if j > 0 { Some(&toks[j - 1]) } else { None });
-                            !pp.map_or(false, |x| {
+                            !pp.is_some_and(|x| {
                                 x.k == K::Sym && x.s == "->"
                                     || x.k == K::Word
                                         && matches!(
@@ -746,7 +746,7 @@ fn collect(path: &std::path::Path, out: &mut Vec<String>) {
             }
             collect(&p, out);
         }
-    } else if path.extension().map_or(false, |e| e == "yx") {
+    } else if path.extension().is_some_and(|e| e == "yx") {
         out.push(path.to_string_lossy().trim_start_matches("./").to_string());
     }
 }

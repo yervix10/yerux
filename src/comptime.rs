@@ -41,7 +41,7 @@ fn show_line(p: Pos) -> usize {
 }
 
 fn unsupported(what: &str, pos: Pos, chain: &[(String, Pos)]) -> Diag {
-    let mut d = diag(format!("{} cannot run at compile time [E-K1]", what), pos)
+    let d = diag(format!("{} cannot run at compile time [E-K1]", what), pos)
         .note("why: compile-time code is run by the compiler; for now it may only use Int, Char and Bool values, `let`/`var`, `if`, `while`, and calls to functions with such parameters")
         .note("fix: compute the value at run time, or rewrite the code with scalar values only");
     add_chain(d, chain)
