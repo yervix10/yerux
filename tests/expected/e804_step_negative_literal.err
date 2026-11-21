@@ -1,0 +1,9 @@
+error: the step of a `for` loop must be positive
+ --> tests/e804_step_negative_literal.yx:3:23
+  |
+3 |   for i in 0..10 step -1 {
+  |                       ^^
+  = ranges always count upwards from the start towards the end
+  = help: to count down, loop upwards and compute the value: `for k in 0..n { let i = n - 1 - k }`
+
+1 error(s). Nothing was generated.

@@ -3590,7 +3590,16 @@ impl<'a> Checker<'a> {
                 let mut step_expr: Option<Expr> = None;
                 if let Some(se) = h.step.clone() {
                     let sp = se.pos;
-                    if let EK::Int(n) = se.k {
+                    // a literal step, including a negated one (`step -1`), is checked at compile time
+                    let lit = match &se.k {
+                        EK::Int(n) => Some(*n as i128),
+                        EK::Un("-", inner) => match inner.k {
+                            EK::Int(n) => Some(-(n as i128)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(n) = lit {
                         if n <= 0 {
                             self.err(
                                 diag("the step of a `for` loop must be positive", sp)
