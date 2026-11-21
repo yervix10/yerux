@@ -18,6 +18,7 @@
 # Timeouts scale with the load average (per CPU); a timed-out run is repeated once with twice the time.
 # Programs are independent, so they run in parallel; output is printed in a fixed order afterwards.
 set -uo pipefail
+export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 2
 # One suite at a time across agents/worktrees: queue on an exclusive flock (RUN_ALL_NOLOCK=1 skips it).
