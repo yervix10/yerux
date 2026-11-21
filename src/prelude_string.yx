@@ -35,6 +35,24 @@ fn std__case_cp(cp: Int, up: Bool) -> Int {
         if cp == 962 {
             return 931
         }
+        if cp == 181 {
+            return 924 // micro sign -> Greek capital mu
+        }
+        if cp == 970 || cp == 971 {
+            return cp - 32 // dialytika: ϊ ϋ -> Ϊ Ϋ
+        }
+        if cp == 940 {
+            return 902 // ά -> Ά
+        }
+        if cp >= 941 && cp <= 943 {
+            return cp - 37 // έ ή ί -> Έ Ή Ί
+        }
+        if cp == 972 {
+            return 908 // ό -> Ό
+        }
+        if cp == 973 || cp == 974 {
+            return cp - 63 // ύ ώ -> Ύ Ώ
+        }
         if cp >= 1072 && cp <= 1103 {
             return cp - 32
         }
@@ -61,8 +79,20 @@ fn std__case_cp(cp: Int, up: Bool) -> Int {
     if cp == 376 {
         return 255
     }
-    if cp >= 913 && cp <= 937 && cp != 930 {
+    if cp >= 913 && cp <= 939 && cp != 930 {
         return cp + 32
+    }
+    if cp == 902 {
+        return 940 // Ά -> ά
+    }
+    if cp >= 904 && cp <= 906 {
+        return cp + 37 // Έ Ή Ί -> έ ή ί
+    }
+    if cp == 908 {
+        return 972 // Ό -> ό
+    }
+    if cp == 910 || cp == 911 {
+        return cp + 63 // Ύ Ώ -> ύ ώ
     }
     if cp >= 1040 && cp <= 1071 {
         return cp + 32

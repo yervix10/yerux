@@ -1,0 +1,13 @@
+// to_upper maps the micro sign µ (U+00B5) to Greek capital Mu; accented / dialytika Greek letters round-trip.
+fn main() {
+  let a = String.from("µm 5µs")
+  print(a.to_upper())
+  print(a.to_upper().to_lower())
+  let g = String.from("άέήίόύώϊϋ")
+  print(g.to_upper())
+  print(g.to_upper().to_lower())
+  let h = String.from("ΆΈΉΊΌΎΏΪΫ")
+  print(h.to_lower())
+  let w = String.from("καλημέρα ΐΰ")
+  print(w.to_upper())
+}
