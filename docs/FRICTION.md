@@ -324,7 +324,8 @@ imported module", or "module has no item called 'len'" for a parameter) when `st
 loader now tracks such declarations by block: inside the scope the name is the variable, after it (and in the
 initializer of the declaring `let`) it is the module again. Closure parameters and tuple/match patterns that bind a
 module name are not tracked yet (rename them or import with `as`). Tests: `tests/mod_ok/shadow_module`,
-`tests/mod_err/shadow_hides_module` (the module is hidden inside the scope: the error is the ordinary "no method").
+`tests/mod_err/shadow_hides_module` (the module is hidden inside the scope: the error is the ordinary "no method"). The
+self-hosted resolver (`selfhost/resolve.yx`) follows the same scoping (`tests/selfhost_resolve.sh`, 0 mismatches).
 
 ## Fixed: moving a tuple element named the internal field
 

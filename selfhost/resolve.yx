@@ -163,12 +163,15 @@ fn resolve_path(resolver: mut Resolver, ctx: view FileContext, name: view String
 fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>, index: Int) {
   let tag = String.from(tree.at(index).tag)
   var first = index + 1
+  // locals that hide a module alias (parameters, loop variables, `let`s) end with their block, function or loop
+  let mark = ctx.shadowed.len()
+  var late_shadow = String.new()
   if tag == "Field" || tag == "Method" {
     let recv = ast.child(tree, index, 0)
     if tree.at(recv).tag == "Var" {
       let alias = ast.name_at(tree, recv, 0)
       let member = ast.name_at(tree, index, 1)
-      if resolve_qualified(resolver, ctx, alias, member) {
+      if !ctx.shadowed.contains(alias) && resolve_qualified(resolver, ctx, alias, member) {
         first = tree.at(recv).end
       }
     }
@@ -186,11 +189,14 @@ fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNo
   } else if tag == "Var" || tag == "Move" {
     resolve_name(resolver, ctx, ast.name_at(tree, index, 0), "value")
   } else if tag == "Let" {
+    // the initializer still sees the module: the name is hidden only after it
+    late_shadow = ast.name_at(tree, index, 0)
+  } else if tag == "Param" {
     let name = ast.name_at(tree, index, 0)
-    if alias_module(ctx, name) >= 0 {
-      issue(resolver, ctx.module_id, "alias-shadow:{name}")
-      ctx.shadowed.push(move name)
-    }
+    if alias_module(ctx, name) >= 0 { ctx.shadowed.push(move name) }
+  } else if tag == "For" {
+    let name = ast.name_at(tree, index, 1)
+    if alias_module(ctx, name) >= 0 { ctx.shadowed.push(move name) }
   }
 
   var i = first
@@ -198,6 +204,8 @@ fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNo
     visit(resolver, ctx, tree, i)
     i = tree.at(i).end
   }
+  if late_shadow.len() > 0 && alias_module(ctx, late_shadow) >= 0 { ctx.shadowed.push(move late_shadow) }
+  if tag == "Block" || tag == "Fn" || tag == "For" { ctx.shadowed.truncate(mark) }
 }
 
 fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>) {
