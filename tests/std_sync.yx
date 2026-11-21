@@ -1,0 +1,14 @@
+import std.sync
+
+fn main() {
+    let gate = sync.once()
+    gate.call(|| print("once"))
+    gate.call(|| print("bad"))
+    let rendezvous = sync.barrier(1)
+    rendezvous.wait()
+    print("barrier")
+    let permits = sync.semaphore(1)
+    permits.acquire()
+    permits.release()
+    print("semaphore")
+}

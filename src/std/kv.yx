@@ -1,0 +1,109 @@
+// std.kv: persistent string key/value storage. Values are UTF-8 strings.
+import std.fs
+import std.hex
+import std.fmt
+import std.text
+
+pub struct Store {
+    path: String,
+}
+
+pub fn open(path: view String) -> Result<Store, String> {
+    return Ok(Store { path: String.from(path) })
+}
+
+pub fn set(store: view Store, key: view String, value: view String) -> Result<Int, String> {
+    var current = String.new()
+    match fs.read_to_string(store.path) {
+        Ok(contents) => { current = move contents }
+        Err(e) => {
+            if e.code != 2 { return Err(String.from(e.message)) }
+        }
+    }
+    let key_hex = hex.encode(key)
+    let value_hex = hex.encode(value)
+    var next = String.from(current)
+    next.push_str(key_hex)
+    next.push_byte(9)
+    next.push_str(value_hex)
+    next.push_byte(10)
+    var temp = String.from(store.path)
+    temp.push_str(".tmp")
+    match fs.write(temp, next) {
+        Ok(_) => {
+            match fs.rename(temp, store.path) {
+                Ok(_) => { return Ok(value.len()) }
+                Err(e) => { return Err(String.from(e.message)) }
+            }
+        }
+        Err(e) => { return Err(String.from(e.message)) }
+    }
+}
+
+pub fn get(store: view Store, key: view String) -> Result<Option<String>, String> {
+    var contents = String.new()
+    match fs.read_to_string(store.path) {
+        Ok(value) => { contents = move value }
+        Err(e) => {
+            if e.code == 2 { return Ok(None) }
+            return Err(String.from(e.message))
+        }
+    }
+    let target = hex.encode(key)
+    let lines = contents.split("\n")
+    var found = Option<String>.None
+    for line in lines {
+        let fields = line.split("\t")
+        if fields.len() == 2 && fields[0] == target {
+            match hex.decode(fields[1]) {
+                Ok(value) => { found = Some(move value) }
+                Err(_) => { return Err(String.from("corrupt kv record")) }
+            }
+        }
+    }
+    return Ok(move found)
+}
+
+pub fn set_int(store: view Store, key: view String, value: Int) -> Result<Int, String> {
+    let encoded = fmt.format_int(value, 10)
+    return set(store, key, encoded)
+}
+
+pub fn get_int(store: view Store, key: view String) -> Result<Option<Int>, String> {
+    match get(store, key) {
+        Ok(value) => {
+            match value {
+                Some(encoded) => {
+                    match text.parse_int(encoded) {
+                        Ok(number) => { return Ok(Some(number)) }
+                        Err(_) => { return Err(String.from("stored value is not an integer")) }
+                    }
+                }
+                None => { return Ok(None) }
+            }
+        }
+        Err(e) => { return Err(move e) }
+    }
+}
+
+pub fn set_bool(store: view Store, key: view String, value: Bool) -> Result<Int, String> {
+    if value { return set(store, key, "true") }
+    return set(store, key, "false")
+}
+
+pub fn get_bool(store: view Store, key: view String) -> Result<Option<Bool>, String> {
+    match get(store, key) {
+        Ok(value) => {
+            match value {
+                Some(encoded) => {
+                    match text.parse_bool(encoded) {
+                        Ok(flag) => { return Ok(Some(flag)) }
+                        Err(_) => { return Err(String.from("stored value is not a boolean")) }
+                    }
+                }
+                None => { return Ok(None) }
+            }
+        }
+        Err(e) => { return Err(move e) }
+    }
+}

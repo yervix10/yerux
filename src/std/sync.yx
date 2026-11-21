@@ -1,0 +1,47 @@
+// std.sync: small atomic coordination helpers (busy-waiting).
+pub struct Once { state: Atomic<Int> }
+pub struct Barrier { parties: Int, arrived: Atomic<Int>, generation: Atomic<Int> }
+pub struct Semaphore { permits: Atomic<Int> }
+
+pub fn once() -> Once { return Once { state: Atomic<Int>.new(0) } }
+pub fn barrier(parties: Int) -> Barrier {
+    if parties < 1 { panic("barrier requires at least one party") }
+    return Barrier { parties: parties, arrived: Atomic<Int>.new(0), generation: Atomic<Int>.new(0) }
+}
+pub fn semaphore(permits: Int) -> Semaphore {
+    if permits < 0 { panic("semaphore permits cannot be negative") }
+    return Semaphore { permits: Atomic<Int>.new(permits) }
+}
+
+impl Once {
+    fn call(view self, action: fn()) {
+        if self.state.compare_swap(0, 1) {
+            action()
+            self.state.store(2)
+        } else {
+            while self.state.load() != 2 {}
+        }
+    }
+}
+
+impl Barrier {
+    fn wait(view self) {
+        let gen = self.generation.load()
+        if self.arrived.add(1) + 1 == self.parties {
+            self.arrived.store(0)
+            self.generation.store(gen + 1)
+        } else {
+            while self.generation.load() == gen {}
+        }
+    }
+}
+
+impl Semaphore {
+    fn acquire(view self) {
+        while true {
+            let count = self.permits.load()
+            if count > 0 && self.permits.compare_swap(count, count - 1) { return }
+        }
+    }
+    fn release(view self) { self.permits.add(1) }
+}
