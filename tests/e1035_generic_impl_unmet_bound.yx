@@ -1,0 +1,19 @@
+struct Stack<T> { items: List<T> }
+
+impl<T> Stack<T> {
+  fn new() -> Stack<T> { return Stack { items: List<T>.new() } }
+  fn push(mut self, x: T) { self.items.push(move x) }
+}
+
+impl<T: Equal> Stack<T> {
+  fn has(view self, x: view T) -> Bool { return self.items.contains(x) }
+}
+
+struct Plain { n: Int }
+
+fn main() {
+  var s = Stack<Plain>.new()
+  s.push(Plain { n: 1 })
+  let p = Plain { n: 2 }
+  print(s.has(p))
+}

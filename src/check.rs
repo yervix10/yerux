@@ -6435,7 +6435,8 @@ impl<'a> Checker<'a> {
                     self.queue.push((
                         f,
                         format!(
-                            "the built-in {} for {}",
+                            "the {} {} for {}",
+                            if self.ps.impls[ii].prelude { "built-in" } else { "generic" },
                             tn.as_deref().unwrap_or("impl"),
                             self.types.name(ty)
                         ),
@@ -7773,6 +7774,51 @@ impl<'a> Checker<'a> {
         }
         let _ = user_traits;
         let n = self.ps.impls.len();
+        // user generic impls: bounds name real traits; inherent impls of overlapping types do not repeat a method
+        for ii in 0..n {
+            if self.ps.impls[ii].prelude || self.ps.impls[ii].generics.is_empty() {
+                continue;
+            }
+            let gs = self.ps.impls[ii].generics.clone();
+            for tp in &gs {
+                for (b, bp) in &tp.bounds {
+                    if !tnames.contains(b) {
+                        self.err(
+                            diag(format!("unknown trait '{}' in the bound of {}", b, tp.name), *bp)
+                                .note(format!("known traits: {}", known()))
+                                .note("help: declare it with `trait Name { fn method(view self) -> Int }`"),
+                        );
+                    }
+                }
+            }
+            if self.ps.impls[ii].trait_name.is_some() {
+                continue;
+            }
+            for jj in 0..ii {
+                let (a, b) = (&self.ps.impls[ii], &self.ps.impls[jj]);
+                if b.trait_name.is_some() || b.prelude {
+                    continue;
+                }
+                let mut pids = a.pids.clone();
+                pids.extend(b.pids.iter());
+                let mut bind = vec![None; pids.len()];
+                if unify(&self.types, a.self_ty, b.self_ty, &pids, &mut bind).is_err() {
+                    continue;
+                }
+                let dup: Vec<(String, Pos)> = a
+                    .methods
+                    .iter()
+                    .filter(|m| b.methods.iter().any(|o| o.name == m.name))
+                    .map(|m| (m.name.clone(), m.pos))
+                    .collect();
+                for (mn, mp) in dup {
+                    self.err(
+                        diag(format!("method '{}' is defined twice for overlapping impls of {}", mn, self.tn(self.ps.impls[ii].self_ty)), mp)
+                            .note("two `impl` blocks of the same generic type cannot both define a method with this name, even with different bounds"),
+                    );
+                }
+            }
+        }
         for ii in 0..n {
             let (tn, tpos, ty, ipos, prelude) = {
                 let im = &self.ps.impls[ii];

@@ -1,0 +1,12 @@
+true
+Stack[1, 2]
+2
+3
+3
+25
+Stack[a, b]
+true
+Pair { a: 1, b: x }
+true
+Node(1, 2)
+Leaf

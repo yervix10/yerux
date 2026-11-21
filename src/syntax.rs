@@ -2846,15 +2846,11 @@ impl Parser {
     fn impl_def(&mut self, funcs: &mut Vec<Func>) -> PR<()> {
         let ipos = self.bump().pos;
         let prelude = self.i < self.prelude_len;
-        // `impl<T: Show> ...`: only the built-in library has generic impls
+        // `impl<T: Show> ...`: generic impls (library and user); their methods are parsed per instantiation
         let mut generics: Vec<TParam> = vec![];
         let mut pids: Vec<usize> = vec![];
         let saved_tp = self.tparams.clone();
         if self.is_sym("<") {
-            if !prelude {
-                return Err(diag("generic `impl` blocks are not supported yet", self.pos())
-                    .note("help: write a generic function instead (`fn show_all<T: Show>(items: view List<T>)`), or an `impl` for one concrete type"));
-            }
             generics = self.generics_list()?;
             for g in &generics {
                 let t = self.new_param(&g.name, g.bounds.iter().map(|b| b.0.clone()).collect());
@@ -2896,7 +2892,7 @@ impl Parser {
                     h.pos,
                 ));
             }
-            let lazy = prelude;
+            let lazy = prelude || !generics.is_empty();
             if lazy {
                 self.skip_item()?;
             } else {
@@ -4298,7 +4294,7 @@ impl Parser {
 /// `derive Clone, Equal, Show for Name` (top level, after or before the definition): replaced by ordinary
 /// `impl` blocks generated field by field / variant by variant, so every later stage sees plain impls.
 /// An unknown trait or type name produces an impl the checker rejects with its usual error.
-fn expand_derives(user: Vec<Token>) -> Vec<Token> {
+pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
     if !user
         .iter()
         .any(|t| matches!(&t.t, Tok::Id(k) if k == "derive"))
@@ -4307,6 +4303,7 @@ fn expand_derives(user: Vec<Token>) -> Vec<Token> {
     }
     // definitions: name -> (is_struct, generic, body tokens between the braces)
     let mut defs: HashMap<String, (bool, Vec<Token>)> = HashMap::new();
+    let mut gens: HashMap<String, Vec<String>> = HashMap::new();
     let mut depth = 0i32;
     let mut i = 0;
     while i < user.len() {
@@ -4316,9 +4313,14 @@ fn expand_derives(user: Vec<Token>) -> Vec<Token> {
             Tok::Id(k) if depth == 0 && (k == "struct" || k == "enum") => {
                 if let Some(Tok::Id(n)) = user.get(i + 1).map(|t| &t.t) {
                     let mut j = i + 2;
+                    let mut gp = vec![];
                     while j < user.len() && user[j].t != Tok::Sym("{") {
+                        if let Tok::Id(g) = &user[j].t {
+                            gp.push(g.clone());
+                        }
                         j += 1;
                     }
+                    gens.insert(n.clone(), gp);
                     let mut d = 0;
                     let mut body = vec![];
                     let mut k2 = j;
@@ -4394,7 +4396,7 @@ fn expand_derives(user: Vec<Token>) -> Vec<Token> {
                 if f == "for" && !traits.is_empty() {
                     at = user[i].pos;
                     for tr in &traits {
-                        gen.push_str(&derive_impl(tr, name, defs.get(name), &parts));
+                        gen.push_str(&derive_impl(tr, name, defs.get(name), gens.get(name), &parts));
                     }
                     i = j + 2;
                     continue;
@@ -4426,10 +4428,18 @@ fn derive_impl(
     tr: &str,
     name: &str,
     def: Option<&(bool, Vec<Token>)>,
+    gp: Option<&Vec<String>>,
     parts: &dyn Fn(&[Token]) -> Vec<&[Token]>,
 ) -> String {
     let Some((is_struct, body)) = def else {
         return format!("impl {} for {} {{ }}\n", tr, name);
+    };
+    let gp: Vec<String> = gp.cloned().unwrap_or_default();
+    let (ih, ty) = if gp.is_empty() {
+        (format!("impl {tr}"), name.to_string())
+    } else {
+        let bs: Vec<String> = gp.iter().map(|g| format!("{g}: {tr}")).collect();
+        (format!("impl<{}> {tr}", bs.join(", ")), format!("{name}<{}>", gp.join(", ")))
     };
     if *is_struct {
         // field names: `name: Type`
@@ -4445,7 +4455,7 @@ fn derive_impl(
                 let init: Vec<String> =
                     fields.iter().map(|f| format!("{f}: self.{f}.clone()")).collect();
                 format!(
-                    "impl Clone for {name} {{ fn clone(view self) -> {name} {{ return {name} {{ {} }} }} }}\n",
+                    "{ih} for {ty} {{ fn clone(view self) -> {ty} {{ return {name} {{ {} }} }} }}\n",
                     init.join(", ")
                 )
             }
@@ -4454,7 +4464,7 @@ fn derive_impl(
                 for f in &fields {
                     b += &format!("if self.{f} != other.{f} {{ return false }}\n");
                 }
-                format!("impl Equal for {name} {{ fn eq(view self, other: view {name}) -> Bool {{\n{b}return true }} }}\n")
+                format!("{ih} for {ty} {{ fn eq(view self, other: view {ty}) -> Bool {{\n{b}return true }} }}\n")
             }
             "Show" => {
                 let items: Vec<String> =
@@ -4464,7 +4474,7 @@ fn derive_impl(
                 } else {
                     format!("{name} {{{{ {} }}}}", items.join(", "))
                 };
-                format!("impl Show for {name} {{ fn show(view self) -> String {{ return \"{text}\" }} }}\n")
+                format!("{ih} for {ty} {{ fn show(view self) -> String {{ return \"{text}\" }} }}\n")
             }
             _ => format!("impl {tr} for {name} {{ }}\n"),
         }
@@ -4497,7 +4507,7 @@ fn derive_impl(
                     let val = if *n == 0 { format!("{name}.{v}") } else { format!("{name}.{v}({})", args.join(", ")) };
                     arms += &format!("{} => {{ return {val} }}\n", pat(v, &a));
                 }
-                format!("impl Clone for {name} {{ fn clone(view self) -> {name} {{ match self {{\n{arms}}} }} }}\n")
+                format!("{ih} for {ty} {{ fn clone(view self) -> {ty} {{ match self {{\n{arms}}} }} }}\n")
             }
             "Equal" => {
                 let mut arms = String::new();
@@ -4512,7 +4522,7 @@ fn derive_impl(
                         pat(v, &b)
                     );
                 }
-                format!("impl Equal for {name} {{ fn eq(view self, other: view {name}) -> Bool {{ match self {{\n{arms}}} }} }}\n")
+                format!("{ih} for {ty} {{ fn eq(view self, other: view {ty}) -> Bool {{ match self {{\n{arms}}} }} }}\n")
             }
             "Show" => {
                 let mut arms = String::new();
@@ -4526,7 +4536,7 @@ fn derive_impl(
                     };
                     arms += &format!("{} => {{ return \"{txt}\" }}\n", pat(v, &a));
                 }
-                format!("impl Show for {name} {{ fn show(view self) -> String {{ match self {{\n{arms}}} }} }}\n")
+                format!("{ih} for {ty} {{ fn show(view self) -> String {{ match self {{\n{arms}}} }} }}\n")
             }
             _ => format!("impl {tr} for {name} {{ }}\n"),
         }
