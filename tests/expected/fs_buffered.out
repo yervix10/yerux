@@ -1,0 +1,31 @@
+mkdir: ok 0
+write_many: ok 0
+size 208900
+20002 lines, first 'line 0', last 'z'
+read_many: ok 20002
+write: ok 12
+97
+read 2: 98 10
+3
+<cd>
+<>
+<last>
+eof
+12
+buffered: ok 12
+bytes: ok 1
+kept by drop!
+small: ok 1
+big: ok 70000
+flush: ok 0
+flush empty: ok 0
+finish: ok 0
+70001
+true
+raw: ok 3
+true
+true
+true
+buffer: ok 1
+flush read-only: error 9
+cleanup: ok 0

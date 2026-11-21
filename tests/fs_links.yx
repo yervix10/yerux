@@ -1,0 +1,117 @@
+// std.fs permissions (chmod) and links (symlink, read_link, hard_link), errors as values
+import std.fs
+import std.io
+
+fn kind_name(k: io.IoErrorKind) -> Text {
+  if k == io.IoErrorKind.NotFound { return "NotFound" }
+  if k == io.IoErrorKind.AlreadyExists { return "AlreadyExists" }
+  if k == io.IoErrorKind.InvalidInput { return "InvalidInput" }
+  if k == io.IoErrorKind.PermissionDenied { return "PermissionDenied" }
+  return "other"
+}
+
+fn report(what: Text, r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => { print("{what}: ok {n}") }
+    Err(e) => { print("{what}: {kind_name(e.kind)}") }
+  }
+}
+
+fn mode_of(p: view String) -> Int {
+  match fs.metadata(p) {
+    Ok(m) => { return m.mode }
+    Err(e) => { return -1 }
+  }
+}
+
+fn main() {
+  let dir = "/tmp/yerux_fs_links_{io.process_id()}"
+  report("mkdir", fs.create_dir(dir))
+  let file = "{dir}/data.txt"
+  report("write", fs.write(file, "payload"))
+
+  // permissions
+  report("chmod 0o600", fs.set_permissions(file, 384))
+  print(mode_of(file))
+  report("chmod 0o755", fs.set_permissions(file, 493))
+  print(mode_of(file))
+  report("chmod bad mode", fs.set_permissions(file, 4096))
+  report("chmod negative", fs.set_permissions(file, -1))
+  report("chmod missing", fs.set_permissions("{dir}/missing", 420))
+  report("chmod 0", fs.set_permissions(file, 0))
+  print(mode_of(file))
+  let root = __syscall(107, 0, 0, 0, 0, 0, 0) == 0     // geteuid: root ignores permission bits
+  match fs.read_to_string(file) {
+    Ok(t) => { if root { print("open no-permission: PermissionDenied") } else { print("unexpected success") } }
+    Err(e) => { print("open no-permission: {kind_name(e.kind)}") }
+  }
+  report("chmod back", fs.set_permissions(file, 420))
+
+  // symbolic links
+  let link = "{dir}/link"
+  report("symlink", fs.symlink("data.txt", link))
+  report("symlink again", fs.symlink("data.txt", link))
+  match fs.read_link(link) {
+    Ok(t) => { print("target {t}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.symlink_metadata(link) {
+    Ok(m) => { print("lstat {m.kind.show()}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.metadata(link) {
+    Ok(m) => { print("stat {m.kind.show()} {m.size}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_to_string(link) {
+    Ok(t) => { print("through link: {t}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  let dangling = "{dir}/dangling"
+  report("dangling symlink", fs.symlink("nowhere/at/all", dangling))
+  print(fs.exists(dangling))
+  match fs.symlink_metadata(dangling) {
+    Ok(m) => { print("dangling lstat {m.kind.show()}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_link(file) {
+    Ok(t) => { print("unexpected success") }
+    Err(e) => { print("read_link on a file: {kind_name(e.kind)}") }
+  }
+  match fs.read_link("{dir}/missing") {
+    Ok(t) => { print("unexpected success") }
+    Err(e) => { print("read_link missing: {kind_name(e.kind)}") }
+  }
+  var long_target = String.new()
+  for i in 0..600 { long_target.push_byte(97 + i % 26) }
+  let longl = "{dir}/long"
+  report("long symlink", fs.symlink(long_target, longl))
+  match fs.read_link(longl) {
+    Ok(t) => { print(t.len()) print(t == long_target) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // hard links share the content
+  let hard = "{dir}/hard.txt"
+  report("hard_link", fs.hard_link(file, hard))
+  report("hard_link again", fs.hard_link(file, hard))
+  report("hard_link missing", fs.hard_link("{dir}/missing", "{dir}/h2"))
+  report("append via hard", fs.append(hard, "+more"))
+  match fs.read_to_string(file) {
+    Ok(t) => { print(t) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // listings report links as links, remove_dir_all does not follow them
+  let outside = "/tmp/yerux_fs_links_out_{io.process_id()}"
+  report("outside dir", fs.create_dir(outside))
+  report("outside file", fs.write("{outside}/keep.txt", "keep"))
+  report("dir symlink", fs.symlink(outside, "{dir}/out"))
+  match fs.read_dir_entries(dir) {
+    Ok(es) => { for e in es { print("{e.name} {e.kind.show()}") } }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  report("remove_dir_all", fs.remove_dir_all(dir))
+  print(fs.exists("{outside}/keep.txt"))
+  report("remove outside", fs.remove_dir_all(outside))
+}

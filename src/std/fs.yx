@@ -454,3 +454,706 @@ pub fn remove_dir_all(path: view String) -> Result<Int, io.IoError> {
     }
     return remove_dir(path)
 }
+
+// ───────────────────────── binary files (List<UInt8> / [UInt8] slices) ─────────────────────────
+
+// Write `n` bytes from raw memory to fd (EINTR retried). Returns 0 or a positive errno.
+fn write_raw(fd: Int, p: Int, n: Int) -> Int {
+    var off = 0
+    while off < n {
+        let w = __syscall(1, fd, p + off, n - off, 0, 0, 0)
+        if w == -4 {
+            continue
+        }
+        if w < 0 {
+            return 0 - w
+        }
+        off = off + w
+    }
+    return 0
+}
+
+// The bytes of a slice copied to a fresh raw block (the caller frees it). List<UInt8> keeps one word per
+// element, so the bytes have to be packed before a write(2).
+fn pack(data: view [UInt8]) -> Int {
+    let n = data.len()
+    let p = __alloc(n + 1)
+    var i = 0
+    while i < n {
+        __store8(p + i, data[i].to_int())
+        i = i + 1
+    }
+    return p
+}
+
+fn push_bytes(out: mut List<UInt8>, p: Int, n: Int) {
+    var i = 0
+    while i < n {
+        out.push(__load8(p + i).to_uint8())
+        i = i + 1
+    }
+}
+
+fn write_bytes_flags(path: view String, data: view [UInt8], flags: Int) -> Result<Int, io.IoError> {
+    let cp = io.cpath(path)?
+    let fd = __syscall(2, cp.raw_addr(), flags, 420, 0, 0, 0)
+    if fd < 0 {
+        return Err(io.os_error("open", path, 0 - fd))
+    }
+    let n = data.len()
+    let p = pack(data)
+    var err = write_raw(fd, p, n)
+    __free(p)
+    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
+    if err == 0 && c < 0 {
+        err = 0 - c
+    }
+    if err != 0 {
+        return Err(io.os_error("write", path, err))
+    }
+    return Ok(n)
+}
+
+/// The whole file as bytes (any content).
+pub fn read_bytes(path: view String) -> Result<List<UInt8>, io.IoError> {
+    var f = open(path)?
+    return f.read_to_end()
+}
+
+/// Create or truncate `path` (mode 0644) and write the bytes of `data` (a `List<UInt8>`, an array
+/// `[UInt8; N]` or a slice `x[a..b]`). Returns the number of bytes written.
+pub fn write_bytes(path: view String, data: view [UInt8]) -> Result<Int, io.IoError> {
+    return write_bytes_flags(path, data, 524865)
+}
+
+/// Append the bytes of `data` to `path`, creating it when missing.
+pub fn append_bytes(path: view String, data: view [UInt8]) -> Result<Int, io.IoError> {
+    return write_bytes_flags(path, data, 525377)
+}
+
+/// The bytes of a String as a List<UInt8> (UTF-8).
+pub fn string_bytes(s: view String) -> List<UInt8> {
+    var out = List<UInt8>.new()
+    var i = 0
+    while i < s.len() {
+        out.push(s.byte(i).to_uint8())
+        i = i + 1
+    }
+    return out
+}
+
+/// A String from bytes; `InvalidData` when they are not valid UTF-8.
+pub fn bytes_to_string(b: view [UInt8]) -> Result<String, io.IoError> {
+    var s = String.new()
+    var i = 0
+    while i < b.len() {
+        s.push_byte(b[i].to_int())
+        i = i + 1
+    }
+    return io.checked_text(move s)
+}
+
+// ───────────────────────── permissions and links ─────────────────────────
+
+/// Set the permission bits of `path` (`chmod`, e.g. `0o644` = 420, `0o755` = 493; 0..4095).
+pub fn set_permissions(path: view String, mode: Int) -> Result<Int, io.IoError> {
+    if mode < 0 || mode > 4095 {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "set permissions: mode must be in 0..=0o7777"))
+    }
+    let cp = io.cpath(path)?
+    let r = __syscall(90, cp.raw_addr(), mode, 0, 0, 0, 0)
+    if r < 0 {
+        return Err(io.os_error("set permissions", path, 0 - r))
+    }
+    return Ok(0)
+}
+
+/// Create a symbolic link `link` that points at `target` (the target need not exist; it is stored as text).
+pub fn symlink(target: view String, link: view String) -> Result<Int, io.IoError> {
+    let a = io.cpath(target)?
+    let b = io.cpath(link)?
+    let r = __syscall(88, a.raw_addr(), b.raw_addr(), 0, 0, 0, 0)
+    if r < 0 {
+        return Err(io.os_error("symlink", link, 0 - r))
+    }
+    return Ok(0)
+}
+
+/// The target stored in symbolic link `path` (not resolved). `InvalidInput` when `path` is not a link.
+pub fn read_link(path: view String) -> Result<String, io.IoError> {
+    let cp = io.cpath(path)?
+    var size = 256
+    while true {
+        let buf = __alloc(size)
+        let r = __syscall(89, cp.raw_addr(), buf, size, 0, 0, 0)
+        if r < 0 {
+            __free(buf)
+            return Err(io.os_error("read link", path, 0 - r))
+        }
+        if r == size && size < 1048576 {
+            __free(buf)
+            size = size * 4
+            continue
+        }
+        var s = String.new()
+        s.push_raw(buf, r)
+        __free(buf)
+        return io.checked_text(move s)
+    }
+    return Ok(String.new())
+}
+
+/// A second name `link` for the file `target` (hard link, same file system).
+pub fn hard_link(target: view String, link: view String) -> Result<Int, io.IoError> {
+    let a = io.cpath(target)?
+    let b = io.cpath(link)?
+    let r = __syscall(86, a.raw_addr(), b.raw_addr(), 0, 0, 0, 0)
+    if r < 0 {
+        return Err(io.os_error("hard link", link, 0 - r))
+    }
+    return Ok(0)
+}
+
+// ───────────────────────── file handles ─────────────────────────
+
+/// An open file. It owns its descriptor: dropping the File closes it (errors on that implicit close are
+/// ignored; call `fs.close(f)` to see them). Move-only like every value with a `Drop`.
+pub struct File {
+    fd: Int,
+    path: String,
+}
+
+impl Drop for File {
+    fn drop(mut self) {
+        if self.fd >= 0 {
+            let r = __syscall(3, self.fd, 0, 0, 0, 0, 0)
+            self.fd = -1
+        }
+    }
+}
+
+/// How `open_with` opens a file. Start from `fs.options()` (read only) and set the fields.
+pub struct OpenOptions {
+    read: Bool,
+    write: Bool,
+    append: Bool,
+    create: Bool,
+    truncate: Bool,
+    create_new: Bool,
+    mode: Int,
+}
+
+/// Read-only, no creation, mode 0644 for files that get created.
+pub fn options() -> OpenOptions {
+    return OpenOptions { read: true, write: false, append: false, create: false, truncate: false, create_new: false, mode: 420 }
+}
+
+/// Open with explicit options. `InvalidInput` for a combination that makes no sense (nothing to do, or
+/// truncate/create without write access).
+pub fn open_with(path: view String, o: view OpenOptions) -> Result<File, io.IoError> {
+    let writing = o.write || o.append
+    if !o.read && !writing {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "open: neither read nor write access requested"))
+    }
+    if (o.truncate || o.create || o.create_new) && !writing {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "open: create/truncate need write or append access"))
+    }
+    if o.mode < 0 || o.mode > 4095 {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "open: mode must be in 0..=0o7777"))
+    }
+    // O_CLOEXEC always; O_RDONLY 0, O_WRONLY 1, O_RDWR 2
+    var flags = 524288
+    if o.read && writing {
+        flags = flags + 2
+    } else if writing {
+        flags = flags + 1
+    }
+    if o.append {
+        flags = flags + 1024
+    }
+    if o.create_new {
+        flags = flags + 64 + 128
+    } else if o.create {
+        flags = flags + 64
+    }
+    if o.truncate {
+        flags = flags + 512
+    }
+    let cp = io.cpath(path)?
+    let fd = __syscall(2, cp.raw_addr(), flags, o.mode, 0, 0, 0)
+    if fd < 0 {
+        return Err(io.os_error("open", path, 0 - fd))
+    }
+    return Ok(File { fd: fd, path: String.from(path) })
+}
+
+/// Open an existing file for reading.
+pub fn open(path: view String) -> Result<File, io.IoError> {
+    var o = options()
+    return open_with(path, o)
+}
+
+/// Create or truncate a file for writing (mode 0644).
+pub fn create(path: view String) -> Result<File, io.IoError> {
+    var o = options()
+    o.read = false
+    o.write = true
+    o.create = true
+    o.truncate = true
+    return open_with(path, o)
+}
+
+/// Open for appending, creating the file when missing.
+pub fn open_append(path: view String) -> Result<File, io.IoError> {
+    var o = options()
+    o.read = false
+    o.append = true
+    o.create = true
+    return open_with(path, o)
+}
+
+/// Close a file and report the error of close(2) (dropping a File closes it silently).
+pub fn close(f: File) -> Result<Int, io.IoError> {
+    var g = move f
+    if g.fd < 0 {
+        return Ok(0)
+    }
+    let r = __syscall(3, g.fd, 0, 0, 0, 0, 0)
+    g.fd = -1
+    if r < 0 {
+        return Err(io.os_error("close", g.path, 0 - r))
+    }
+    return Ok(0)
+}
+
+fn seek_raw(f: view File, off: Int, whence: Int) -> Result<Int, io.IoError> {
+    let r = __syscall(8, f.fd, off, whence, 0, 0, 0)
+    if r < 0 {
+        return Err(io.os_error("seek", f.path, 0 - r))
+    }
+    return Ok(r)
+}
+
+// read(2) into raw memory, EINTR retried; Ok(0) at end of file
+fn read_raw(f: view File, p: Int, n: Int) -> Result<Int, io.IoError> {
+    while true {
+        let r = __syscall(0, f.fd, p, n, 0, 0, 0)
+        if r == -4 {
+            continue
+        }
+        if r < 0 {
+            return Err(io.os_error("read", f.path, 0 - r))
+        }
+        return Ok(r)
+    }
+    return Ok(0)
+}
+
+impl File {
+    /// Read up to `buf.len()` bytes into `buf`; returns how many (0 at end of file).
+    fn read(mut self, buf: mut [UInt8]) -> Result<Int, io.IoError> {
+        let n = buf.len()
+        if n == 0 {
+            return Ok(0)
+        }
+        let p = __alloc(n)
+        match read_raw(self, p, n) {
+            Ok(got) => {
+                var i = 0
+                while i < got {
+                    buf[i] = __load8(p + i).to_uint8()
+                    i = i + 1
+                }
+                __free(p)
+                return Ok(got)
+            }
+            Err(e) => {
+                __free(p)
+                return Err(move e)
+            }
+        }
+    }
+
+    /// Up to `max` bytes (fewer near the end of the file, empty at the end).
+    fn read_bytes(mut self, max: Int) -> Result<List<UInt8>, io.IoError> {
+        var out = List<UInt8>.new()
+        if max <= 0 {
+            return Ok(move out)
+        }
+        let p = __alloc(max)
+        match read_raw(self, p, max) {
+            Ok(got) => {
+                push_bytes(out, p, got)
+                __free(p)
+                return Ok(move out)
+            }
+            Err(e) => {
+                __free(p)
+                return Err(move e)
+            }
+        }
+    }
+
+    /// Everything from the current position to the end of the file.
+    fn read_to_end(mut self) -> Result<List<UInt8>, io.IoError> {
+        var out = List<UInt8>.new()
+        let p = __alloc(65536)
+        while true {
+            match read_raw(self, p, 65536) {
+                Ok(got) => {
+                    if got == 0 {
+                        break
+                    }
+                    push_bytes(out, p, got)
+                }
+                Err(e) => {
+                    __free(p)
+                    return Err(move e)
+                }
+            }
+        }
+        __free(p)
+        return Ok(move out)
+    }
+
+    /// The rest of the file as a String; `InvalidData` when it is not valid UTF-8.
+    fn read_to_string(mut self) -> Result<String, io.IoError> {
+        var s = String.new()
+        let p = __alloc(65536)
+        while true {
+            match read_raw(self, p, 65536) {
+                Ok(got) => {
+                    if got == 0 {
+                        break
+                    }
+                    s.push_raw(p, got)
+                }
+                Err(e) => {
+                    __free(p)
+                    return Err(move e)
+                }
+            }
+        }
+        __free(p)
+        return io.checked_text(move s)
+    }
+
+    /// Write all of `data`; returns its length.
+    fn write(mut self, data: view [UInt8]) -> Result<Int, io.IoError> {
+        let n = data.len()
+        let p = pack(data)
+        let err = write_raw(self.fd, p, n)
+        __free(p)
+        if err != 0 {
+            return Err(io.os_error("write", self.path, err))
+        }
+        return Ok(n)
+    }
+
+    /// Write the bytes of `s`; returns its length.
+    fn write_str(mut self, s: view String) -> Result<Int, io.IoError> {
+        let err = write_raw(self.fd, s.raw_addr(), s.len())
+        if err != 0 {
+            return Err(io.os_error("write", self.path, err))
+        }
+        return Ok(s.len())
+    }
+
+    /// Move to byte `pos` from the start; returns the new position.
+    fn seek(mut self, pos: Int) -> Result<Int, io.IoError> {
+        return seek_raw(self, pos, 0)
+    }
+
+    /// Move by `delta` bytes from the current position.
+    fn seek_relative(mut self, delta: Int) -> Result<Int, io.IoError> {
+        return seek_raw(self, delta, 1)
+    }
+
+    /// Move to `delta` bytes from the end (`0` = end of file, `-1` = last byte).
+    fn seek_from_end(mut self, delta: Int) -> Result<Int, io.IoError> {
+        return seek_raw(self, delta, 2)
+    }
+
+    /// The current position.
+    fn position(mut self) -> Result<Int, io.IoError> {
+        return seek_raw(self, 0, 1)
+    }
+
+    /// Truncate or extend (with zero bytes) the file to `n` bytes (needs write access).
+    fn set_len(mut self, n: Int) -> Result<Int, io.IoError> {
+        let r = __syscall(77, self.fd, n, 0, 0, 0, 0)
+        if r < 0 {
+            return Err(io.os_error("set length", self.path, 0 - r))
+        }
+        return Ok(0)
+    }
+
+    /// Flush the file's data and metadata to the device (fsync).
+    fn sync(mut self) -> Result<Int, io.IoError> {
+        let r = __syscall(74, self.fd, 0, 0, 0, 0, 0)
+        if r < 0 {
+            return Err(io.os_error("sync", self.path, 0 - r))
+        }
+        return Ok(0)
+    }
+
+    /// fstat of the open file.
+    fn metadata(view self) -> Result<Metadata, io.IoError> {
+        let st = __alloc(144)
+        let r = __syscall(5, self.fd, st, 0, 0, 0, 0)
+        if r < 0 {
+            __free(st)
+            return Err(io.os_error("stat", self.path, 0 - r))
+        }
+        let m = __load8(st + 24) + 256 * __load8(st + 25)
+        let size = __load64(st + 48)
+        let mns = __load64(st + 88) * 1000000000 + __load64(st + 96)
+        __free(st)
+        return Ok(Metadata { kind: kind_from_mode(m), size: size, mode: m % 4096, modified_ns: mns })
+    }
+
+    /// The raw descriptor (still owned by the File).
+    fn raw_fd(view self) -> Int {
+        return self.fd
+    }
+}
+
+// ───────────────────────── buffered reading and writing ─────────────────────────
+
+/// A File with a 64 KiB read buffer: lines and single bytes without one system call each.
+pub struct Reader {
+    file: File,
+    buf: Int,
+    pos: Int,
+    end: Int,
+}
+
+impl Drop for Reader {
+    fn drop(mut self) {
+        __free(self.buf)
+        self.buf = 0
+    }
+}
+
+/// Buffered reading of an open file (takes it over; dropping the Reader closes it).
+pub fn reader(f: File) -> Reader {
+    return Reader { file: move f, buf: __alloc(65536), pos: 0, end: 0 }
+}
+
+/// Open `path` for buffered reading.
+pub fn open_reader(path: view String) -> Result<Reader, io.IoError> {
+    let f = open(path)?
+    return Ok(reader(move f))
+}
+
+impl Reader {
+    // refill when empty; false at end of file
+    fn fill(mut self) -> Result<Bool, io.IoError> {
+        if self.pos < self.end {
+            return Ok(true)
+        }
+        let n = read_raw(self.file, self.buf, 65536)?
+        self.pos = 0
+        self.end = n
+        return Ok(n > 0)
+    }
+
+    /// The next byte; None at end of file.
+    fn read_byte(mut self) -> Result<Option<UInt8>, io.IoError> {
+        let more = self.fill()?
+        if !more {
+            return Ok(None)
+        }
+        let b = __load8(self.buf + self.pos)
+        self.pos = self.pos + 1
+        return Ok(Some(b.to_uint8()))
+    }
+
+    /// Up to `buf.len()` bytes (from the buffer first); 0 at end of file.
+    fn read(mut self, buf: mut [UInt8]) -> Result<Int, io.IoError> {
+        let more = self.fill()?
+        if !more {
+            return Ok(0)
+        }
+        var n = self.end - self.pos
+        if n > buf.len() {
+            n = buf.len()
+        }
+        var i = 0
+        while i < n {
+            buf[i] = __load8(self.buf + self.pos + i).to_uint8()
+            i = i + 1
+        }
+        self.pos = self.pos + n
+        return Ok(n)
+    }
+
+    /// The next line without `\n` / `\r\n`; None at end of file. `InvalidData` for a line that is not UTF-8.
+    fn read_line(mut self) -> Result<Option<String>, io.IoError> {
+        var line = String.new()
+        var got = false
+        while true {
+            let more = self.fill()?
+            if !more {
+                break
+            }
+            got = true
+            var i = self.pos
+            while i < self.end && __load8(self.buf + i) != 10 {
+                i = i + 1
+            }
+            line.push_raw(self.buf + self.pos, i - self.pos)
+            if i < self.end {
+                self.pos = i + 1
+                break
+            }
+            self.pos = self.end
+        }
+        if !got {
+            return Ok(None)
+        }
+        if line.len() > 0 && line.byte(line.len() - 1) == 13 {
+            let t = line.slice(0, line.len() - 1)
+            let c = io.checked_text(move t)?
+            return Ok(Some(move c))
+        }
+        let c = io.checked_text(move line)?
+        return Ok(Some(move c))
+    }
+
+    /// All remaining lines.
+    fn lines(mut self) -> Result<List<String>, io.IoError> {
+        var out = List<String>.new()
+        while true {
+            match self.read_line()? {
+                Some(l) => {
+                    out.push(move l)
+                }
+                None => {
+                    break
+                }
+            }
+        }
+        return Ok(move out)
+    }
+
+    /// The rest of the file as a String.
+    fn read_to_string(mut self) -> Result<String, io.IoError> {
+        var s = String.new()
+        while true {
+            let more = self.fill()?
+            if !more {
+                break
+            }
+            s.push_raw(self.buf + self.pos, self.end - self.pos)
+            self.pos = self.end
+        }
+        return io.checked_text(move s)
+    }
+}
+
+/// A File with a 64 KiB write buffer. Dropping the Writer flushes what is left (errors ignored) and closes
+/// the file; call `flush()` or `fs.finish(w)` to see the errors.
+pub struct Writer {
+    file: File,
+    buf: Int,
+    len: Int,
+}
+
+impl Drop for Writer {
+    fn drop(mut self) {
+        if self.len > 0 {
+            let e = write_raw(self.file.fd, self.buf, self.len)
+            self.len = 0
+        }
+        __free(self.buf)
+        self.buf = 0
+    }
+}
+
+/// Buffered writing to an open file (takes it over).
+pub fn writer(f: File) -> Writer {
+    return Writer { file: move f, buf: __alloc(65536), len: 0 }
+}
+
+/// Create or truncate `path` for buffered writing.
+pub fn create_writer(path: view String) -> Result<Writer, io.IoError> {
+    let f = create(path)?
+    return Ok(writer(move f))
+}
+
+/// Flush, then close and report every error.
+pub fn finish(w: Writer) -> Result<Int, io.IoError> {
+    var x = move w
+    let r = x.flush()?
+    let c = __syscall(3, x.file.fd, 0, 0, 0, 0, 0)
+    x.file.fd = -1
+    if c < 0 {
+        return Err(io.os_error("close", x.file.path, 0 - c))
+    }
+    return Ok(0)
+}
+
+impl Writer {
+    fn put(mut self, p: Int, n: Int) -> Result<Int, io.IoError> {
+        if self.len + n > 65536 {
+            let r = self.flush()?
+        }
+        if n >= 65536 {
+            let err = write_raw(self.file.fd, p, n)
+            if err != 0 {
+                return Err(io.os_error("write", self.file.path, err))
+            }
+            return Ok(n)
+        }
+        var i = 0
+        while i < n {
+            __store8(self.buf + self.len + i, __load8(p + i))
+            i = i + 1
+        }
+        self.len = self.len + n
+        return Ok(n)
+    }
+
+    /// Write out everything buffered.
+    fn flush(mut self) -> Result<Int, io.IoError> {
+        if self.len == 0 {
+            return Ok(0)
+        }
+        let n = self.len
+        self.len = 0
+        let err = write_raw(self.file.fd, self.buf, n)
+        if err != 0 {
+            return Err(io.os_error("write", self.file.path, err))
+        }
+        return Ok(n)
+    }
+
+    fn write_str(mut self, s: view String) -> Result<Int, io.IoError> {
+        return self.put(s.raw_addr(), s.len())
+    }
+
+    /// `s` followed by `\n`.
+    fn write_line(mut self, s: view String) -> Result<Int, io.IoError> {
+        let a = self.put(s.raw_addr(), s.len())?
+        let b = self.write_byte(10u8)?
+        return Ok(a + b)
+    }
+
+    fn write_byte(mut self, b: UInt8) -> Result<Int, io.IoError> {
+        if self.len + 1 > 65536 {
+            let r = self.flush()?
+        }
+        __store8(self.buf + self.len, b.to_int())
+        self.len = self.len + 1
+        return Ok(1)
+    }
+
+    fn write(mut self, data: view [UInt8]) -> Result<Int, io.IoError> {
+        let n = data.len()
+        let p = pack(data)
+        let r = self.put(p, n)
+        __free(p)
+        return r
+    }
+}

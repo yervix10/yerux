@@ -1,0 +1,47 @@
+mkdir: ok 0
+written 7 + 5 + 2, at 14
+write_part: ok 0
+[104 101 108 108 111]
+5
+from 7: world!
+[33 10]
+12
+[100]
+11
+0
+size 14 file
+true
+14
+0
+read_part: ok 0
+write_bytes: ok 256
+append_bytes: ok 6
+262
+true
+[250 251 252 253 254 255]
+bytes_to_string: InvalidData
+[104 195 169 108 108 111]
+héllo
+create_new existing: AlreadyExists
+fresh write: ok 8
+set_len: ok 0
+sync: ok 0
+read past the end: ok 0 bytes
+123
+rw write: ok 2
+AB3
+open: neither read nor write access requested
+open: create/truncate need write or append access
+append: ok 1
+write-only read: other 9
+append seek: ok 0
+AB3+
+open missing: NotFound
+create on dir: IsDirectory
+read dir handle: IsDirectory 21
+3000
+10
+0
+explicit close: ok 0
+0
+cleanup: ok 0

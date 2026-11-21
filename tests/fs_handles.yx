@@ -1,0 +1,236 @@
+// std.fs file handles: open/read/write/seek/close, Drop closes the descriptor, errors as values
+import std.fs
+import std.io
+
+fn kind_name(k: io.IoErrorKind) -> Text {
+  if k == io.IoErrorKind.NotFound { return "NotFound" }
+  if k == io.IoErrorKind.AlreadyExists { return "AlreadyExists" }
+  if k == io.IoErrorKind.InvalidInput { return "InvalidInput" }
+  if k == io.IoErrorKind.InvalidData { return "InvalidData" }
+  if k == io.IoErrorKind.IsDirectory { return "IsDirectory" }
+  if k == io.IoErrorKind.PermissionDenied { return "PermissionDenied" }
+  return "other"
+}
+
+fn report(what: Text, r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => { print("{what}: ok {n}") }
+    Err(e) => { print("{what}: {kind_name(e.kind)} {e.code}") }
+  }
+}
+
+fn report_bytes(what: Text, r: Result<List<UInt8>, io.IoError>) {
+  match r {
+    Ok(b) => { print("{what}: ok {b.len()} bytes") }
+    Err(e) => { print("{what}: {kind_name(e.kind)} {e.code}") }
+  }
+}
+
+fn show_bytes(b: view [UInt8]) {
+  var s = String.from("[")
+  for x in b {
+    if s.len() > 1 { s.push_str(" ") }
+    s.push_int(x.to_int())
+  }
+  s.push_str("]")
+  print(s)
+}
+
+fn open_fds() -> Int {
+  match fs.read_dir("/proc/self/fd") {
+    Ok(l) => { return l.len() }
+    Err(e) => { return -1 }
+  }
+}
+
+fn write_part(path: view String) -> Result<Int, io.IoError> {
+  var f = fs.create(path)?
+  let a = f.write_str("hello, ")?
+  var data = List<UInt8>.new()
+  data.push(119u8)
+  data.push(111u8)
+  data.push(114u8)
+  data.push(108u8)
+  data.push(100u8)
+  let b = f.write(data)?
+  let arr: [UInt8; 3] = [33u8, 10u8, 0u8]
+  let c = f.write(arr[0..2])?
+  let pos = f.position()?
+  print("written {a} + {b} + {c}, at {pos}")
+  return fs.close(move f)
+}
+
+fn read_part(path: view String) -> Result<Int, io.IoError> {
+  var f = fs.open(path)?
+  var buf = [0u8; 5]
+  let n = f.read(buf)?
+  show_bytes(buf)
+  print(n)
+  let p = f.seek(7)?
+  let rest = f.read_to_string()?
+  print("from {p}: {rest.trim()}")
+  let e = f.seek_from_end(-2)?
+  let tail = f.read_bytes(10)?
+  show_bytes(tail)
+  print(e)
+  let back = f.seek_relative(-3)?
+  let one = f.read_bytes(1)?
+  show_bytes(one)
+  print(back)
+  let eof = f.read_bytes(0)?
+  print(eof.len())
+  let m = f.metadata()?
+  print("size {m.size} {m.kind.show()}")
+  print(f.raw_fd() > 2)
+  let all = f.seek(0)?
+  let bytes = f.read_to_end()?
+  print(bytes.len())
+  let more = f.read_to_end()?
+  print(more.len())
+  return Ok(0)
+}
+
+fn main() {
+  let dir = "/tmp/yerux_fs_handles_{io.process_id()}"
+  report("mkdir", fs.create_dir(dir))
+  let path = "{dir}/a.txt"
+  report("write_part", write_part(path))
+  report("read_part", read_part(path))
+
+  // whole-file binary helpers, any byte values
+  var raw = List<UInt8>.new()
+  for i in 0..256 { raw.push(i.to_uint8()) }
+  let bin = "{dir}/all.bin"
+  report("write_bytes", fs.write_bytes(bin, raw))
+  report("append_bytes", fs.append_bytes(bin, raw[250..]))
+  match fs.read_bytes(bin) {
+    Ok(b) => {
+      print(b.len())
+      var same = true
+      for i in 0..256 { if b[i].to_int() != i { same = false } }
+      print(same)
+      show_bytes(b[256..])
+      match fs.bytes_to_string(b) {
+        Ok(s) => { print("unexpected success") }
+        Err(e) => { print("bytes_to_string: {kind_name(e.kind)}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  let hello = "héllo"
+  let hb = fs.string_bytes(hello)
+  show_bytes(hb)
+  match fs.bytes_to_string(hb) {
+    Ok(s) => { print(s) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // open options
+  var o = fs.options()
+  o.write = true
+  o.create_new = true
+  match fs.open_with(path, o) {
+    Ok(f) => { print("unexpected success") }
+    Err(e) => { print("create_new existing: {kind_name(e.kind)}") }
+  }
+  let fresh = "{dir}/fresh.txt"
+  match fs.open_with(fresh, o) {
+    Ok(f) => {
+      var g = move f
+      report("fresh write", g.write_str("12345678"))
+      report("set_len", g.set_len(3))
+      report("sync", g.sync())
+      report_bytes("read past the end", g.read_bytes(4))
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_to_string(fresh) {
+    Ok(t) => { print(t) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  var rw = fs.options()
+  rw.write = true
+  match fs.open_with(fresh, rw) {
+    Ok(f) => {
+      var g = move f
+      report("rw write", g.write_str("AB"))
+      let p = g.seek(0)
+      match g.read_to_string() {
+        Ok(t) => { print(t) }
+        Err(e) => { print("unexpected: {e}") }
+      }
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  var none = fs.options()
+  none.read = false
+  match fs.open_with(fresh, none) {
+    Ok(f) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+  var bad = fs.options()
+  bad.truncate = true
+  match fs.open_with(fresh, bad) {
+    Ok(f) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+  match fs.open_append(fresh) {
+    Ok(f) => {
+      var g = move f
+      report("append", g.write_str("+"))
+      report_bytes("write-only read", g.read_bytes(1))
+      report("append seek", g.seek(0))
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.read_to_string(fresh) {
+    Ok(t) => { print(t) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.open("{dir}/missing") {
+    Ok(f) => { print("unexpected success") }
+    Err(e) => { print("open missing: {kind_name(e.kind)}") }
+  }
+  match fs.create(dir) {
+    Ok(f) => { print("unexpected success") }
+    Err(e) => { print("create on dir: {kind_name(e.kind)}") }
+  }
+  match fs.open(dir) {
+    Ok(f) => {
+      var g = move f
+      report_bytes("read dir handle", g.read_bytes(4))
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  // Drop closes: thousands of opens never run out of descriptors (the soft limit is usually 1024)
+  let before = open_fds()
+  var ok = 0
+  for i in 0..3000 {
+    match fs.open(path) {
+      Ok(f) => { ok = ok + 1 }
+      Err(e) => { print("leak at {i}: {e}") break }
+    }
+  }
+  print(ok)
+  var kept = List<fs.File>.new()
+  for i in 0..10 {
+    match fs.open(path) {
+      Ok(f) => { kept.push(move f) }
+      Err(e) => { print("unexpected: {e}") }
+    }
+  }
+  print(open_fds() - before)
+  kept.clear()
+  print(open_fds() - before)
+  match fs.open(path) {
+    Ok(f) => {
+      let g = move f
+      report("explicit close", fs.close(move g))
+    }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  print(open_fds() - before)
+
+  report("cleanup", fs.remove_dir_all(dir))
+}

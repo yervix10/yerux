@@ -1,0 +1,44 @@
+mkdir: ok 0
+write: ok 7
+chmod 0o600: ok 0
+384
+chmod 0o755: ok 0
+493
+chmod bad mode: InvalidInput
+chmod negative: InvalidInput
+chmod missing: NotFound
+chmod 0: ok 0
+0
+open no-permission: PermissionDenied
+chmod back: ok 0
+symlink: ok 0
+symlink again: AlreadyExists
+target data.txt
+lstat symlink
+stat file 7
+through link: payload
+dangling symlink: ok 0
+false
+dangling lstat symlink
+read_link on a file: InvalidInput
+read_link missing: NotFound
+long symlink: ok 0
+600
+true
+hard_link: ok 0
+hard_link again: AlreadyExists
+hard_link missing: NotFound
+append via hard: ok 5
+payload+more
+outside dir: ok 0
+outside file: ok 4
+dir symlink: ok 0
+dangling symlink
+data.txt file
+hard.txt file
+link symlink
+long symlink
+out symlink
+remove_dir_all: ok 0
+true
+remove outside: ok 0
