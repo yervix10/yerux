@@ -333,3 +333,10 @@ elements are now printed as `p.0` in every place diagnostic, and the note sugges
 `let (a, b) = move p`. Test: `tests/e1401_move_tuple_element.yx`. (The goldens of `e33` and `e35` were refreshed:
 `Clone`, added to the known traits list by the derive work, was missing from them.)
 
+## Documented: `io.exit` skips destructors and defers
+
+The language has no unwinding, so `io.exit` cannot run the cleanup of its callers. It is now documented in
+[STDLIB_IO.md](STDLIB_IO.md#ending-the-process-exit-exit_clean-run_status), with two additions: `io.exit_clean` (same
+call, explicit name) and `io.run_status(f)`, which runs `f: fn() -> Int` to completion (destructors and defers run)
+and then exits with its status. Tests `io_exit_drop`, `io_exit_skips_drop`. Not done: an `exit` that unwinds.
+
