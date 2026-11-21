@@ -16,8 +16,15 @@ fn hex(s: view String) -> String {
   return out
 }
 
-fn emit(kind: Text, value: view String) {
-  print("{kind}{hex(value)}")
+// A zero line keeps the original position-free dump format.
+fn emit_row(line: Int, row: view String) {
+  if line == 0 { print(row) }
+  else { print("{line}:{row}") }
+}
+
+fn emit(line: Int, kind: Text, value: view String) {
+  let row = "{kind}{hex(value)}"
+  emit_row(line, row)
 }
 
 fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
@@ -30,23 +37,23 @@ fn hex_value(b: Int) -> Int {
   return -1
 }
 
-fn emit_interp(parts: view List<Part>, count: Int) {
+fn emit_interp(parts: view List<Part>, count: Int, line: Int) {
   if count == 0 {
-    emit("Id:", String.from("String"))
-    emit("Sym:", String.from("."))
-    emit("Id:", String.from("new"))
-    print("Sym:28")
-    print("Sym:29")
+    emit(line, "Id:", String.from("String"))
+    emit(line, "Sym:", String.from("."))
+    emit(line, "Id:", String.from("new"))
+    emit_row(line, String.from("Sym:28"))
+    emit_row(line, String.from("Sym:29"))
     return
   }
-  if parts.at(count - 1).expr { emit("Id:", String.from("std__fmt_val")) }
-  else { emit("Id:", String.from("std__fmt_lit")) }
-  print("Sym:28")
-  emit_interp(parts, count - 1)
-  print("Sym:2c")
-  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false) }
-  else { emit("Str:", parts.at(count - 1).text) }
-  print("Sym:29")
+  if parts.at(count - 1).expr { emit(line, "Id:", String.from("std__fmt_val")) }
+  else { emit(line, "Id:", String.from("std__fmt_lit")) }
+  emit_row(line, String.from("Sym:28"))
+  emit_interp(parts, count - 1, line)
+  emit_row(line, String.from("Sym:2c"))
+  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false, line) }
+  else { emit(line, "Str:", parts.at(count - 1).text) }
+  emit_row(line, String.from("Sym:29"))
 }
 
 fn line_at(src: view String, at: Int) -> Int {
@@ -108,18 +115,29 @@ fn main() {
     Some(p) => {
       match fs.read_to_string(p) {
         Err(e) => { print("could not read {p}: {e.message}"); return }
-        Ok(src) => { lex(src, true) }
+        Ok(src) => {
+          var line = 0
+          match env.arg(2) {
+            Some(flag) => { if flag == "--positioned" { line = 1 } }
+            None => {}
+          }
+          lex(src, true, line)
+        }
       }
     }
   }
 }
 
-fn lex(src: view String, eof: Bool) {
+fn lex(src: view String, eof: Bool, first_line: Int) {
+  var line = first_line
   let n = src.len()
   var i = 0
   while i < n {
     let b = src.byte(i)
-    if b == 10 || b == 13 || b == 32 || b == 9 { i = i + 1 }
+    if b == 10 || b == 13 || b == 32 || b == 9 {
+      if b == 10 && line > 0 { line = line + 1 }
+      i = i + 1
+    }
     else if b == 47 && i + 1 < n && src.byte(i + 1) == 47 {
       while i < n && src.byte(i) != 10 { i = i + 1 }
     }
@@ -129,8 +147,8 @@ fn lex(src: view String, eof: Bool) {
       while i < n && is_alnum(src.byte(i)) { i = i + 1 }
       let ident = src.slice(start, i)
       if ident == "print" && print_interp_arg(src, i) {
-        emit("Id:", String.from("std__print_owned"))
-      } else { emit("Id:", src.slice(start, i)) }
+        emit(line, "Id:", String.from("std__print_owned"))
+      } else { emit(line, "Id:", src.slice(start, i)) }
     }
     else if is_digit(b) {
       let start = i
@@ -170,7 +188,7 @@ fn lex(src: view String, eof: Bool) {
       let core = src.slice(start, core_end).replace("_", "")
       let suffix = raw.slice(core_end - start, raw.len())
       if is_float || suffix == "f32" || suffix == "f64" {
-        print("Float:{hex(core)}:{suffix}")
+        let row = "Float:{hex(core)}:{suffix}"; emit_row(line, row)
       } else if radix != 10 {
         var value = 0
         var j = digits_start
@@ -180,19 +198,19 @@ fn lex(src: view String, eof: Bool) {
           j = j + 1
         }
         if value >= 0 {
-          if suffix.len() == 0 { print("Num:{value}") }
-          else { print("NumT:{value}:{suffix}") }
-        } else { emit("UnsupportedNumber:", raw) }
+          if suffix.len() == 0 { let row = "Num:{value}"; emit_row(line, row) }
+          else { let row = "NumT:{value}:{suffix}"; emit_row(line, row) }
+        } else { emit(line, "UnsupportedNumber:", raw) }
       } else {
         var value = 0
         if core.parse_int(value) {
-          if suffix.len() == 0 { print("Num:{value}") }
-          else { print("NumT:{value}:{suffix}") }
+          if suffix.len() == 0 { let row = "Num:{value}"; emit_row(line, row) }
+          else { let row = "NumT:{value}:{suffix}"; emit_row(line, row) }
         } else {
           let unsigned_max = String.from("18446744073709551615")
           if core.len() < unsigned_max.len() || (core.len() == unsigned_max.len() && core <= unsigned_max) {
-            print("NumT:{core}:{suffix}")
-          } else { emit("UnsupportedNumber:", raw) }
+            let row = "NumT:{core}:{suffix}"; emit_row(line, row)
+          } else { emit(line, "UnsupportedNumber:", raw) }
         }
       }
     }
@@ -232,7 +250,7 @@ fn lex(src: view String, eof: Bool) {
       }
       if j < n && src.byte(j) == 39 { j = j + 1 }
       else { report_error(src, "a character literal must contain exactly one character", i, (j - i).max(1), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
-      print("Char:{value}")
+      let row = "Char:{value}"; emit_row(line, row)
       i = j
     }
     else if b == 34 {
@@ -284,33 +302,33 @@ fn lex(src: view String, eof: Bool) {
       if i < n && src.byte(i) == 34 { i = i + 1 }
       if interpolated {
         if value.len() > 0 { parts.push(Part { expr: false, text: move value }) }
-        emit_interp(parts, parts.len())
-      } else { emit("Str:", value) }
+        emit_interp(parts, parts.len(), line)
+      } else { emit(line, "Str:", value) }
     }
     else {
       if b >= 128 {
-        print("UnsupportedCharacter:{i}")
+        let row = "UnsupportedCharacter:{i}"; emit_row(line, row)
         i = i + src.char_size(i)
       } else {
       var three = String.new()
       var two = String.new()
       if i + 2 < n && src.byte(i + 1) < 128 && src.byte(i + 2) < 128 { three = src.slice(i, i + 3) }
       if i + 1 < n && src.byte(i + 1) < 128 { two = src.slice(i, i + 2) }
-      if three == "..=" { emit("Sym:", three); i = i + 3 }
+      if three == "..=" { emit(line, "Sym:", three); i = i + 3 }
       else if two == "==" || two == "!=" || two == "<=" || two == ">=" || two == "&&" || two == "||" || two == "->" || two == "=>" || two == ".." {
-        emit("Sym:", two); i = i + 2
+        emit(line, "Sym:", two); i = i + 2
       }
       else {
         let one = src.slice(i, i + 1)
         if one == "(" || one == ")" || one == "{{" || one == "}}" || one == "[" || one == "]" || one == "," || one == ":" || one == ";" || one == "=" || one == "<" || one == ">" || one == "+" || one == "-" || one == "*" || one == "/" || one == "%" || one == "!" || one == "." || one == "|" || one == "@" || one == "?" {
-          emit("Sym:", one); i = i + 1
+          emit(line, "Sym:", one); i = i + 1
         } else {
-          print("UnsupportedCharacter:{i}")
+          let row = "UnsupportedCharacter:{i}"; emit_row(line, row)
           i = i + src.char_size(i)
         }
       }
       }
     }
   }
-  if eof { print("Eof") }
+  if eof { emit_row(line, String.from("Eof")) }
 }
