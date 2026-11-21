@@ -154,7 +154,7 @@ fn closure_open(src: view String, ts: view List<T>, i: Int) -> Bool {
   if !sym(src, ts.at(i), "|") { return false }
   if i == 0 { return false }
   let p = ts.at(i - 1)
-  if p.k == K.Sym { return !(sym(src, p, ")") || sym(src, p, "]") || sym(src, p, "}}") || (sym(src, p, ">") && is_gen_token(src, ts, i - 1))) }
+  if p.k == K.Sym { return !(sym(src, p, ")") || sym(src, p, "]") || sym(src, p, "}}") || sym(src, p, ">")) }
   if p.k == K.Word { let v = val(src, p); return same(v, "move") || same(v, "return") || same(v, "in") }
   return false
 }
@@ -170,6 +170,21 @@ fn closure_bar(src: view String, ts: view List<T>, i: Int) -> Bool {
       }
     }
     j = j + 1
+  }
+  return false
+}
+fn closure_params(src: view String, ts: view List<T>, i: Int) -> Bool {
+  var j = i - 1
+  while j >= 0 {
+    if sym(src, ts.at(j), "|") && closure_open(src, ts, j) {
+      var k = j + 1
+      while k < ts.len() {
+        if sym(src, ts.at(k), "|") { return i < k }
+        k = k + 1
+      }
+      return false
+    }
+    j = j - 1
   }
   return false
 }
@@ -241,7 +256,7 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
     if !hard && (multi_close || just_open || pending_hard || top_end || (prev_comment && pd == 0) || (stack.len() > 0 && stack.at(stack.len()-1).multi && (stack.at(stack.len()-1).decl || stack.at(stack.len()-1).lit) && prev >= 0 && sym(src, ts.at(prev), ",") && pd == 0)) { hard = true; blank = top_end || (prev_comment && t.nl >= 2) || (stack.len() > 0 && stack.at(stack.len()-1).multi && prev >= 0 && sym(src, ts.at(prev), ",") && t.nl >= 2) }
     if !hard && last_closed && !last_closed_lit && stack.len() > 0 && stack.at(stack.len()-1).multi && !close && !sym(src, t, ",") && !sym(src, t, ")") && !sym(src, t, ".") && !(t.k == K.Word && same(value, "else")) { hard = true; blank = t.nl >= 2 }
     var continuation = false
-    if !hard && t.nl > 0 && out.len() > 0 && pd == 0 {
+    if !hard && t.nl > 0 && out.len() > 0 && pd == 0 && !closure_params(src, ts, i) {
       let prev_is_generic_close = prev >= 0 && sym(src, ts.at(prev), ">") && is_gen_token(src, ts, prev)
       if is_gen_token(src, ts, i) || sym(src, t, ".") || (t.k == K.Word && same(value, "else")) || sym(src, t, "{{") { }
       else if prev >= 0 && binop(val(src, ts.at(prev))) && !prev_is_generic_close { hard = true; continuation = true }
@@ -250,8 +265,10 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
     if !hard && t.nl > 0 && t.k == K.Word && same(value, "fn") && stack.len() > 0 && stack.at(stack.len()-1).multi { hard = true }
     if close && stack.len() > 0 && stack.at(stack.len()-1).multi { hard = true }
     var closed_lit = false
-    if close && stack.len() > 0 { let o = stack.pop(); if o.multi { depth = depth - 1 } pd = o.pd; cont = o.cont; closed_lit = o.lit }
+    var restore_cont = false
+    if close && stack.len() > 0 { let o = stack.pop(); if o.multi { depth = depth - 1 } pd = o.pd; restore_cont = o.cont; closed_lit = o.lit }
     if hard { cont = continuation }
+    if close && restore_cont { cont = true }
     if hard {
       while out.len() > 0 && out.byte(out.len()-1) == 32 { out = out.slice(0, out.len() - 1) }
       if out.len() > 0 && out.byte(out.len()-1) != 10 { out.push_byte(10); if blank { out.push_byte(10) } }
@@ -274,7 +291,7 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
       while j < end { if ts.at(j).nl > 0 || ts.at(j).k == K.Comment { multi = true } j = j + 1 }
       let decl = prev >= 1 && (same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum"))
       var lit = prev >= 0 && is_struct_name(src, ts, prev) && !decl
-      if prev >= 1 && (same(val(src, ts.at(prev - 1)), "impl") || same(val(src, ts.at(prev - 1)), "for") || same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum")) { lit = false }
+      if prev >= 1 && (sym(src, ts.at(prev - 1), "->") || same(val(src, ts.at(prev - 1)), "impl") || same(val(src, ts.at(prev - 1)), "for") || same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum")) { lit = false }
       stack.push(Open { multi: multi, decl: decl, lit: lit, pd: pd, cont: cont })
       if multi { depth = depth + 1 }
       just_open = multi; pd = 0; cont = false
