@@ -111,11 +111,12 @@ AUX=(
   "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
   "lsp_vscode|bash tests/lsp_vscode.sh"
   "tokens_dump|bash tests/tokens_dump.sh"
+  "win_smoke|bash tests/win_smoke.sh"
   "dist|bash tests/dist.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
 )
-FAST_AUX=" dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
+FAST_AUX=" win_smoke dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
 aux=()
 if [ "$BLESS" = 0 ]; then
   for a in "${AUX[@]}"; do

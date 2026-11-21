@@ -54,3 +54,46 @@ jobs:
           tar -xzf dist/yerux-*.tar.gz -C "$HOME"
           "$HOME"/yerux-*/install.sh
           "$HOME/.local/bin/yerux" --version
+  windows-check:
+    # the compiler must keep compiling for Windows (no Windows-only code is run here)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add x86_64-pc-windows-gnu
+      - run: cargo check --tests --target x86_64-pc-windows-gnu
+  windows:
+    # Windows host: build, doctor, the native backend (PE executables) on examples and the fast list,
+    # and the C backend through the MinGW gcc that the runner image ships (informational)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - name: build (no warnings)
+        run: |
+          touch src/main.rs
+          cargo build --release 2>&1 | tee build.log
+          ! grep -q '^warning' build.log
+      - name: doctor
+        run: target/release/yerux.exe doctor
+      - name: native smoke suite (examples + fast list)
+        run: bash tests/win_smoke.sh
+      - name: unit tests (informational until proven on Windows)
+        continue-on-error: true
+        run: cargo test -q
+      - name: C backend with MinGW gcc (informational)
+        continue-on-error: true
+        run: |
+          export YERUX_CC=gcc
+          target/release/yerux.exe run examples/01_lists.yx
