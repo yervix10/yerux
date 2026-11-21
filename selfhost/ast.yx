@@ -92,4 +92,3 @@ pub fn decoded_name(tree: view List<AstNode>, index: Int) -> String {
 pub fn name_at(tree: view List<AstNode>, parent: Int, offset: Int) -> String {
   return decoded_name(tree, child(tree, parent, offset))
 }
-
