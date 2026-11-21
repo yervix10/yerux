@@ -4,11 +4,43 @@ import std.io
 /// A TCP socket address. `ip` must be an IPv4 or IPv6 numeric literal; no DNS lookup is performed.
 pub struct SocketAddr { ip: String, port: Int }
 
-/// An owned TCP connection. Call `close` explicitly; Yerux currently has no user-defined Drop hook.
-pub struct TcpStream { fd: Int, _owned: String }
+/// An owned TCP connection. Dropping it closes the descriptor.
+pub struct TcpStream { fd: Int }
 
-/// An owned listening TCP socket. Call `close` explicitly.
-pub struct TcpListener { fd: Int, _owned: String }
+/// An owned listening TCP socket. Dropping it closes the descriptor.
+pub struct TcpListener { fd: Int }
+
+impl Drop for TcpStream {
+  fn drop(mut self) {
+    drop_fd(self.fd)
+  }
+}
+
+impl Drop for TcpListener {
+  fn drop(mut self) {
+    drop_fd(self.fd)
+  }
+}
+
+// Retire the descriptor before close(2). Linux can release it even if close
+// reports a failure, so a later cleanup must never retry that descriptor.
+fn close_fd(fd: mut Int) -> Int {
+  let open_fd = fd
+  fd = -1
+  return __syscall(3, open_fd, 0, 0, 0, 0, 0)
+}
+
+fn drop_fd(fd: mut Int) {
+  if fd >= 0 {
+    let ignored = close_fd(fd)
+  }
+}
+
+fn close_result(fd: mut Int) -> Result<Int, io.IoError> {
+  let r = close_fd(fd)
+  if r < 0 { return Err(io.os_error("close", "socket", 0 - r)) }
+  return Ok(0)
+}
 
 pub fn address(ip: Text, port: Int) -> Result<SocketAddr, io.IoError> {
   if port < 0 || port > 65535 {
@@ -119,20 +151,17 @@ pub fn connect(a: view SocketAddr) -> Result<TcpStream, io.IoError> {
   if a.ip.find(":") >= 0 { family = 10 }
   let fd = __syscall(41, family, 1, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
+  let stream = TcpStream { fd: fd }
   let sa = __alloc(32)
   let n = sockaddr(a, sa)
   if n < 0 {
-    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
     __free(sa)
     return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal"))
   }
   let r = __syscall(42, fd, sa, n, 0, 0, 0)
   __free(sa)
-  if r < 0 {
-    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
-    return Err(io.os_error("connect", a.ip, 0 - r))
-  }
-  return Ok(TcpStream { fd: fd, _owned: String.new() })
+  if r < 0 { return Err(io.os_error("connect", a.ip, 0 - r)) }
+  return Ok(move stream)
 }
 
 /// Bind and listen on an IPv4 or `::1` IPv6 literal.
@@ -141,31 +170,34 @@ pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
   if a.ip.find(":") >= 0 { family = 10 }
   let fd = __syscall(41, family, 1, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
+  let listener = TcpListener { fd: fd }
   let yes = __alloc(4)
   __store8(yes, 1)
   let so = __syscall(54, fd, 1, 2, yes, 4, 0)
   __free(yes)
   let sa = __alloc(32)
   let n = sockaddr(a, sa)
-  if n < 0 { let c = __syscall(3, fd, 0, 0, 0, 0, 0); __free(sa); return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal")) }
+  if n < 0 {
+    __free(sa)
+    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal"))
+  }
   let b = __syscall(49, fd, sa, n, 0, 0, 0)
   __free(sa)
   if so < 0 || b < 0 {
     var e = so
     if e >= 0 { e = b }
-    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
     return Err(io.os_error("bind", a.ip, 0 - e))
   }
   let r = __syscall(50, fd, 128, 0, 0, 0, 0)
-  if r < 0 { let c = __syscall(3, fd, 0, 0, 0, 0, 0); return Err(io.os_error("listen", a.ip, 0 - r)) }
-  return Ok(TcpListener { fd: fd, _owned: String.new() })
+  if r < 0 { return Err(io.os_error("listen", a.ip, 0 - r)) }
+  return Ok(move listener)
 }
 
 /// Accept one incoming connection.
 pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
   let fd = __syscall(43, l.fd, 0, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("accept", "", 0 - fd)) }
-  return Ok(TcpStream { fd: fd, _owned: String.new() })
+  return Ok(TcpStream { fd: fd })
 }
 
 /// Read up to `limit` bytes; an empty String means orderly EOF.
@@ -187,16 +219,12 @@ pub fn write(s: view TcpStream, data: view String) -> Result<Int, io.IoError> {
   return Ok(n)
 }
 
+/// Close a stream, consuming it and reporting the result of close(2).
 pub fn close_stream(s: TcpStream) -> Result<Int, io.IoError> {
-  let r = __syscall(3, s.fd, 0, 0, 0, 0, 0)
-  s.fd = -1
-  if r < 0 { return Err(io.os_error("close", "socket", 0 - r)) }
-  return Ok(0)
+  return close_result(s.fd)
 }
 
+/// Close a listener, consuming it and reporting the result of close(2).
 pub fn close_listener(l: TcpListener) -> Result<Int, io.IoError> {
-  let r = __syscall(3, l.fd, 0, 0, 0, 0, 0)
-  l.fd = -1
-  if r < 0 { return Err(io.os_error("close", "socket", 0 - r)) }
-  return Ok(0)
+  return close_result(l.fd)
 }

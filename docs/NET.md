@@ -12,15 +12,21 @@ return at most `limit` bytes; empty data denotes EOF. Writes return the number
 of bytes accepted by one syscall and can be short. Calls block; poll/epoll and
 nonblocking modes are not provided.
 
-Sockets are represented by owning wrapper values, but the language currently
-has no user-defined `Drop` implementation. Call the matching close function
-explicitly; dropping a wrapper without closing leaks its descriptor. The first
-IPv6 implementation supports only `::1`; other IPv6 literal forms are rejected
-when converted to a sockaddr.
+## Socket ownership and close
 
-The socket wrappers carry an owned field so the checker tracks them as non-Copy
-values. `close_stream(move stream)` and `close_listener(move listener)` consume
-the wrapper; later uses are rejected as use-after-move. Since user-defined
-`Drop` is not implemented, an unclosed wrapper still leaks its fd at scope exit.
-Tests cover loopback echo on C and native, invalid literals, refused connections,
-unhandled results, and using a closed stream.
+`TcpStream` and `TcpListener` own their descriptors. When a live wrapper is
+dropped, its destructor closes the descriptor. This applies to scope exit,
+early returns, destruction of containers, and unwinding after a recoverable
+worker panic. Moving a socket transfers responsibility for the descriptor to
+the new owner.
+
+Use `net.close_stream(move stream)` or `net.close_listener(move listener)` when
+you need the result of `close(2)`. Both consume the socket and mark its
+descriptor closed before making the syscall, so subsequent cleanup cannot
+close it again, even if the syscall reports an error. Automatic close discards
+that error. Treat the underlying descriptor as an implementation detail and
+obtain owning sockets through `connect`, `listen` or `accept`.
+
+`tests/net_drop.yx` checks descriptor counts via `/proc/self/fd`, including
+descriptor reuse after a conditional move. The leak checker also verifies
+the test's heap allocations.

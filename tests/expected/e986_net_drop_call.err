@@ -1,0 +1,17 @@
+error: `drop` of net.TcpStream cannot be called directly
+ --> tests/e986_net_drop_call.yx:4:3
+  |
+4 |   s.drop()
+  |   ^^^^^^^^
+  = the compiler runs it when the value is destroyed
+  = help: end its scope or move it into a function that takes it by value
+
+error: `drop` of net.TcpListener cannot be called directly
+ --> tests/e986_net_drop_call.yx:5:3
+  |
+5 |   l.drop()
+  |   ^^^^^^^^
+  = the compiler runs it when the value is destroyed
+  = help: end its scope or move it into a function that takes it by value
+
+2 error(s). Nothing was generated.

@@ -1,0 +1,9 @@
+import std.io
+import std.net
+
+fn misuse(l: net.TcpListener) -> Result<net.TcpStream, io.IoError> {
+  let closed = net.close_listener(move l)?
+  return net.accept(l)
+}
+
+fn main() {}

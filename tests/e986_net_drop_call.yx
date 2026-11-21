@@ -1,0 +1,8 @@
+import std.net
+
+fn misuse(s: mut net.TcpStream, l: mut net.TcpListener) {
+  s.drop()
+  l.drop()
+}
+
+fn main() {}
