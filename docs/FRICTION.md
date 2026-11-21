@@ -251,9 +251,10 @@ Found while writing a small `make`. Open unless marked.
 - **`match` is a statement, not an expression** (`let lines = match r { Ok(l) => l, Err(e) => { return .. } }` is
   "unexpected keyword 'match'"). Every `Result` unwrap needs `var x = default` plus an assignment inside the arm
   (`x = move l`), which also forces a throw-away initial value for owned types.
-- **`List<String>` has no `copy()`** (it needs `T: Copy`), so cloning a list of strings needs a hand-written
+- **`List<String>` has no `copy()`** (fixed: use `clone()`, see below) (it needs `T: Copy`), so cloning a list of strings needs a hand-written
   helper. Needed here because iterating `ctx.rules.at(i).deps` while `build(ctx, ..)` takes `ctx` as `mut`
   conflicts with the borrow.
+  `List<String>.clone()` (prelude_list.yx) now copies the strings; other owned element types still need a loop.
 - **Elements cannot be bound with `let x = list.at(i)`** ("cannot move 'argv.at(..)' out of its List"); it has to
   be `String.from(list.at(i))` even to just compare it. `for x in list` borrows fine, so index loops over
   `view List<String>` are the awkward case.

@@ -2,6 +2,7 @@
 # Regression runner for the Yerux compiler.
 #   tests/run_all.sh          build + run everything, compare against goldens
 #   tests/run_all.sh --bless  (re)generate goldens from the current C backend
+#   Concurrent runs queue on /tmp/yerux-run_all.lock; RUN_ALL_NOLOCK=1 skips the lock.
 # Checks per program:
 #   C      : C backend stdout + exit code vs tests/expected/<name>.out/.code
 #   NATIVE : same on --native (SKIP when "native backend: ..." rejects it)
@@ -11,6 +12,15 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 2
+# One suite at a time across agents/worktrees: queue on an exclusive flock (RUN_ALL_NOLOCK=1 skips it).
+if [ "${RUN_ALL_NOLOCK:-0}" != "1" ] && [ -z "${RUN_ALL_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; then
+  exec 9>/tmp/yerux-run_all.lock
+  if ! flock -n 9; then
+    echo "esperando otra corrida de run_all.sh (lock /tmp/yerux-run_all.lock)…" >&2
+    flock 9
+  fi
+  export RUN_ALL_LOCKED=1
+fi
 BLESS=0
 [ "${1:-}" = "--bless" ] && BLESS=1
 cargo build --release 2>&1 | tail -n 2 || exit 2

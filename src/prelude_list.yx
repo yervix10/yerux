@@ -215,3 +215,16 @@ impl<T: Ordered> List<T> {
         self.qsort(0, self.len() - 1, depth)
     }
 }
+
+// `copy()` needs `T: Copy`; strings are cloned element by element
+impl List<String> {
+    fn clone(view self) -> List<String> {
+        var r = List<String>.new()
+        var i = 0
+        while i < self.len() {
+            r.push(String.from(self.at(i)))
+            i = i + 1
+        }
+        return r
+    }
+}
