@@ -1,0 +1,8 @@
+enum State { On(Int), Off }
+fn main() {
+    let state = State.On(9)
+    match state {
+        On(value) if value > 0 => { print(value) }
+        Off => {}
+    }
+}

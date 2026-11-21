@@ -1,0 +1,44 @@
+enum State<T> { Hold(T), Empty }
+
+fn optional(flag: Bool) -> Option<Int> {
+    if flag { return Some(9) }
+    return None
+}
+
+fn checked(flag: Bool) -> Result<Int, String> {
+    if flag { return Ok(9) }
+    return Err("missing")
+}
+
+fn unwrap_optional(flag: Bool) -> Option<Int> {
+    let number = optional(flag)?
+    return Some(number + 1)
+}
+
+fn outcome(flag: Bool) -> Result<Int, String> {
+    let number = checked(flag)?
+    return Ok(number + 1)
+}
+
+fn main() {
+    let value = State.Hold(Some(true))
+    match value {
+        Hold(Some(true)) => { let code = 1; print(code) }
+        Hold(Some(false)) | Hold(None) => { let code = 2; print(code) }
+        Empty => { print(3) }
+    }
+    let empty: State<Option<Bool>> = State.Empty
+    let failure = Result<Int, String>.Err("missing")
+    let failed = failure.is_err()
+    let error = failure.err()
+    let present = error.is_some()
+    let good = outcome(true)
+    let result = good.unwrap_or(0)
+    let none: Option<UInt8> = None
+    match none {
+        Some(byte) => { let next = byte + 1; print(next) }
+        None => { print(result) }
+    }
+    print(failed)
+    print(present)
+}

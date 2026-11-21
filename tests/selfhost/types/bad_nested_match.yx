@@ -1,0 +1,8 @@
+enum Switch { Enabled(Bool), Disabled }
+fn main() {
+    let enabled = Switch.Enabled(true)
+    match enabled {
+        Enabled(true) => {}
+        Disabled => {}
+    }
+}

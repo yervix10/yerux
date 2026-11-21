@@ -1,0 +1,2 @@
+fn divide(x: Int, y: Int<-1..1>) -> Int { return x / y }
+fn main() {}

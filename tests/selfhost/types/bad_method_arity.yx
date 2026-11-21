@@ -1,0 +1,8 @@
+struct Counter { value: Int }
+impl Counter {
+    fn add(mut self, amount: Int) { self.value = self.value + amount }
+}
+fn main() {
+    var counter = Counter { value: 1 }
+    counter.add()
+}

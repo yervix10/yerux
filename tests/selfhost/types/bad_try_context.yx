@@ -1,0 +1,2 @@
+fn make() -> Option<Int> { return Some(1) }
+fn main() { let value = make()?; print(value) }

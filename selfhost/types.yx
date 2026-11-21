@@ -1,13 +1,19 @@
-// Basic type checking over the source AST and its lexical binding identities.
+// Type checking over the source AST and its lexical binding identities.
 import std.env
 import std.fs
 import ast
 import locals
+import type_terms
 
 struct FieldType { name: String, ty: String }
-struct Shape { name: String, fields: List<FieldType> }
+struct Variant { name: String, payload: List<String> }
+struct Shape { name: String, generics: List<String>, fields: List<FieldType>, variants: List<Variant>, is_enum: Bool }
 struct Parameter { mode: String, ty: String }
-struct Signature { name: String, spelling: String, args: List<Parameter>, result: String }
+struct Signature {
+  name: String, spelling: String, args: List<Parameter>, result: String,
+  owner: String, receiver: String, generics: List<String>,
+}
+struct Function { node: Int, signature: Int }
 struct Types {
   identities: List<Int>,
   declarations: List<Int>,
@@ -15,7 +21,10 @@ struct Types {
   shapes: List<Shape>,
   signatures: List<Signature>,
   errors: Int,
+  generics: List<String>,
+  return_type: String,
 }
+struct PatternRow { nodes: List<Int> }
 struct Returns { expected: String, inferred: String }
 
 fn unknown() -> String { return String.from("?") }
@@ -27,7 +36,7 @@ fn issue(types: mut Types, message: view String) {
 }
 
 fn expect_type(types: mut Types, expected: view String, actual: view String) {
-  if expected != "?" && actual != "?" && expected != actual {
+  if !type_terms.compatible(expected, actual) {
     issue(types, "expected {expected} but this is {actual}")
   }
 }
@@ -54,8 +63,9 @@ fn suffix_type(suffix: view String) -> String {
 }
 
 fn shape_index(types: view Types, name: view String) -> Int {
+  let base = type_terms.base(name)
   for i in 0..types.shapes.len() {
-    if types.shapes.at(i).name == name { return i }
+    if types.shapes.at(i).name == base { return i }
   }
   return -1
 }
@@ -70,8 +80,9 @@ fn field_index(shape: view Shape, name: view String) -> Int {
 fn signature_index(types: view Types, name: view String, by_type: Bool) -> Int {
   for i in 0..types.signatures.len() {
     if by_type {
-      if types.signatures.at(i).spelling == name { return i }
-    } else if types.signatures.at(i).name == name { return i }
+      if types.signatures.at(i).owner == "" && types.signatures.at(i).generics.len() == 0 &&
+          types.signatures.at(i).spelling == name { return i }
+    } else if types.signatures.at(i).owner == "" && types.signatures.at(i).name == name { return i }
   }
   return -1
 }
@@ -91,6 +102,7 @@ fn add_signature(types: mut Types, name: view String, args: List<Parameter>, ret
   }
   types.signatures.push(Signature {
     name: String.from(name), spelling: String.from(text), args: move args, result: String.from(ret),
+    owner: String.new(), receiver: String.new(), generics: List<String>.new(),
   })
   return text
 }
@@ -100,11 +112,20 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
   if tree.at(index).tag == "Type" {
     let name = ast.name_at(tree, index, 0)
     let args = ast.child(tree, index, 1)
-    if tree.at(args).end != args + 1 { return unknown() }
+    if name == "Int" && child_count(tree, args) == 1 && tree.at(args + 1).tag == "Range" {
+      var lo = String.from(tree.at(ast.child(tree, args + 1, 0)).tag)
+      var hi = String.from(tree.at(ast.child(tree, args + 1, 1)).tag)
+      if lo == "_" { lo = String.new() }
+      if hi == "_" { hi = String.new() }
+      return "Int<{lo}..{hi}>"
+    }
     if name == "Int64" { return String.from("Int") }
     if name == "Float64" { return String.from("Float") }
     if integer(name) || floating(name) || name == "Bool" || name == "Char" ||
-        name == "Text" || name == "String" || shape_index(types, name) >= 0 { return name }
+        name == "Text" || name == "String" || shape_index(types, name) >= 0 ||
+        types.generics.contains(name) || name == "List" || name == "Box" || name == "Ptr" {
+      return type_terms.apply(name, source_types(types, tree, ast.child(tree, index, 1)))
+    }
   }
   if tree.at(index).tag == "FnType" {
     let ps = ast.child(tree, index, 0)
@@ -120,6 +141,41 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
     return add_signature(types, String.new(), move args, ret)
   }
   return unknown()
+}
+
+fn source_types(types: mut Types, tree: view List<ast.AstNode>, list: Int) -> List<String> {
+  var args = List<String>.new()
+  var i = list + 1
+  while i < tree.at(list).end {
+    args.push(source_type(types, tree, i))
+    i = tree.at(i).end
+  }
+  return move args
+}
+
+fn generic_names(tree: view List<ast.AstNode>, list: Int) -> List<String> {
+  var names = List<String>.new()
+  var i = list + 1
+  while i < tree.at(list).end {
+    names.push(ast.name_at(tree, i, 0))
+    i = tree.at(i).end
+  }
+  return move names
+}
+
+fn copy_names(names: view List<String>) -> List<String> {
+  var copy = List<String>.new()
+  for name in names { copy.push(String.from(name)) }
+  return move copy
+}
+
+fn instantiate(ty: view String, names: view List<String>, actual: view String) -> String {
+  var sub = type_terms.with_names(names)
+  let args = type_terms.arguments(actual)
+  for i in 0..min(args.len(), names.len()) {
+    sub.values.set(i, String.from(args.at(i)))
+  }
+  return type_terms.substitute(ty, sub)
 }
 
 fn return_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> String {
@@ -187,31 +243,72 @@ fn literal_integer(types: mut Types, tree: view List<ast.AstNode>, index: Int, h
   return int_literal(types, tree.at(number).tag, ty, negative)
 }
 
-fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: view String, sig: Int) -> String {
+fn child_count(tree: view List<ast.AstNode>, index: Int) -> Int {
   var count = 0
-  var i = args + 1
-  while i < tree.at(args).end {
+  var i = index + 1
+  while i < tree.at(index).end {
     count = count + 1
     i = tree.at(i).end
   }
+  return count
+}
+
+fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: view String, sig: Int, owner: view String) -> String {
+  let count = child_count(tree, args)
   if sig >= 0 {
     let expected = types.signatures.at(sig).args.len()
     if count != expected {
-      issue(types, "'{name}' expects {expected} argument(s) but got {count}")
+      if types.signatures.at(sig).receiver != "" {
+        issue(types, "method '{name}' of {owner} expects {expected} argument(s) besides the receiver but got {count}")
+      } else {
+        issue(types, "'{name}' expects {expected} argument(s) but got {count}")
+      }
       return unknown()
     }
   }
+  var sub = type_terms.empty()
+  if sig >= 0 {
+    sub = type_terms.with_names(types.signatures.at(sig).generics)
+    type_terms.bind(sub, types.signatures.at(sig).owner, owner)
+  }
+  let before = types.errors
   var at = 0
-  i = args + 1
+  var i = args + 1
   while i < tree.at(args).end {
     var expected = unknown()
-    if sig >= 0 { expected = String.from(types.signatures.at(sig).args.at(at).ty) }
-    let actual = infer(types, tree, i, expected)
-    expect_type(types, expected, actual)
+    var formal = unknown()
+    if sig >= 0 {
+      formal = String.from(types.signatures.at(sig).args.at(at).ty)
+      expected = type_terms.substitute(formal, sub)
+    }
+    var hint = String.from(expected)
+    let generic = owner == "?" && type_terms.mentions(formal, sub.names)
+    if generic { hint = unknown() }
+    let actual = infer(types, tree, i, hint)
+    type_terms.bind(sub, formal, actual)
+    let resolved = type_terms.substitute(formal, sub)
+    if !type_terms.compatible(resolved, actual) {
+      if generic && sub.names.contains(formal) {
+        let ordinal = at + 1
+        issue(types, "argument {ordinal} of '{name}' is {actual}, but {formal} was already fixed to {resolved} by an earlier argument")
+      } else if generic { expect_type(types, formal, actual) }
+      else { expect_type(types, resolved, actual) }
+    }
     at = at + 1
     i = tree.at(i).end
   }
-  if sig >= 0 { return String.from(types.signatures.at(sig).result) }
+  if sig >= 0 {
+    if owner == "?" && types.errors == before {
+      for at in 0..sub.names.len() {
+        if sub.values.at(at) == "?" {
+          let param = String.from(sub.names.at(at))
+          issue(types, "cannot infer the type parameter {param} of '{name}'")
+          return unknown()
+        }
+      }
+    }
+    return type_terms.substitute(types.signatures.at(sig).result, sub)
+  }
   if name == "print" {
     if count != 1 { issue(types, String.from("print expects exactly 1 argument")) }
     return unit()
@@ -222,22 +319,31 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
 fn struct_literal(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> String {
   let n = ast.name_at(tree, index, 0)
   let shape = shape_index(types, n)
+  var sub = type_terms.empty()
+  if shape >= 0 {
+    sub = type_terms.with_names(types.shapes.at(shape).generics)
+    let args = source_types(types, tree, ast.child(tree, index, 1))
+    for i in 0..min(args.len(), sub.names.len()) {
+      sub.values.set(i, String.from(args.at(i)))
+    }
+  }
   let fields = ast.child(tree, index, 2)
   var appeared = List<String>.new()
   var i = fields + 1
   while i < tree.at(fields).end {
     let name = ast.name_at(tree, i, 0)
     var field = -1
-    var expected = unknown()
+    var formal = unknown()
     if shape >= 0 {
       field = field_index(types.shapes.at(shape), name)
-      if field >= 0 { expected = String.from(types.shapes.at(shape).fields.at(field).ty) }
+      if field >= 0 { formal = String.from(types.shapes.at(shape).fields.at(field).ty) }
     }
-    let actual = infer(types, tree, ast.child(tree, i, 1), expected)
+    let actual = infer(types, tree, ast.child(tree, i, 1), type_terms.substitute(formal, sub))
+    type_terms.bind(sub, formal, actual)
     if shape >= 0 {
       if field < 0 { issue(types, "struct {n} has no field '{name}'") }
       else {
-        expect_type(types, expected, actual)
+        expect_type(types, type_terms.substitute(formal, sub), actual)
         if appeared.contains(name) { issue(types, "field '{name}' is given twice") }
         else { appeared.push(String.from(name)) }
       }
@@ -253,20 +359,135 @@ fn struct_literal(types: mut Types, tree: view List<ast.AstNode>, index: Int) ->
     let names = missing.join(", ")
     issue(types, "missing field(s) in {n}: {names}")
   }
-  return n
+  return type_terms.apply(n, sub.values)
+}
+
+fn variant_index(shape: view Shape, name: view String) -> Int {
+  for i in 0..shape.variants.len() {
+    if shape.variants.at(i).name == name { return i }
+  }
+  return -1
+}
+
+fn nominal_constructor(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
+    name: view String, args: Int, hint: view String) -> String {
+  let shape = shape_index(types, owner)
+  let variant = variant_index(types.shapes.at(shape), name)
+  if variant < 0 {
+    let base = String.from(types.shapes.at(shape).name)
+    issue(types, "enum {base} has no variant '{name}'")
+    return unknown()
+  }
+  var sub = type_terms.with_names(types.shapes.at(shape).generics)
+  var explicit = type_terms.arguments(owner)
+  let base = type_terms.base(owner)
+  if explicit.len() == 0 && base == type_terms.base(hint) { explicit = type_terms.arguments(hint) }
+  for i in 0..min(explicit.len(), sub.names.len()) {
+    sub.values.set(i, String.from(explicit.at(i)))
+  }
+  let expected = types.shapes.at(shape).variants.at(variant).payload.len()
+  var count = 0
+  if args >= 0 { count = child_count(tree, args) }
+  if count != expected {
+    issue(types, "{owner}.{name} expects {expected} value(s), got {count}")
+    return unknown()
+  }
+  var node = args + 1
+  for i in 0..count {
+    let formal = String.from(types.shapes.at(shape).variants.at(variant).payload.at(i))
+    let actual = infer(types, tree, node, type_terms.substitute(formal, sub))
+    type_terms.bind(sub, formal, actual)
+    expect_type(types, type_terms.substitute(formal, sub), actual)
+    node = tree.at(node).end
+  }
+  var missing = List<String>.new()
+  for i in 0..sub.names.len() {
+    if sub.values.at(i) == "?" { missing.push(String.from(sub.names.at(i))) }
+  }
+  if missing.len() > 0 {
+    let names = missing.join(", ")
+    issue(types, "cannot infer the type argument(s) {names} of {base}.{name}")
+    return unknown()
+  }
+  return type_terms.apply(base, sub.values)
+}
+
+fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
+    name: view String, args: Int, receiver: Int, hint: view String) -> String {
+  let shape = shape_index(types, owner)
+  if receiver >= 0 && (name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul") {
+    let number = numeric_type(owner)
+    if floating(number) {
+      issue(types, "'{name}' is for integers, not {number}")
+      return unknown()
+    }
+    if integer(number) {
+      if child_count(tree, args) != 1 {
+        issue(types, "'{name}' expects 1 argument")
+        return unknown()
+      }
+      expect_type(types, number, infer(types, tree, args + 1, number))
+      return number
+    }
+  }
+  if receiver < 0 && shape >= 0 && types.shapes.at(shape).is_enum {
+    return nominal_constructor(types, tree, owner, name, args, hint)
+  }
+  for i in 0..types.signatures.len() {
+    let formal = String.from(types.signatures.at(i).owner)
+    let mode = String.from(types.signatures.at(i).receiver)
+    if types.signatures.at(i).name == name && ((receiver >= 0) == (mode != "")) {
+      if formal == owner {
+        return call_args(types, tree, args, name, i, owner)
+      }
+      let base = type_terms.base(formal)
+      if types.signatures.at(i).generics.len() > 0 && base == type_terms.base(owner) {
+        return call_args(types, tree, args, name, i, owner)
+      }
+    }
+  }
+  if receiver >= 0 && (shape >= 0 || owner == "Bool" || owner == "Text") {
+    issue(types, "type {owner} has no method '{name}'")
+    return unknown()
+  }
+  return call_args(types, tree, args, name, -1, unknown())
+}
+
+fn static_owner(types: view Types, tree: view List<ast.AstNode>, index: Int) -> String {
+  if tree.at(index).tag == "Var" && types.identities.at(index) < 0 {
+    return ast.name_at(tree, index, 0)
+  }
+  return unknown()
 }
 
 fn scalar_literal(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  if tree.at(node).tag == "Un" && tree.at(ast.child(tree, node, 0)).tag == "2d" {
+    return scalar_literal(tree, ast.child(tree, node, 1))
+  }
   return tree.at(node).tag == "Int" || (tree.at(node).tag == "Float" &&
     tree.at(ast.child(tree, node, 1)).tag == "")
+}
+
+fn numeric_type(ty: view String) -> String {
+  if ty.starts_with("Int<") { return String.from("Int") }
+  return String.from(ty)
+}
+
+fn zero_in_range(ty: view String) -> Bool {
+  let bounds = ty.slice(4, ty.len() - 1).split("..")
+  var lo = 0
+  var hi = 0
+  let has_lo = bounds.at(0).parse_int(lo)
+  let has_hi = bounds.at(1).parse_int(hi)
+  return (!has_lo || lo <= 0) && (!has_hi || hi >= 0)
 }
 
 fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let op = ast.name_at(tree, index, 0)
   let left = ast.child(tree, index, 1)
   let right = ast.child(tree, index, 2)
+  let boolean = String.from("Bool")
   if op == "&&" || op == "||" {
-    let boolean = String.from("Bool")
     expect_type(types, boolean, infer(types, tree, left, boolean))
     expect_type(types, boolean, infer(types, tree, right, boolean))
     return boolean
@@ -280,13 +501,86 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     lhs = infer(types, tree, left, hint)
     rhs = infer(types, tree, right, lhs)
   }
-  expect_type(types, lhs, rhs)
-  if op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=" {
-    return String.from("Bool")
+  let a = numeric_type(lhs)
+  let b = numeric_type(rhs)
+  let ordered = op == "<" || op == ">" || op == "<=" || op == ">="
+  let equal = op == "==" || op == "!="
+  if a == "?" || b == "?" {
+    if ordered || equal { return boolean }
+    return unknown()
   }
-  if lhs == "?" || rhs == "?" { return unknown() }
-  if integer(lhs) || floating(lhs) { return lhs }
-  return unknown() // operator overloads require trait resolution
+  if equal {
+    if integer(a) || floating(a) || a == "Char" || a == "Bool" || a == "String" || a == "Text" {
+      if !(a == "String" && b == "Text") { expect_type(types, a, b) }
+    } else if shape_index(types, a) >= 0 {
+      issue(types, "cannot compare values of type {a}")
+    }
+    return boolean
+  }
+  if ordered && (a == "Char" || a == "String" || a == "Text") {
+    expect_type(types, a, b)
+    return boolean
+  }
+  if !ordered && (a == "Char" || b == "Char") {
+    issue(types, "cannot use `{op}` on a Char")
+    return unknown()
+  }
+  if !integer(a) && !floating(a) {
+    if types.generics.contains(a) { return unknown() }
+    if ordered {
+      if a == "Bool" && tree.at(left).tag != "Var" {
+        issue(types, "cannot use `{op}` here: the left side is a Bool value that is not a variable")
+      } else if a == "Bool" { expect_type(types, a, b) }
+      else { issue(types, "cannot use `{op}` on values of type {a}: it does not implement Ordered") }
+      return boolean
+    }
+    expect_type(types, String.from("Int"), a)
+    return unknown()
+  }
+  if a != b && integer(a) && floating(b) {
+    expect_type(types, b, a)
+    if ordered { return boolean }
+    return b
+  }
+  expect_type(types, a, b)
+  if ordered { return boolean }
+  if op == "%" && floating(a) { issue(types, "`%` is not defined for {a}") }
+  if (op == "/" || op == "%") && rhs.starts_with("Int<") && zero_in_range(rhs) {
+    issue(types, String.from("the divisor may be 0"))
+  }
+  return a
+}
+
+fn propagate(types: mut Types, tree: view List<ast.AstNode>, node: Int) -> String {
+  let operand = infer(types, tree, node, unknown())
+  if operand == "?" { return unknown() }
+  let family = type_terms.base(operand)
+  if family != "Result" && family != "Option" {
+    issue(types, "`?` needs a Result or an Option, but this is {operand}")
+    return unknown()
+  }
+  let ret = String.from(types.return_type)
+  if ret == "?" { return unknown() }
+  let ret_family = type_terms.base(ret)
+  if ret_family != "Result" && ret_family != "Option" {
+    issue(types, "cannot use `?` in a function that returns {ret}")
+    return unknown()
+  }
+  if family != ret_family {
+    issue(types, "`?` is used on {operand} but this function returns {ret}")
+    return unknown()
+  }
+  let args = type_terms.arguments(operand)
+  let returned = type_terms.arguments(ret)
+  if args.len() == 0 || returned.len() == 0 { return unknown() }
+  if family == "Result" && args.len() == 2 && returned.len() == 2 && args.at(1) != returned.at(1) {
+    let from_type = String.from(args.at(1))
+    let to_type = String.from(returned.at(1))
+    // A user-defined error conversion is resolved by the production checker.
+    issue(types, "`?` cannot turn the error {from_type} into the {to_type} this function returns")
+    return unknown()
+  }
+  return String.from(args.at(0))
 }
 
 fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
@@ -298,7 +592,10 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
     expected = String.from(types.signatures.at(hinted).result)
   }
   var state = Returns { expected: move expected, inferred: unit() }
+  let outer = String.from(types.return_type)
+  types.return_type = String.from(state.expected)
   check_body(types, state, tree, ast.child(tree, index, 6))
+  types.return_type = move outer
   if state.expected != "?" { return add_signature(types, String.new(), move args, state.expected) }
   return add_signature(types, String.new(), move args, state.inferred)
 }
@@ -324,6 +621,9 @@ fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view 
     let n = ast.name_at(tree, index, 0)
     let sig = signature_index(types, n, false)
     if sig >= 0 { return String.from(types.signatures.at(sig).spelling) }
+    if tag == "Var" && n == "None" {
+      return nominal_constructor(types, tree, String.from("Option"), n, -1, hint)
+    }
     return unknown()
   }
   if tag == "Ascribe" {
@@ -343,25 +643,56 @@ fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view 
         issue(types, "'{n}' is a variable of type {ty}, not a function, so it cannot be called")
       }
     } else { sig = signature_index(types, n, false) }
-    return call_args(types, tree, ast.child(tree, index, 1), n, sig)
+    let args = ast.child(tree, index, 1)
+    if id < 0 && sig < 0 {
+      if n == "Some" {
+        return nominal_constructor(types, tree, String.from("Option"), n, args, hint)
+      }
+      if n == "Ok" || n == "Err" {
+        return nominal_constructor(types, tree, String.from("Result"), n, args, hint)
+      }
+    }
+    return call_args(types, tree, args, n, sig, unknown())
   }
   if tag == "CallFn" {
     let callee = infer(types, tree, ast.child(tree, index, 0), unknown())
     let sig = signature_index(types, callee, true)
-    return call_args(types, tree, ast.child(tree, index, 1), String.from("function value"), sig)
+    return call_args(types, tree, ast.child(tree, index, 1), String.from("function value"), sig, unknown())
   }
   if tag == "Closure" { return closure_type(types, tree, index, hint) }
   if tag == "StructLit" { return struct_literal(types, tree, index) }
-  if tag == "Field" {
-    let receiver = infer(types, tree, ast.child(tree, index, 0), unknown())
+  if tag == "Method" || tag == "Field" {
+    let node = ast.child(tree, index, 0)
+    let name = ast.name_at(tree, index, 1)
+    let owner = static_owner(types, tree, node)
+    if tag == "Method" {
+      let args = ast.child(tree, index, 2)
+      if owner != "?" { return member(types, tree, owner, name, args, -1, hint) }
+      let receiver = infer(types, tree, node, unknown())
+      return member(types, tree, receiver, name, args, node, hint)
+    }
+    if owner != "?" {
+      let shape = shape_index(types, owner)
+      if shape >= 0 && types.shapes.at(shape).is_enum {
+        return nominal_constructor(types, tree, owner, name, -1, hint)
+      }
+    }
+    let receiver = infer(types, tree, node, unknown())
     let shape = shape_index(types, receiver)
-    if shape >= 0 {
-      let name = ast.name_at(tree, index, 1)
+    if shape >= 0 && !types.shapes.at(shape).is_enum {
       let field = field_index(types.shapes.at(shape), name)
-      if field >= 0 { return String.from(types.shapes.at(shape).fields.at(field).ty) }
+      if field >= 0 {
+        return instantiate(types.shapes.at(shape).fields.at(field).ty, types.shapes.at(shape).generics, receiver)
+      }
       issue(types, "struct {receiver} has no field '{name}'")
     }
     return unknown()
+  }
+  if tag == "GenericMember" {
+    let base = ast.name_at(tree, index, 0)
+    let owner = type_terms.apply(base, source_types(types, tree, ast.child(tree, index, 1)))
+    let name = ast.name_at(tree, index, 2)
+    return member(types, tree, owner, name, ast.child(tree, index, 3), -1, hint)
   }
   if tag == "Bin" { return binary(types, tree, index, hint) }
   if tag == "Un" {
@@ -372,11 +703,19 @@ fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view 
       expect_type(types, ty, infer(types, tree, value, ty))
       return ty
     }
+    if op == "?" { return propagate(types, tree, value) }
     if op == "-" {
       if tree.at(value).tag == "Int" || tree.at(value).tag == "NumT" {
         return literal_integer(types, tree, value, hint, true)
       }
-      return infer(types, tree, value, hint)
+      let ty = numeric_type(infer(types, tree, value, hint))
+      if ty.starts_with("UInt") {
+        issue(types, "cannot negate a {ty}: unsigned numbers have no minus sign")
+      } else if !integer(ty) && !floating(ty) {
+        expect_type(types, String.from("Int"), ty)
+        return unknown()
+      }
+      return ty
     }
   }
   return unknown()
@@ -400,6 +739,221 @@ fn check_assignment(types: mut Types, tree: view List<ast.AstNode>, index: Int) 
   expect_type(types, left, right)
 }
 
+fn pattern_head(tree: view List<ast.AstNode>, node: Int) -> Int {
+  var head = node
+  while head >= 0 && tree.at(head).tag == "Bind" {
+    head = ast.child(tree, head, 1)
+  }
+  return head
+}
+
+fn whole_pattern(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  return node < 0 || tree.at(node).tag == "_" || tree.at(node).tag == "Wild"
+}
+
+fn check_pattern(types: mut Types, tree: view List<ast.AstNode>, node: Int, subject: view String) {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Bind" {
+    let id = types.identities.at(node)
+    if id >= 0 { types.bindings.set(id, String.from(subject)) }
+    check_pattern(types, tree, ast.child(tree, node, 1), subject)
+  } else if tag == "Or" {
+    let items = ast.child(tree, node, 0)
+    var i = items + 1
+    while i < tree.at(items).end {
+      check_pattern(types, tree, i, subject)
+      i = tree.at(i).end
+    }
+  } else if tag == "Variant" {
+    let shape = shape_index(types, subject)
+    if shape < 0 || !types.shapes.at(shape).is_enum { return }
+    let name = ast.name_at(tree, node, 0)
+    let variant = variant_index(types.shapes.at(shape), name)
+    if variant < 0 {
+      issue(types, "enum {subject} has no variant '{name}'")
+      return
+    }
+    let items = ast.child(tree, node, 1)
+    let count = child_count(tree, items)
+    let expected = types.shapes.at(shape).variants.at(variant).payload.len()
+    if count != expected {
+      issue(types, "{subject}.{name} carries {expected} value(s) but the pattern binds {count}")
+      return
+    }
+    var i = items + 1
+    for at in 0..count {
+      let payload = instantiate(types.shapes.at(shape).variants.at(variant).payload.at(at),
+        types.shapes.at(shape).generics, subject)
+      check_pattern(types, tree, i, payload)
+      i = tree.at(i).end
+    }
+  } else if tag == "Bool" || tag == "Int" || tag == "Char" {
+    var ty = String.from(tag)
+    if tag == "Int" && integer(subject) { ty = String.from(subject) }
+    expect_type(types, subject, ty)
+  }
+}
+
+fn specialize_row(tree: view List<ast.AstNode>, rows: mut List<PatternRow>, row: view PatternRow,
+    node: Int, name: view String, arity: Int) {
+  let head = pattern_head(tree, node)
+  var prefix = List<Int>.new()
+  if whole_pattern(tree, head) {
+    for i in 0..arity { prefix.push(-1) }
+  } else if tree.at(head).tag == "Or" {
+    let items = ast.child(tree, head, 0)
+    var i = items + 1
+    while i < tree.at(items).end {
+      specialize_row(tree, rows, row, i, name, arity)
+      i = tree.at(i).end
+    }
+    return
+  } else if tree.at(head).tag == "Variant" {
+    let variant = ast.name_at(tree, head, 0)
+    if name == "" || variant != name { return }
+    let pats = ast.child(tree, head, 1)
+    if child_count(tree, pats) != arity { return }
+    var i = pats + 1
+    while i < tree.at(pats).end {
+      prefix.push(i)
+      i = tree.at(i).end
+    }
+  } else if !(tree.at(head).tag == "Bool" && tree.at(ast.child(tree, head, 0)).tag == name) {
+    return
+  }
+  for i in 1..row.nodes.len() { prefix.push(row.nodes.at(i)) }
+  rows.push(PatternRow { nodes: move prefix })
+}
+
+fn specialized_witness(types: view Types, tree: view List<ast.AstNode>, rows: view List<PatternRow>,
+    columns: view List<String>, name: view String, payload: view List<String>, out: mut List<String>) -> Bool {
+  var next_rows = List<PatternRow>.new()
+  for row in rows { specialize_row(tree, next_rows, row, row.nodes.at(0), name, payload.len()) }
+  var next_types = copy_names(payload)
+  for i in 1..columns.len() { next_types.push(String.from(columns.at(i))) }
+  var witness = List<String>.new()
+  if !missing_pattern(types, tree, next_rows, next_types, witness) { return false }
+  if name == "" { out.push(String.from("_")) }
+  else if payload.len() == 0 { out.push(String.from(name)) }
+  else {
+    var parts = List<String>.new()
+    for i in 0..payload.len() { parts.push(String.from(witness.at(i))) }
+    let text = parts.join(", ")
+    out.push("{name}({text})")
+  }
+  for i in payload.len()..witness.len() { out.push(String.from(witness.at(i))) }
+  return true
+}
+
+fn variant_witness(types: view Types, tree: view List<ast.AstNode>, rows: view List<PatternRow>,
+    columns: view List<String>, shape: Int, variant: view Variant, out: mut List<String>) -> Bool {
+  var payload = List<String>.new()
+  for ty in variant.payload {
+    payload.push(instantiate(ty, types.shapes.at(shape).generics, columns.at(0)))
+  }
+  return specialized_witness(types, tree, rows, columns, variant.name, payload, out)
+}
+
+fn missing_pattern(types: view Types, tree: view List<ast.AstNode>, rows: view List<PatternRow>,
+    columns: view List<String>, out: mut List<String>) -> Bool {
+  if columns.len() == 0 { return rows.len() == 0 }
+  if rows.len() == 0 {
+    for col in columns { out.push(String.from("_")) }
+    return true
+  }
+  // A column made exclusively of wildcards does not require constructor expansion.
+  var wild = true
+  for row in rows {
+    if !whole_pattern(tree, pattern_head(tree, row.nodes.at(0))) { wild = false; break }
+  }
+  let shape = shape_index(types, columns.at(0))
+  let none = List<String>.new()
+  if !wild && shape >= 0 && types.shapes.at(shape).is_enum {
+    for variant in types.shapes.at(shape).variants {
+      if variant_witness(types, tree, rows, columns, shape, variant, out) { return true }
+    }
+    return false
+  }
+  if !wild && columns.at(0) == "Bool" {
+    return specialized_witness(types, tree, rows, columns, String.from("false"), none, out) ||
+      specialized_witness(types, tree, rows, columns, String.from("true"), none, out)
+  }
+  return specialized_witness(types, tree, rows, columns, String.new(), none, out)
+}
+
+fn flat_variant(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  if tree.at(node).tag != "Variant" { return tree.at(node).tag == "Wild" }
+  let payload = ast.child(tree, node, 1)
+  var i = payload + 1
+  while i < tree.at(payload).end {
+    if tree.at(i).tag != "Bind" || tree.at(ast.child(tree, i, 1)).tag != "_" { return false }
+    i = tree.at(i).end
+  }
+  return true
+}
+
+fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) {
+  let subject = infer(types, tree, ast.child(tree, index, 0), unknown())
+  let shape = shape_index(types, subject)
+  let arms = ast.child(tree, index, 1)
+  var rows = List<PatternRow>.new()
+  var seen = List<String>.new()
+  var flat = true
+  var covered = false
+  let errors = types.errors
+  var i = arms + 1
+  while i < tree.at(arms).end {
+    let pat = ast.child(tree, i, 0)
+    let guard = ast.child(tree, i, 1)
+    if !flat_variant(tree, pat) || tree.at(guard).tag != "_" { flat = false }
+    i = tree.at(i).end
+  }
+  i = arms + 1
+  while i < tree.at(arms).end {
+    let pat = ast.child(tree, i, 0)
+    let guard = ast.child(tree, i, 1)
+    check_pattern(types, tree, pat, subject)
+    if tree.at(guard).tag == "_" {
+      var row = List<Int>.new()
+      row.push(pat)
+      rows.push(PatternRow { nodes: move row })
+      if flat && tree.at(pat).tag == "Variant" {
+        let name = ast.name_at(tree, pat, 0)
+        if seen.contains(name) { issue(types, "variant '{name}' is matched twice") }
+        else { seen.push(move name) }
+      }
+      if whole_pattern(tree, pattern_head(tree, pat)) { covered = true }
+    } else {
+      let boolean = String.from("Bool")
+      expect_type(types, boolean, infer(types, tree, guard, boolean))
+    }
+    check_body(types, returns, tree, ast.child(tree, i, 2))
+    i = tree.at(i).end
+  }
+  if covered || types.errors != errors { return }
+  var columns = List<String>.new()
+  columns.push(String.from(subject))
+  var missing = List<String>.new()
+  if shape >= 0 && types.shapes.at(shape).is_enum {
+    for variant in types.shapes.at(shape).variants {
+      if flat {
+        if !seen.contains(variant.name) { missing.push(String.from(variant.name)) }
+      } else {
+        var witness = List<String>.new()
+        if variant_witness(types, tree, rows, columns, shape, variant, witness) {
+          missing.push(String.from(witness.at(0)))
+        }
+      }
+    }
+  } else if subject == "Bool" {
+    let uncovered = missing_pattern(types, tree, rows, columns, missing)
+  }
+  if missing.len() > 0 {
+    let text = missing.join(", ")
+    issue(types, "`match` is not exhaustive: missing {text}")
+  }
+}
+
 fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) {
   let tag = String.from(tree.at(index).tag)
   if tag == "Let" {
@@ -413,7 +967,8 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
     types.bindings.set(id, String.from(ty))
     if ty != "?" {
       let name = ast.name_at(tree, index, 0)
-      print("type:{name}:{ty}")
+      let display = numeric_type(ty)
+      print("type:{name}:{display}")
     }
   } else if tag == "Return" {
     let value = ast.child(tree, index, 0)
@@ -436,8 +991,10 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
       check_body(types, returns, tree, i)
       i = tree.at(i).end
     }
+  } else if tag == "Match" {
+    check_match(types, returns, tree, index)
   } else if tag == "Block" || tag == "[" || tag == "Scope" || tag == "Unsafe" ||
-      tag == "Defer" || tag == "Match" || tag == "Arm" || tag == "For" {
+      tag == "Defer" || tag == "For" {
     var i = index + 1
     while i < tree.at(index).end {
       check_body(types, returns, tree, i)
@@ -446,37 +1003,124 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
   }
 }
 
+fn prelude_method(types: mut Types, owner: view String, name: Text, receiver: Text, result: Text, arg: Text, mode: Text) {
+  var args = List<Parameter>.new()
+  if arg != "" { args.push(Parameter { mode: String.from(mode), ty: String.from(arg) }) }
+  let index = types.signatures.len()
+  let spelling = add_signature(types, String.from(name), move args, String.from(result))
+  types.signatures.at(index).owner = String.from(owner)
+  types.signatures.at(index).receiver = String.from(receiver)
+  types.signatures.at(index).generics = type_terms.arguments(owner)
+}
+
+fn prelude_enum(name: Text, parameters: Text, first: Text, second: Text, second_type: Text) -> Shape {
+  let names = String.from(parameters).split(", ")
+  var variants = List<Variant>.new()
+  var payload = List<String>.new()
+  payload.push(String.from("T"))
+  variants.push(Variant { name: String.from(first), payload: move payload })
+  var other = List<String>.new()
+  if second_type != "" { other.push(String.from(second_type)) }
+  variants.push(Variant { name: String.from(second), payload: move other })
+  return Shape {
+    name: String.from(name), generics: move names, fields: List<FieldType>.new(),
+    variants: move variants, is_enum: true,
+  }
+}
+
+fn declare_prelude(types: mut Types) {
+  types.shapes.push(prelude_enum("Option", "T", "Some", "None", ""))
+  types.shapes.push(prelude_enum("Result", "T, E", "Ok", "Err", "E"))
+  let string = String.from("String")
+  prelude_method(types, string, "new", "", "String", "", "Own")
+  prelude_method(types, string, "from", "", "String", "String", "View")
+  prelude_method(types, string, "len", "View", "Int", "", "Own")
+  prelude_method(types, string, "clear", "Mut", "nothing", "", "Own")
+  prelude_method(types, string, "push_str", "Mut", "nothing", "String", "View")
+  let list = String.from("List<T>")
+  prelude_method(types, list, "new", "", "List<T>", "", "Own")
+  prelude_method(types, list, "len", "View", "Int", "", "Own")
+  prelude_method(types, list, "at", "View", "T", "Int", "Own")
+  prelude_method(types, list, "push", "Mut", "nothing", "T", "Own")
+  prelude_method(types, list, "pop", "Mut", "T", "", "Own")
+  let option = String.from("Option<T>")
+  prelude_method(types, option, "is_some", "View", "Bool", "", "Own")
+  prelude_method(types, option, "is_none", "View", "Bool", "", "Own")
+  prelude_method(types, option, "unwrap", "Own", "T", "", "Own")
+  prelude_method(types, option, "unwrap_or", "Own", "T", "T", "Own")
+  prelude_method(types, option, "or", "Own", "Option<T>", "Option<T>", "Own")
+  let result = String.from("Result<T, E>")
+  prelude_method(types, result, "is_ok", "View", "Bool", "", "Own")
+  prelude_method(types, result, "is_err", "View", "Bool", "", "Own")
+  prelude_method(types, result, "ok", "Own", "Option<T>", "", "Own")
+  prelude_method(types, result, "err", "Own", "Option<E>", "", "Own")
+  prelude_method(types, result, "unwrap", "Own", "T", "", "Own")
+  prelude_method(types, result, "unwrap_or", "Own", "T", "T", "Own")
+}
+
 fn declare_shapes(types: mut Types, tree: view List<ast.AstNode>, items: Int) {
   var declarations = List<Int>.new()
   var i = items + 1
   while i < tree.at(items).end {
     let decl = ast.child(tree, i, 2)
-    if tree.at(decl).tag == "Struct" {
-      let generic = ast.child(tree, decl, 1)
-      if tree.at(generic).end == generic + 1 {
-        types.shapes.push(Shape { name: ast.name_at(tree, decl, 0), fields: List<FieldType>.new() })
-        declarations.push(decl)
-      }
+    let tag = String.from(tree.at(decl).tag)
+    if tag == "Struct" || tag == "Enum" {
+      let generics = generic_names(tree, ast.child(tree, decl, 1))
+      types.shapes.push(Shape {
+        name: ast.name_at(tree, decl, 0), generics: move generics, fields: List<FieldType>.new(),
+        variants: List<Variant>.new(), is_enum: tag == "Enum",
+      })
+      declarations.push(decl)
     }
     i = tree.at(i).end
   }
-  for at in 0..declarations.len() {
-    let fields = ast.child(tree, declarations.at(at), 2)
+  let offset = types.shapes.len() - declarations.len()
+  for index in 0..declarations.len() {
+    let at = index + offset
+    types.generics = copy_names(types.shapes.at(at).generics)
+    let fields = ast.child(tree, declarations.at(index), 2)
     i = fields + 1
     while i < tree.at(fields).end {
       let name = ast.name_at(tree, i, 0)
-      let ty = source_type(types, tree, ast.child(tree, i, 1))
-      types.shapes.at(at).fields.push(FieldType { name: move name, ty: move ty })
+      let entry = ast.child(tree, i, 1)
+      if tree.at(i).tag == "FieldDef" {
+        let ty = source_type(types, tree, entry)
+        types.shapes.at(at).fields.push(FieldType { name: move name, ty: move ty })
+      } else {
+        let payload = source_types(types, tree, entry)
+        types.shapes.at(at).variants.push(Variant { name: move name, payload: move payload })
+      }
       i = tree.at(i).end
     }
   }
+  types.generics = List<String>.new()
+}
+
+fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, owner: view String) -> Function {
+  types.generics = generic_names(tree, ast.child(tree, node, 1))
+  let params_node = ast.child(tree, node, 2)
+  var receiver = String.new()
+  if tree.at(params_node).end > params_node + 1 && tree.at(params_node + 1).tag == "Self" {
+    let self_node = params_node + 1
+    receiver = String.from(tree.at(ast.child(tree, self_node, 0)).tag)
+    types.bindings.set(types.identities.at(self_node), String.from(owner))
+  }
+  let params = param_types(types, tree, params_node, -1, true)
+  let ret = return_type(types, tree, ast.child(tree, node, 3))
+  let name = ast.name_at(tree, node, 0)
+  let index = types.signatures.len()
+  let spelling = add_signature(types, name, move params, ret)
+  types.signatures.at(index).owner = String.from(owner)
+  types.signatures.at(index).receiver = move receiver
+  types.signatures.at(index).generics = copy_names(types.generics)
+  return Function { node: node, signature: index }
 }
 
 fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals) -> Int {
   var types = Types {
     identities: List<Int>.new(), declarations: List<Int>.new(),
     bindings: List<String>.new(), shapes: List<Shape>.new(),
-    signatures: List<Signature>.new(), errors: 0,
+    signatures: List<Signature>.new(), errors: 0, generics: List<String>.new(), return_type: unknown(),
   }
   for id in bindings.identities { types.identities.push(id) }
   for binding in bindings.bindings {
@@ -484,29 +1128,34 @@ fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals) -> Int
     types.bindings.push(unknown())
   }
   let items = ast.child(tree, 0, 0)
+  declare_prelude(types)
   declare_shapes(types, tree, items)
 
-  var functions = List<Int>.new()
+  var functions = List<Function>.new()
   var i = items + 1
   while i < tree.at(items).end {
     let decl = ast.child(tree, i, 2)
     if tree.at(decl).tag == "Fn" {
-      let generic = ast.child(tree, decl, 1)
-      if tree.at(generic).end == generic + 1 {
-        let name = ast.name_at(tree, decl, 0)
-        let params = param_types(types, tree, ast.child(tree, decl, 2), -1, true)
-        let ret = return_type(types, tree, ast.child(tree, decl, 3))
-        let spelling = add_signature(types, name, move params, ret)
-        functions.push(decl)
+      functions.push(declare_function(types, tree, decl, String.new()))
+    } else if tree.at(decl).tag == "Impl" && child_count(tree, ast.child(tree, decl, 0)) == 0 {
+      types.generics = List<String>.new()
+      let owner = source_type(types, tree, ast.child(tree, decl, 2))
+      if owner != "?" {
+        let methods = ast.child(tree, decl, 3)
+        var m = methods + 1
+        while m < tree.at(methods).end {
+          functions.push(declare_function(types, tree, m, owner))
+          m = tree.at(m).end
+        }
       }
     }
     i = tree.at(i).end
   }
   for fun in functions {
-    let n = ast.name_at(tree, fun, 0)
-    let sig = signature_index(types, n, false)
-    var state = Returns { expected: String.from(types.signatures.at(sig).result), inferred: unit() }
-    check_body(types, state, tree, ast.child(tree, fun, 4))
+    types.generics = copy_names(types.signatures.at(fun.signature).generics)
+    var state = Returns { expected: String.from(types.signatures.at(fun.signature).result), inferred: unit() }
+    types.return_type = String.from(state.expected)
+    check_body(types, state, tree, ast.child(tree, fun.node, 4))
   }
   return types.errors
 }
