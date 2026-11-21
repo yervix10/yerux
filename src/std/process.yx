@@ -960,3 +960,36 @@ pub fn run_command(c: view Command) -> Result<Output, io.IoError> {
 pub fn id() -> Int {
     return io.process_id()
 }
+
+/// Run a program while polling it at 1 ms intervals. Returns `Ok(None)` after killing and reaping a child
+/// that exceeds `timeout_ms`; otherwise returns its captured output. Timeout values <= 0 are invalid.
+pub fn run_timeout(program: view String, args: view List<String>, timeout_ms: Int) -> Result<Option<Output>, io.IoError> {
+    if timeout_ms <= 0 {
+        return Err(bad("process timeout must be positive"))
+    }
+    var c = command(program)
+    c.add_args(args)
+    c.set_stdin(Stdio.Null)
+    c.set_stdout(Stdio.Piped)
+    c.set_stderr(Stdio.Piped)
+    var child = start(c)?
+    var elapsed = 0
+    while elapsed < timeout_ms {
+        match child.try_wait()? {
+            Some(status) => {
+                let stdout = child.read_stdout()?
+                let stderr = child.read_stderr()?
+                return Ok(Some(Output { status: status, stdout: move stdout, stderr: move stderr }))
+            }
+            None => {
+                io.sleep_ms(1)
+                elapsed = elapsed + 1
+            }
+        }
+    }
+    let killed = child.kill()?
+    let status = child.wait()?
+    let stdout = child.read_stdout()?
+    let stderr = child.read_stderr()?
+    return Ok(None)
+}

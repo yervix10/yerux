@@ -1,0 +1,94 @@
+// std.unicode: pragmatic Unicode scalar helpers; no locale or external runtime required.
+import std.text
+
+/// True for common Unicode combining-mark blocks.
+pub fn is_combining(c: Char) -> Bool {
+  let n = c.to_int()
+  return (n >= 768 && n <= 879) || (n >= 6832 && n <= 6911) || (n >= 7616 && n <= 7679) || (n >= 8400 && n <= 8447) || (n >= 65056 && n <= 65071)
+}
+
+/// Broad Unicode letter ranges (not a full Unicode general-category database).
+pub fn is_letter(c: Char) -> Bool {
+  let n = c.to_int()
+  return (n >= 65 && n <= 90) || (n >= 97 && n <= 122) || (n >= 192 && n <= 687) || (n >= 880 && n <= 1327) || (n >= 1329 && n <= 1423) || (n >= 2304 && n <= 4095) || (n >= 44032 && n <= 55203) || (n >= 63744 && n <= 64255) || (n >= 131072 && n <= 195101)
+}
+
+/// True for decimal digits in common Unicode scripts.
+pub fn is_number(c: Char) -> Bool {
+  let n = c.to_int()
+  return (n >= 48 && n <= 57) || (n >= 1632 && n <= 1641) || (n >= 1776 && n <= 1785) || (n >= 2406 && n <= 2415) || (n >= 65296 && n <= 65305)
+}
+
+/// Unicode whitespace characters used by common text formats.
+pub fn is_whitespace(c: Char) -> Bool {
+  let n = c.to_int()
+  return n == 9 || n == 10 || n == 11 || n == 12 || n == 13 || n == 32 || n == 133 || n == 160 || n == 5760 || (n >= 8192 && n <= 8202) || n == 8232 || n == 8233 || n == 8239 || n == 8287 || n == 12288
+}
+
+/// Approximate terminal cell width: combining marks and controls are 0, wide CJK/emoji ranges are 2, others 1.
+pub fn char_width(c: Char) -> Int {
+  let n = c.to_int()
+  if n < 32 || (n >= 127 && n < 160) || is_combining(c) { return 0 }
+  if (n >= 4352 && n <= 4607) || (n >= 11904 && n <= 42191) || (n >= 44032 && n <= 55203) || (n >= 65072 && n <= 65103) || (n >= 65281 && n <= 65376) || (n >= 127744 && n <= 129791) || (n >= 131072 && n <= 196605) { return 2 }
+  return 1
+}
+
+/// Sum of approximate terminal widths of all Unicode scalar values in `s`.
+pub fn width(s: view String) -> Int {
+  let chars = text.chars(s)
+  var total = 0
+  var i = 0
+  while i < chars.len() { total = total + char_width(chars.at(i)); i = i + 1 }
+  return total
+}
+
+fn compose(base: Int, mark: Int) -> Int {
+  if mark == 769 {
+    if base == 65 { return 193 } if base == 97 { return 225 }
+    if base == 69 { return 201 } if base == 101 { return 233 }
+    if base == 73 { return 205 } if base == 105 { return 237 }
+    if base == 79 { return 211 } if base == 111 { return 243 }
+    if base == 85 { return 218 } if base == 117 { return 250 }
+    if base == 89 { return 221 } if base == 121 { return 253 }
+  }
+  if mark == 768 {
+    if base == 65 { return 192 } if base == 97 { return 224 }
+    if base == 69 { return 200 } if base == 101 { return 232 }
+    if base == 73 { return 204 } if base == 105 { return 236 }
+    if base == 79 { return 210 } if base == 111 { return 242 }
+    if base == 85 { return 217 } if base == 117 { return 249 }
+  }
+  if mark == 776 {
+    if base == 65 { return 196 } if base == 97 { return 228 }
+    if base == 69 { return 203 } if base == 101 { return 235 }
+    if base == 73 { return 207 } if base == 105 { return 239 }
+    if base == 79 { return 214 } if base == 111 { return 246 }
+    if base == 85 { return 220 } if base == 117 { return 252 }
+    if base == 89 { return 376 } if base == 121 { return 255 }
+  }
+  if mark == 771 { if base == 78 { return 209 } if base == 110 { return 241 } if base == 65 { return 195 } if base == 97 { return 227 } if base == 79 { return 213 } if base == 111 { return 245 } }
+  if mark == 778 { if base == 65 { return 197 } if base == 97 { return 229 } }
+  if mark == 807 { if base == 67 { return 199 } if base == 99 { return 231 } }
+  return 0
+}
+
+/// Compose common Latin base-plus-accent pairs. This is a deliberately small NFC subset, not full normalization.
+pub fn normalize_nfc(s: view String) -> String {
+  let chars = text.chars(s)
+  var out = List<Char>.new()
+  var i = 0
+  while i < chars.len() {
+    let current = chars.at(i)
+    if i + 1 < chars.len() {
+      let joined = compose(current.to_int(), chars.at(i + 1).to_int())
+      if joined != 0 {
+        out.push(Char.from_int(joined))
+        i = i + 2
+        continue
+      }
+    }
+    out.push(current)
+    i = i + 1
+  }
+  return text.from_chars(out)
+}
