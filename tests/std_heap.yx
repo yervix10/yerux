@@ -1,0 +1,14 @@
+import std.collections
+fn main() {
+  var h = List<Int>.new()
+  collections.heap_push(h, 4)
+  collections.heap_push(h, 9)
+  collections.heap_push(h, 1)
+  collections.heap_push(h, 7)
+  match collections.heap_peek(h) { Some(x) => { print(x) } None => { print(-1) } }
+  collections.heap_for_each(h, |x: view Int| { print(x) })
+  match collections.heap_pop(h) { Some(x) => { print(x) } None => { print(-1) } }
+  match collections.heap_pop(h) { Some(x) => { print(x) } None => { print(-1) } }
+  match collections.heap_pop(h) { Some(x) => { print(x) } None => { print(-1) } }
+  match collections.heap_pop(h) { Some(x) => { print(x) } None => { print(-1) } }
+}

@@ -36,4 +36,38 @@ pub fn vecdeque_for_each<T>(q: view List<T>, f: view fn(view T)) {
   while i < q.len() { f(q.at(i)); i = i + 1 }
 }
 
+// Max heap / priority queue stored in a List<T>; the greatest Ordered value is popped first.
+pub fn heap_push<T: Ordered>(h: mut List<T>, value: T) {
+  h.push(move value)
+  var i = h.len() - 1
+  while i > 0 {
+    let p = (i - 1) / 2
+    if h.at(p).cmp(h.at(i)) >= 0 { break }
+    h.swap(p, i)
+    i = p
+  }
+}
+pub fn heap_pop<T: Ordered>(h: mut List<T>) -> Option<T> {
+  if h.is_empty() { return None }
+  h.swap(0, h.len() - 1)
+  let result = h.pop()
+  var i = 0
+  while i * 2 + 1 < h.len() {
+    var c = i * 2 + 1
+    if c + 1 < h.len() && h.at(c).cmp(h.at(c + 1)) < 0 { c = c + 1 }
+    if h.at(i).cmp(h.at(c)) >= 0 { break }
+    h.swap(i, c)
+    i = c
+  }
+  return Some(move result)
+}
+pub fn heap_peek<T: Ordered + Copy>(h: view List<T>) -> Option<T> {
+  if h.is_empty() { return None }
+  return Some(h.get(0))
+}
+pub fn heap_for_each<T>(h: view List<T>, f: view fn(view T)) {
+  var i = 0
+  while i < h.len() { f(h.at(i)); i = i + 1 }
+}
+
 
