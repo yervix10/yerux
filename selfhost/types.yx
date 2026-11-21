@@ -12,7 +12,7 @@ struct Shape { name: String, generics: List<String>, fields: List<FieldType>, va
 struct Parameter { mode: String, ty: String }
 struct Signature {
   name: String, spelling: String, args: List<Parameter>, result: String,
-  owner: String, receiver: String, generics: List<String>,
+  owner: String, receiver: String, generics: List<String>, copy_params: List<String>,
 }
 struct Function { node: Int, signature: Int }
 struct Types {
@@ -110,7 +110,7 @@ fn add_signature(types: mut Types, name: view String, args: List<Parameter>, ret
   }
   types.signatures.push(Signature {
     name: String.from(name), spelling: String.from(text), args: move args, result: String.from(ret),
-    owner: String.new(), receiver: String.new(), generics: List<String>.new(),
+    owner: String.new(), receiver: String.new(), generics: List<String>.new(), copy_params: List<String>.new(),
   })
   return text
 }
@@ -476,6 +476,17 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
           return unknown()
         }
       }
+      for at in 0..sub.names.len() {
+        let param = String.from(sub.names.at(at))
+        if types.signatures.at(sig).copy_params.contains(param) {
+          let actual = String.from(sub.values.at(at))
+          var visiting = List<String>.new()
+          if actual == "nothing" || is_owned(types, actual, visiting) {
+            issue(types, "{actual} does not implement Copy, which '{name}' needs for {param}")
+          }
+        }
+      }
+      if types.errors != before { return unknown() }
     }
     return type_terms.substitute(types.signatures.at(sig).result, sub)
   }
@@ -1324,10 +1335,15 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
     types.moved = move before
   } else if tag == "Block" || tag == "[" || tag == "Scope" || tag == "Unsafe" {
     var i = index + 1
+    var exits = false
     while i < tree.at(index).end {
-      if check_body(types, returns, tree, i) { return true }
+      if check_body(types, returns, tree, i) {
+        if types.verify_ownership { return true }
+        exits = true
+      }
       i = tree.at(i).end
     }
+    return exits
   }
   return false
 }
@@ -1462,6 +1478,7 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
   types.signatures.at(index).owner = String.from(owner)
   types.signatures.at(index).receiver = move receiver
   types.signatures.at(index).generics = copy_names(types.generics)
+  types.signatures.at(index).copy_params = copy_parameters(tree, ast.child(tree, node, 1))
   return Function { node: node, signature: index }
 }
 
@@ -1509,7 +1526,7 @@ fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify
     types.generics = copy_names(types.signatures.at(fun.signature).generics)
     var state = Returns { expected: String.from(types.signatures.at(fun.signature).result), inferred: unit() }
     types.return_type = String.from(state.expected)
-    types.copy_params = copy_parameters(tree, ast.child(tree, fun.node, 1))
+    types.copy_params = copy_names(types.signatures.at(fun.signature).copy_params)
     let exits = check_body(types, state, tree, ast.child(tree, fun.node, 4))
   }
   return types.errors
