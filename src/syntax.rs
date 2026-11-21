@@ -51,8 +51,37 @@ impl Diag {
     }
 }
 
+thread_local! {
+    /// start offsets of the lines of the source rendered last (`render` is called once per diagnostic, and
+    /// `lines().nth(n)` made thousands of diagnostics quadratic)
+    static LINE_STARTS: std::cell::RefCell<(usize, usize, Vec<usize>)> = const { std::cell::RefCell::new((0, 0, Vec::new())) };
+}
+
+fn source_line(src: &str, n: usize) -> &str {
+    LINE_STARTS.with(|c| {
+        let mut c = c.borrow_mut();
+        let key = (src.as_ptr() as usize, src.len());
+        if (c.0, c.1) != key || c.2.is_empty() {
+            let mut v = vec![0usize];
+            for (i, b) in src.bytes().enumerate() {
+                if b == b'\n' {
+                    v.push(i + 1);
+                }
+            }
+            *c = (key.0, key.1, v);
+        }
+        match c.2.get(n) {
+            Some(&a) if a <= src.len() => {
+                let end = c.2.get(n + 1).map(|e| e - 1).unwrap_or(src.len());
+                src[a..end.max(a)].trim_end_matches('\r')
+            }
+            _ => "",
+        }
+    })
+}
+
 pub fn render(d: &Diag, file: &str, src: &str) -> String {
-    let line = src.lines().nth(d.pos.line.saturating_sub(1)).unwrap_or("");
+    let line = source_line(src, d.pos.line.saturating_sub(1));
     let w = d.pos.line.to_string().len();
     let mut s = format!(
         "error: {}\n{:w$}--> {}:{}:{}\n",
