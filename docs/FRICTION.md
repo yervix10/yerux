@@ -254,7 +254,7 @@ Found while writing a small `make`. Open unless marked.
 - **`List<String>` has no `copy()`** (fixed: use `clone()`, see below) (it needs `T: Copy`), so cloning a list of strings needs a hand-written
   helper. Needed here because iterating `ctx.rules.at(i).deps` while `build(ctx, ..)` takes `ctx` as `mut`
   conflicts with the borrow.
-  `List<String>.clone()` (prelude_list.yx) now copies the strings; other owned element types still need a loop.
+  The `Clone` trait (docs/CLONE.md) now covers `List<T: Clone>`, Map, Set, Option and user impls.
 - **Elements cannot be bound with `let x = list.at(i)`** ("cannot move 'argv.at(..)' out of its List"); it has to
   be `String.from(list.at(i))` even to just compare it. `for x in list` borrows fine, so index loops over
   `view List<String>` are the awkward case.

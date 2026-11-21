@@ -381,3 +381,15 @@ impl<T: Show> Show for Set<T> {
         return s
     }
 }
+
+impl<K: Clone, V: Clone> Clone for Map<K, V> {
+    fn clone(view self) -> Map<K, V> {
+        return Map { keys: self.keys.clone(), vals: self.vals.clone(), hashes: self.hashes.clone(), slots: self.slots.clone() }
+    }
+}
+
+impl<T: Clone> Clone for Set<T> {
+    fn clone(view self) -> Set<T> {
+        return Set { items: self.items.clone() }
+    }
+}

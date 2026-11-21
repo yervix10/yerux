@@ -905,3 +905,12 @@ fn m__pow(x: Float, y: Float) -> Float {
     }
     return m__exp(y * m__ln(x))
 }
+impl Clone for Int8 { fn clone(view self) -> Int8 { return self } }
+impl Clone for Int16 { fn clone(view self) -> Int16 { return self } }
+impl Clone for Int32 { fn clone(view self) -> Int32 { return self } }
+impl Clone for UInt8 { fn clone(view self) -> UInt8 { return self } }
+impl Clone for UInt16 { fn clone(view self) -> UInt16 { return self } }
+impl Clone for UInt32 { fn clone(view self) -> UInt32 { return self } }
+impl Clone for UInt64 { fn clone(view self) -> UInt64 { return self } }
+impl Clone for Float32 { fn clone(view self) -> Float32 { return self } }
+impl Clone for Float { fn clone(view self) -> Float { return self } }

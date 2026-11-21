@@ -226,3 +226,29 @@ impl<T: Equal> Equal for Option<T> {
         }
     }
 }
+
+impl<T: Clone> Clone for Option<T> {
+    fn clone(view self) -> Option<T> {
+        match self {
+            Some(v) => {
+                return Some(v.clone())
+            }
+            None => {
+                return None
+            }
+        }
+    }
+}
+
+impl<T: Clone, E: Clone> Clone for Result<T, E> {
+    fn clone(view self) -> Result<T, E> {
+        match self {
+            Ok(v) => {
+                return Ok(v.clone())
+            }
+            Err(e) => {
+                return Err(e.clone())
+            }
+        }
+    }
+}

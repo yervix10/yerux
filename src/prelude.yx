@@ -8,6 +8,8 @@ trait Equal { fn eq(view self, other: view Self) -> Bool }
 trait Ordered { fn cmp(view self, other: view Self) -> Int }
 trait Show { fn show(view self) -> String }
 trait Drop { fn drop(mut self) }
+// deep copy: `x.clone()` gives an independent value (owned data is duplicated, not moved)
+trait Clone { fn clone(view self) -> Self }
 
 impl Equal for Int { fn eq(view self, other: view Int) -> Bool { return self == other } }
 impl Equal for Char { fn eq(view self, other: view Char) -> Bool { return self == other } }
@@ -95,3 +97,9 @@ struct Tuple3<A, B, C> { _0: A, _1: B, _2: C }
 struct Tuple4<A, B, C, D> { _0: A, _1: B, _2: C, _3: D }
 struct Tuple5<A, B, C, D, E> { _0: A, _1: B, _2: C, _3: D, _4: E }
 struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
+
+impl Clone for Int { fn clone(view self) -> Int { return self } }
+impl Clone for Char { fn clone(view self) -> Char { return self } }
+impl Clone for Bool { fn clone(view self) -> Bool { return self } }
+impl Clone for Text { fn clone(view self) -> Text { return self } }
+impl Clone for String { fn clone(view self) -> String { return String.from(self) } }

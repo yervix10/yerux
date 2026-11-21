@@ -185,6 +185,9 @@ fn main() {
 ```
 - After `remove`/`take`, last entry moves into the hole — order changes deterministically.
 
+### Clone
+`impl<K: Clone, V: Clone> Clone for Map<K, V>`: `m.clone()` is an independent deep copy (see [CLONE.md](CLONE.md)); same for `Set<T: Clone>`.
+
 ### Show
 `impl<K: Show, V: Show> Show for Map<K, V>`: `"{m}"` gives `{k1: v1, k2: v2}`.
 
