@@ -1,0 +1,56 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fast:
+    # quick check on pull requests: build without warnings, unit tests, representative subset of the suite
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - run: tests/ci.sh --fast
+  full:
+    # full suite on every push to main
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - run: tests/ci.sh
+  release-check:
+    # the release tarball builds, installs into a throwaway HOME and `yerux doctor` passes
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/release.sh dist
+      - run: |
+          export HOME="$(mktemp -d)"
+          tar -xzf dist/yerux-*.tar.gz -C "$HOME"
+          "$HOME"/yerux-*/install.sh
+          "$HOME/.local/bin/yerux" --version
