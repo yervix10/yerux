@@ -1,0 +1,9 @@
+error: cannot use 'l': it was already moved
+ --> tests/e987_net_listener_use_after_close.yx:6:21
+  |
+6 |   return net.accept(l)
+  |                     ^
+  = 'l' was moved on line 5
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.
