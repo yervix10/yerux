@@ -92,3 +92,5 @@ exit by design, so it is not in the leak list).
   `fork`), no shell-quoting helpers.
 - stdout/stderr text is lossy in `Output`; stdin is fed as `String` or `[UInt8]` (bytes are copied).
 - Windows and aarch64: refused at compile time (they would need `CreateProcessW` / the aarch64 syscall numbers).
+
+`process.run_timeout(program, args, timeout_ms)` captures stdout/stderr and returns `Some(Output)` on exit or kills and reaps the child before returning `None` on timeout. Timeout must be positive. It polls at 1 ms intervals; keep child output bounded because pipes are drained after the process exits. Test: `tests/process_timeout.yx`.
