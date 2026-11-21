@@ -1,0 +1,10 @@
+// Remainder by a runtime zero panics like division.
+fn rem(a: Int, b: Int) -> Int {
+  return a % b
+}
+
+fn main() {
+  print(rem(7, 3))
+  print(rem(-7, 3))
+  print(rem(7, 0))
+}

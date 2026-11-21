@@ -1,0 +1,7 @@
+error: duplicate variant 'A'
+ --> tests/e951_duplicate_variant.yx:1:21
+  |
+1 | enum E { A, B(Int), A }
+  |                     ^
+
+1 error(s). Nothing was generated.

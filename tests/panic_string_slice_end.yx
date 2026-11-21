@@ -1,0 +1,6 @@
+// String.slice end inside a multi-byte character panics with the "end" message.
+fn main() {
+  let s = String.from("a€b")
+  print(s.slice(1, 4))
+  print(s.slice(0, 2))
+}

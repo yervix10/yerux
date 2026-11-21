@@ -1,0 +1,10 @@
+// l.swap is a built-in: an index equal to the length panics in every backend.
+fn main() {
+  var l = List<Int>.new()
+  l.push(1)
+  l.push(2)
+  l.swap(0, 1)
+  print(l.get(0))
+  l.swap(1, 2)
+  print("unreachable")
+}

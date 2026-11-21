@@ -1,0 +1,9 @@
+error: `?` needs a Result or an Option, but this is Int
+ --> tests/e958_try_on_int.yx:2:11
+  |
+2 |   let y = x?
+  |           ^^
+  = `?` unwraps the success value and returns the error (or `None`) from the current function
+  = help: only use it on calls that return `Result<T, E>` or `Option<T>`
+
+1 error(s). Nothing was generated.

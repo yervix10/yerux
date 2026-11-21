@@ -1,0 +1,9 @@
+error: `?` is used on Result<Int, String> but this function returns Option<Int>
+ --> tests/e960_try_result_in_option.yx:3:11
+  |
+3 |   let y = g()?
+  |           ^^^^
+  = a Result carries an error that an Option cannot hold
+  = help: drop the error with `.ok()`: `value.ok()?`, or make the function return a Result
+
+1 error(s). Nothing was generated.

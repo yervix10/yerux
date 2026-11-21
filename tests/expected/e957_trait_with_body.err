@@ -1,0 +1,8 @@
+error: a trait lists signatures only: remove the body
+ --> tests/e957_trait_with_body.yx:2:29
+  |
+2 |   fn area(view self) -> Int { return 0 }
+  |                             ^
+  = the body goes in `impl Trait for Type { .. }`
+
+1 error(s). Nothing was generated.

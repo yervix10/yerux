@@ -1,0 +1,161 @@
+// Edge cases of the List API: insert at both ends, remove/swap_remove of the last element,
+// truncate to more/equal/zero, reverse of tiny lists, extend with empty lists, slices of
+// length zero, searching and sorting corner cases, all with Copy and owned elements.
+fn show(l: view List<Int>) {
+  var r = String.from("[")
+  var i = 0
+  while i < l.len() {
+    if i > 0 { r.push_str(",") }
+    r.push_int(l.get(i))
+    i = i + 1
+  }
+  r.push_str("]")
+  print(r)
+}
+
+fn shows(l: view List<String>) {
+  let j = l.join(",")
+  print("<{j}> {l.len()}")
+}
+
+fn main() {
+  var l = List<Int>.new()
+  print("{l.is_empty()} {l.len()}")
+  l.insert(0, 5)          // into an empty list
+  l.insert(1, 7)          // at len
+  l.insert(0, 1)          // at 0
+  l.insert(2, 6)          // in the middle
+  show(l)
+  print("{l.is_empty()} {l.len()}")
+  let last = l.remove(l.len() - 1)
+  let first = l.swap_remove(0)
+  print("{last} {first}")
+  show(l)
+  let only = l.swap_remove(l.len() - 1)
+  print(only)
+  show(l)
+
+  // truncate: larger than len, equal, smaller, zero (twice)
+  var t = List<Int>.new()
+  var i = 0
+  while i < 6 { t.push(i * i); i = i + 1 }
+  t.truncate(100)
+  show(t)
+  t.truncate(6)
+  show(t)
+  t.truncate(3)
+  show(t)
+  t.truncate(0)
+  show(t)
+  t.truncate(0)
+  show(t)
+
+  // reverse: empty, one, two, odd
+  var r = List<Int>.new()
+  r.reverse()
+  show(r)
+  r.push(1)
+  r.reverse()
+  show(r)
+  r.push(2)
+  r.reverse()
+  show(r)
+  r.push(3)
+  r.reverse()
+  show(r)
+
+  // extend: empty into empty, empty into full, full into empty, order preserved
+  var a = List<Int>.new()
+  a.extend(List<Int>.new())
+  show(a)
+  var b = List<Int>.new()
+  b.push(4)
+  b.push(5)
+  a.extend(move b)
+  show(a)
+  a.extend(List<Int>.new())
+  show(a)
+  var c = List<Int>.new()
+  c.push(6)
+  c.push(7)
+  c.push(8)
+  a.extend(move c)
+  show(a)
+
+  // slice: empty at start, end and middle; whole; copy is independent
+  let s0 = a.slice(0, 0)
+  let s5 = a.slice(5, 5)
+  let s2 = a.slice(2, 2)
+  let all = a.slice(0, a.len())
+  show(s0)
+  show(s5)
+  show(s2)
+  show(all)
+  var cp = a.copy()
+  cp.set(0, 99)
+  show(a)
+  show(cp)
+
+  // index_of / contains: first of duplicates, missing, empty list
+  var d = List<Int>.new()
+  d.push(3)
+  d.push(1)
+  d.push(3)
+  print("{d.index_of(3)} {d.index_of(1)} {d.index_of(42)} {d.contains(1)} {d.contains(0)}")
+  let none = List<Int>.new()
+  print("{none.index_of(0)} {none.contains(0)} {none.is_sorted()}")
+
+  // sorting: duplicates, negatives, extremes, already sorted, reversed
+  var big = List<Int>.new()
+  big.push(0)
+  big.push(-9223372036854775807 - 1)
+  big.push(9223372036854775807)
+  big.push(-1)
+  big.push(0)
+  big.push(1)
+  big.push(-1)
+  print(big.is_sorted())
+  big.sort()
+  show(big)
+  print(big.is_sorted())
+  big.sort()
+  show(big)
+  big.reverse()
+  big.sort()
+  show(big)
+  var same = List<Int>.new()
+  i = 0
+  while i < 40 { same.push(7); i = i + 1 }
+  same.sort()
+  print("{same.is_sorted()} {same.len()} {same.get(0)} {same.get(39)}")
+
+  // owned elements through every operation
+  var w = List<String>.new()
+  w.insert(0, String.from("b"))
+  w.insert(0, String.from("a"))
+  w.insert(2, String.from("d"))
+  w.insert(2, String.from("c"))
+  shows(w)
+  w.reverse()
+  shows(w)
+  let gone = w.swap_remove(0)
+  let mid = w.remove(1)
+  print("{gone} {mid}")
+  shows(w)
+  var more = List<String>.new()
+  more.push(String.from("x"))
+  more.push(String.from("y"))
+  w.extend(move more)
+  shows(w)
+  w.sort()
+  shows(w)
+  let key = String.from("y")
+  print("{w.index_of(key)} {w.contains(key)}")
+  w.truncate(1)
+  shows(w)
+  w.truncate(0)
+  shows(w)
+  w.sort()
+  w.reverse()
+  shows(w)
+}

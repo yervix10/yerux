@@ -1,0 +1,8 @@
+// A negative insert position panics instead of wrapping around.
+fn main() {
+  var l = List<Int>.new()
+  l.push(3)
+  print(l.get(0))
+  l.insert(-1, 4)
+  print("unreachable")
+}

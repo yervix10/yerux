@@ -1,0 +1,9 @@
+// List.slice whose end is past the length panics.
+fn main() {
+  var l = List<Int>.new()
+  l.push(1)
+  let ok = l.slice(1, 1)
+  print(ok.len())
+  let bad = l.slice(0, 2)
+  print(bad.len())
+}

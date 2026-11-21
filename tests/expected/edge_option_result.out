@@ -1,0 +1,16 @@
+Some(12) None None Some(bad number 'y')
+Some(left) Some(fallback) None
+true true Some(missing)
+have default -5 0
+true false false true
+  parsed 1
+  parsed 2
+Ok(6)
+  parsed 1
+Err(bad number 'two')
+Err(bad number 'one')
+  parsed 1
+  parsed 2
+Err(bad number '')
+Some(104)
+None

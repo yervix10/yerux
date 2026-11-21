@@ -1,0 +1,120 @@
+// Edge cases of the String API that the other string tests do not reach:
+// find_from positions, empty patterns, boundaries outside the string, push_byte/push_slice,
+// split/replace corner cases, trim of every ASCII whitespace kind, ordering and multi-byte chars.
+fn main() {
+  let s = String.from("abcabc")
+  // find_from: start, middle, exactly at a match, past the last match, at len, past len
+  let f0 = s.find_from("abc", 0)
+  let f1 = s.find_from("abc", 1)
+  let f3 = s.find_from("abc", 3)
+  let f4 = s.find_from("abc", 4)
+  print("{f0} {f1} {f3} {f4}")
+  let g6 = s.find_from("c", 6)
+  let g100 = s.find_from("c", 100)
+  let ge6 = s.find_from("", 6)
+  let ge2 = s.find_from("", 2)
+  let ge7 = s.find_from("", 7)
+  print("{g6} {g100} {ge6} {ge2} {ge7}")
+  // a pattern longer than the string, and the empty pattern
+  let long = s.find("abcabcabc")
+  let fe = s.find("")
+  let ce = s.contains("")
+  let cc = s.contains("cab")
+  print("{long} {fe} {ce} {cc}")
+  // starts_with / ends_with: empty, equal, longer
+  let sw1 = s.starts_with("")
+  let ew1 = s.ends_with("")
+  let sw2 = s.starts_with("abcabc")
+  let ew2 = s.ends_with("abcabc")
+  let sw3 = s.starts_with("abcabcx")
+  let ew3 = s.ends_with("xabcabc")
+  let ew4 = s.ends_with("bc")
+  let sw4 = s.starts_with("b")
+  print("{sw1} {ew1} {sw2} {ew2} {sw3} {ew3} {ew4} {sw4}")
+
+  // is_boundary outside the string never panics
+  let u = String.from("añ€😀")
+  print("{u.len()} {u.char_count()}")
+  print("{u.is_boundary(-1)} {u.is_boundary(0)} {u.is_boundary(1)} {u.is_boundary(2)} {u.is_boundary(3)}")
+  print("{u.is_boundary(6)} {u.is_boundary(7)} {u.is_boundary(10)} {u.is_boundary(11)} {u.is_boundary(99)}")
+  print(u.slice(3, 6))
+  print(u.slice(6, 10))
+  print(u.slice(10, 10).len())
+
+  // push_byte / push_slice build arbitrary UTF-8
+  var b = String.new()
+  b.push_byte(72)
+  b.push_byte(105)
+  b.push_byte(0xC3)
+  b.push_byte(0xA9)
+  b.push_slice("xyz", 1, 3)
+  b.push_slice(s, 0, 0)
+  b.push_slice(s, 4, 6)
+  print("{b} {b.len()} {b.char_count()}")
+
+  // split: separator at both ends, repeated, multi-byte, absent, whole string
+  let p1 = String.from("--a----b--")
+  let parts = p1.split("--")
+  let j1 = parts.join("|")
+  print("{parts.len()} [{j1}]")
+  let p2 = String.from("x€y€€z")
+  let parts2 = p2.split("€")
+  let j2 = parts2.join(",")
+  print("{parts2.len()} [{j2}]")
+  let nosep = s.split(";")
+  print("{nosep.len()} {nosep.at(0)}")
+  let whole = s.split("abcabc")
+  let j3 = whole.join("+")
+  print("{whole.len()} [{j3}]")
+
+  // join of empty and single-element lists
+  let empty = List<String>.new()
+  let j4 = empty.join(",")
+  print("[{j4}]")
+  var one = List<String>.new()
+  one.push("solo")
+  let j5 = one.join(",")
+  print("[{j5}]")
+
+  // replace: no match, overlapping pattern, replacement containing the pattern, deletion
+  print(s.replace("zz", "Q"))
+  let aaaa = String.from("aaaa")
+  print(aaaa.replace("aaa", "b"))
+  print(s.replace("a", "aa"))
+  print(s.replace("bc", ""))
+  print(p2.replace("€", "E"))
+
+  // repeat of empty and once
+  let e = String.from("")
+  let r0 = e.repeat(5)
+  let r1 = s.repeat(1)
+  let r3 = s.repeat(3)
+  print("[{r0}] [{r1}] {r3.len()}")
+
+  // trim: tab, newline, carriage return and space on both ends, inner space kept, only whitespace
+  var ws = String.new()
+  ws.push_byte(9)
+  ws.push_byte(10)
+  ws.push_byte(13)
+  ws.push_byte(32)
+  ws.push_str("mid dle")
+  ws.push_byte(32)
+  ws.push_byte(13)
+  ws.push_byte(9)
+  ws.push_byte(10)
+  print("[{ws.trim()}] {ws.trim_start().len()} {ws.trim_end().len()}")
+  let blank = String.from(" \t\n ")
+  print("[{blank.trim()}] [{blank.trim_start()}] [{blank.trim_end()}]")
+
+  // case: digits and punctuation unchanged, non-letter multi-byte unchanged
+  let mixed = String.from("a1-Z_€😀ß")
+  print(mixed.to_upper())
+  print(mixed.to_lower())
+
+  // ordering
+  let x = String.from("abc")
+  let y = String.from("abd")
+  let z = String.from("ab")
+  print("{x < y} {y < x} {z < x} {x < z} {x == x} {x.cmp(y)} {y.cmp(x)} {x.cmp(x)} {z.cmp(x)}")
+  print("{e < z} {e.cmp(e)}")
+}

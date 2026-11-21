@@ -1,0 +1,7 @@
+error: duplicate field 'x'
+ --> tests/e950_duplicate_field.yx:1:28
+  |
+1 | struct P { x: Int, y: Int, x: Int }
+  |                            ^
+
+1 error(s). Nothing was generated.

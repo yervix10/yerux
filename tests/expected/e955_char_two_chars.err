@@ -1,0 +1,8 @@
+error: a character literal must contain exactly one character
+ --> tests/e955_char_two_chars.yx:2:11
+  |
+2 |   let c = 'ab'
+  |           ^^
+  = a Char literal holds exactly one Unicode character: 'a', 'é', '\n', '\u{1F600}'; use ".." for text
+
+1 error(s). Nothing was generated.

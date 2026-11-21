@@ -1,0 +1,9 @@
+error: a `comptime` expression must be an Int, Char or Bool, found String [E-K3]
+ --> tests/e966_comptime_string.yx:2:20
+  |
+2 |   let s = comptime String.from("x")
+  |                    ^^^^^^^^^^^^^^^^
+  = why: for now only scalar values can leave compile time
+  = fix: use comptime for the number or the condition, and build the aggregate at run time
+
+1 error(s). Nothing was generated.

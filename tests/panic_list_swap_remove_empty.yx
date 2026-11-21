@@ -1,0 +1,7 @@
+// swap_remove on an empty list reports its own message, not the pop it is built on.
+fn main() {
+  var l = List<Int>.new()
+  l.push(4)
+  print(l.swap_remove(0))
+  print(l.swap_remove(0))
+}

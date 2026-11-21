@@ -1,0 +1,10 @@
+// Result.expect panics with "<msg>: <error>".
+fn half(n: Int) -> Result<Int, String> {
+  if n % 2 != 0 { return Err("{n} is odd") }
+  return Ok(n / 2)
+}
+
+fn main() {
+  print(half(8).expect("half of 8"))
+  print(half(7).expect("half of 7"))
+}

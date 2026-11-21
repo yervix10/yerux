@@ -1,0 +1,9 @@
+error: `?` is used on Option<Int> but this function returns Result<Int, String>
+ --> tests/e959_try_option_in_result.yx:3:11
+  |
+3 |   let y = g()?
+  |           ^^^^
+  = an Option has no error to return from a function that returns a Result
+  = help: turn the missing value into an error first: `ok_or(value, "what was missing")?`
+
+1 error(s). Nothing was generated.

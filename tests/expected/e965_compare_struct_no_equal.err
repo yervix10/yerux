@@ -1,0 +1,8 @@
+error: cannot use `==` on values of type P: it does not implement Equal
+ --> tests/e965_compare_struct_no_equal.yx:5:9
+  |
+5 |   print(a == b)
+  |         ^^^^^^
+  = help: add `impl Equal for P { fn eq(view self, other: view P) -> Bool { .. } }`
+
+1 error(s). Nothing was generated.

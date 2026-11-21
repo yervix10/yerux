@@ -1,0 +1,2 @@
+enum E { A, B(Int), A }
+fn main() { print(1) }

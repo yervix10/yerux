@@ -1,0 +1,94 @@
+// Map/Set corner cases: replacing a value drops the old one, remove of missing keys, removing
+// the last and the only entry, clear followed by reuse, growth through many rehashes with
+// interleaved removals (backward-shift deletion), negative and extreme keys, empty key.
+fn dump(m: view Map<String, String>) {
+  var r = String.from("{{")
+  var i = 0
+  while i < m.len() {
+    if i > 0 { r.push_str(" ") }
+    r.push_str(m.keys.at(i))
+    r.push_str("=")
+    r.push_str(m.vals.at(i))
+    i = i + 1
+  }
+  r.push_str("}}")
+  print(r)
+}
+
+fn main() {
+  var m = Map<String, String>.new()
+  let fa = m.find("a")
+  let ca = m.contains("a")
+  let ra = m.remove("a")
+  print("{m.is_empty()} {m.len()} {fa} {ca} {ra}")
+  m.insert(String.from("a"), String.from("1"))
+  m.insert(String.from("b"), String.from("2"))
+  m.insert(String.from("a"), String.from("one"))      // replace: old "1" dropped, order kept
+  m.insert(String.from(""), String.from("empty key"))
+  dump(m)
+  let fe = m.find("")
+  let fb = m.find("b")
+  print("{m.len()} {fe} {fb}")
+  let rz = m.remove("zz")
+  let re1 = m.remove("")      // the last entry
+  let re2 = m.remove("")      // now missing
+  print("{rz} {re1} {re2}")
+  dump(m)
+  let e = m.find("b")
+  m.vals.at(e).push_str("!")
+  let took = m.take("a")
+  print(took)
+  dump(m)
+  let rb = m.remove("b")      // the only entry
+  print("{rb} {m.is_empty()}")
+  dump(m)
+  m.insert(String.from("again"), String.from("x"))
+  m.clear()
+  let cg = m.contains("again")
+  print("{m.len()} {cg}")
+  m.insert(String.from("after"), String.from("clear"))
+  dump(m)
+
+  // many inserts and removals: every key must still be found exactly when present
+  var big = Map<Int, Int>.new()
+  var i = -500
+  while i < 500 {
+    big.insert(i * 7919, i)
+    i = i + 1
+  }
+  i = -500
+  while i < 500 {
+    if i % 3 == 0 { let gone = big.remove(i * 7919) }
+    i = i + 1
+  }
+  var found = 0
+  var wrong = 0
+  i = -500
+  while i < 500 {
+    let present = big.contains(i * 7919)
+    if present != (i % 3 != 0) { wrong = wrong + 1 }
+    if present {
+      found = found + 1
+      if big.get(i * 7919) != i { wrong = wrong + 1 }
+    }
+    i = i + 1
+  }
+  print("{big.len()} {found} {wrong}")
+  big.insert(9223372036854775807, 1)
+  big.insert(-9223372036854775807 - 1, 2)
+  big.insert(0, 3)
+  print("{big.get(9223372036854775807)} {big.get(-9223372036854775807 - 1)} {big.get(0)} {big.get_or(1, -1)}")
+
+  // Set: duplicates, remove, re-insert, clear
+  var s = Set<Int>.new()
+  print("{s.insert(1)} {s.insert(1)} {s.insert(-1)} {s.len()}")
+  print("{s.remove(1)} {s.remove(1)} {s.contains(1)} {s.contains(-1)}")
+  print("{s.insert(1)} {s.len()}")
+  s.clear()
+  print("{s.is_empty()} {s.insert(5)} {s}")
+  var ss = Set<String>.new()
+  let k = String.from("k")
+  let i1 = ss.insert(String.from("k"))
+  let i2 = ss.insert(String.from("k"))
+  print("{i1} {i2} {ss.contains(k)} {ss.len()}")
+}
