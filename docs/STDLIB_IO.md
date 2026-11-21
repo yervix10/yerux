@@ -188,3 +188,5 @@ status. Tests: `tests/io_exit_drop.yx`, `tests/io_exit_skips_drop.yx`, `tests/io
 `log.debug/info/warn/error(message)` write `[LEVEL] message` lines to stderr. Logging is best effort and does not return write errors. See `tests/std_log.yx`.
 
 `fs.is_symlink(path)` checks the link itself with `lstat` semantics and returns false when metadata cannot be read. Directory entry metadata remains available through `read_dir_entries`. See `tests/std_fs_metadata.yx`.
+
+`env.get_int(name)` parses a decimal integer while preserving the distinction between a missing variable (`Ok(None)`) and malformed content (`Err(String)`). See `tests/std_env_typed.yx`.
