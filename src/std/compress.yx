@@ -1,0 +1,34 @@
+// std.compress: small, dependency-free byte-oriented run-length encoding.
+// Format: repeated (count, byte) pairs, count in 1..255. This is not gzip/deflate.
+pub fn compress(input: view String) -> String {
+    var out = String.new()
+    var i = 0
+    while i < input.len() {
+        let byte = input.byte(i)
+        var count = 1
+        while i + count < input.len() && input.byte(i + count) == byte && count < 255 {
+            count = count + 1
+        }
+        out.push_byte(count)
+        out.push_byte(byte)
+        i = i + count
+    }
+    return move out
+}
+
+pub fn decompress(input: view String) -> Result<String, String> {
+    if input.len() % 2 != 0 { return Err(String.from("invalid RLE data")) }
+    var out = String.new()
+    var i = 0
+    while i < input.len() {
+        let count = input.byte(i)
+        if count == 0 { return Err(String.from("invalid RLE run length")) }
+        var j = 0
+        while j < count {
+            out.push_byte(input.byte(i + 1))
+            j = j + 1
+        }
+        i = i + 2
+    }
+    return Ok(move out)
+}
