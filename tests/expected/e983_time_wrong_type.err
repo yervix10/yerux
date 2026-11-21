@@ -1,0 +1,7 @@
+error: expected Int but this is time.Instant
+ --> tests/e983_time_wrong_type.yx:6:17
+  |
+6 |   time.sleep_ms(t)
+  |                 ^
+
+1 error(s). Nothing was generated.

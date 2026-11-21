@@ -156,3 +156,296 @@ pub fn measure(f: view fn()) -> Int {
   f()
   return io.monotonic_ns() - t0
 }
+
+// ───────────────────────── clocks ─────────────────────────
+
+/// Nanoseconds on the monotonic clock (CLOCK_MONOTONIC): never goes backwards, only differences mean something.
+pub fn monotonic_ns() -> Int {
+  return io.monotonic_ns()
+}
+
+/// Wall clock (CLOCK_REALTIME) since 1970-01-01 00:00:00 UTC; it can jump when the system clock is set.
+pub fn unix_nanos() -> Int {
+  return io.unix_nanos()
+}
+
+pub fn unix_millis() -> Int {
+  return io.unix_nanos() / 1000000
+}
+
+pub fn unix_secs() -> Int {
+  return io.unix_secs()
+}
+
+/// Pauses the thread for `ms` milliseconds (no-op for ms <= 0).
+pub fn sleep_ms(ms: Int) {
+  io.sleep_ms(ms)
+}
+
+/// A point on the monotonic clock. Plain data (Copy): compare `ns` fields or subtract with `since`.
+pub struct Instant {
+  ns: Int,
+}
+
+/// The current instant on the monotonic clock.
+pub fn now() -> Instant {
+  return Instant { ns: io.monotonic_ns() }
+}
+
+impl Instant {
+  /// Time since this instant (negative if it lies in the future).
+  fn elapsed(view self) -> Int {
+    return io.monotonic_ns() - self.ns
+  }
+
+  /// `self - earlier`, a duration.
+  fn since(view self, earlier: view Instant) -> Int {
+    return self.ns - earlier.ns
+  }
+
+  /// This instant moved by duration `d`.
+  fn add(view self, d: Int) -> Instant {
+    return Instant { ns: self.ns + d }
+  }
+
+  fn is_before(view self, other: view Instant) -> Bool {
+    return self.ns < other.ns
+  }
+}
+
+/// Sleep until the monotonic clock reaches `t` (returns at once if it already has).
+pub fn sleep_until(t: Instant) {
+  let d = t.ns - io.monotonic_ns()
+  if d > 0 {
+    io.sleep_ns(d)
+  }
+}
+
+/// The instant `d` nanoseconds from now (for `sleep_until` and timeouts).
+pub fn deadline_in(d: Int) -> Instant {
+  return Instant { ns: io.monotonic_ns() + d }
+}
+
+// ───────────────────────── calendar (UTC, proleptic Gregorian) ─────────────────────────
+
+/// A UTC date and time. `month` 1..12, `day` 1..31, `hour` 0..23, `minute` 0..59, `second` 0..59 (no leap
+/// seconds), `nanos` 0..999999999, `weekday` 1 (Monday) .. 7 (Sunday), ISO 8601.
+pub struct DateTime {
+  year: Int,
+  month: Int,
+  day: Int,
+  hour: Int,
+  minute: Int,
+  second: Int,
+  nanos: Int,
+  weekday: Int,
+}
+
+fn floor_div(a: Int, b: Int) -> Int {
+  let q = a / b
+  if (a % b != 0) && ((a < 0) != (b < 0)) {
+    return q - 1
+  }
+  return q
+}
+
+fn floor_mod(a: Int, b: Int) -> Int {
+  return a - floor_div(a, b) * b
+}
+
+/// Days since 1970-01-01 of a civil date (H. Hinnant's algorithm, valid for every Int year in range).
+fn days_from_civil(y0: Int, m: Int, d: Int) -> Int {
+  var y = y0
+  if m <= 2 {
+    y = y - 1
+  }
+  let era = floor_div(y, 400)
+  let yoe = y - era * 400
+  var mp = m + 9
+  if m > 2 {
+    mp = m - 3
+  }
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  return era * 146097 + doe - 719468
+}
+
+pub fn is_leap_year(y: Int) -> Bool {
+  return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// Number of days in month `m` (1..12) of year `y`; 0 for a month out of range.
+pub fn days_in_month(y: Int, m: Int) -> Int {
+  if m == 2 {
+    if is_leap_year(y) {
+      return 29
+    }
+    return 28
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    return 30
+  }
+  if m >= 1 && m <= 12 {
+    return 31
+  }
+  return 0
+}
+
+/// The UTC calendar time of `ns` nanoseconds since the Unix epoch (negative = before 1970).
+pub fn utc_from_unix_nanos(ns: Int) -> DateTime {
+  let secs = floor_div(ns, 1000000000)
+  return civil(secs, ns - secs * 1000000000)
+}
+
+/// The UTC calendar time of `secs` seconds since the Unix epoch (any Int: no nanosecond overflow).
+pub fn utc_from_unix(secs: Int) -> DateTime {
+  return civil(secs, 0)
+}
+
+fn civil(secs: Int, frac: Int) -> DateTime {
+  let days = floor_div(secs, 86400)
+  let sod = secs - days * 86400
+  let z = days + 719468
+  let era = floor_div(z, 146097)
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  var m = mp - 9
+  if mp < 10 {
+    m = mp + 3
+  }
+  var y = yoe + era * 400
+  if m <= 2 {
+    y = y + 1
+  }
+  return DateTime {
+    year: y,
+    month: m,
+    day: d,
+    hour: sod / 3600,
+    minute: (sod % 3600) / 60,
+    second: sod % 60,
+    nanos: frac,
+    weekday: floor_mod(days + 3, 7) + 1,
+  }
+}
+
+/// The current UTC date and time (wall clock).
+pub fn utc_now() -> DateTime {
+  return utc_from_unix_nanos(io.unix_nanos())
+}
+
+fn bad_date(what: Text) -> io.IoError {
+  return io.custom_error(io.IoErrorKind.InvalidInput, what)
+}
+
+/// A checked UTC date and time; `InvalidInput` when a field is out of range (Feb 30, hour 24, ...).
+pub fn utc(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int) -> Result<DateTime, io.IoError> {
+  if year < -999999 || year > 999999 {
+    return Err(bad_date("date: year out of range"))
+  }
+  if month < 1 || month > 12 {
+    return Err(bad_date("date: month out of range"))
+  }
+  if day < 1 || day > days_in_month(year, month) {
+    return Err(bad_date("date: day out of range"))
+  }
+  if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 {
+    return Err(bad_date("date: time of day out of range"))
+  }
+  let days = days_from_civil(year, month, day)
+  return Ok(utc_from_unix(days * 86400 + hour * 3600 + minute * 60 + second))
+}
+
+/// Seconds since the Unix epoch of a DateTime (its `nanos` are ignored).
+pub fn to_unix(dt: view DateTime) -> Int {
+  return days_from_civil(dt.year, dt.month, dt.day) * 86400 + dt.hour * 3600 + dt.minute * 60 + dt.second
+}
+
+fn push2(r: mut String, v: Int) {
+  if v < 10 {
+    r.push_byte(48)
+  }
+  r.push_int(v)
+}
+
+/// ISO 8601 / RFC 3339 text: `2026-11-21T09:05:03Z` (years outside 0..9999 are printed as they are).
+pub fn format_iso(dt: view DateTime) -> String {
+  var r = String.new()
+  var y = dt.year
+  if y < 0 {
+    r.push_byte(45)
+    y = -y
+  }
+  if y < 1000 {
+    r.push_byte(48)
+  }
+  if y < 100 {
+    r.push_byte(48)
+  }
+  if y < 10 {
+    r.push_byte(48)
+  }
+  r.push_int(y)
+  r.push_byte(45)
+  push2(r, dt.month)
+  r.push_byte(45)
+  push2(r, dt.day)
+  r.push_byte(84)
+  push2(r, dt.hour)
+  r.push_byte(58)
+  push2(r, dt.minute)
+  r.push_byte(58)
+  push2(r, dt.second)
+  r.push_byte(90)
+  return r
+}
+
+impl Show for DateTime {
+  fn show(view self) -> String {
+    return format_iso(self)
+  }
+}
+
+fn digits(s: view String, from: Int, n: Int, out: mut Int) -> Bool {
+  var v = 0
+  var i = 0
+  while i < n {
+    let b = s.byte(from + i)
+    if b < 48 || b > 57 {
+      return false
+    }
+    v = v * 10 + (b - 48)
+    i = i + 1
+  }
+  out = v
+  return true
+}
+
+/// Parse `YYYY-MM-DDTHH:MM:SSZ` (also with a space or lowercase `t` instead of `T`, a lowercase `z`, or a
+/// bare date `YYYY-MM-DD` = midnight). `InvalidInput` when the text is malformed or a field is out of range.
+pub fn parse_iso(s: view String) -> Result<DateTime, io.IoError> {
+  let n = s.len()
+  if n != 10 && n != 20 {
+    return Err(bad_date("date: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ"))
+  }
+  var y = 0
+  var mo = 0
+  var d = 0
+  var ok = digits(s, 0, 4, y) && s.byte(4) == 45 && digits(s, 5, 2, mo) && s.byte(7) == 45 && digits(s, 8, 2, d)
+  var h = 0
+  var mi = 0
+  var se = 0
+  if ok && n == 20 {
+    let t = s.byte(10)
+    let z = s.byte(19)
+    ok = (t == 84 || t == 116 || t == 32) && digits(s, 11, 2, h) && s.byte(13) == 58 && digits(s, 14, 2, mi)
+    ok = ok && s.byte(16) == 58 && digits(s, 17, 2, se) && (z == 90 || z == 122)
+  }
+  if !ok {
+    return Err(bad_date("date: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ"))
+  }
+  return utc(y, mo, d, h, mi, se)
+}
