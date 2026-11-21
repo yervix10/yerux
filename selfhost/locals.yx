@@ -1,0 +1,154 @@
+// Lexical binding identities and closure captures before checker lowering.
+import ast
+
+pub struct Binding { name: String, node: Int, depth: Int }
+pub struct Capture { closure: Int, binding: Int }
+pub struct Locals {
+  bindings: List<Binding>,
+  // For each AST node, the binding id it declares or uses, or -1.
+  identities: List<Int>,
+  active: List<Int>,
+  stack: List<Int>,
+  captures: List<Capture>,
+  next_closure: Int,
+  rows: List<String>,
+}
+
+fn pop_scope(locals: mut Locals, mark: Int) {
+  while locals.active.len() > mark { let unused = locals.active.pop() }
+}
+
+fn bind(locals: mut Locals, n: view String, node: Int) {
+  let id = locals.bindings.len()
+  locals.bindings.push(Binding { name: String.from(n), node: node, depth: locals.stack.len() })
+  locals.active.push(id)
+  locals.identities.set(node, id)
+  locals.rows.push("bind:{id}:{n}")
+}
+
+fn capture(locals: mut Locals, closure: Int, id: Int, n: view String) {
+  for c in locals.captures {
+    if c.closure == closure && c.binding == id { return }
+  }
+  locals.captures.push(Capture { closure: closure, binding: id })
+  locals.rows.push("capture:{closure}:{id}:{n}")
+}
+
+fn reference(locals: mut Locals, name: view String, node: Int, kind: Text) {
+  var i = locals.active.len()
+  while i > 0 {
+    i = i - 1
+    let id = locals.active.at(i)
+    if locals.bindings.at(id).name == name {
+      locals.identities.set(node, id)
+      locals.rows.push("use:{kind}:{id}:{name}")
+      let depth = locals.bindings.at(id).depth
+      for at in depth..locals.stack.len() {
+        let closure = locals.stack.at(at)
+        capture(locals, closure, id, name)
+      }
+      return
+    }
+  }
+}
+
+fn pattern(locals: mut Locals, tree: view List<ast.AstNode>, index: Int) {
+  let tag = String.from(tree.at(index).tag)
+  if tag == "Bind" || tag == "UnpackBind" {
+    let name = ast.name_at(tree, index, 0)
+    if tag == "Bind" {
+      bind(locals, name, index)
+      pattern(locals, tree, ast.child(tree, index, 1))
+    } else if name != "_" { bind(locals, name, index) }
+  } else if tag == "Variant" || tag == "TuplePat" || tag == "UnpackTuple" || tag == "Or" {
+    var offset = 0
+    if tag == "Variant" { offset = 1 }
+    let items = ast.child(tree, index, offset)
+    var i = items + 1
+    while i < tree.at(items).end {
+      pattern(locals, tree, i)
+      if tag == "Or" { break }
+      i = tree.at(i).end
+    }
+  }
+}
+
+fn function(locals: mut Locals, tree: view List<ast.AstNode>, params: Int, body: Int) {
+  if tree.at(body).tag == "_" { return }
+  let mark = locals.active.len()
+  var i = params + 1
+  while i < tree.at(params).end {
+    if tree.at(i).tag == "Self" { bind(locals, String.from("self"), i) }
+    else { bind(locals, ast.name_at(tree, i, 0), i) }
+    i = tree.at(i).end
+  }
+  walk(locals, tree, body)
+  pop_scope(locals, mark)
+}
+
+fn children(locals: mut Locals, tree: view List<ast.AstNode>, index: Int) {
+  var i = index + 1
+  while i < tree.at(index).end {
+    walk(locals, tree, i)
+    i = tree.at(i).end
+  }
+}
+
+fn walk(locals: mut Locals, tree: view List<ast.AstNode>, index: Int) {
+  let tag = String.from(tree.at(index).tag)
+  if tag == "Fn" {
+    function(locals, tree, ast.child(tree, index, 2), ast.child(tree, index, 4))
+  } else if tag == "Closure" {
+    let id = locals.next_closure
+    locals.next_closure = id + 1
+    locals.rows.push("closure:{id}")
+    locals.stack.push(id)
+    function(locals, tree, ast.child(tree, index, 4), ast.child(tree, index, 6))
+    let unused = locals.stack.pop()
+  } else if tag == "Block" {
+    let mark = locals.active.len()
+    children(locals, tree, index)
+    pop_scope(locals, mark)
+  } else if tag == "Let" {
+    walk(locals, tree, ast.child(tree, index, 2))
+    bind(locals, ast.name_at(tree, index, 0), index)
+  } else if tag == "Unpack" {
+    walk(locals, tree, ast.child(tree, index, 1))
+    pattern(locals, tree, ast.child(tree, index, 0))
+  } else if tag == "For" {
+    walk(locals, tree, ast.child(tree, index, 3))
+    walk(locals, tree, ast.child(tree, index, 4))
+    let mark = locals.active.len()
+    bind(locals, ast.name_at(tree, index, 1), index)
+    walk(locals, tree, ast.child(tree, index, 5))
+    pop_scope(locals, mark)
+  } else if tag == "Arm" {
+    let mark = locals.active.len()
+    pattern(locals, tree, ast.child(tree, index, 0))
+    walk(locals, tree, ast.child(tree, index, 1))
+    walk(locals, tree, ast.child(tree, index, 2))
+    pop_scope(locals, mark)
+  } else if tag == "Var" || tag == "Move" {
+    let name = ast.name_at(tree, index, 0)
+    if tag == "Move" { reference(locals, name, index, "move") }
+    else { reference(locals, name, index, "read") }
+  } else if tag == "Call" {
+    reference(locals, ast.name_at(tree, index, 0), index, "call")
+    walk(locals, tree, ast.child(tree, index, 1))
+  } else if tag == "ArrayFill" {
+    walk(locals, tree, ast.child(tree, index, 0))
+  } else if tag != "Type" && tag != "BracketType" && tag != "FnType" &&
+      tag != "DynType" && tag != "TupleType" {
+    children(locals, tree, index)
+  }
+}
+
+pub fn resolve(tree: view List<ast.AstNode>) -> Locals {
+  var result = Locals {
+    bindings: List<Binding>.new(), identities: List<Int>.new(), active: List<Int>.new(),
+    stack: List<Int>.new(), captures: List<Capture>.new(), next_closure: 0, rows: List<String>.new(),
+  }
+  for i in 0..tree.len() { result.identities.push(-1) }
+  walk(result, tree, 0)
+  return move result
+}

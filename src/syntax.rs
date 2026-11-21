@@ -2,8 +2,9 @@
 use crate::numeric::{self, Nk};
 use std::collections::{HashMap, HashSet};
 
+mod lexical;
 mod surface;
-pub use surface::dump as dump_file_source;
+pub use surface::{dump as dump_file_source, dump_locals};
 
 // ───────────────────────── Diagnostics ─────────────────────────
 
