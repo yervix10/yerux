@@ -27,7 +27,7 @@ error: unknown trait 'Missing'
    |
 22 | impl Missing for Dot {
    |      ^^^^^^^
-   = known traits: Copy, Equal, Ordered, Show, Drop, Hash, Area
+   = known traits: Copy, Equal, Ordered, Show, Hash, Area
    = help: declare it first: `trait Missing { fn method(view self) -> Int }`
 
 error: Ordered is already implemented for Dot

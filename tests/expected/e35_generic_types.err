@@ -3,7 +3,7 @@ error: unknown trait 'Sortable' in the bound of T
   |
 6 | fn f<T: Sortable>(x: T) { }
   |         ^^^^^^^^
-  = known traits: Copy, Equal, Ordered, Show, Drop, Hash
+  = known traits: Copy, Equal, Ordered, Show, Hash
   = help: declare it with `trait Name { fn method(view self) -> Int }`
 
 error: type P has no method 'size'

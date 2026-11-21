@@ -1,9 +1,0 @@
-error: `drop` of Tag cannot be called directly
- --> tests/e1200_drop_call.yx:8:3
-  |
-8 |   t.drop()
-  |   ^^^^^^^^
-  = it runs automatically, exactly once, when the value goes out of scope
-  = help: to drop a value early, move it into a function that takes it by value (`fn close(f: File) { }`), or end its scope
-
-1 error(s). Nothing was generated.

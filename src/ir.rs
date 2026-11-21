@@ -1051,12 +1051,6 @@ impl<'a> L<'a> {
                     });
                     return;
                 }
-                if let Some(fname) = self.types.user_drop.get(&sid).cloned() {
-                    // `impl Drop`: the user's drop runs first, with the value still whole
-                    let a = self.at(base, off);
-                    let id = self.ids[&fname];
-                    self.emit(Inst::Call(None, id, vec![a]));
-                }
                 let fields = self.types.structs[sid].fields.clone();
                 for (n, f) in fields {
                     if self.types.owned(f) {
@@ -2687,7 +2681,6 @@ impl<'a> L<'a> {
     /// A struct whose drop is the plain field-by-field drop (no guard, handle, shared cell or closure environment).
     fn plain_struct(&self, sid: usize) -> bool {
         !self.types.is_lock_guard(sid)
-            && !self.types.user_drop.contains_key(&sid)
             && self.types.join_payload(sid).is_none()
             && self.types.runtime_struct(sid, "Shared").is_none()
             && !self.types.structs[sid].cname.starts_with("Env__")

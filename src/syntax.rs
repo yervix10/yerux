@@ -655,8 +655,6 @@ pub struct Types {
     /// List indices that are slices `[T]` (a `view`/`mut` borrow of a run of elements): same header as a
     /// List, but they never own or grow their buffer.
     pub slices: HashSet<usize>,
-    /// Structs with a user `impl Drop`: struct id -> name of the `drop` function (run before the fields drop).
-    pub user_drop: HashMap<usize, String>,
 }
 
 /// Largest fixed-size array (in bytes of the native layout): bigger buffers belong on the heap (`List<T>`).
@@ -849,7 +847,6 @@ impl Types {
             Ty::List(_) | Ty::String | Ty::Box(_) | Ty::Fn(_) | Ty::Dyn(_) => true,
             Ty::Struct(i) => {
                 self.is_lock_guard(i)
-                    || self.user_drop.contains_key(&i)
                     || self.join_payload(i).is_some()
                     || self.structs[i].fields.iter().any(|(_, f)| self.owned(*f))
             }
