@@ -1174,3 +1174,11 @@ impl Writer {
         return r
     }
 }
+
+/// True when `path` names a symbolic link itself (does not follow the link).
+pub fn is_symlink(path: view String) -> Bool {
+    match symlink_metadata(path) {
+        Ok(info) => { return info.kind == FileKind.Symlink }
+        Err(_) => { return false }
+    }
+}
