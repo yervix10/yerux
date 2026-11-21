@@ -129,7 +129,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
 
@@ -141,7 +141,7 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
-fn dump_tokens(file: &str) {
+fn dump_tokens(file: &str, positioned: bool) {
     let src = fs::read_to_string(file).unwrap_or_else(|e| {
         eprintln!("could not read {}: {}", file, e);
         exit(2)
@@ -170,33 +170,20 @@ fn dump_tokens(file: &str) {
             syntax::Tok::Sym(s) => format!("Sym:{}", hex(s.as_bytes())),
             syntax::Tok::Eof => "Eof".to_string(),
         };
-        println!("{}", row);
-    }
-}
-
-fn dump_ast_expr(file: &str) {
-    let src = fs::read_to_string(file).unwrap_or_else(|e| {
-        eprintln!("could not read {}: {}", file, e);
-        exit(2)
-    });
-    match syntax::dump_expr_source(&src) {
-        Ok(ast) => println!("{}", ast),
-        Err(d) => {
-            println!("Error:{}:{}:{}:{}", hex(d.msg.as_bytes()), d.pos.line, d.pos.col, d.pos.len);
-            for note in d.notes {
-                println!("Note:{}", hex(note.as_bytes()));
-            }
-            exit(1)
+        if positioned {
+            println!("{}:{}", token.pos.line, row);
+        } else {
+            println!("{}", row);
         }
     }
 }
 
-fn dump_ast_stmt(file: &str) {
+fn dump_ast(file: &str, parse: fn(&str) -> Result<String, syntax::Diag>) {
     let src = fs::read_to_string(file).unwrap_or_else(|e| {
         eprintln!("could not read {}: {}", file, e);
         exit(2)
     });
-    match syntax::dump_stmt_source(&src) {
+    match parse(&src) {
         Ok(ast) => println!("{}", ast),
         Err(d) => {
             println!("Error:{}:{}:{}:{}", hex(d.msg.as_bytes()), d.pos.line, d.pos.col, d.pos.len);
@@ -225,17 +212,16 @@ fn main() {
 
 fn real_main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() == 3 && args[1] == "tokens" {
-        dump_tokens(&args[2]);
-        return;
-    }
-    if args.len() == 3 && args[1] == "ast-expr" {
-        dump_ast_expr(&args[2]);
-        return;
-    }
-    if args.len() == 3 && args[1] == "ast-stmt" {
-        dump_ast_stmt(&args[2]);
-        return;
+    if args.len() == 3 {
+        match args[1].as_str() {
+            "tokens" | "tokens-positioned" => {
+                return dump_tokens(&args[2], args[1] == "tokens-positioned");
+            }
+            "ast-file" => return dump_ast(&args[2], syntax::dump_file_source),
+            "ast-expr" => return dump_ast(&args[2], syntax::dump_expr_source),
+            "ast-stmt" => return dump_ast(&args[2], syntax::dump_stmt_source),
+            _ => {}
+        }
     }
     if args.len() >= 2 && args[1] == "fmt" {
         exit(fmt::run_cli(&args[2..]));
