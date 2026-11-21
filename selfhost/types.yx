@@ -30,6 +30,12 @@ struct Types {
   moved: List<Bool>,
   loops: List<LoopFlow>,
   frozen: List<ownership.Loan>,
+  trace: Bool,
+  expressions: List<String>,
+  messages: List<String>,
+}
+pub struct Checked {
+  bindings: List<String>, expressions: List<String>, messages: List<String>, errors: Int,
 }
 struct LoopFlow { label: String, breaks: List<Bool>, continues: List<Bool>, continued: Bool }
 struct PatternRow { nodes: List<Int> }
@@ -39,7 +45,7 @@ fn unknown() -> String { return String.from("?") }
 fn unit() -> String { return String.from("nothing") }
 
 fn issue(types: mut Types, message: view String) {
-  print("error: {message}")
+  types.messages.push("error: {message}")
   types.errors = types.errors + 1
 }
 
@@ -457,7 +463,9 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     if sig >= 0 { record_loan(types, tree, loans, i, mode, actual, false) }
     type_terms.bind(sub, formal, actual)
     let resolved = type_terms.substitute(formal, sub)
-    if !type_terms.compatible(resolved, actual) {
+    let text_argument = owner == "String" && resolved == "String" && actual == "Text" &&
+      (name == "from" || name == "concat" || name == "push_str" || name == "eq")
+    if !text_argument && !type_terms.compatible(resolved, actual) {
       if generic && sub.names.contains(formal) {
         let ordinal = at + 1
         issue(types, "argument {ordinal} of '{name}' is {actual}, but {formal} was already fixed to {resolved} by an earlier argument")
@@ -789,6 +797,12 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
 }
 
 fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
+  let ty = infer_expr(types, tree, index, hint)
+  if !types.trace { types.expressions.set(index, String.from(ty)) }
+  return ty
+}
+
+fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let tag = String.from(tree.at(index).tag)
   if tag == "Int" || tag == "NumT" { return literal_integer(types, tree, index, hint, false) }
   if tag == "Float" {
@@ -1290,17 +1304,24 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
     }
     let id = types.identities.at(index)
     types.bindings.set(id, String.from(ty))
-    if ty != "?" {
+    if types.trace && ty != "?" {
       let name = ast.name_at(tree, index, 0)
       let display = numeric_type(ty)
-      print("type:{name}:{display}")
+      types.messages.push("type:{name}:{display}")
     }
   } else if tag == "Return" {
     let value = ast.child(tree, index, 0)
     var ty = unit()
     if tree.at(value).tag != "_" {
       ty = infer(types, tree, value, returns.expected)
-      require_value(types, tree, value, ty)
+      if tree.at(value).tag == "Var" && owns_value(types, ty) {
+        let id = types.identities.at(value)
+        if id >= 0 {
+          let name = ast.name_at(tree, value, 0)
+          if types.modes.at(id) == "Own" { move_binding(types, id, name) }
+          else { issue(types, "cannot return '{name}': it is only borrowed") }
+        }
+      } else { require_value(types, tree, value, ty) }
     }
     expect_type(types, returns.expected, ty)
     if returns.inferred == "nothing" { returns.inferred = move ty }
@@ -1397,9 +1418,15 @@ fn declare_prelude(types: mut Types) {
   let string = String.from("String")
   prelude_method(types, string, "new", "", "String", "", "Own")
   prelude_method(types, string, "from", "", "String", "String", "View")
+  let concat = types.signatures.len()
+  prelude_method(types, string, "concat", "", "String", "String", "View")
+  types.signatures.at(concat).args.push(Parameter { mode: String.from("View"), ty: String.from("String") })
   prelude_method(types, string, "len", "View", "Int", "", "Own")
+  prelude_method(types, string, "byte", "View", "Int", "Int", "Own")
+  prelude_method(types, string, "eq", "View", "Bool", "String", "View")
   prelude_method(types, string, "clear", "Mut", "nothing", "", "Own")
   prelude_method(types, string, "push_str", "Mut", "nothing", "String", "View")
+  prelude_method(types, string, "push_int", "Mut", "nothing", "Int", "Own")
   let list = String.from("List<T>")
   prelude_method(types, list, "new", "", "List<T>", "", "Own")
   prelude_method(types, list, "len", "View", "Int", "", "Own")
@@ -1482,7 +1509,8 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
   return Function { node: node, signature: index }
 }
 
-fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify_ownership: Bool) -> Int {
+pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify_ownership: Bool,
+    trace: Bool) -> Checked {
   var types = Types {
     identities: List<Int>.new(), declarations: List<Int>.new(),
     bindings: List<String>.new(), shapes: List<Shape>.new(),
@@ -1490,7 +1518,9 @@ fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify
     verify_ownership: verify_ownership, copy_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
     loops: List<LoopFlow>.new(), frozen: List<ownership.Loan>.new(),
+    trace: trace, expressions: List<String>.new(), messages: List<String>.new(),
   }
+  if !trace { for i in 0..tree.len() { types.expressions.push(unknown()) } }
   for id in bindings.identities { types.identities.push(id) }
   for binding in bindings.bindings {
     types.declarations.push(binding.node)
@@ -1529,7 +1559,10 @@ fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify
     types.copy_params = copy_names(types.signatures.at(fun.signature).copy_params)
     let exits = check_body(types, state, tree, ast.child(tree, fun.node, 4))
   }
-  return types.errors
+  return Checked {
+    bindings: copy_names(types.bindings), expressions: copy_names(types.expressions),
+    messages: copy_names(types.messages), errors: types.errors,
+  }
 }
 
 fn main() {
@@ -1545,7 +1578,11 @@ fn main() {
       let bindings = locals.resolve(file.nodes)
       if args.at(1) == "locals" {
         for row in bindings.rows { print(row) }
-      } else if check_file(file.nodes, bindings, args.at(1) == "ownership") > 0 { env.exit(1) }
+      } else {
+        let checked = check_file(file.nodes, bindings, args.at(1) == "ownership", true)
+        for row in checked.messages { print(row) }
+        if checked.errors > 0 { env.exit(1) }
+      }
     }
   }
 }
