@@ -196,7 +196,7 @@ l.insert(i, x)   l.remove(i) -> T   l.swap_remove(i) -> T   l.swap(i, j)   l.rev
 l.contains(x)   l.index_of(x) -> i or -1      (T: Equal)        l.slice(from, to)   l.copy()   (T: Copy)
 l.sort()   l.is_sorted()                       (T: Ordered; quicksort + insertion sort + heapsort fallback, in place, not stable)
 ```
-All of them work for owned elements (elements are moved with `swap`, never copied). `first`/`last` are `l.at(0)` and `l.at(l.len() - 1)`. `l.swap(i, j)` is a built-in (both backends).
+All of them work for owned elements (elements are moved with `swap`, never copied). `first`/`last` are `l.at(0)` and `l.at(l.len() - 1)`. `l.swap(i, j)` is a built-in (both backends). `l.truncate(n)` keeps the first `n` elements (`n >= len` is a no-op; `n < 0` panics with "List.truncate length is negative").
 
 ## Numbers
 Types: `Int` = `Int64` (alias `i64`), `Int8 Int16 Int32`, `UInt8 UInt16 UInt32 UInt64` (aliases `i8 i16 i32 u8 u16 u32 u64`), `Float` (IEEE binary64, alias `f64`) and `Float32` (binary32, alias `f32`).
