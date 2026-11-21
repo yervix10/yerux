@@ -1,0 +1,146 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Yerux",
+  "scopeName": "source.yerux",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#chars" },
+    { "include": "#declarations" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#builtin-types" },
+    { "include": "#calls" },
+    { "include": "#types" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.documentation.yerux", "match": "///.*$" },
+        { "name": "comment.line.double-slash.yerux", "match": "//.*$" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.yerux",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.yerux", "match": "\\\\(?:[nrt\"\\\\0]|u\\{[0-9A-Fa-f]+\\})" },
+        { "name": "constant.character.escape.brace.yerux", "match": "\\{\\{|\\}\\}" },
+        {
+          "name": "meta.interpolation.yerux",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.yerux" } },
+          "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.yerux" } },
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#keywords" },
+            { "include": "#constants" },
+            { "include": "#calls" },
+            { "include": "#types" }
+          ]
+        }
+      ]
+    },
+    "chars": {
+      "name": "string.quoted.single.yerux",
+      "match": "'(?:[^'\\\\]|\\\\(?:[nrt'\\\\0]|u\\{[0-9A-Fa-f]+\\}))'"
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.yerux", "match": "\\b0[xX][0-9A-Fa-f_]+(?:[iu](?:8|16|32|64))?\\b" },
+        { "name": "constant.numeric.binary.yerux", "match": "\\b0[bB][01_]+\\b" },
+        { "name": "constant.numeric.float.yerux", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?(?:f32|f64)?\\b" },
+        { "name": "constant.numeric.integer.yerux", "match": "\\b[0-9][0-9_]*(?:[iu](?:8|16|32|64)|f32|f64)?\\b" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.yerux" },
+            "2": { "name": "entity.name.function.yerux" }
+          }
+        },
+        {
+          "match": "\\b(struct|enum|trait|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.yerux" },
+            "2": { "name": "entity.name.type.yerux" }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.const.yerux" },
+            "2": { "name": "entity.name.constant.yerux" }
+          }
+        },
+        {
+          "match": "\\b(let|var)\\s+(?:(mut)\\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.variable.yerux" },
+            "2": { "name": "storage.modifier.yerux" },
+            "3": { "name": "variable.other.definition.yerux" }
+          }
+        },
+        {
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_.]*)(?:\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": { "name": "keyword.control.import.yerux" },
+            "2": { "name": "entity.name.namespace.yerux" },
+            "3": { "name": "keyword.control.import.yerux" },
+            "4": { "name": "entity.name.namespace.yerux" }
+          }
+        },
+        {
+          "match": "\\b(impl)\\b",
+          "name": "keyword.declaration.impl.yerux"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.yerux", "match": "\\b(if|else|while|for|in|match|return|break|continue|defer)\\b" },
+        { "name": "storage.modifier.yerux", "match": "\\b(pub|move|view|mut|dyn|unsafe|extern|link)\\b" },
+        { "name": "keyword.control.concurrency.yerux", "match": "\\b(spawn|parallel|scope)\\b" },
+        { "name": "keyword.other.yerux", "match": "\\b(fn|let|var|struct|enum|trait|impl|import|as|test|derive|const|type)\\b" }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.boolean.yerux", "match": "\\b(true|false)\\b" },
+        { "name": "constant.language.yerux", "match": "\\b(None|self)\\b" }
+      ]
+    },
+    "builtin-types": {
+      "name": "support.type.yerux",
+      "match": "\\b(Int|Int8|Int16|Int32|Int64|UInt8|UInt16|UInt32|UInt64|Float|Float32|Float64|Bool|Char|Text|String|List|Map|Set|Option|Result|Unit)\\b"
+    },
+    "calls": {
+      "patterns": [
+        { "name": "support.function.builtin.yerux", "match": "\\b(print|assert|panic|len)(?=\\s*\\()" },
+        { "name": "entity.name.function.call.yerux", "match": "\\b[a-z_][A-Za-z0-9_]*(?=\\s*(?:<[^>]*>)?\\s*\\()" }
+      ]
+    },
+    "types": {
+      "name": "entity.name.type.yerux",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.yerux", "match": "->|=>" },
+        { "name": "keyword.operator.comparison.yerux", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.logical.yerux", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.arithmetic.yerux", "match": "[-+*/%]" },
+        { "name": "keyword.operator.range.yerux", "match": "\\.\\.=?" },
+        { "name": "keyword.operator.assignment.yerux", "match": "=" }
+      ]
+    }
+  }
+}

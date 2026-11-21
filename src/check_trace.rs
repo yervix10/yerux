@@ -3,8 +3,20 @@ use crate::syntax::{lex, Program, Stmt, Tok, Ty, Types, PRELUDE_LINE, SK};
 use std::collections::{HashMap, HashSet};
 
 type Bindings = HashMap<(usize, usize), String>;
+/// (line, column of the `let`/`var`, name, type)
+type Rows = Vec<(usize, usize, String, String)>;
 
 pub fn binding_types(program: &Program, source: &str) -> Vec<String> {
+    let mut rows: Vec<String> = typed_bindings(program, source)
+        .into_iter()
+        .map(|(_, _, name, ty)| format!("type:{name}:{ty}"))
+        .collect();
+    rows.sort_unstable();
+    rows
+}
+
+/// The checked type of every source `let`/`var` of the entry file, keyed by the position of the keyword.
+pub fn typed_bindings(program: &Program, source: &str) -> Rows {
     // Record the source bindings independently of the checker's synthetic lets
     // (temporaries, closure environments and desugared loop variables).
     let tokens = lex(source).unwrap_or_else(|_| unreachable!("entry source was already lexed"));
@@ -36,11 +48,10 @@ pub fn binding_types(program: &Program, source: &str) -> Vec<String> {
             block(&function.body, &program.types, &declarations, &mut rows);
         }
     }
-    rows.sort_unstable();
     rows
 }
 
-fn block(body: &[Stmt], types: &Types, declarations: &Bindings, rows: &mut Vec<String>) {
+fn block(body: &[Stmt], types: &Types, declarations: &Bindings, rows: &mut Rows) {
     for stmt in body {
         match &stmt.k {
             SK::Let(name, _, init, _)
@@ -52,7 +63,7 @@ fn block(body: &[Stmt], types: &Types, declarations: &Bindings, rows: &mut Vec<S
                 } else {
                     init.ty
                 };
-                rows.push(format!("type:{name}:{}", types.name(ty)));
+                rows.push((stmt.pos.line, stmt.pos.col, name.clone(), types.name(ty)));
             }
             SK::If(_, yes, no) => {
                 block(yes, types, declarations, rows);
