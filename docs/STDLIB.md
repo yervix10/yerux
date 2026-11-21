@@ -633,6 +633,12 @@ Beyond interpolation. Widths count characters.
 | `fixed(x: Float, decimals)` | positional, 0..15 decimals, rounds half away from zero on the scaled value (exact while `|x| * 10^decimals < 2^53`); `nan` / `inf` as text |
 | `percent(x, decimals)` | `percent(0.256, 1)` is `25.6%` |
 | `bytes_human(n)` | `1.5 KiB`, `5.0 MiB` |
+| `format_int_precision(x, base, precision)` | minimum digit count; zero with precision zero is empty |
+| `format_int_width(x, base, width, fill, left)` `fixed_width(x, decimals, width, fill, left)` | minimum character width, left aligned when `left` is true |
+
+### `std.args`
+
+`parse(argv)` accepts a `List<String>` including the program name; `parse_process()` uses `std.io.args()`. The schema free parser collects `--name=value` in `options`, long flags in `flags`, splits short flag groups (`-abc`), treats the first positional as `subcommand`, and keeps later values in `positionals`. `--` ends option parsing; `--help` sets `help` and adds the `help` flag. Use `has_flag(parsed, name)`, `option(parsed, name)` (last value wins), and `help_line(program, usage)` to build a usage line. Options without `=value` are flags because no option schema is provided.
 
 ### `std.time`
 A duration is a `time.Duration` (Copy struct of nanoseconds with `Equal`/`Ordered`/`Show` and methods `add` `sub` `mul` `div` ..., see [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md#stdtime-duration)). `nanos` `micros` `millis` `seconds` `minutes` `hours` build one; `as_micros` `as_millis` `as_secs` `as_secs_float` `as_millis_float` convert; `format(d)` prints `850 ns`, `12.5 us`, `3.2 ms`, `1.5 s`, `2m 05s`, `1h 02m 03s`; `sleep(d)`, `sleep_ms(ms)`; `measure(f: fn()) -> Duration`. Clocks: `monotonic_ns()`, `unix_nanos()`, `unix_millis()`, `unix_secs()`; `now() -> Instant` (monotonic; `elapsed`, `since`, `add`, `is_before`), `deadline_in(d)`, `sleep_until(t)`. Calendar (UTC): `DateTime`, `utc_from_unix(secs)`, `utc_now()`, `utc(y, mo, d, h, mi, s) -> Result<DateTime, io.IoError>`, `to_unix`, `format_iso`, `parse_iso(s) -> Result<..>`, `is_leap_year`, `days_in_month` (details in [STDLIB_IO.md](STDLIB_IO.md#stdtime-clocks-sleep-utc-calendar)). `stopwatch()` returns a `Stopwatch` (monotonic clock, from `std.io`) with methods `elapsed()`, `elapsed_ms()`, `lap()` (time since the previous lap, starts a new one) and `restart()`:
