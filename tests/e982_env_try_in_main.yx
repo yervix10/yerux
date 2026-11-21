@@ -1,0 +1,7 @@
+// std.env: `?` needs a function that returns a Result
+import std.env
+
+fn main() {
+  let d = env.current_dir()?
+  print(d)
+}

@@ -1,0 +1,8 @@
+error: module 'std.env' has no item called 'set'
+ --> tests/e984_env_no_set.yx:5:3
+  |
+5 |   env.set("KEY", "value")
+  |   ^^^^^^^
+  = public items of 'std.env': args, arg_count, arg, get, get_or, has, require, vars, home_dir, temp_dir, current_dir, set_current_dir, current_exe, pid, exit
+
+1 error(s). Nothing was generated.

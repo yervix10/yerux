@@ -1,0 +1,117 @@
+// std.env: arguments, variables, working directory, errors as values
+import std.env
+import std.fs
+import std.io
+
+fn show_opt(o: Option<String>) {
+  match o {
+    Some(s) => { print("Some({s})") }
+    None => { print("None") }
+  }
+}
+
+fn needs(name: Text) -> Result<Int, io.IoError> {
+  let v = env.require(name)?
+  return Ok(v.len())
+}
+
+fn main() {
+  // arguments (tests/env_basic.args)
+  print(env.arg_count())
+  let all = env.args()
+  print(all.len())
+  show_opt(env.arg(1))
+  show_opt(env.arg(2))
+  show_opt(env.arg(3))
+  show_opt(env.arg(-1))
+  match env.arg(0) {
+    Some(p) => { print(p.len() > 0) }
+    None => { print("no program name") }
+  }
+
+  // variables (run_all.sh exports YX_IO_TEST=hello_env)
+  show_opt(env.get("YX_IO_TEST"))
+  show_opt(env.get("YX_IO_TEST_NOT_SET_ANYWHERE"))
+  show_opt(env.get("YX_IO_TES"))
+  print(env.has("YX_IO_TEST"))
+  print(env.has("YX_IO_TEST_NOT_SET_ANYWHERE"))
+  print(env.get_or("YX_IO_TEST_NOT_SET_ANYWHERE", "fallback"))
+  print(env.get_or("YX_IO_TEST", "fallback"))
+  match needs("YX_IO_TEST") {
+    Ok(n) => { print("require ok {n}") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match needs("YX_IO_TEST_NOT_SET_ANYWHERE") {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => {
+      print(e.message)
+      print(e.kind == io.IoErrorKind.NotFound)
+    }
+  }
+  var found = 0
+  let vs = env.vars()
+  for kv in vs {
+    if kv.0 == "YX_IO_TEST" {
+      print("vars: {kv.0}={kv.1}")
+      found = found + 1
+    }
+  }
+  print(found)
+  print(vs.len() > 0)
+  let tmp = env.temp_dir()
+  print(tmp.len() > 0)
+  match env.home_dir() {
+    Some(h) => { print("home set") }
+    None => { print("home set") }
+  }
+
+  // working directory
+  let dir = "/tmp/yerux_env_basic_{env.pid()}"
+  match fs.create_dir(dir) {
+    Ok(n) => { print("mkdir ok") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match env.current_dir() {
+    Ok(d) => { print(d.starts_with("/")) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match env.set_current_dir(dir) {
+    Ok(n) => { print("chdir ok") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match env.current_dir() {
+    Ok(d) => { print(d == dir) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  // relative paths now resolve from the new directory
+  match fs.write("rel.txt", "relative") {
+    Ok(n) => { print(n) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  let full = "{dir}/rel.txt"
+  print(fs.is_file(full))
+  match env.set_current_dir("/tmp/yerux_env_definitely_missing") {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => { print(e.message) }
+  }
+  match env.set_current_dir(full) {
+    Ok(n) => { print("unexpected success") }
+    Err(e) => { print(e.kind == io.IoErrorKind.NotDirectory) }
+  }
+  match env.set_current_dir("/") {
+    Ok(n) => { print("back to /") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  match fs.remove_dir_all(dir) {
+    Ok(n) => { print("cleaned") }
+    Err(e) => { print("unexpected: {e}") }
+  }
+
+  match env.current_exe() {
+    Ok(p) => { print(p.starts_with("/")) }
+    Err(e) => { print("unexpected: {e}") }
+  }
+  print(env.pid() > 0)
+  env.exit(3)
+  print("not reached")
+}

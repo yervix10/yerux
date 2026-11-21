@@ -1,0 +1,9 @@
+error: cannot use `?` in a function that returns nothing
+ --> tests/e982_env_try_in_main.yx:5:11
+  |
+5 |   let d = env.current_dir()?
+  |           ^^^^^^^^^^^^^^^^^^
+  = `?` returns the error early, so the function must return `Result<T, E>`
+  = help: handle the value with `match` here, or change the function's return type
+
+1 error(s). Nothing was generated.
