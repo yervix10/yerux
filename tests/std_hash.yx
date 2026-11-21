@@ -1,0 +1,12 @@
+// FNV-1a, CRC-32 and SHA-256 known-answer tests.
+import std.hash
+
+fn main() {
+  print(hash.fnv1a32(""))
+  print(hash.fnv1a32("hello"))
+  print(hash.crc32(""))
+  print(hash.crc32("123456789"))
+  print(hash.sha256(""))
+  print(hash.sha256("abc"))
+  print(hash.sha256("The quick brown fox jumps over the lazy dog"))
+}

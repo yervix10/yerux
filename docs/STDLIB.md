@@ -575,6 +575,25 @@ struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
 | `parse_bool(s) -> Result<Bool, String>` | `true` / `false` |
 | `parse_float(s) -> Result<Float, String>` | `[+-]digits[.digits][e[+-]digits]`, `inf`, `-inf`, `nan`. Correctly rounded when the digits fit in 15 significant digits and the exponent is within +-22; otherwise it can be a few ulps off (no big-number slow path yet) |
 
+### `std.hex`, `std.base64`, and `std.hash`
+
+`std.hex.encode(s)` encodes the UTF-8 bytes of a string as lowercase hexadecimal; `decode(s)` returns
+`Result<String, String>` and rejects odd lengths or non-hex digits. `std.base64.encode(s)` and
+`decode(s)` use the RFC 4648 standard alphabet and padded form; decode validates padding and returns
+errors for malformed input. The decoded bytes are returned in a Yerux `String`.
+
+`std.hash.fnv1a32(s)` and `crc32(s)` return unsigned 32-bit results represented by non-negative
+`Int` values. CRC is CRC-32/ISO-HDLC (the ZIP/Ethernet variant). `std.hash.sha256(s)` returns the
+standard SHA-256 digest as 64 lowercase hexadecimal characters. All three hash the UTF-8 bytes.
+
+### `std.rand`
+
+`var r = rand.new(seed)` creates a deterministic 32-bit linear-congruential generator;
+`rand.next(r)` returns values in `0..2^32`, `rand.range(r, lo, hi)` returns in the half-open
+interval `[lo, hi)`, and `rand.reseed(r, seed)` resets it. `rand.system()` seeds from the current
+wall-clock nanoseconds. This generator is intended for simulation and tests, not security-sensitive
+randomness; range reduction has modulo bias unless the width divides `2^32`.
+
 ### `std.math`
 Only what the prelude lacks (`sqrt`, `sin`, `pow`, `floor`, ... are prelude functions). `pi()` `e()` `tau()`; `abs` `sign` `min` `max` `clamp(x, lo, hi)` on `Int`; `clamp_float`; `gcd` `lcm`; `ipow(base, exp)` (checked); `isqrt`; `div_floor` `mod_floor` (sign of the divisor); `is_prime`; `lerp`; `to_radians` `to_degrees`.
 

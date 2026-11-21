@@ -758,6 +758,9 @@ fn collect(path: &std::path::Path, out: &mut Vec<String>) {
 
 /// `yerux fmt [--check|--stdout] file.yx|dir ...` (rewrites files in place by default).
 pub fn run_cli(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "--selfhost") {
+        return run_selfhost_cli(args);
+    }
     let (mut check, mut stdout) = (false, false);
     let mut paths = vec![];
     for a in args {
@@ -829,5 +832,39 @@ pub fn run_cli(args: &[String]) -> i32 {
         1
     } else {
         0
+    }
+}
+
+fn run_selfhost_cli(args: &[String]) -> i32 {
+    if !args.iter().any(|a| a == "--stdout") {
+        eprintln!("yerux fmt --selfhost currently requires --stdout FILE");
+        return 2;
+    }
+    let paths: Vec<_> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    if paths.len() != 1 {
+        eprintln!("usage: yerux fmt --selfhost --stdout FILE");
+        return 2;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let exe = std::env::temp_dir().join(format!("yerux_fmt_selfhost_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let built = std::process::Command::new(std::env::current_exe().unwrap())
+        .current_dir(root)
+        .args(["build", "selfhost/fmt.yx", "-o"])
+        .arg(&exe)
+        .output();
+    match built {
+        Ok(out) if out.status.success() => out,
+        Ok(out) => { eprint!("{}", String::from_utf8_lossy(&out.stderr)); return 1; }
+        Err(e) => { eprintln!("could not build selfhost formatter: {}", e); return 1; }
+    };
+    let out = std::process::Command::new(&exe).arg(paths[0]).output();
+    let _ = std::fs::remove_file(&exe);
+    match out {
+        Ok(out) => {
+            print!("{}", String::from_utf8_lossy(&out.stdout));
+            if !out.status.success() { eprint!("{}", String::from_utf8_lossy(&out.stderr)); return 1; }
+            0
+        }
+        Err(e) => { eprintln!("could not run selfhost formatter: {}", e); 1 }
     }
 }

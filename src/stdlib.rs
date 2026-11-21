@@ -16,6 +16,10 @@ pub fn source(key: &str) -> Option<&'static str> {
         "std.env" => Some(include_str!("std/env.yx")),
         "std.net" => Some(include_str!("std/net.yx")),
         "std.process" => Some(include_str!("std/process.yx")),
+        "std.hex" => Some(include_str!("std/hex.yx")),
+        "std.base64" => Some(include_str!("std/base64.yx")),
+        "std.hash" => Some(include_str!("std/hash.yx")),
+        "std.rand" => Some(include_str!("std/rand.yx")),
         _ => None,
     }
 }

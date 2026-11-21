@@ -1,0 +1,23 @@
+// std.rand uses a deterministic seedable generator and a system-seeded convenience constructor.
+import std.rand
+
+fn main() {
+  var a = rand.new(1)
+  var b = rand.new(1)
+  for _ in 0..8 {
+    let x = rand.next(a)
+    let y = rand.next(b)
+    if x != y { panic("same seed diverged") }
+    if x < 0 || x >= 4294967296 { panic("next outside u32") }
+    print(x)
+  }
+  var c = rand.new(17)
+  for _ in 0..20 {
+    let x = rand.range(c, -3, 7)
+    if x < -3 || x >= 7 { panic("range outside bounds") }
+  }
+  var sys = rand.system()
+  print(rand.next(sys) >= 0)
+  rand.reseed(c, 17)
+  print(rand.next(c) == 1042201148)
+}
