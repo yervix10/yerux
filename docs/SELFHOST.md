@@ -96,3 +96,8 @@ Formatter continuation milestone: restoring parenthesis depth across brace-delim
 literals, handling multiline generic ranges, and distinguishing closure bars from pattern
 alternatives raised exact matches to 217/243 (89%) and idempotence to 234/243 on the
 frozen dirty set generated from a temporary corpus copy.
+
+Latest measured formatter status after tuple/function generic disambiguation: 217/243
+byte-identical (89%) and 234/243 idempotent. The remaining 26 mismatches concentrate in
+multiline block classification, range-bound generic parameters, unary-minus spacing, and
+operator continuation.
