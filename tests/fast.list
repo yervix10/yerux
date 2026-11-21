@@ -1,0 +1,16 @@
+arr_basic
+slice_basic
+slice_for
+arr_owned_drop
+arr_eq_show
+clone_trait
+derive_basic
+generic_impls
+iter_basic
+iter_more
+err_context
+list_string_clone
+conc_spawn
+conc_parallel
+conc_sharing
+std_toml
