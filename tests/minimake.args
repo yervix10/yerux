@@ -1,0 +1,10 @@
+-f
+tests/minimake/Makefile
+clean
+all
+--then
+all
+--then
+/tmp/yerux_minimake_test/app
+--then
+clean

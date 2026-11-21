@@ -63,3 +63,12 @@ Unicode escapes. See [the sample document](json/example.json).
 
 The [HTTP/1.1 loopback example](../../docs/HTTP.md) serves static files,
 echoes POST bodies, and includes a CLI for GET and POST requests.
+
+## minimake
+
+`minimake.yx` is a small `make` built on `std.process` (recipes run as `/bin/sh -c`) and `std.fs` (modification
+times). `minimake [-f Makefile] [target ...] [--then target ...]`; variables, `$@ $< $^ $(NAME)`, `.PHONY`,
+`@`/`-` recipe prefixes, cycle and missing-rule errors. `tests/minimake/Makefile` is the golden scenario
+(clean, build, rebuild-nothing, "up to date", clean); `tests/minimake_errors.sh` covers the failure exit codes.
+Friction notes: [../../docs/FRICTION.md](../../docs/FRICTION.md).
+

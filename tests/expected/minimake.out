@@ -1,0 +1,14 @@
+/bin/rm -rf /tmp/yerux_minimake_test
+/bin/mkdir -p /tmp/yerux_minimake_test
+/bin/cat tests/minimake/a.src > /tmp/yerux_minimake_test/a.txt
+/bin/cat tests/minimake/b.src > /tmp/yerux_minimake_test/b.txt
+/bin/cat /tmp/yerux_minimake_test/a.txt /tmp/yerux_minimake_test/b.txt > /tmp/yerux_minimake_test/app
+linked /tmp/yerux_minimake_test/app from /tmp/yerux_minimake_test/a.txt /tmp/yerux_minimake_test/b.txt
+building into /tmp/yerux_minimake_test
+/bin/false
+an ignored failure above
+building into /tmp/yerux_minimake_test
+/bin/false
+an ignored failure above
+minimake: '/tmp/yerux_minimake_test/app' is up to date.
+/bin/rm -rf /tmp/yerux_minimake_test
