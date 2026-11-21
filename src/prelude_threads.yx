@@ -110,10 +110,20 @@ struct ChannelState<T> {
     capacity: Int,
     closed: Bool,
     receiver_open: Bool,
+    sender_count: Int,
 }
 
 struct Sender<T> { state: Shared<Locked<ChannelState<T>>> }
 struct Receiver<T> { state: Shared<Locked<ChannelState<T>>> }
+
+fn __channel_monotonic_ns() -> Int {
+    let ts = __alloc(16)
+    let result = __syscall(228, 1, ts, 0, 0, 0, 0)
+    var ns = 0
+    if result == 0 { ns = __load64(ts) * 1000000000 + __load64(ts + 8) }
+    __free(ts)
+    return ns
+}
 
 fn __channel_try_send<T>(state: view Locked<ChannelState<T>>, value: T) -> (Int, Option<T>) {
     let held = __lock_word(__box_address(state.mutex))
@@ -138,19 +148,20 @@ impl<T> Sender<T> {
     fn bounded(capacity: Int) -> (Sender<T>, Receiver<T>) {
         if capacity < 0 { panic("channel capacity cannot be negative") }
         let state = Shared.new(Locked.new(ChannelState<T> {
-            queue: List<T>.new(), capacity: capacity, closed: false, receiver_open: true,
+            queue: List<T>.new(), capacity: capacity, closed: false, receiver_open: true, sender_count: 1,
         }))
         return (Sender<T> { state: state.clone() }, Receiver<T> { state: move state })
     }
 
     fn unbounded() -> (Sender<T>, Receiver<T>) {
         let state = Shared.new(Locked.new(ChannelState<T> {
-            queue: List<T>.new(), capacity: 0, closed: false, receiver_open: true,
+            queue: List<T>.new(), capacity: 0, closed: false, receiver_open: true, sender_count: 1,
         }))
         return (Sender<T> { state: state.clone() }, Receiver<T> { state: move state })
     }
 
     fn clone(view self) -> Sender<T> {
+        self.state.get().with(|state| state.sender_count = state.sender_count + 1)
         return Sender<T> { state: self.state.clone() }
     }
 
@@ -170,6 +181,15 @@ impl<T> Sender<T> {
     }
 }
 
+impl<T> Drop for Sender<T> {
+    fn drop(mut self) {
+        self.state.get().with(|state| {
+            state.sender_count = state.sender_count - 1
+            if state.sender_count == 0 { state.closed = true }
+        })
+    }
+}
+
 impl<T> Receiver<T> {
     fn recv(view self) -> Option<T> {
         while true {
@@ -185,6 +205,42 @@ impl<T> Receiver<T> {
             state.closed = true
         })
     }
+
+    fn recv_timeout(view self, timeout_ms: Int) -> Option<T> {
+        if timeout_ms < 0 { panic("channel timeout cannot be negative") }
+        let deadline = __channel_monotonic_ns() + timeout_ms * 1000000
+        while true {
+            let (closed, item) = __channel_try_recv(self.state.get())
+            if item.is_some() || closed { return item }
+            if __channel_monotonic_ns() >= deadline { return None }
+        }
+        return None
+    }
+}
+
+impl<T> Drop for Receiver<T> {
+    fn drop(mut self) {
+        self.state.get().with(|state| {
+            state.receiver_open = false
+            state.closed = true
+        })
+    }
+}
+
+// Selects the first available item from either receiver, polling left first.
+// None means the deadline elapsed or both channels are closed and drained.
+fn select2<T>(left: view Receiver<T>, right: view Receiver<T>, timeout_ms: Int) -> Option<(Int, T)> {
+    if timeout_ms < 0 { panic("channel timeout cannot be negative") }
+    let deadline = __channel_monotonic_ns() + timeout_ms * 1000000
+    while true {
+        let (left_closed, left_item) = __channel_try_recv(left.state.get())
+        if left_item.is_some() { return Some((0, left_item.unwrap())) }
+        let (right_closed, right_item) = __channel_try_recv(right.state.get())
+        if right_item.is_some() { return Some((1, right_item.unwrap())) }
+        if left_closed && right_closed { return None }
+        if __channel_monotonic_ns() >= deadline { return None }
+    }
+    return None
 }
 
 struct SharedCell<T> {

@@ -75,8 +75,11 @@ consistent operations. `Sender<T>.bounded(capacity)` and
 `Sender<T>.unbounded()` create typed MPSC endpoints. `send`, `recv` and `close`
 are available. Bounded sends and empty receives spin while they wait; queues
 share one exclusive lock, and removing from the queue front is linear in queue
-length. Closing the final sender is explicit because generic `Drop` support is
-not available in the language yet. `thread_pool_new(n)` starts `n` persistent
+length. Dropping the final sender closes the channel after queued values are
+drained. Dropping the receiver makes later sends return `false`.
+`recv_timeout(ms)` returns `None` on timeout or when the closed channel is
+drained. `select2(left, right, timeout_ms)` polls two receivers with the same
+element type and returns the chosen index and value. `thread_pool_new(n)` starts `n` persistent
 workers; `parallel_for` dispatches ranges across them, and `close()` stops and
 joins all workers. Pool shutdown must be explicit. The `scope`/`spawn` path and
 each `parallel for` still create their own workers.
@@ -94,9 +97,13 @@ prelude APIs. Run them with `tests/run_all.sh --fast` (or
 
 `Sender<T>.bounded(capacity)` and `Sender<T>.unbounded()` return a sender and
 single receiver. `send(value)` returns `Bool`; `recv()` returns `Option<T>`.
-The sender may be cloned for multiple producers. Closing is explicit: call
-`close()` on a sender to stop new sends, then the receiver drains queued values
-and gets `None`. Closing the receiver makes later sends return `false`.
+The sender may be cloned for multiple producers. Call `close()` on a sender to
+stop new sends, or let the final sender drop. The receiver drains queued values
+and then gets `None`. Closing or dropping the receiver makes later sends return
+`false`. `recv_timeout(ms)` returns `None` if it times out or the closed channel
+is drained. `select2(left, right, timeout_ms)` waits on two receivers with the
+same item type and returns `(0, value)` or `(1, value)`; it polls left first if
+both have queued items.
 `tests/concurrency_channel.yx` and `examples/concurrency_channels.yx` show
 bounded back-pressure, unbounded transfer, and draining after close. Both
 `send` on a full bounded queue and `recv` on an empty open queue spin until

@@ -1,0 +1,17 @@
+struct Resource { id: Int }
+
+impl Drop for Resource {
+  fn drop(mut self) { print(self.id) }
+}
+
+struct GenericDrop<T> { value: T }
+
+impl<T> Drop for GenericDrop<T> {
+  fn drop(mut self) {
+    print(7)
+  }
+}
+
+fn main() {
+  let value = GenericDrop<Resource> { value: Resource { id: 42 } }
+}
