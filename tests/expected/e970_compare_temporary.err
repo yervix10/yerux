@@ -1,0 +1,16 @@
+error: cannot use `<` here: the left side is a String value that is not a variable
+ --> tests/e970_compare_temporary.yx:3:9
+  |
+3 |   print(String.from("a") < String.from("b"))
+  |         ^^^^^^^^^^^^^^^^
+  = `<` on String calls `cmp`, which borrows its left side
+  = help: store the value with `let` first, then compare the variable
+
+error: cannot use `<` on values of type P: it does not implement Ordered
+ --> tests/e970_compare_temporary.yx:4:9
+  |
+4 |   print(P { x: 1 } < P { x: 2 })
+  |         ^^^^^^^^^^
+  = help: `<`, `>`, `<=` and `>=` work on numbers, Char, and types that implement Ordered
+
+2 error(s). Nothing was generated.

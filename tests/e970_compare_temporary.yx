@@ -1,0 +1,5 @@
+struct P { x: Int }
+fn main() {
+  print(String.from("a") < String.from("b"))
+  print(P { x: 1 } < P { x: 2 })
+}

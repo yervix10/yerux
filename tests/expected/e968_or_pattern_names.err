@@ -1,0 +1,17 @@
+error: every alternative of an or-pattern must bind the same names
+ --> tests/e968_or_pattern_names.yx:5:5
+  |
+5 |     E.A(x) | E.B(y) => { print(x) }
+  |     ^^^^^^
+  = one alternative binds 'x' but another binds 'y'
+  = help: use the same names in every alternative, or split them into separate arms
+
+error: every alternative of an or-pattern must bind the same names
+  --> tests/e968_or_pattern_names.yx:11:5
+   |
+11 |     (1, b) | (2, _) => { print(b) }
+   |     ^^^^^^
+   = one alternative binds 'b' but another binds nothing
+   = help: use the same names in every alternative, or split them into separate arms
+
+2 error(s). Nothing was generated.
