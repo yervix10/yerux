@@ -199,22 +199,60 @@ fn mutex_with_view<T, R>(lock: view Mutex<T>, body: view fn(view T) -> R) -> R {
     return lock.inner.with_view(body)
 }
 
-// Reader/writer lock API. The current implementation uses the same
-// starvation-safe exclusive primitive for both access modes.
-struct RwLock<T> { inner: Locked<T> }
+// Reader/writer lock: readers increment a shared count after checking the
+// writer flag, then recheck it to close the writer/read race. Writers claim
+// the flag and wait for the count to reach zero. The lock is spin-based.
+struct RwLock<T> {
+    readers: Box<Int>,
+    writer: Box<Int>,
+    value: Locked<T>,
+}
 
 impl<T> RwLock<T> {
     fn new(value: T) -> RwLock<T> {
-        return RwLock<T> { inner: Locked.new(move value) }
+        __check_shared_content(value)
+        return RwLock<T> {
+            readers: Box.new(0),
+            writer: Box.new(0),
+            value: Locked.new(move value),
+        }
     }
 }
 
+fn __rw_read_lock<T>(lock: view RwLock<T>) -> Int {
+    let readers = __box_address(lock.readers)
+    let writer = __box_address(lock.writer)
+    while true {
+        while __atomic_load(writer) != 0 {}
+        __atomic_fetch_add(readers, 1)
+        if __atomic_load(writer) == 0 {
+            return readers
+        }
+        __atomic_fetch_add(readers, -1)
+    }
+    return readers
+}
+
+fn __rw_write_lock<T>(lock: view RwLock<T>) -> Int {
+    let writer = __box_address(lock.writer)
+    let readers = __box_address(lock.readers)
+    while __atomic_cmpxchg(writer, 0, 1) != 0 {}
+    while __atomic_load(readers) != 0 {}
+    return writer
+}
+
 fn rwlock_read<T, R>(lock: view RwLock<T>, body: view fn(view T) -> R) -> R {
-    return lock.inner.with_view(body)
+    let held = __rw_read_lock(lock)
+    let result = body(lock.value.locked_value())
+    __atomic_fetch_add(held, -1)
+    return result
 }
 
 fn rwlock_write<T, R>(lock: view RwLock<T>, body: view fn(mut T) -> R) -> R {
-    return lock.inner.with(body)
+    let held = __rw_write_lock(lock)
+    let result = body(lock.value.locked_value())
+    __atomic_store(held, 0)
+    return result
 }
 
 fn __parallel_lane(first: Int, end: Int, inclusive: Bool, body: Int) {

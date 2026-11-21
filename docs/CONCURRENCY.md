@@ -65,9 +65,11 @@ The prelude also exposes `Mutex<T>` as a named facade over `Locked<T>`.
 `mutex_with_view(lock, f)` can return owned callback results. These use the
 same exclusive futex mutex and scoped-borrow restrictions as `Locked`.
 
-`RwLock<T>` currently offers `rwlock_read` and `rwlock_write` scoped callback
-APIs, but both paths use the exclusive `Locked<T>` implementation. It is a
-correct compatibility API, not a concurrent-reader implementation. The
+`RwLock<T>` offers `rwlock_read` and `rwlock_write` scoped callback APIs.
+Readers increment a shared count, so multiple readers can proceed together;
+writers claim an exclusive flag and wait for active readers. Acquisition is
+spin-based and does not guarantee fairness. A panic inside a callback can
+leave the lock held; recoverable panic-safe release is future work. The
 prelude atomics remain `Atomic<Int>` and `Atomic<Bool>` with sequentially
 consistent operations; a persistent worker pool and channels are still
 unimplemented.
