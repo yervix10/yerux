@@ -1,8 +1,21 @@
 # Yerux master roadmap (M1..M12)
 
+> **Status note:** this is a direction and effort estimate, not a checklist of
+> the compiler's current feature status. The original M1–M3 descriptions below
+> have been updated to reflect the implementation recorded in `SPEC.md`,
+> `BACKEND.md`, and the focused docs. The later framework milestones remain
+> proposed work. In particular, the compiler still has a C backend and uses
+> `cc` for its default output; native output does not yet cover every feature
+> or target.
+
 Tracks: **L** language, **B** compiler/backend, **S** stdlib, **T** tooling, **P** platform layer, **R** rendering, **F** framework. Effort in person-months (pm) for one experienced engineer; see FFI.md and RENDERING.md for the basis. Cumulative totals assume strictly serial work; many items can overlap.
 
-## Dependency spine
+## Long-term dependency sketch
+
+This sketch describes ordering for the proposed framework work. Language and
+backend items already implemented are summarized in the milestone table and
+their linked reference docs; this is not a current implementation dependency
+graph.
 
 ```
  B: N2 regalloc --> N3 aggregates/ptrs/allocator --> F0 sized ints, floats, Ptr --> F1 dynamic ELF --> PE --> aarch64 --> Mach-O
@@ -18,9 +31,9 @@ Tracks: **L** language, **B** compiler/backend, **S** stdlib, **T** tooling, **P
 
 | M | Name | Contents | Depends on | Effort | Done when |
 |---|---|---|---|---|---|
-| **M1** | Native backend complete (N2, N3) | Register allocation, SSA-lite opts, structs/enums/match, `view`/`mut` pointers, `mmap` allocator, drop glue; all examples and tests pass on the native backend; C backend retired to a test oracle | now | 4-6 | `yerux build` needs no `cc` for the whole current language; speed within 10% of gcc -O2 on the benchmark |
-| **M2** | Systems types | Sized ints, `Float32/64` + SSE2, `Ptr<T>` + `unsafe`, arrays/slices, heap `String`/`Text`, generic `List<T>`, `Option/Result/?`, modules, integer/float formatting | M1 | 5-7 | A program can parse a binary file format and print floats |
-| **M3** | Stdlib core + FFI stage 1 (first slice done: `std.io`, see STDLIB_IO.md) | Syscall wrappers (files, mmap, sockets, time, env, args, `epoll`), byte buffers, formatter, test runner; **dynamic ELF writer + `extern "C"` + `dlopen`** (FFI F1-F2); `ffi` capability stub | M2 | 4-6 | `extern` call to libc `write`; open a Unix socket and echo |
+| **M1** | Native backend foundations | x86-64 Linux native backend, register allocation, structs/enums/match, borrows, allocator and drop glue are implemented. AArch64 Linux core IR and Windows PE support are present with documented limitations. C remains the default backend and test oracle. | substantially complete | — | See `BACKEND.md` for supported features and target-specific gaps. |
+| **M2** | Systems types and language core | Sized integers, `Float`/`Float32`, `Ptr<T>` construction, `String`, generic `List<T>`, `Option`/`Result`/`?`, modules, formatting, ranges and compile-time evaluation are implemented. Arrays/slices remain future work. | substantially complete | — | See `SPEC.md` and `docs/STDLIB.md`. |
+| **M3** | Stdlib core + FFI | `std.io` has an implemented first slice. C FFI works through the C backend and Linux x86-64 native path; dynamic ELF loading is implemented for that native path. The broader syscall, networking, and capability design remains future work. | partial | — | See `docs/STDLIB_IO.md` and `docs/FFI.md`. |
 | **M4** | Window + pixels (Linux) | Wayland client from scratch, memfd+shm, xdg-shell, events; first CPU fill; headless Weston CI + golden images | M3 (sockets only; no FFI needed) | 3-5 | Solid-colour window, closes cleanly |
 | **M5** | Text and first widgets | Closures and function values; interfaces/traits with dynamic dispatch; TTF reader, outline rasterizer, glyph cache; display list; pointer/keyboard input; box-constraint layout core; "counter" app | M4, language work | 6-9 | Line of text and clickable button (Linux Wayland, CPU) |
 | **M6** | Framework core + X11 | Element/render tree, rebuild/state model (decision on diff vs signals), gestures, focus, scroll, animation ticker/vsync; X11 backend; hot restart | M5 | 8-12 | Todo-list app with text field (Latin) runs on Wayland and X11 |
