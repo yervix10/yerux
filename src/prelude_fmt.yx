@@ -146,3 +146,15 @@ fn std__split_at<T>(xs: view [T], k: Int, f: view fn(view [T], view [T])) {
 fn std__split_at_mut<T>(xs: mut [T], k: Int, f: view fn(mut [T], mut [T])) {
     f(xs[..k], xs[k..])
 }
+
+impl<T: Clone> Clone for List<T> {
+    fn clone(view self) -> List<T> {
+        var r = List<T>.new()
+        var i = 0
+        while i < self.len() {
+            r.push(self.at(i).clone())
+            i = i + 1
+        }
+        return r
+    }
+}

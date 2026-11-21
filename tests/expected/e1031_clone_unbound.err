@@ -1,0 +1,17 @@
+error: Plain does not implement Clone, which 'dup' needs for T
+ --> tests/e1031_clone_unbound.yx:9:11
+  |
+9 |   let q = dup(p)
+  |           ^^^^^^
+  = 'dup' is declared `fn dup<T: Clone>`
+  = help: add `impl Clone for Plain { fn clone(view self) -> Plain { .. } }`
+
+error: List<Plain> has no method 'clone' here
+  --> tests/e1031_clone_unbound.yx:11:12
+   |
+11 |   let l2 = l.clone()
+   |            ^^^^^^^^^
+   = 'clone' needs T: Clone, but Plain does not implement Clone
+   = help: add `impl Clone for Plain { .. }`
+
+2 error(s). Nothing was generated.

@@ -1,0 +1,12 @@
+struct Plain { n: Int }
+
+fn dup<T: Clone>(x: view T) -> T {
+  return x.clone()
+}
+
+fn main() {
+  let p = Plain { n: 1 }
+  let q = dup(p)
+  var l = List<Plain>.new()
+  let l2 = l.clone()
+}
