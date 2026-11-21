@@ -8,7 +8,7 @@ enum K { Word, Num, Str, Sym, Comment }
 impl Equal for K { fn eq(view self, other: view K) -> Bool { return kcode(self) == kcode(other) } }
 fn kcode(k: view K) -> Int { match k { K.Word => { return 0 } K.Num => { return 1 } K.Str => { return 2 } K.Sym => { return 3 } K.Comment => { return 4 } } }
 struct T { k: K, start: Int, end: Int, nl: Int, line: Int }
-struct Open { multi: Bool, decl: Bool, lit: Bool, pd: Int }
+struct Open { multi: Bool, decl: Bool, lit: Bool, pd: Int, cont: Bool }
 
 fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
 fn is_alpha(b: Int) -> Bool { return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 }
@@ -119,8 +119,22 @@ fn is_gen_token(src: view String, ts: view List<T>, at: Int) -> Bool {
         while j < ts.len() {
           if ts.at(j).k == K.Word && same(val(src, ts.at(j)), "fn") { has_fn = true }
           if (sym(src, ts.at(j), "(") || sym(src, ts.at(j), ")")) && !has_fn { valid = false; break }
+          if (same(val(src, ts.at(j)), "..") && !same(name, "Int")) { valid = false; break }
           if sym(src, ts.at(j), "<") { depth = depth + 1 }
-          else if sym(src, ts.at(j), ">") { depth = depth - 1; if depth == 0 { if valid && at >= i && at <= j { return true } break } }
+          else if sym(src, ts.at(j), ">") {
+            depth = depth - 1
+            if depth == 0 {
+              if valid {
+                if j + 1 >= ts.len() { if at >= i && at <= j { return true } }
+                else {
+                  let next = ts.at(j + 1)
+                  let nv = val(src, next)
+                  if next.nl > 0 || next.k == K.Comment || (next.k == K.Word && same(nv, "else")) || sym(src, next, "(") || sym(src, next, ".") || sym(src, next, "{{") || sym(src, next, "}}") || sym(src, next, ",") || sym(src, next, ")") || sym(src, next, "=") || sym(src, next, ">") || sym(src, next, ";") { if at >= i && at <= j { return true } }
+                }
+              }
+              break
+            }
+          }
           j = j + 1
         }
       }
@@ -140,7 +154,7 @@ fn closure_open(src: view String, ts: view List<T>, i: Int) -> Bool {
   if !sym(src, ts.at(i), "|") { return false }
   if i == 0 { return false }
   let p = ts.at(i - 1)
-  if p.k == K.Sym { return !(sym(src, p, ")") || sym(src, p, "]") || sym(src, p, "}}")) }
+  if p.k == K.Sym { return !(sym(src, p, ")") || sym(src, p, "]") || sym(src, p, "}}") || sym(src, p, ">")) }
   if p.k == K.Word { let v = val(src, p); return same(v, "move") || same(v, "return") || same(v, "in") }
   return false
 }
@@ -156,6 +170,21 @@ fn closure_bar(src: view String, ts: view List<T>, i: Int) -> Bool {
       }
     }
     j = j + 1
+  }
+  return false
+}
+fn closure_params(src: view String, ts: view List<T>, i: Int) -> Bool {
+  var j = i - 1
+  while j >= 0 {
+    if sym(src, ts.at(j), "|") && closure_open(src, ts, j) {
+      var k = j + 1
+      while k < ts.len() {
+        if sym(src, ts.at(k), "|") { return i < k }
+        k = k + 1
+      }
+      return false
+    }
+    j = j - 1
   }
   return false
 }
@@ -224,10 +253,10 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
     var blank = false
     if in_import && (same(value, "import") || same(value, "type")) { hard = true; in_import = false }
     else if in_import && t.nl > 0 { hard = true; blank = true; in_import = false }
-    if !hard && (multi_close || just_open || pending_hard || top_end || (prev_comment && pd == 0) || (stack.len() > 0 && stack.at(stack.len()-1).multi && stack.at(stack.len()-1).decl && prev >= 0 && sym(src, ts.at(prev), ",") && pd == 0)) { hard = true; blank = top_end || (prev_comment && t.nl >= 2) || (stack.len() > 0 && stack.at(stack.len()-1).multi && prev >= 0 && sym(src, ts.at(prev), ",") && t.nl >= 2) }
+    if !hard && (multi_close || just_open || pending_hard || top_end || (prev_comment && pd == 0) || (stack.len() > 0 && stack.at(stack.len()-1).multi && (stack.at(stack.len()-1).decl || stack.at(stack.len()-1).lit) && prev >= 0 && sym(src, ts.at(prev), ",") && pd == 0)) { hard = true; blank = top_end || (prev_comment && t.nl >= 2) || (stack.len() > 0 && stack.at(stack.len()-1).multi && prev >= 0 && sym(src, ts.at(prev), ",") && t.nl >= 2) }
     if !hard && last_closed && !last_closed_lit && stack.len() > 0 && stack.at(stack.len()-1).multi && !close && !sym(src, t, ",") && !sym(src, t, ")") && !sym(src, t, ".") && !(t.k == K.Word && same(value, "else")) { hard = true; blank = t.nl >= 2 }
     var continuation = false
-    if !hard && t.nl > 0 && out.len() > 0 && pd == 0 {
+    if !hard && t.nl > 0 && out.len() > 0 && pd == 0 && !closure_params(src, ts, i) {
       let prev_is_generic_close = prev >= 0 && sym(src, ts.at(prev), ">") && is_gen_token(src, ts, prev)
       if is_gen_token(src, ts, i) || sym(src, t, ".") || (t.k == K.Word && same(value, "else")) || sym(src, t, "{{") { }
       else if prev >= 0 && binop(val(src, ts.at(prev))) && !prev_is_generic_close { hard = true; continuation = true }
@@ -236,8 +265,10 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
     if !hard && t.nl > 0 && t.k == K.Word && same(value, "fn") && stack.len() > 0 && stack.at(stack.len()-1).multi { hard = true }
     if close && stack.len() > 0 && stack.at(stack.len()-1).multi { hard = true }
     var closed_lit = false
-    if close && stack.len() > 0 { let o = stack.pop(); if o.multi { depth = depth - 1 } pd = o.pd; closed_lit = o.lit }
+    var restore_cont = false
+    if close && stack.len() > 0 { let o = stack.pop(); if o.multi { depth = depth - 1 } pd = o.pd; restore_cont = o.cont; closed_lit = o.lit }
     if hard { cont = continuation }
+    if close && restore_cont { cont = true }
     if hard {
       while out.len() > 0 && out.byte(out.len()-1) == 32 { out = out.slice(0, out.len() - 1) }
       if out.len() > 0 && out.byte(out.len()-1) != 10 { out.push_byte(10); if blank { out.push_byte(10) } }
@@ -260,10 +291,10 @@ fn format_tokens(src: view String, ts: view List<T>) -> String {
       while j < end { if ts.at(j).nl > 0 || ts.at(j).k == K.Comment { multi = true } j = j + 1 }
       let decl = prev >= 1 && (same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum"))
       var lit = prev >= 0 && is_struct_name(src, ts, prev) && !decl
-      if prev >= 1 && (same(val(src, ts.at(prev - 1)), "impl") || same(val(src, ts.at(prev - 1)), "for") || same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum")) { lit = false }
-      stack.push(Open { multi: multi, decl: decl, lit: lit, pd: pd })
+      if prev >= 1 && (sym(src, ts.at(prev - 1), "->") || same(val(src, ts.at(prev - 1)), "impl") || same(val(src, ts.at(prev - 1)), "for") || same(val(src, ts.at(prev - 1)), "struct") || same(val(src, ts.at(prev - 1)), "enum")) { lit = false }
+      stack.push(Open { multi: multi, decl: decl, lit: lit, pd: pd, cont: cont })
       if multi { depth = depth + 1 }
-      just_open = multi; pd = 0
+      just_open = multi; pd = 0; cont = false
     }
     if close && stack.len() == 0 { top_end = true }
     if close { last_closed = true; last_closed_lit = closed_lit }
