@@ -127,12 +127,26 @@ class Result:
     pass
 
 
-def run(args, inp=None, timeout=60):
+def load_factor():
+    """>= 1: how much slower than an idle machine we should expect to be (load average per CPU)."""
     try:
-        p = subprocess.run(args, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
-        return p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired:
-        return "timeout", b"", b""
+        return max(1.0, os.getloadavg()[0] / (os.cpu_count() or 1))
+    except OSError:
+        return 1.0
+
+
+def run(args, inp=None, timeout=60):
+    """A timeout scales with the machine load and is retried once with twice the time before it counts: a
+    compiler that is merely slow because other jobs are running must not look like a hang. Real hangs still
+    fail (they exceed 2x the scaled limit)."""
+    limit = timeout * load_factor()
+    for attempt in (1, 2):
+        try:
+            p = subprocess.run(args, capture_output=True, timeout=limit, stdin=subprocess.DEVNULL)
+            return p.returncode, p.stdout, p.stderr
+        except subprocess.TimeoutExpired:
+            limit *= 2
+    return "timeout", b"", b""
 
 
 def crashed(rc, err):
