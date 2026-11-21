@@ -430,6 +430,7 @@ struct ThreadPoolState {
     remaining: Int,
     next: Int,
     end: Int,
+    chunk: Int,
     body: Int,
     closed: Bool,
 }
@@ -448,14 +449,16 @@ fn __thread_pool_worker(state: Shared<Locked<ThreadPoolState>>) -> Int {
         if generation == seen { continue }
         seen = generation
         while true {
-            let (index, body) = state.get().with(|s| {
-                if s.next >= s.end { return (-1, s.body) }
-                let i = s.next
-                s.next = s.next + 1
-                return (i, s.body)
+            let (first, limit, body) = state.get().with(|s| {
+                if s.next >= s.end { return (-1, -1, s.body) }
+                let first = s.next
+                var limit = first + s.chunk
+                if limit > s.end { limit = s.end }
+                s.next = limit
+                return (first, limit, s.body)
             })
-            if index < 0 { break }
-            __parallel_call(body, index)
+            if first < 0 { break }
+            for index in first..limit { __parallel_call(body, index) }
         }
         state.get().with(|s| {
             s.remaining = s.remaining - 1
@@ -473,6 +476,9 @@ impl ThreadPool {
             if s.closed { panic("thread pool is closed") }
             s.next = first
             s.end = end
+            let chunk = (end - first) / (self.worker_count * 8)
+            s.chunk = chunk
+            if s.chunk < 1 { s.chunk = 1 }
             s.body = address
             s.remaining = self.worker_count
             s.generation = s.generation + 1
@@ -496,7 +502,7 @@ fn thread_pool_new(count: Int) -> ThreadPool {
     var n = count
     if n < 1 { n = 1 }
     let state = Shared.new(Locked.new(ThreadPoolState {
-        generation: 0, remaining: 0, next: 0, end: 0, body: 0, closed: false,
+        generation: 0, remaining: 0, next: 0, end: 0, chunk: 1, body: 0, closed: false,
     }))
     var threads = List<Int>.new()
     for _ in 0..n {

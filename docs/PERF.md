@@ -10,23 +10,31 @@ These measurements were collected on a shared build host while other regression 
 
 `python3 bench/concurrency.py --runs 5` compares the native backend's serial
 loop with `thread_pool_map` on a four-worker persistent pool. Each run computes
-four batches of 5,000 items; each item performs 1,000 rounds of the same
+four batches of 5,000 items; each item performs 12,000 rounds of the same
 integer recurrence. The pool binary includes worker startup, four map/join
 barriers, result collection, and shutdown. The script checks identical output
-and reports median wall time, including process startup.
+and reports median wall time, including process startup. This raises useful
+work per callback substantially over the original 1,000-round case.
 
 Measured on the same 12-CPU Linux 6.12.117 host (five timed runs after one
 warm-up):
 
 | Workload | Median wall time | Relative to serial |
 |---|---:|---:|
-| Serial native loop | 0.109 s | 1.00x |
-| Four-worker pool map | 0.137 s | 1.25x |
+| Serial native loop, 1,000 rounds (previous run) | 0.109 s | 1.00x |
+| Four-worker pool map, 1,000 rounds (previous run) | 0.137 s | 1.25x |
+| Serial native loop, 12,000 rounds | 1.391 s | 1.00x |
+| Four-worker pool map, 12,000 rounds | 1.528 s | 1.10x |
 
-This task size does not amortize the pool scheduler and synchronized result
-collection: the pool map is slower in this run. Use larger per-item work or
-batch several items per task before expecting a speedup. Reproduce with
-`bench/concurrency.py`; timings are sensitive to host load.
+The larger workload narrows the slowdown but still does not show a speedup.
+Inspection found one avoidable scheduler cost: workers previously acquired the
+shared state lock once per index. They now reserve chunks (about one eighth of
+the work per worker, with a minimum of one index) and process each chunk
+without touching the lock. `thread_pool_map` still takes a shared result lock
+for every callback, and all workers poll the completion state; these costs
+remain visible even when callbacks are expensive. The measurements are honest
+end-to-end results, not evidence that this machine or API scales. Reproduce
+with `bench/concurrency.py`; timings vary with host load and CPU quota.
 
 ## fib - fib(40) recursion (spec asked 38; raised so the run is not ~0.1 s)
 

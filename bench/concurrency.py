@@ -47,7 +47,7 @@ def main():
         expected = subprocess.run([serial], capture_output=True, text=True, check=True).stdout
         serial_s = measure(serial, expected, args.runs)
         pool_s = measure(pooled, expected, args.runs)
-        print(f"4 batches x 5000 items, 1000 rounds per item, pool workers: 4, runs: {args.runs}")
+        print(f"4 batches x 5000 items, 12000 rounds per item, pool workers: 4, runs: {args.runs}")
         print(f"serial median: {serial_s:.6f}s")
         print(f"pool map median: {pool_s:.6f}s ({pool_s / serial_s:.2f}x serial)")
 
