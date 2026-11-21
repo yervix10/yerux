@@ -1,0 +1,89 @@
+// Option/Result combinators with owned payloads: ok, err, or, ok_or, unwrap_or, show and ==,
+// plus `?` chains that stop at the first failure. Every dropped payload must be freed (ASan).
+fn parse(s: view String) -> Result<Int, String> {
+  var n = 0
+  if s.parse_int(n) { return Ok(n) }
+  return Err("bad number '{s}'")
+}
+
+fn sum3(a: view String, b: view String, c: view String) -> Result<Int, String> {
+  let x = parse(a)?
+  print("  parsed {x}")
+  let y = parse(b)?
+  print("  parsed {y}")
+  let z = parse(c)?
+  return Ok(x + y + z)
+}
+
+fn first_word(s: view String) -> Option<String> {
+  let words = s.split(" ")
+  if s.len() == 0 { return None }
+  return Some(String.from(words.at(0)))
+}
+
+fn initial(s: view String) -> Option<Int> {
+  let w = first_word(s)?
+  return Some(w.byte(0))
+}
+
+fn main() {
+  // ok / err on both variants, owned payloads
+  let a = parse(String.from("12")).ok()
+  let b = parse(String.from("x")).ok()
+  let c = parse(String.from("12")).err()
+  let d = parse(String.from("y")).err()
+  print("{a} {b} {c} {d}")
+
+  // or: first wins when present, owned payloads on both sides
+  let s1: Option<String> = Some("left")
+  let s2: Option<String> = Some("right")
+  let o1 = s1.or(move s2)
+  let n1: Option<String> = None
+  let s3: Option<String> = Some("fallback")
+  let o2 = n1.or(move s3)
+  let n2: Option<String> = None
+  let n3: Option<String> = None
+  let o3 = n2.or(move n3)
+  print("{o1} {o2} {o3}")
+
+  // ok_or with an owned error
+  let some: Option<Int> = Some(3)
+  let none: Option<Int> = None
+  let r1 = ok_or(some, String.from("missing"))
+  let r2 = ok_or(none, String.from("missing"))
+  let r2e = r2.is_err()
+  print("{r1.is_ok()} {r2e} {r2.err()}")
+
+  // unwrap_or drops the unused default / payload
+  let u1: Option<String> = Some("have")
+  let u2: Option<String> = None
+  let v1 = u1.unwrap_or(String.from("default"))
+  let v2 = u2.unwrap_or(String.from("default"))
+  let e1 = parse(String.from("-5")).unwrap_or(0)
+  let e2 = parse(String.from("--5")).unwrap_or(0)
+  print("{v1} {v2} {e1} {e2}")
+
+  // equality of options
+  let p: Option<Int> = Some(1)
+  let q: Option<Int> = Some(1)
+  let r: Option<Int> = Some(2)
+  let z: Option<Int> = None
+  let z2: Option<Int> = None
+  print("{p == q} {p == r} {p == z} {z == z2}")
+
+  // `?` stops at the first failing step and skips the rest
+  let res1 = sum3(String.from("1"), String.from("2"), String.from("3"))
+  print("{res1}")
+  let res2 = sum3(String.from("1"), String.from("two"), String.from("3"))
+  print("{res2}")
+  let res3 = sum3(String.from("one"), String.from("2"), String.from("3"))
+  print("{res3}")
+  let res4 = sum3(String.from("1"), String.from("2"), String.from(""))
+  print("{res4}")
+
+  // Option `?` with an owned intermediate
+  let res5 = initial(String.from("hello world"))
+  print("{res5}")
+  let res6 = initial(String.from(""))
+  print("{res6}")
+}
