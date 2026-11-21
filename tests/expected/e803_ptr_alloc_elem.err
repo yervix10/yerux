@@ -11,5 +11,6 @@ error: Ptr has no method 'read'
 6 |     q.read(0)
   |     ^^^^^^^^^
   = methods: is_null(), free()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n))
+  = help: check the receiver type and method name, or define the method in an `impl` block
 
 2 error(s). Nothing was generated.

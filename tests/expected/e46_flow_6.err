@@ -18,5 +18,6 @@ error: expected Int but this is Text
   |
 5 |   for i in 0..t { print(i) }
   |               ^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 3 error(s). Nothing was generated.

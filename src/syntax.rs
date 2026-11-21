@@ -101,10 +101,89 @@ pub fn render(d: &Diag, file: &str, src: &str) -> String {
         "^".repeat(d.pos.len.max(1)),
         w = w
     );
-    for n in &d.notes {
+    let mut notes = d.notes.clone();
+    if !notes.iter().any(|n| n.starts_with("help:")) {
+        if let Some(hint) = diagnostic_hint(&d.msg) {
+            notes.push(hint);
+        }
+    }
+    for n in &notes {
         s += &format!("{:w$} = {}\n", "", n, w = w);
     }
     s
+}
+
+/// Short next steps for frequent errors that otherwise leave the user with only a description.
+fn diagnostic_hint(msg: &str) -> Option<String> {
+    let hint = if msg.starts_with("expected ") && msg.contains(" but this is ") {
+        "check the value at this expression; convert it explicitly or change the expected type"
+    } else if msg.starts_with("variable '") && msg.ends_with("' does not exist") {
+        "check the spelling, scope, and whether the name needs to be imported or qualified"
+    } else if msg.starts_with("function '") && msg.ends_with("' does not exist") {
+        "check the function name and import the module that defines it"
+    } else if msg.starts_with("unknown type '") {
+        "check the type name, then define it or import the module that exports it"
+    } else if msg.starts_with("unknown trait '") {
+        "check the trait name and declare or import that trait before using it"
+    } else if msg.starts_with("module '") && msg.contains("' has no item called '") {
+        "check the module alias and exported item name; qualify the name with the correct module"
+    } else if msg.contains(" is private in module '") {
+        "add `pub` to the declaration if it is intended to be used outside its module"
+    } else if msg.contains(" has no method '") {
+        "check the receiver type and method name, or define the method in an `impl` block"
+    } else if msg.starts_with("struct ") && msg.contains(" has no field '") {
+        "check the field name and the struct's declared fields"
+    } else if msg.contains("expects ") && msg.contains("argument(s) but got") {
+        "pass the number of arguments shown in the function's signature"
+    } else if msg.starts_with("cannot use '") && msg.contains("was already moved") {
+        "use the value before moving it, or pass it by `view` when the callee only reads it"
+    } else if msg.starts_with("cannot lend '") && msg.contains("as `mut`") {
+        "declare the binding with `var` so it can be borrowed mutably"
+    } else if msg.starts_with("cannot move '") {
+        "borrow the value with `view`, or move the whole owner when ownership is needed"
+    } else if msg.starts_with("this function value takes ") && msg.contains("argument(s) but") {
+        "match the call arguments to the function value's parameter list"
+    } else if msg.contains("is a variable of type ") && msg.ends_with("so it cannot be called") {
+        "call a function value, or use the variable as a value instead"
+    } else if msg.starts_with("the slice type ") && msg.contains("can only be the type of a `view` or `mut` parameter") {
+        "use the slice in a `view` or `mut` parameter, or use `List<T>` for an owned collection"
+    } else if msg.starts_with("duplicate ") {
+        "rename or remove the repeated declaration"
+    } else {
+        return None;
+    };
+    Some(format!("help: {hint}"))
+}
+
+#[cfg(test)]
+mod diagnostic_hint_tests {
+    use super::diagnostic_hint;
+
+    #[test]
+    fn frequent_diagnostic_classes_have_actionable_hints() {
+        let cases = [
+            "expected Int but this is Text",
+            "variable 'x' does not exist",
+            "function 'f' does not exist",
+            "unknown type 'Missing'",
+            "unknown trait 'Missing'",
+            "module 'm' has no item called 'x'",
+            "'x' is private in module 'm'",
+            "type T has no method 'f'",
+            "struct T has no field 'f'",
+            "'f' expects 2 argument(s) but got 1",
+            "cannot use 'x': it was already moved",
+            "cannot lend 'x' as `mut`: it was declared with `let` (immutable)",
+            "cannot move 'x' out of its struct",
+            "this function value takes 2 argument(s) but 1 were given",
+            "'x' is a variable of type Int, not a function, so it cannot be called",
+            "the slice type [Int] can only be the type of a `view` or `mut` parameter",
+            "duplicate parameter 'x'",
+        ];
+        for msg in cases {
+            assert!(diagnostic_hint(msg).is_some(), "missing hint for: {msg}");
+        }
+    }
 }
 
 // ───────────────────────── Lexer ─────────────────────────

@@ -1,0 +1,4 @@
+import std.fs
+fn main() {
+  fs.no_such_item()
+}
