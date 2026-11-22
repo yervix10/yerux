@@ -4,5 +4,6 @@ error: 'm' is a variable of type Int, not a function, so it cannot be called
 4 |   print(m(2))
   |         ^^^^
   = only function values (closures and function names) can be called with `name(args)`
+  = help: call a function value, or use the variable as a value instead
 
 1 error(s). Nothing was generated.

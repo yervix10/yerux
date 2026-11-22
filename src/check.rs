@@ -518,7 +518,8 @@ struct Checker<'a> {
     // generics
     ps: &'a mut Parser,
     in_generic: bool, // checking a generic body with abstract type parameters
-    queue: Vec<(Func, String)>, // instantiations still to check (with a description for notes)
+    queue: Vec<(Func, String, Option<Pos>)>, // instantiations and their first user-visible call sites
+    inst_origin: Option<Pos>, // user-visible origin while checking an instantiated body
     split_ok: bool,   // checking `std__split_at*`: its two halves of one slice may be lent together
     inst_fns: HashMap<(String, Vec<Ty>), (String, Sig)>,
     hint: Option<Ty>, // expected type of the next expression (to infer `Maybe.None`)
@@ -578,7 +579,21 @@ struct LoopCtx {
 }
 
 impl<'a> Checker<'a> {
-    fn err(&mut self, d: Diag) {
+    fn err(&mut self, mut d: Diag) {
+        if let Some(origin) = self.inst_origin {
+            if d.pos != origin {
+                if d.pos.line >= crate::syntax::PRELUDE_LINE {
+                    d.notes
+                        .push("instantiated code is defined in the built-in library".into());
+                } else {
+                    d.notes.push(format!(
+                        "instantiated code is defined at line {}",
+                        d.pos.line
+                    ));
+                }
+                d.pos = origin;
+            }
+        }
         self.errs.push(d);
     }
     fn tn(&self, t: Ty) -> String {
@@ -6260,8 +6275,11 @@ impl<'a> Checker<'a> {
                         ret: f.ret,
                     },
                 );
-                self.queue
-                    .push((f, format!("the built-in function {}", name)));
+                self.queue.push((
+                    f,
+                    format!("the built-in function {}", name),
+                    self.inst_origin,
+                ));
             }
             Err(d) => self.err(d),
         }
@@ -6568,6 +6586,7 @@ impl<'a> Checker<'a> {
                             tn.as_deref().unwrap_or("impl"),
                             self.types.name(ty)
                         ),
+                        self.inst_origin,
                     ));
                 }
                 Err(d) => {
@@ -6654,7 +6673,12 @@ impl<'a> Checker<'a> {
             _ => return Err(()),
         };
         let tyn = self.tn(rt);
+        let previous_origin = self.inst_origin;
+        if self.inst_origin.is_none() {
+            self.inst_origin = Some(pos);
+        }
         let mut target = self.method_target(rt, None, &m);
+        self.inst_origin = previous_origin;
         if target.as_ref().is_some_and(|(name, _)| name.starts_with("$Drop__")) {
             self.direct_drop_error(&tyn, pos);
             return Err(());
@@ -7604,8 +7628,11 @@ impl<'a> Checker<'a> {
                     body: body.unwrap_or_default(),
                     pos: h.pos,
                 };
-                self.queue
-                    .push((f, format!("`{}` with {}", g.name, shown.join(", "))));
+                self.queue.push((
+                    f,
+                    format!("`{}` with {}", g.name, shown.join(", ")),
+                    Some(self.inst_origin.unwrap_or(pos)),
+                ));
                 Some((name, sig))
             }
         }
@@ -7817,6 +7844,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         ps,
         in_generic: false,
         queue: vec![],
+        inst_origin: None,
         split_ok: false,
         inst_fns: HashMap::new(),
         hint: None,
@@ -7881,23 +7909,29 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
                 ck.types.user_drop.insert(sid, name);
             }
         }
-        while let Some((mut f, why)) = ck.queue.pop() {
+        while let Some((mut f, why, origin)) = ck.queue.pop() {
+            let previous_origin = ck.inst_origin;
+            ck.inst_origin = origin;
             let before = ck.errs.len();
             ck.func(&mut f);
             for d in ck.errs[before..].iter_mut() {
                 d.notes.push(format!("while checking {}", why));
             }
             done.push(f);
+            ck.inst_origin = previous_origin;
         }
     }
     // instantiations (they were created while checking the code above, and may create more)
-    while let Some((mut f, why)) = ck.queue.pop() {
+    while let Some((mut f, why, origin)) = ck.queue.pop() {
+        let previous_origin = ck.inst_origin;
+        ck.inst_origin = origin;
         let before = ck.errs.len();
         ck.func(&mut f);
         for d in ck.errs[before..].iter_mut() {
             d.notes.push(format!("while checking {}", why));
         }
         done.push(f);
+        ck.inst_origin = previous_origin;
     }
     // Some object types first appear when a generic body is instantiated.
     for i in 0..ck.types.dyns.len() {

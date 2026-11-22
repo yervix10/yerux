@@ -1,0 +1,14 @@
+struct Point { x: Int }
+fn one(x: Int) -> Int { return x }
+
+fn main() {
+  let wrong: Int = "text"
+  let absent = missing_name
+  let method = wrong.no_such_method()
+  let arity = one()
+  let not_fn = wrong()
+  let list = List<Int>.new()
+  list.push(1)
+  let point = Point { x: 1 }
+  let field = point.no_such_field
+}

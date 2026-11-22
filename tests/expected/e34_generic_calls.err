@@ -3,6 +3,7 @@ error: 'same' expects 2 argument(s) but got 1
   |
 8 |     print(same(1))
   |           ^^^^^^^
+  = help: pass the number of arguments shown in the function's signature
 
 error: argument 2 of 'same' is Bool, but T was already fixed to Int by an earlier argument
   --> examples/e34_generic_calls.yx:11:19

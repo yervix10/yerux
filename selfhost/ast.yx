@@ -92,3 +92,28 @@ pub fn decoded_name(tree: view List<AstNode>, index: Int) -> String {
 pub fn name_at(tree: view List<AstNode>, parent: Int, offset: Int) -> String {
   return decoded_name(tree, child(tree, parent, offset))
 }
+
+pub fn alias_target(tree: view List<AstNode>, name: view String) -> Int {
+  let items = child(tree, 0, 0)
+  var at = items + 1
+  while at < tree.at(items).end {
+    let decl = child(tree, at, 2)
+    if tree.at(decl).tag == "Alias" {
+      let candidate = name_at(tree, decl, 0)
+      if candidate == name { return child(tree, decl, 1) }
+    }
+    at = tree.at(at).end
+  }
+  return -1
+}
+
+pub fn range_type(tree: view List<AstNode>, args: Int) -> String {
+  if args + 1 >= tree.at(args).end || tree.at(args + 1).tag != "Range" {
+    return String.from("Int")
+  }
+  var lo = String.from(tree.at(child(tree, args + 1, 0)).tag)
+  var hi = String.from(tree.at(child(tree, args + 1, 1)).tag)
+  if lo == "_" { lo = String.new() }
+  if hi == "_" { hi = String.new() }
+  return "Int<{lo}..{hi}>"
+}

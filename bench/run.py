@@ -16,7 +16,7 @@ ROOT = os.path.dirname(HERE)
 SRC = os.path.join(HERE, "src")
 BUILD = os.path.join(HERE, "build")
 YERUX = os.path.join(ROOT, "target", "release", "yerux")
-BENCHES = ["fib", "nbody", "hashmap", "sort", "strings", "json"]
+BENCHES = ["fib", "nbody", "fannkuch", "hashmap", "sort", "strings", "json"]
 SOURCE_ALIAS = {"strings": "strbuild"}
 DESC = {
     "arith": "100M-iteration checked arithmetic loop",
@@ -28,6 +28,7 @@ DESC = {
     "alloc": "6M x (List<Int> of 8 + String) create/drop",
     "matmul": "300x300 flat List<Int> matmul, 5 rounds",
     "nbody": "5-body n-body (List<Float> state, sqrt), 2M steps",
+    "fannkuch": "fannkuch redux (10 elements, checksum and maximum flips)",
     "mandelbrot": "800x600 Mandelbrot, 200 iterations (Float locals)",
     "dot": "dot product of two 1M List<Float>, 200 rounds",
     "hashmap": "200k integer map inserts and lookups",

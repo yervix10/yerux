@@ -10,5 +10,6 @@ error: expected String but this is Int
   |
 5 |   env.set("KEY", 5)
   |                  ^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 2 error(s). Nothing was generated.

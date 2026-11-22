@@ -1,0 +1,10 @@
+error: cannot move 'self.value' out of its struct
+  --> tests/e1501_imported_generic_span.yx:11:15
+   |
+11 |   let value = holder.borrowed_take()
+   |               ^^^^^^^^^^^^^^^^^^^^^^
+   = help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct
+   = instantiated code is defined at line 6
+   = while checking the generic impl for Holder<String>
+
+1 error(s). Nothing was generated.

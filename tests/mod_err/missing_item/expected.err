@@ -4,5 +4,6 @@ error: module 'lib' has no item called 'mul'
 4 |   print(lib.mul(2, 3))
   |         ^^^^^^^
   = public items of 'lib': add, sub
+  = help: check the module alias and exported item name; qualify the name with the correct module
 
 1 error(s). Nothing was generated.

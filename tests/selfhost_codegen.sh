@@ -43,6 +43,20 @@ if "$driver" "$tmp/missing.yx" 2>"$tmp/missing.err"; then
 fi
 grep -qE 'resolving absent: source file not found' "$tmp/missing.err"
 
+cat >"$tmp/deferred-move.yx" <<'SOURCE'
+fn consume(s: String) {}
+fn main() {
+  let text = String.from("owed")
+  defer print(text)
+  consume(move text)
+}
+SOURCE
+if "$driver" "$tmp/deferred-move.yx" 2>"$tmp/deferred-move.err"; then
+  printf 'selfhost driver accepted use after move in a deferred statement\n' >&2
+  exit 1
+fi
+rg -q 'this deferred statement uses' "$tmp/deferred-move.err"
+
 source_ast() {
   : >"$tmp/source.err"
   "$tmp/rebuilt/lexer" "$1" --positioned >"$tmp/tokens" 2>"$tmp/source.err" || return
@@ -61,7 +75,9 @@ required() {
     tests/agg_string_ops.yx|tests/opt_shortcircuit.yx|tests/n2_overflow.yx|\
     tests/num_panic_u64_div0.yx|tests/own_enum_basic.yx|tests/agg_list_ops.yx|\
     tests/slice_edge_oob_range.yx|tests/drop_basic.yx|tests/selfhost/types/methods_generics.yx|\
-    tests/selfhost/types/enums_result_option.yx) return 0 ;;
+    tests/selfhost/types/enums_result_option.yx|tests/defer_owned.yx|tests/flow_for_range.yx|\
+    tests/own_try_order.yx|tests/range_as_else.yx|tests/range_panic_uint64.yx|tests/num_math.yx|\
+    tests/num_float_basic.yx|tests/agg_flow_list.yx|tests/slice_for.yx|tests/edge_option_result.yx) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -190,4 +206,4 @@ if ((skipped > 0)); then
     printf '%4d  %s\n' "${reasons[$category]}" "$category"
   done | sort -k1,1nr -k2
 fi
-[[ $identical -ge 149 && $panics -ge 2 && $rejections == 2 && $failures == 0 ]]
+[[ $identical -ge 223 && $panics -ge 2 && $rejections == 2 && $failures == 0 ]]

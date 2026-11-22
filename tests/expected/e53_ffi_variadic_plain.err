@@ -3,5 +3,6 @@ error: 'abs' expects 1 argument(s) but got 2
   |
 6 |   unsafe { print(abs(1, 2)) }
   |                  ^^^^^^^^^
+  = help: pass the number of arguments shown in the function's signature
 
 1 error(s). Nothing was generated.

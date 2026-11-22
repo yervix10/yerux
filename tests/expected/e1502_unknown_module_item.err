@@ -1,0 +1,9 @@
+error: module 'std.fs' has no item called 'no_such_item'
+ --> tests/e1502_unknown_module_item.yx:3:3
+  |
+3 |   fs.no_such_item()
+  |   ^^^^^^^^^^^^^^^
+  = public items of 'std.fs': FileKind, Metadata, metadata, symlink_metadata, exists, is_file, is_dir, file_size, read_to_string, read_lines, write, append, copy, remove_file, rename, create_dir, create_dir_all, remove_dir, DirEntry, read_dir_entries, read_dir, remove_dir_all, read_bytes, write_bytes, append_bytes, string_bytes, bytes_to_string, set_permissions, symlink, read_link, hard_link, File, OpenOptions, options, open_with, open, create, open_append, close, Reader, reader, open_reader, close_reader, Writer, writer, create_writer, finish, is_symlink
+  = help: check the module alias and exported item name; qualify the name with the correct module
+
+1 error(s). Nothing was generated.

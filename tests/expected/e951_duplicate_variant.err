@@ -3,5 +3,6 @@ error: duplicate variant 'A'
   |
 1 | enum E { A, B(Int), A }
   |                     ^
+  = help: rename or remove the repeated declaration
 
 1 error(s). Nothing was generated.

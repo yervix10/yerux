@@ -4,5 +4,6 @@ error: this function value takes 1 argument(s) but 2 were given
 3 |   print(f(1, 2))
   |         ^^^^^^^
   = its type is fn(Int) -> Int
+  = help: match the call arguments to the function value's parameter list
 
 1 error(s). Nothing was generated.
