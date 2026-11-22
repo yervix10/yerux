@@ -97,9 +97,47 @@ fn cache_import(build: mut Build, name: view String) -> Bool {
   return false
 }
 
+// Map and Set are written in Yerux (prelude_map.yx); a program that names them gets the prelude
+// in front of its source, like the Rust compiler's embedded prelude.
+fn uses_collections(text: view String) -> Bool {
+  return text.split("Map<").len() > 1 || text.split("Set<").len() > 1 ||
+    text.split("Map.").len() > 1 || text.split("Set.").len() > 1
+}
+
+fn with_prelude(build: view Build, source: view String) -> String {
+  let prelude = path.join(build.runtime, "prelude_map.yx")
+  if !fs.is_file(prelude) { return String.new() }
+  var text = String.new()
+  match fs.read_to_string(source) {
+    Err(error) => { return String.new() }
+    Ok(contents) => { text = String.from(contents) }
+  }
+  if !uses_collections(text) { return String.new() }
+  var head = String.new()
+  match fs.read_to_string(prelude) {
+    Err(error) => { return String.new() }
+    Ok(contents) => { head = String.from(contents) }
+  }
+  // imports must stay first: the prelude goes after the leading import lines
+  var top = String.new()
+  var rest = String.new()
+  var in_top = true
+  for line in text.split("\n") {
+    if in_top && !(line.starts_with("import ") || line.starts_with("//") || line.len() == 0) { in_top = false }
+    if in_top { top.push_str(line); top.push_str("\n") }
+    else { rest.push_str(line); rest.push_str("\n") }
+  }
+  let combined = path.join(build.work, "with_prelude.yx")
+  if !write(combined, "{top}{head}\n{rest}") { return String.new() }
+  return combined
+}
+
 fn compile(build: mut Build, source: view String, output: view String, emit_ast: Bool) -> Bool {
   let entry = path.file_name(source)
-  if !cache_source(build, source, entry) { return false }
+  var origin = String.from(source)
+  let combined = with_prelude(build, source)
+  if combined.len() > 0 { origin = String.from(combined) }
+  if !cache_source(build, origin, entry) { return false }
   let resolver = path.join(build.stages, "resolve")
   let linked_path = path.join(build.work, "linked.ast")
   var args = List<String>.new()

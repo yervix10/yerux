@@ -1187,7 +1187,7 @@ fn trait_method(gen: view Generator, tree: view List<ast.AstNode>, owner: view S
 fn match_method(gen: view Generator, tree: view List<ast.AstNode>, owner: view String,
     name: view String, has_receiver: Bool) -> Int {
   for method in gen.methods {
-    if method.trait_name != "Drop" && method.trait_name != "Equal" && method_matches(tree, method, owner) {
+    if method.trait_name != "Drop" && (method.trait_name != "Equal" || name == "eq") && method_matches(tree, method, owner) {
       let candidate = ast.name_at(tree, method.node, 0)
       let params = ast.child(tree, method.node, 2)
       let has_self = tree.at(params).end > params + 1 && tree.at(params + 1).tag == "Self"
@@ -1812,6 +1812,12 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
         return conversion(gen, tree, value, target, name.starts_with("truncate_"))
       }
       if types.math_arity(name) != 0 { return emit_math(gen, tree, name, args, recv, ty) }
+      if name == "eq" {
+        let left = expression(gen, tree, recv)
+        let saved = temp(gen, tree, left.ty, left.code)
+        let right = expression(gen, tree, actual)
+        return temp(gen, tree, ty, "({saved.code} == {right.code})")
+      }
       if name == "cmp" {
         let left = expression(gen, tree, recv)
         let saved = temp(gen, tree, left.ty, left.code)
@@ -2755,8 +2761,6 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
         var g = generics + 1
         while g < tree.at(generics).end {
           if tree.at(g).tag != "Generic" { unsupported("non-type generic impl parameters") }
-          let bounds = ast.child(tree, g, 1)
-          if tree.at(bounds).end != bounds + 1 { unsupported("bounded generic impl") }
           g = tree.at(g).end
         }
       }

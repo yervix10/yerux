@@ -38,6 +38,7 @@ compile_selfhost() {
   done
   cp src/c_runtime.h src/c_selfhost_*.h "$output/runtime/"
   cp -R src/std "$output/runtime/"
+  { printf 'trait Hash { fn hash(view self) -> Int }\n'; cat src/prelude_map.yx; } >"$output/runtime/prelude_map.yx"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
