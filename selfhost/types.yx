@@ -28,6 +28,7 @@ struct Types {
   copy_params: List<String>,
   modes: List<String>,
   equal_types: List<String>,
+  ordered_types: List<String>,
   aliases: List<String>,
   moved: List<Bool>,
   loops: List<LoopFlow>,
@@ -829,6 +830,13 @@ fn zero_in_range(ty: view String) -> Bool {
   return (!has_lo || lo <= 0) && (!has_hi || hi >= 0)
 }
 
+fn ordered_type(types: view Types, ty: view String) -> Bool {
+  if types.ordered_types.contains(ty) || integer(numeric_type(ty)) || floating(ty) ||
+      ty == "Bool" || ty == "Char" || ty == "String" || ty == "Text" { return true }
+  let element = type_terms.element(ty)
+  return element != "?" && ordered_type(types, element)
+}
+
 fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let op = ast.name_at(tree, index, 0)
   let left = ast.child(tree, index, 1)
@@ -886,7 +894,7 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     if ordered {
       if a == "Bool" && tree.at(left).tag != "Var" {
         issue(types, "cannot use `{op}` here: the left side is a Bool value that is not a variable")
-      } else if a == "Bool" { expect_type(types, a, b) }
+      } else if ordered_type(types, a) { expect_type(types, a, b) }
       else { issue(types, "cannot use `{op}` on values of type {a}: it does not implement Ordered") }
       return boolean
     }
@@ -1994,7 +2002,8 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     verify_ownership: verify_ownership, copy_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<ownership.Loan>.new(),
-    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), aliases: List<String>.new(),
+    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(),
+    ordered_types: List<String>.new(), aliases: List<String>.new(),
   }
   if !trace { for i in 0..tree.len() { types.expressions.push(unknown()) } }
   for id in bindings.identities { types.identities.push(id) }
@@ -2020,6 +2029,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
           let shape = shape_index(types, owner)
           if shape >= 0 { types.shapes.at(shape).user_drop = true }
         } else if name == "Equal" { types.equal_types.push(String.from(owner)) }
+        else if name == "Ordered" { types.ordered_types.push(String.from(owner)) }
       }
     }
     decl = tree.at(decl).end
