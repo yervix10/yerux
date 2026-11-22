@@ -16,7 +16,7 @@ seed_selfhost() {
 compile_selfhost() {
   local compiler=$1 output=$2 reference=${3:-} source stage
   mkdir -p "$output/cache/selfhost" "$output/cache/src/std" "$output/runtime"
-  for source in selfhost/*.yx src/std/path.yx; do
+  for source in selfhost/*.yx src/std/{env,fs,io,path,process}.yx; do
     "$compiler/lexer" "$source" --positioned >"$output/tokens"
     "$compiler/parser" "$output/tokens" >"$output/cache/$source"
   done
