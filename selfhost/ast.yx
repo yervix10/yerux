@@ -122,3 +122,40 @@ pub fn range_type(tree: view List<AstNode>, args: Int) -> String {
   if hi == "_" { hi = String.new() }
   return "Int<{lo}..{hi}>"
 }
+
+// Compile-time integer value of a constant expression (literals, module-level `const`s and + - * / %),
+// as decimal text, or "" when the expression is not one. Used for array lengths.
+pub fn fold_const(tree: view List<AstNode>, node: Int, depth: Int) -> String {
+  if depth > 16 { return String.new() }
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Int" { return String.from(tree.at(child(tree, node, 0)).tag) }
+  if tag == "Var" {
+    let name = name_at(tree, node, 0)
+    let items = child(tree, 0, 0)
+    var at = items + 1
+    while at < tree.at(items).end {
+      let decl = child(tree, at, 2)
+      if tree.at(decl).tag == "Const" {
+        let declared = name_at(tree, decl, 0)
+        if declared == name { return fold_const(tree, child(tree, decl, 2), depth + 1) }
+      }
+      at = tree.at(at).end
+    }
+    return String.new()
+  }
+  if tag == "Bin" {
+    let op = name_at(tree, node, 0)
+    let left = fold_const(tree, child(tree, node, 1), depth + 1)
+    let right = fold_const(tree, child(tree, node, 2), depth + 1)
+    if left.len() == 0 || right.len() == 0 { return String.new() }
+    var a = 0
+    var b = 0
+    if !left.parse_int(a) || !right.parse_int(b) { return String.new() }
+    if op == "+" { return "{a + b}" }
+    if op == "-" { return "{a - b}" }
+    if op == "*" { return "{a * b}" }
+    if op == "/" && b != 0 { return "{a / b}" }
+    if op == "%" && b != 0 { return "{a % b}" }
+  }
+  return String.new()
+}

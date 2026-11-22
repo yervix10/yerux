@@ -24,6 +24,7 @@ struct Generator {
   struct_layouts: List<StructLayout>,
   methods: List<Method>,
   clone_types: List<String>,
+  constants: List<Int>,
   instances: List<Instance>,
   sub: type_terms.Substitution,
   prototypes: String,
@@ -330,8 +331,9 @@ fn declared_type_inner(tree: view List<ast.AstNode>, node: Int, aliases: mut Lis
     let elem = declared_type_inner(tree, ast.child(tree, node, 0), aliases)
     let size = ast.child(tree, node, 1)
     if tree.at(size).tag == "_" { return type_terms.bracket(elem, String.from("_")) }
-    if tree.at(size).tag != "Int" { unsupported("nonliteral array length") }
-    return type_terms.bracket(elem, tree.at(ast.child(tree, size, 0)).tag)
+    let length = ast.fold_const(tree, size, 0)
+    if length.len() == 0 { unsupported("nonliteral array length") }
+    return type_terms.bracket(elem, length)
   }
   if tree.at(node).tag == "FnType" {
     let params = ast.child(tree, node, 0)
@@ -2090,6 +2092,17 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
         if params.len() != 0 { unsupported("generic function value {name}") }
         return function_value(gen, tree, fun, ty)
       }
+      // a constant is its initializer, lowered where it is used
+      for index in 0..gen.constants.len() {
+        let item = gen.constants.at(index)
+        let declared = ast.name_at(tree, item, 0)
+        if declared == name {
+          let init = expression(gen, tree, ast.child(tree, item, 2))
+          let kind = ast.child(tree, item, 1)
+          if tree.at(kind).tag == "_" { return init }
+          return coerce(gen, tree, move init, declared_type(tree, kind))
+        }
+      }
     }
     return local_place(gen, node)
   }
@@ -3011,6 +3024,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
       if name == "Box" { gen.user_box = true }
     }
     else if tag == "Trait" { gen.traits.push(item) }
+    else if tag == "Const" { gen.constants.push(item) }
     else if tag == "Impl" {
       let generics = ast.child(tree, item, 0)
       var params = -1
@@ -3043,7 +3057,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
         m = tree.at(m).end
       }
     }
-    else if tag != "Alias" { unsupported("declaration {tag}") }
+    else if tag != "Alias" && tag != "Const" { unsupported("declaration {tag}") }
     at = tree.at(at).end
   }
   for target in gen.clone_types {
@@ -3111,7 +3125,7 @@ fn main() {
         collections: List<String>.new(), sorted_elements: List<String>.new(), globals: String.new(),
         enums: List<Int>.new(), enum_layouts: List<EnumLayout>.new(),
         traits: List<Int>.new(), heap_drops: List<String>.new(), dyn_tables: List<String>.new(),
-        struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(),
+        struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(), constants: List<Int>.new(),
         instances: List<Instance>.new(), sub: type_terms.empty(), prototypes: String.new(),
         function_values: List<Int>.new(), closure_envs: List<Int>.new(), wrappers: String.new(),
         references: List<Bool>.new(), out: String.new(),

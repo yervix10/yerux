@@ -227,7 +227,8 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
     let item = source_type(types, tree, ast.child(tree, index, 0))
     let size = ast.child(tree, index, 1)
     if tree.at(size).tag == "_" { return type_terms.bracket(item, String.from("_")) }
-    if tree.at(size).tag == "Int" { return type_terms.bracket(item, tree.at(ast.child(tree, size, 0)).tag) }
+    let length = ast.fold_const(tree, size, 0)
+    if length.len() > 0 { return type_terms.bracket(item, length) }
     return unknown()
   }
   if tree.at(index).tag == "Type" {
@@ -1285,6 +1286,25 @@ fn transferable(types: view Types, ty: view String, visited: mut List<String>) -
   return true
 }
 
+// The type of a module-level `const` (its annotation, or the type of its initializer).
+fn const_type(types: mut Types, tree: view List<ast.AstNode>, name: view String) -> String {
+  let items = ast.child(tree, 0, 0)
+  var at = items + 1
+  while at < tree.at(items).end {
+    let item = ast.child(tree, at, 2)
+    if tree.at(item).tag == "Const" {
+      let declared = ast.name_at(tree, item, 0)
+      if declared == name {
+        let kind = ast.child(tree, item, 1)
+        if tree.at(kind).tag != "_" { return source_type(types, tree, kind) }
+        return infer(types, tree, ast.child(tree, item, 2), unknown())
+      }
+    }
+    at = tree.at(at).end
+  }
+  return unknown()
+}
+
 fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let ty = infer_expr(types, tree, index, hint)
   if !types.trace { types.expressions.set(index, String.from(ty)) }
@@ -1464,6 +1484,10 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     if sig >= 0 { return String.from(types.signatures.at(sig).spelling) }
     if tag == "Var" && n == "None" {
       return nominal_constructor(types, tree, String.from("Option"), n, -1, hint)
+    }
+    if tag == "Var" {
+      let found = const_type(types, tree, n)
+      if found != "?" { return found }
     }
     return unknown()
   }
@@ -2529,6 +2553,17 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
       }
     }
     i = tree.at(i).end
+  }
+  var constant = items + 1
+  while constant < tree.at(items).end {
+    let item = ast.child(tree, constant, 2)
+    if tree.at(item).tag == "Const" {
+      let kind = ast.child(tree, item, 1)
+      var declared = unknown()
+      if tree.at(kind).tag != "_" { declared = source_type(types, tree, kind) }
+      let found = infer(types, tree, ast.child(tree, item, 2), declared)
+    }
+    constant = tree.at(constant).end
   }
   for fun in functions {
     types.function_params = ast.child(tree, fun.node, 1)
