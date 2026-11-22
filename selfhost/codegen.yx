@@ -837,6 +837,21 @@ fn call_substitution(gen: view Generator, tree: view List<ast.AstNode>, fun: Int
   return move sub
 }
 
+fn has_try(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  var i = node
+  while i < tree.at(node).end {
+    if tree.at(i).tag == "Un" { let op = ast.name_at(tree, i, 0)
+      if op == "?" { return true } }
+    i = i + 1
+  }
+  return false
+}
+
+fn later_try(tree: view List<ast.AstNode>, nodes: view List<Int>, index: Int) -> Bool {
+  for j in (index + 1)..nodes.len() { if has_try(tree, nodes.at(j)) { return true } }
+  return false
+}
+
 fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: view String,
     args: Int, receiver: Int, ty: view String) -> Value {
   let params = ast.child(tree, fun, 2)
@@ -880,7 +895,11 @@ fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: 
     borrows.push(deferred)
     if !deferred {
       let arg = call_argument(gen, tree, nodes.at(i), expected, by_ref)
-      values.set(i, move arg)
+      if !by_ref && expected != "nothing" && later_try(tree, nodes, i) {
+        // a later argument can leave the function (`?`): this one must already have been evaluated
+        let held = temp(gen, tree, expected, arg)
+        values.set(i, transfer(gen, tree, held))
+      } else { values.set(i, move arg) }
     }
   }
   for i in 0..nodes.len() {
@@ -1670,9 +1689,17 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   } else if tag == "Assign" {
     let target = ast.child(tree, node, 0)
     if !is_place(tree, target) { unsupported("assignment target") }
+    // `a.at(f()?).x = g()`: the right side is evaluated first when the target can leave the function
+    var early = Value { ty: String.new(), code: String.new() }
+    let target_exits = has_try(tree, target)
+    if target_exits {
+      let first = expression(gen, tree, ast.child(tree, node, 1))
+      early = temp(gen, tree, first.ty, transfer(gen, tree, first))
+    }
     let place = expression(gen, tree, target)
     if place.ty.starts_with("Slice<") { unsupported("slice assignment") }
-    let value = expression(gen, tree, ast.child(tree, node, 1))
+    var value = move early
+    if !target_exits { value = expression(gen, tree, ast.child(tree, node, 1)) }
     let rhs = coerce(gen, tree, move value, place.ty)
     let drop = drop_fn(gen, tree, place.ty)
     if drop != "" {
