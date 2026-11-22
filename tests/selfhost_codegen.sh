@@ -43,6 +43,35 @@ if "$driver" "$tmp/missing.yx" 2>"$tmp/missing.err"; then
 fi
 grep -qE 'resolving absent: source file not found' "$tmp/missing.err"
 
+cp -R "$tmp/rebuilt/runtime" "$tmp/custom-runtime"
+cat >>"$tmp/custom-runtime/std/io.yx" <<'SOURCE'
+
+pub fn source_export() -> Int { return 1 }
+fn source_private() -> Int { return 2 }
+SOURCE
+cat >"$tmp/std-api.yx" <<'SOURCE'
+import std.io as terminal
+import std.fs
+import std.net
+import std.process
+fn main() {
+  let source = terminal.source_export()
+  let size = fs.file_size(".")
+  let socket = net.address("127.0.0.1", 80)
+  let command = process.command("/bin/true")
+}
+SOURCE
+"$driver" --runtime "$tmp/custom-runtime" --emit-ast "$tmp/std-api.yx" -o "$tmp/std-api.ast"
+cat >"$tmp/std-private.yx" <<'SOURCE'
+import std.io as terminal
+fn main() { let hidden = terminal.source_private() }
+SOURCE
+if "$driver" --runtime "$tmp/custom-runtime" --emit-ast "$tmp/std-private.yx" 2>"$tmp/std-private.err"; then
+  printf 'selfhost resolver accepted a private standard-library function\n' >&2
+  exit 1
+fi
+rg -q 'private-item:terminal:std.io:source_private' "$tmp/std-private.err"
+
 cat >"$tmp/deferred-move.yx" <<'SOURCE'
 fn consume(s: String) {}
 fn main() {

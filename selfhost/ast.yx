@@ -4,6 +4,11 @@ import std.env
 pub struct AstNode { tag: String, end: Int }
 pub struct AstReader { source: String, cursor: Int, nodes: List<AstNode> }
 
+// The bootstrap backend supplies C shims for these standard-library modules.
+pub fn bootstrap_module(name: view String) -> Bool {
+  return name == "std.io" || name == "std.fs" || name == "std.env" || name == "std.process"
+}
+
 pub fn artifact_error(message: Text) {
   print(message)
   env.exit(2)
