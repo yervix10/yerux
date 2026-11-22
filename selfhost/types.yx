@@ -350,10 +350,11 @@ fn child_count(tree: view List<ast.AstNode>, index: Int) -> Int {
 
 fn is_owned(types: view Types, ty: view String, visiting: mut List<String>) -> Bool {
   let base = type_terms.base(ty)
-  if base == "String" || base == "List" || base == "Box" || ty.starts_with("fn(") { return true }
+  if base == "String" || base == "List" || ty.starts_with("fn(") { return true }
   if types.generics.contains(ty) { return !types.copy_params.contains(ty) }
   let shape = shape_index(types, ty)
-  if shape < 0 || visiting.contains(ty) { return false }
+  if shape < 0 { return base == "Box" }
+  if visiting.contains(ty) { return false }
   if types.shapes.at(shape).user_drop { return true }
   visiting.push(String.from(ty))
   var owns = false
