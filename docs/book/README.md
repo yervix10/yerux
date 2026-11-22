@@ -1,7 +1,7 @@
 # The Yerux Book
 
 A progressive tutorial for the Yerux language, written against the compiler in this repository. Every
-`yerux` code block in these chapters is compiled and run by `tests/doctest.sh` (the blocks followed by an
+`yerux` code block in these chapters is compiled and run by `tests/doctests.sh` (the blocks followed by an
 `output` block must print exactly that), so what you read here is what the compiler does today.
 
 | # | Chapter | You learn |
@@ -20,8 +20,9 @@ A progressive tutorial for the Yerux language, written against the compiler in t
 | 12 | [Collections](12-collections.md) | `List`, `Map`, `Set`, arrays and slices, `std.collections` |
 | 13 | [Modules and packages](13-modules.md) | `import`, `pub`, `yerux.toml`, dependencies |
 | 14 | [The standard library by area](14-stdlib.md) | text, math, fs/env/process, time, hashing, encodings, regex/csv/toml, rand, args |
-| 15 | [Concurrency](15-concurrency.md) | threads, channels, shared state |
-| 16 | [Tools](16-tools.md) | `fmt`, `test`, `lsp`, the VS Code extension, the self-hosted compiler |
+| 15 | [Concurrency](15-concurrency.md) | threads, channels, locks, pools, `std.sync` |
+| 16 | [Tools](16-tools.md) | `fmt`, `test`, `lsp`, `doctor`, the VS Code extension, the self-hosted compiler |
+| 17 | [Windows and other targets](17-windows-and-targets.md) | `--target windows`/`aarch64`, wine, what is rejected where |
 
 ## How the examples are marked
 

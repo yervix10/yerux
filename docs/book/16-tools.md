@@ -12,6 +12,7 @@ Everything below is part of the one `yerux` binary.
 | `yerux test [file.yx\|dir] [--native] [--filter text]` | run `test "name" { .. }` blocks |
 | `yerux fmt [--check\|--stdout] file.yx\|dir` | the formatter |
 | `yerux lsp` | the language server |
+| `yerux --version` / `yerux doctor` | the version / a self-diagnosis of the installation (C compiler, wine, both backends) |
 | `yerux tokens`, `ast-file`, `resolve-file`, `types-file`, `locals-file` | dumps used by the self-hosting comparison tests |
 
 ## Tests: `yerux test`
@@ -83,10 +84,12 @@ not yet the whole language; the status and the remaining work are in [SELFHOST.m
 
 ## Keeping this book honest
 
-`bash tests/doctest.sh` compiles and runs every `yerux` block of this book and of `docs/GUIDE.md`, and
+`bash tests/doctests.sh` compiles and runs every `yerux` block of this book and of `docs/GUIDE.md`, and
 `tests/run_all.sh` runs it with the rest of the suite. If a snippet stops compiling, or prints something other
 than its `output` block, the test fails: fix the text or the compiler.
 
 That is the end of the book. Where to go next: [GUIDE.md](../GUIDE.md) (tour with more detail on strings, `Map`,
 modules, `Box`, numbers), [SPEC.md](../../SPEC.md), the focused documents listed in the
 [README](../../README.md), and the `examples/` and `tests/` folders.
+
+Next: [Windows and other targets](17-windows-and-targets.md).

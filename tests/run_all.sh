@@ -110,7 +110,7 @@ AUX=(
   "io_targets|bash tests/io_targets.sh"
   "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
   "lsp_vscode|bash tests/lsp_vscode.sh"
-  "doctest|bash tests/doctest.sh"
+  "doctests|bash tests/doctests.sh"
   "tokens_dump|bash tests/tokens_dump.sh"
   "win_smoke|bash tests/win_smoke.sh"
   "dist|bash tests/dist.sh"

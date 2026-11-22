@@ -104,10 +104,91 @@ fn main() {
 500500
 ```
 
+## Channels
+
+`Sender<T>.bounded(n)` and `Sender<T>.unbounded()` return a `(Sender<T>, Receiver<T>)` pair (MPSC: clone the sender for
+several producers). `send(v)` returns `false` once the receiver is gone or the channel is closed; `recv()` returns
+`None` when the channel is closed **and** drained; `recv_timeout(ms)` also gives `None` on timeout; `close()` stops
+new sends. Dropping the last sender closes the channel. A bounded `send` on a full queue and a `recv` on an empty
+one wait (spinning) until progress is possible.
+
+```yerux
+fn main() {
+  let (tx, rx) = Sender<Int>.bounded(2)
+  scope {
+    let producer_tx = tx.clone()
+    let producer = spawn move {
+      for i in 1..=5 { producer_tx.send(i * i) }
+      return 0
+    }
+    var sum = 0
+    for _ in 0..5 { sum = sum + rx.recv().unwrap() }
+    print(sum)
+    producer.join()
+  }
+  tx.close()
+  print(rx.recv().is_none())
+}
+```
+
+```output
+55
+true
+```
+
+`select2(left, right, timeout_ms)` waits on two receivers of the same type and returns `Some((index, value))`.
+
+## `Mutex`, `RwLock`, the thread pool, `std.sync`
+
+* `Mutex<T>` is a named facade over `Locked<T>` (`mutex_update`, `mutex_with`, `mutex_with_view`).
+* `RwLock<T>`: `rwlock_read(lock, |v| ..)` lets several readers overlap, `rwlock_write(lock, |v| ..)` is exclusive.
+  Acquisition spins and gives no fairness guarantee; a panic inside a callback can leave the lock held.
+* `thread_pool_new(n)` starts `n` persistent workers; `pool.parallel_for(a, b, |i| ..)` and
+  `thread_pool_map(pool, a, b, |i| ..)` run ranges on them; `pool.close()` stops and joins them (shutdown is explicit).
+* `std.sync`: `sync.once()`, `sync.barrier(parties)`, `sync.semaphore(permits)`: atomic coordination primitives that
+  spin while waiting, meant for short waits.
+
+```yerux
+import std.sync
+
+fn main() {
+  let lock = Shared.new(RwLock<Int>.new(0))
+  scope {
+    let w = lock.clone()
+    let writer = spawn move {
+      rwlock_write(w.get(), |v| {
+        v = v + 41
+        return 1
+      })
+      return 1
+    }
+    print(writer.join().unwrap())
+  }
+  print(rwlock_read(lock.get(), |v| v + 1))
+
+  let total = Shared.new(Atomic<Int>.new(0))
+  var pool = thread_pool_new(4)
+  pool.parallel_for(0, 100, |i| total.get().add(i))
+  print(total.get().load())
+  pool.close()
+
+  let gate = sync.once()
+  gate.call(|| print("once"))
+  gate.call(|| print("never"))
+}
+```
+
+```output
+1
+42
+4950
+once
+```
+
 ## What is not there yet
 
-Channels, work stealing, a thread pool, async/await and detached tasks (`Runtime.spawn_detached`) are not implemented: they exist only as design
-material in CONCURRENCY.md and SIGNALS.md. Windows and aarch64 targets reject the futex primitives
-(see [WINDOWS.md](../WINDOWS.md)).
+Work stealing, async/await and detached tasks (`Runtime.spawn_detached`) are not implemented (design material in
+CONCURRENCY.md and SIGNALS.md), channels have one consumer, and the lock/channel waits spin instead of parking.
+Windows and aarch64 targets reject the futex primitives (chapter 17).
 
 Next: [tools](16-tools.md).

@@ -14,7 +14,10 @@ real program per area; the reference is [STDLIB.md](../STDLIB.md) (and `STDLIB_I
 | Structured text | `std.regex`, `std.csv`, `std.toml` |
 | Command line | `std.args`, `std.env` |
 | Files, processes, time | `std.io`, `std.fs`, `std.path`, `std.process`, `std.time` |
-| Network | `std.net` |
+| Storage, compression, logging | `std.kv`, `std.compress`, `std.log` |
+| Unicode | `std.unicode` |
+| Threads | `std.sync` (chapter 15) |
+| Network | `std.net`, `std.http` |
 
 ## Text and formatting
 
@@ -274,18 +277,60 @@ ok
 See [STDLIB_IO.md](../STDLIB_IO.md), [STDLIB_SYSTEM.md](../STDLIB_SYSTEM.md) and
 [STDLIB_PROCESS.md](../STDLIB_PROCESS.md) for handles, buffering, links, `Duration` and process control.
 
+## Unicode, logging, storage, compression
+
+`std.unicode` is a pragmatic set of scalar helpers (letters, numbers, combining marks, terminal cell width, a small
+Latin NFC composition); it uses curated ranges, not the full Unicode database ([UNICODE.md](../UNICODE.md)). `std.log`
+writes `[LEVEL] message` lines to stderr (`debug`, `info`, `warn`, `error`). `std.kv` is a small persistent
+string/int/bool store in one file (a single writer; updates are atomic through a temp file and `rename`).
+`std.compress` is **run-length encoding**, not gzip or deflate ([STDLIB_COMPRESS.md](../STDLIB_COMPRESS.md)).
+
+```yerux
+import std.unicode
+import std.compress
+import std.kv
+import std.log
+
+fn main() {
+  print(unicode.is_letter('é'))
+  print(unicode.width("日本"))
+  let packed = compress.compress("aaaabbbcc")
+  print(compress.decompress(packed).unwrap())
+
+  match kv.open("/tmp/yerux_book_kv.db") {
+    Ok(db) => {
+      kv.set_int(db, "visits", 3).unwrap()
+      print(kv.get_int(db, "visits").unwrap().unwrap())
+      print(kv.get(db, "absent").unwrap().is_none())
+    }
+    Err(e) => { print("kv failed: {e}") }
+  }
+  log.info("goes to stderr")
+}
+```
+
+```output
+true
+4
+aaaabbbcc
+3
+true
+```
+
 ## Network
 
-`std.net` has blocking TCP sockets (IPv4/IPv6 literals, no DNS) with `Drop`-closed handles; the repository has
-real programs built on it in `examples/real/`: an HTTP/1.1 client and server ([HTTP.md](../HTTP.md)) and a JSON
-parser/formatter ([JSON.md](../JSON.md)); they are examples, not library modules. Sockets need the network, so
-the book does not run this block:
+`std.net` has blocking TCP sockets (IPv4/IPv6 literals, no DNS) with `Drop`-closed handles, and `std.http` is a small
+blocking HTTP/1.1 client over it (`http.get(addr, host, path, headers)`, `http.post_json(..)` returning a `Response`).
+The repository also has real programs built on sockets in `examples/real/`: an HTTP/1.1 server and client
+([HTTP.md](../HTTP.md)) and a JSON parser/formatter ([JSON.md](../JSON.md)). Sockets need the network, so the book
+does not run this block:
 
 ```yerux ignore
 import std.net
+import std.http
 
 fn main() {
-  // see docs/NET.md: net.connect / net.listen / accept / read / write
+  // see docs/NET.md and docs/HTTP.md: net.address / net.listen / accept, http.get
 }
 ```
 

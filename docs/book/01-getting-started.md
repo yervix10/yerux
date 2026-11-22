@@ -1,13 +1,27 @@
 # 1. Installing, `yerux new`, your first program
 
-Yerux is a compiled language; its compiler is a Rust program in this repository (`src/`). There is no
-installer yet: you build it with Cargo.
+Yerux is a compiled language; its compiler is a Rust program in this repository (`src/`). You can build it with
+Cargo, or install a release tarball.
 
 ```sh
 git clone <this repository> && cd yerux
 cargo build --release            # produces target/release/yerux
 export PATH="$PWD/target/release:$PATH"
 ```
+
+To install a release instead (`scripts/release.sh` builds `yerux-<version>-<os>-<arch>.tar.gz`; the standard
+library is compiled into the binary, so only `yerux` is installed):
+
+```sh
+tar xzf yerux-0.5.0-linux-x86_64.tar.gz && cd yerux-0.5.0-linux-x86_64
+./install.sh                     # into ~/.local/bin (PREFIX=/some/dir or --prefix DIR to change)
+yerux --version                  # yerux 0.5.0
+yerux doctor                     # what this installation can do
+```
+
+`yerux doctor` prints the version and binary path, the C compiler it found (or why it is missing), whether
+`wine` is available, the temp directory, and **compiles and runs a program with each backend**; it exits with 1
+only when no backend works.
 
 The default backend translates Yerux to C and calls `cc`, so you need a C compiler. The **native** backend
 (`--native`) writes an x86-64 Linux executable by itself and needs no C compiler at all; `--target aarch64` and
