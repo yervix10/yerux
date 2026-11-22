@@ -68,6 +68,11 @@ static inline E *sc_at_##C(C *a, int64_t i) { \
   return &a->d[i]; \
 }
 
+#define SC_ARRAY_OWNED(C, E, N, DROP) \
+SC_ARRAY(C, E, N) \
+static inline void sc_drop_##C(C *a) { for (int64_t i = 0; i < (N); ++i) DROP(&a->d[i]); *a = (C){0}; } \
+static inline C sc_take_##C(C *a) { C x = *a; *a = (C){0}; return x; }
+
 #define SC_SLICE(C, E) \
 typedef struct { E *d; int64_t len; } C; \
 static inline E *sc_at_##C(C *s, int64_t i) { \

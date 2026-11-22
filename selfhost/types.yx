@@ -880,7 +880,7 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
   if receiver >= 0 && name == "show" && child_count(tree, args) == 0 {
     return String.from("String")
   }
-  if receiver >= 0 && name == "clone" && owner.starts_with("$tuple") && child_count(tree, args) == 0 {
+  if receiver >= 0 && name == "clone" && (owner.starts_with("$tuple") || owner.starts_with("Array<")) && child_count(tree, args) == 0 {
     return String.from(owner)
   }
   let shape = shape_index(types, owner)
@@ -954,6 +954,7 @@ fn sequence_member(types: mut Types, tree: view List<ast.AstNode>, owner: view S
     name: view String, args: Int, receiver: Int) -> String {
   let elem = type_terms.element(owner)
   let integer_type = String.from("Int")
+  if name == "clone" && owner.starts_with("Array<") && child_count(tree, args) == 0 { return String.from(owner) }
   var count = 1
   if name == "len" { count = 0 }
   else if name == "set" || name == "swap" { count = 2 }

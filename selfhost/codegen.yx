@@ -79,9 +79,10 @@ fn prepare_type(gen: mut Generator, tree: view List<ast.AstNode>, ty: view Strin
     let name = type_terms.base(ty)
     gen.collections.push(String.from(ty))
     if name == "Array" {
-      if drop_fn(gen, tree, item).len() != 0 { unsupported("owned array elements") }
       let args = type_terms.arguments(ty)
-      global(gen, "SC_ARRAY(A{id}, {c}, {args.at(1)})")
+      let element_drop = drop_fn(gen, tree, item)
+      if element_drop.len() != 0 { global(gen, "SC_ARRAY_OWNED(A{id}, {c}, {args.at(1)}, {element_drop})") }
+      else { global(gen, "SC_ARRAY(A{id}, {c}, {args.at(1)})") }
     } else if name == "Slice" {
       global(gen, "SC_SLICE(A{id}, {c})")
     } else {
@@ -306,6 +307,9 @@ fn drop_fn(gen: view Generator, tree: view List<ast.AstNode>, ty: view String) -
   if layout >= 0 && gen.enum_layouts.at(layout).owned { return "sc_drop_E{layout}" }
   let collection = collection_name(gen, ty)
   if collection != "" && (ty == "List" || ty.starts_with("List<")) { return "sc_drop_{collection}" }
+  if collection != "" && ty.starts_with("Array<") && drop_fn(gen, tree, type_terms.element(ty)).len() != 0 {
+    return "sc_drop_{collection}"
+  }
   let structure = struct_index(gen, ty)
   if structure >= 0 && gen.struct_layouts.at(structure).owned { return "sc_drop_S{structure}" }
   return String.new()
@@ -627,7 +631,7 @@ fn binary(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view 
   return temp(gen, tree, ty, "nx_{helper}{suffix}({saved.code}, {right.code})")
 }
 
-fn emit_print(gen: mut Generator, value: view Value) {
+fn emit_print(gen: mut Generator, tree: view List<ast.AstNode>, value: view Value) {
   if value.ty == "Bool" { line(gen, "puts({value.code} ? \"true\" : \"false\");") }
   else if value.ty == "Text" { line(gen, "printf(\"%s\\n\", {value.code});") }
   else if value.ty == "String" { line(gen, "nx_print_str({text_view(value)});") }
@@ -638,6 +642,12 @@ fn emit_print(gen: mut Generator, value: view Value) {
   }
   else if value.ty == "UInt64" { line(gen, "printf(\"%llu\\n\", (unsigned long long)({value.code}));") }
   else if integer_c(value.ty).len() != 0 { line(gen, "printf(\"%lld\\n\", (long long)({value.code}));") }
+  else if integer_c(value.ty).len() == 0 {
+    // lists, arrays, options, tuples and types with a Show impl print through their text form
+    let shown = temp(gen, tree, String.from("String"), "nx_str_new()")
+    append_show(gen, tree, shown, value)
+    line(gen, "nx_print_str({text_view(shown)});")
+  }
   else { unsupported("print of {value.ty}") }
 }
 
@@ -1087,7 +1097,7 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
       unsupported("{name} arity")
     }
     let value = expression(gen, tree, args + 1)
-    if name == "print" { emit_print(gen, value) }
+    if name == "print" { emit_print(gen, tree, value) }
     else if name == "panic" { line(gen, "nx_panic_str({text_view(value)});") }
     else {
       if value.ty != "Bool" { unsupported("assert argument type") }
@@ -1141,7 +1151,7 @@ fn bootstrap_call(gen: mut Generator, tree: view List<ast.AstNode>, name: view S
   let second = tree.at(first).end
   if second == end {
     if name == "std__print_owned" {
-      emit_print(gen, left)
+      emit_print(gen, tree, left)
       return Value { ty: String.from("nothing"), code: String.new() }
     }
     if name == "std__io__write_stdout" || name == "std__io__write_stderr" {
@@ -1524,7 +1534,7 @@ fn array_literal(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
     while at < tree.at(items).end {
       let expr = expression(gen, tree, at)
       let value = coerce(gen, tree, move expr, elem)
-      line(gen, "{result.code}.d[{i}] = {value.code};")
+      line(gen, "{result.code}.d[{i}] = {transfer(gen, tree, value)};")
       i = i + 1
       at = tree.at(at).end
     }
@@ -1550,6 +1560,19 @@ fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Va
     let entry = Value { ty: type_terms.element(ty), code: "({source.code}).d[i{id}]" }
     let copied = clone_value(gen, tree, entry)
     line(gen, "sc_push_{c}(&{result.code}, {transfer(gen, tree, copied)});")
+    gen.indent = gen.indent - 1
+    line(gen, String.from("}}"))
+    return move result
+  }
+  if base == "Array" {
+    let result = temp(gen, tree, ty, String.from("{{0}}"))
+    let id = gen.temp
+    gen.temp = id + 1
+    line(gen, "for (int64_t i{id} = 0; i{id} < {sequence_length(source)}; ++i{id}) {{")
+    gen.indent = gen.indent + 1
+    let entry = Value { ty: type_terms.element(ty), code: "({source.code}).d[i{id}]" }
+    let copied = clone_value(gen, tree, entry)
+    line(gen, "{result.code}.d[i{id}] = {transfer(gen, tree, copied)};")
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
     return move result
