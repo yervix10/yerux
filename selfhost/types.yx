@@ -149,6 +149,19 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
         types.generics.contains(name) || name == "List" || name == "Box" || name == "Ptr" {
       return type_terms.apply(name, source_types(types, tree, ast.child(tree, index, 1)))
     }
+    if child_count(tree, args) == 0 {
+      // `type Byte = Int<0..255>`
+      let items = ast.child(tree, 0, 0)
+      var it = items + 1
+      while it < tree.at(items).end {
+        let item = ast.child(tree, it, 2)
+        if tree.at(item).tag == "Alias" {
+          let alias = ast.name_at(tree, item, 0)
+          if alias == name { return source_type(types, tree, ast.child(tree, item, 1)) }
+        }
+        it = tree.at(it).end
+      }
+    }
   }
   if tree.at(index).tag == "FnType" {
     let ps = ast.child(tree, index, 0)
