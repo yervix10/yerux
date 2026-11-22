@@ -23,6 +23,9 @@ pub fn decompress(input: view String) -> Result<String, String> {
     while i < input.len() {
         let count = input.byte(i)
         if count == 0 { return Err(String.from("invalid RLE run length")) }
+        if count > 16777216 - out.len() {
+            return Err(String.from("decompressed output exceeds 16 MiB limit"))
+        }
         var j = 0
         while j < count {
             out.push_byte(input.byte(i + 1))
