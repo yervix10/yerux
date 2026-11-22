@@ -1,0 +1,11 @@
+# Auditoría de `unwrap`/`expect`/`panic!` frente a `.yx` malformado
+
+Revisión estática de `src/`, priorizando rutas de parseo, análisis y generación de código que reciben el AST derivado del fuente. No encontré cinco pánicos demostrablemente alcanzables desde un `.yx` malformado: los puntos siguientes son los cinco supuestos no comprobados más relevantes para probar. En cada caso, el flujo normal parece proteger el supuesto; no son defectos confirmados.
+
+1. **`src/syntax/surface.rs:606` — `expect("surface match pattern")`.** La serialización del AST exige que cada brazo de `match` tenga patrón. Un patrón malformado podría causar pánico si un AST parcial llegara a esta fase; el parser de superficie actualmente devuelve error antes de serializarlo.
+2. **`src/syntax/surface.rs:677` — `expect("surface generic arguments")`.** La serialización de una variante genérica exige argumentos presentes, incluso si están vacíos. Es un riesgo ante un AST parcial/inconsistente; no vi una ruta confirmada desde sintaxis inválida, que debe ser rechazada por el parser.
+3. **`src/check_range.rs:426` — `self.lookup(&vname).unwrap()`.** El comprobador de conversiones a tipos de rango busca una variable que acaba de sintetizar mediante `self.chk`. Si el análisis de esa declaración falla sin detener el flujo, una conversión como `x as Int<0..10> else { ... }` podría alcanzar el `unwrap`; el código consulta primero el tipo con fallback, por lo que conviene verificar que los errores de `self.chk` siempre impiden continuar.
+4. **`src/check.rs:2306` — `self.lookup(&vn).unwrap()`.** La expansión de `?` sintetiza una variable para el payload, la analiza y luego la busca. Una expresión `?` inválida podría ser problemática si el análisis registra un error pero no registra la variable; el nombre es interno y el flujo está diseñado para crearla antes de la búsqueda.
+5. **`src/ir.rs:1642` — `pre_apre.take().unwrap()`.** La generación IR para `push_str`/`eq` presupone que el análisis previo preparó el argumento prestado. Una llamada mal tipada que escapara la barrera de errores del compilador podría terminar aquí; no encontré evidencia de que el flujo normal genere IR tras un error de tipos.
+
+Los `unwrap` protegidos inmediatamente por `is_some`/validaciones de aridad y los pánicos de invariantes de backend no se priorizaron. No se modificó código del compilador.

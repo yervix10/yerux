@@ -1,9 +1,9 @@
-error: a Result<Int, io.IoError> is created and immediately discarded (memory leak)
+error: this expression produces an owned Result<Int, io.IoError> value that must be used or explicitly discarded
  --> tests/e984_env_set_wrong_type.yx:5:3
   |
 5 |   env.set("KEY", 5)
   |   ^^^^^^^^^^^^^^^^^
-  = help: store it with `let` or `var`
+  = help: bind the value with `let` or `var`, or discard it with `let _ = ...`
 
 error: expected String but this is Int
  --> tests/e984_env_set_wrong_type.yx:5:18

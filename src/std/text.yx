@@ -343,24 +343,7 @@ pub fn split_ws(s: view String) -> List<String> {
 /// The lines of `s`: separated by "\n", a "\r" before it is removed, and a final empty line after a trailing
 /// newline is not reported (`lines("a\nb\n")` is `a`, `b`; `lines("")` is empty).
 pub fn lines(s: view String) -> List<String> {
-  var out = List<String>.new()
-  var start = 0
-  var i = 0
-  while i < s.len() {
-    if s.byte(i) == 10 {
-      var e = i
-      if e > start && s.byte(e - 1) == 13 {
-        e = e - 1
-      }
-      out.push(s.slice(start, e))
-      start = i + 1
-    }
-    i = i + 1
-  }
-  if start < s.len() {
-    out.push(s.slice(start, s.len()))
-  }
-  return out
+  return s.lines()
 }
 
 // ───────────────────────── parsing ─────────────────────────

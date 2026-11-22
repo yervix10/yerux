@@ -4005,10 +4005,10 @@ impl<'a> Checker<'a> {
                     let n = self.tn(t);
                     self.err(
                         diag(
-                            format!("a {} is created and immediately discarded (memory leak)", n),
+                            format!("this expression produces an owned {} value that must be used or explicitly discarded", n),
                             e.pos,
                         )
-                        .note("help: store it with `let` or `var`"),
+                        .note("help: bind the value with `let` or `var`, or discard it with `let _ = ...`"),
                     );
                 }
             }

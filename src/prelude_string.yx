@@ -229,6 +229,27 @@ impl String {
         return out
     }
 
+    fn lines(view self) -> List<String> {
+        var out = List<String>.new()
+        var start = 0
+        var i = 0
+        while i < self.len() {
+            if self.byte(i) == 10 {
+                var e = i
+                if e > start && self.byte(e - 1) == 13 {
+                    e = e - 1
+                }
+                out.push(self.slice(start, e))
+                start = i + 1
+            }
+            i = i + 1
+        }
+        if start < self.len() {
+            out.push(self.slice(start, self.len()))
+        }
+        return out
+    }
+
     fn trim_start(view self) -> String {
         var a = 0
         while a < self.len() && std__is_ws(self.byte(a)) {

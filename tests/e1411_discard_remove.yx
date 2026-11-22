@@ -1,0 +1,5 @@
+fn main() {
+  var values = List<String>.new()
+  values.push(String.from("value"))
+  values.remove(0)
+}

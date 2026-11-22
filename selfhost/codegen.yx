@@ -2054,9 +2054,9 @@ fn emit_string_method(gen: mut Generator, tree: view List<ast.AstNode>, recv: In
   var helper = "nx_str_{name}"
   let text = name == "eq" || name == "push_str" || name == "replace" || name == "find" ||
     name == "starts_with" || name == "ends_with" || name == "contains" || name == "split"
-  if name == "split" {
+  if name == "split" || name == "lines" {
     prepare_type(gen, tree, ty)
-    helper = "sc_split_{c_type(gen, tree, ty)}"
+    helper = "sc_{name}_{c_type(gen, tree, ty)}"
   } else if name == "slice" || name == "trim" || name == "replace" || name == "find" ||
       name == "starts_with" || name == "ends_with" || name == "contains" || name == "parse_int" || name == "push_slice" || name == "find_from" ||
       name == "trim_start" || name == "trim_end" || name == "repeat" || name == "to_upper" ||

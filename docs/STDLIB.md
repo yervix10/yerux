@@ -55,6 +55,7 @@ All APIs below are from `src/prelude*.yx` — ordinary Yerux code compiled only 
 | `is_boundary` | `fn is_boundary(view self, i: Int) -> Bool` | `assert(s.is_boundary(i))` |
 | `slice` | `fn slice(view self, from: Int, to: Int) -> String` (char boundaries) | `let sub = s.slice(0, 5)` |
 | `split` | `fn split(view self, sep: view String) -> List<String>` | `let parts = s.split(" ")` |
+| `lines` | `fn lines(view self) -> List<String>` | Split on `\n`, strip a preceding `\r`, and omit the final empty line after a trailing newline |
 | `trim` | `fn trim(view self) -> String` | `let t = s.trim()` |
 | `trim_start` | `fn trim_start(view self) -> String` | `let t = s.trim_start()` |
 | `trim_end` | `fn trim_end(view self) -> String` | `let t = s.trim_end()` |

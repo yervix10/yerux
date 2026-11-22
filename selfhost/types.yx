@@ -2352,6 +2352,7 @@ fn declare_prelude(types: mut Types) {
   prelude_method(types, string, "contains", "View", "Bool", "String", "View")
   prelude_method(types, string, "find", "View", "Int", "String", "View")
   prelude_method(types, string, "split", "View", "List<String>", "String", "View")
+  prelude_method(types, string, "lines", "View", "List<String>", "", "Own")
   prelude_method(types, string, "parse_int", "View", "Bool", "Int", "Mut")
   let char = String.from("Char")
   prelude_method(types, char, "to_int", "View", "Int", "", "Own")
