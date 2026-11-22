@@ -151,8 +151,12 @@ fn c_compile_mode(c: &str, out: &str, links: &[String], debug: bool) -> Result<(
     .arg(&cfile)
     .arg("-lm");
     // with YERUX_BACKTRACE set at build time every Yerux function keeps its own frame, so the panic stack is complete
-    if env::var("YERUX_BACKTRACE").map(|v| !v.is_empty() && v != "0").unwrap_or(false) {
+    let bt = env::var("YERUX_BACKTRACE").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
+    if bt {
         cmd.args(["-fno-inline", "-fno-optimize-sibling-calls"]);
+    }
+    if bt || debug {
+        cmd.arg("-DNX_BACKTRACE");
     }
     if let Ok(extra) = env::var("YERUX_CC_FLAGS") {
         cmd.args(extra.split_whitespace());
@@ -540,6 +544,9 @@ fn real_main() {
         exit(2);
     }
     let no_opt = args.iter().any(|a| a == "--no-opt") || debug;
+    if debug || std::env::var_os("YERUX_BACKTRACE").is_some() || std::env::var_os("YERUX_LOCS").is_some() {
+        cgen::FULL_LOCS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if args.iter().any(|a| a == "--check-ranges") {
         ir::CHECK_RANGES.store(true, std::sync::atomic::Ordering::Relaxed);
     }

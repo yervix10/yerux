@@ -19,6 +19,7 @@
 # Programs are independent, so they run in parallel; output is printed in a fixed order afterwards.
 set -uo pipefail
 export LC_ALL=C
+export YERUX_LOCS=1   # the goldens carry every panic position (C release leaves hot arithmetic ones out by default)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 2
 # One suite at a time across agents/worktrees: queue on an exclusive flock (RUN_ALL_NOLOCK=1 skips it).

@@ -24,8 +24,8 @@ struct Gen<'a> {
     loc_ix: std::rc::Rc<std::cell::RefCell<HashMap<(u32, u32, u32), u32>>>,
     files: std::rc::Rc<Vec<String>>,
     track: bool,
-    /// Library functions that take the location of their caller as a hidden last argument (`nx_l`), so a panic
-    /// inside `Option.unwrap` is reported where the user called it. Never functions used as values.
+    /// Library functions that report a failure at their caller's position: the caller stores it in `nx_cur_loc` just
+    /// before the call (a global read only on the failure path, so library code keeps the same shape as before).
     tfuncs: std::rc::Rc<HashSet<String>>,
     /// Functions whose address is taken (closures, drop glue, trait objects): called with a fixed signature.
     valued: std::rc::Rc<std::cell::RefCell<HashSet<String>>>,
@@ -44,6 +44,15 @@ struct CLoop {
 pub fn generate(prog: &Program, sigs: Sigs) -> String {
     generate_inner(prog, sigs, None)
 }
+
+/// `unwrap`/`expect` family: its only failure is an explicit panic, so recording the caller's position before
+/// the call is cheap enough for every build (the other library calls only do it when FULL_LOCS).
+fn unwrap_like(name: &str) -> bool {
+    ["__unwrap", "__expect", "__unwrap_err", "__expect_err"].iter().any(|s| name.ends_with(s))
+}
+
+/// Keep per-site locations on arithmetic checks (see `Gen::loc_hot`).
+pub static FULL_LOCS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn generate_with_files(prog: &Program, sigs: Sigs, source_files: &[String]) -> String {
     generate_inner(prog, sigs, Some(source_files))
@@ -234,10 +243,6 @@ fn generate_pass(
                 }
             })
             .collect();
-        let mut ps = ps;
-        if g.tfuncs.contains(&f.name) {
-            ps.push("uint32_t".to_string());
-        }
         let ps = if ps.is_empty() {
             "void".to_string()
         } else {
@@ -339,10 +344,10 @@ impl Gen<'_> {
     }
 
     /// The `uint32_t l` argument of a checked operation at `pos`: an index into the location table, or the
-    /// hidden `nx_l` parameter inside a library function (its caller's location), or 0 (unknown).
+    /// `nx_cur_loc` inside a library function (its caller's location), or 0 (unknown).
     fn loc(&self, pos: Pos) -> String {
         if self.in_t.get() {
-            return "nx_l".into();
+            return "0xFFFFFFFFu".into(); // nx_cur_loc, resolved on the failure path
         }
         if !self.track || pos.line >= PRELUDE_LINE || pos.line == 0 {
             return "0".into();
@@ -357,6 +362,19 @@ impl Gen<'_> {
         locs.push(key);
         ix.insert(key, i);
         i.to_string()
+    }
+
+    /// Location of a check that sits in hot code (arithmetic, string byte ops, conversions, calls into the
+    /// library). Distinct per-site constants stop GCC from merging those failure paths and it duplicates hot
+    /// blocks (structs +14 %, textops +19 %, json +15 %), so a plain release build leaves them out (0 = no
+    /// `at` line); --debug, YERUX_BACKTRACE or YERUX_LOCS keep them. Index/slice checks, explicit `panic`
+    /// and `assert` always carry their position: measured at ~0 %.
+    fn loc_hot(&self, pos: Pos) -> String {
+        if FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) {
+            self.loc(pos)
+        } else {
+            "0".into()
+        }
     }
 
     fn loc_arg(&self, pos: Pos) -> Arg {
@@ -949,10 +967,8 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             self.vars.insert(p.id, (n, r, p.ty));
         }
         let t = self.tfuncs.contains(&f.name);
-        self.in_t.set(t);
-        if t {
-            ps.push("uint32_t nx_l".to_string());
-        }
+        // only the library functions whose caller records its position (see `unwrap_like`) read it
+        self.in_t.set(t && (FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || unwrap_like(&f.name)));
         let params = if ps.is_empty() {
             "void".to_string()
         } else {
@@ -1435,9 +1451,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 } else if crate::numeric::is_float(e.ty) {
                     format!("(-{})", c)
                 } else if matches!(e.ty, Ty::Int | Ty::Range(..)) {
-                    format!("nxl_neg({}, {})", c, self.loc(e.pos))
+                    format!("nxl_neg({}, {})", c, self.loc_hot(e.pos))
                 } else {
-                    format!("nxl_neg_{}({}, {})", nsfx(e.ty), c, self.loc(e.pos))
+                    format!("nxl_neg_{}({}, {})", nsfx(e.ty), c, self.loc_hot(e.pos))
                 }
             }
             EK::Bin(op, a, b) => {
@@ -1474,7 +1490,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                             );
                         }
                         if matches!(m.as_str(), "byte" | "push_byte" | "push_slice" | "char_at" | "char_size") {
-                            a.push(self.loc_arg(e.pos));
+                            a.push(Arg { code: self.loc_hot(e.pos), val: true, lit: true, impure: false });
                             self.call_c(&format!("nxl_str_{}", m), a)
                         } else {
                             self.call_c(&format!("nx_str_{}", m), a)
@@ -1523,7 +1539,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 if f == "is_valid" {
                     format!("nx_char_valid({})", self.ex(&args[0]))
                 } else {
-                    format!("nxl_char_from_int({}, {})", self.ex(&args[0]), self.loc(e.pos))
+                    format!("nxl_char_from_int({}, {})", self.ex(&args[0]), self.loc_hot(e.pos))
                 }
             }
             EK::Static { ty, f, args } => match ty {
@@ -1835,15 +1851,18 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     for x in args.iter().skip(sig.params.len()) {
                         a.push(self.val_c(x));
                     }
-                    if self.tfuncs.contains(name) {
-                        a.push(self.loc_arg(e.pos));
-                    }
                     let target = if self.externs.contains(name) {
                         format!("nx_x_{}", name)
                     } else {
                         format!("nx_f_{}", name)
                     };
-                    self.call_c(&target, a)
+                    let call = self.call_c(&target, a);
+                    if self.tfuncs.contains(name) && !self.in_t.get() && (FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || unwrap_like(name)) {
+                        // the callee reports a failure at its caller's position (read only on the failure path)
+                        format!("(nx_cur_loc = {}, {})", self.loc(e.pos), call)
+                    } else {
+                        call
+                    }
                 }
             },
         }
@@ -1957,15 +1976,15 @@ impl Gen<'_> {
                                 format!("INT64_C({})", n)
                             }
                         };
-                        format!("nxl_to_range((__int128)({}), {}, {}, {})", c, k(lo), k(hi), self.loc(pos))
+                        format!("nxl_to_range((__int128)({}), {}, {}, {})", c, k(lo), k(hi), self.loc_hot(pos))
                     }
                 } else {
-                    format!("nxl_to_{}({}, {})", nsfx(to), c, self.loc(pos))
+                    format!("nxl_to_{}({}, {})", nsfx(to), c, self.loc_hot(pos))
                 }
             }
             (false, true) => format!("(({}){})", ct, c),
             (true, true) => format!("(({}){})", ct, c),
-            (true, false) => format!("nxl_f2i_{}((double)({}), {})", nsfx(to), c, self.loc(pos)),
+            (true, false) => format!("nxl_f2i_{}((double)({}), {})", nsfx(to), c, self.loc_hot(pos)),
         }
     }
 
@@ -1989,7 +2008,7 @@ impl Gen<'_> {
         };
         let checked = !f.starts_with('w');
         if checked {
-            args.push(self.loc_arg(pos));
+            args.push(Arg { code: self.loc_hot(pos), val: true, lit: true, impure: false });
         }
         let p = if checked { "nxl" } else { "nx" };
         let name = if matches!(t, Ty::Int | Ty::Range(..)) {

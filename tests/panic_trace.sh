@@ -5,7 +5,8 @@
 #   --debug build, YERUX_BACKTRACE=1   stderr == golden (the backtrace is complete: nothing is inlined)
 #   --debug build, no variable         stderr == the golden up to "stack backtrace:" (no cost unless asked)
 #   YERUX_BACKTRACE=0                  same as no variable
-#   release build (optimised)          the location lines only (inlining may remove frames, never positions)
+#   release build (optimised)          the location lines only (inlining may remove frames, never positions); the plain
+#                                      C release leaves out the position of hot arithmetic checks (YERUX_LOCS=1 keeps it)
 #   C release built with the variable  the full golden (the variable at build time keeps every function a frame)
 # Every run must exit with 101. usage: tests/panic_trace.sh [--bless]  (bless writes the goldens from the C backend)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT" || exit 2
@@ -40,11 +41,21 @@ for src in tests/panic_trace/*.yx; do
     cmp -s "$TMP/err" "$TMP/gold_head" || { note "FAIL $name/$backend: stderr without the variable"; diff "$TMP/gold_head" "$TMP/err" | head -n 6; }
     run "$TMP/d" YERUX_BACKTRACE=0
     cmp -s "$TMP/err" "$TMP/gold_head" || note "FAIL $name/$backend: YERUX_BACKTRACE=0 still prints"
-    "$Y" build "$src" "${flags[@]}" -o "$TMP/r" >/dev/null 2>"$TMP/e" || { note "FAIL $name/$backend: release build"; continue; }
+    # the C release keeps the position of index/slice/explicit/unwrap checks, but not of hot arithmetic ones (they
+    # cost speed: see docs/PANIC_DIAGNOSTICS.md) unless built with YERUX_LOCS=1; native always has every position
+    if [ $backend = c ] && ! YERUX_LOCS=1 "$Y" build "$src" -o "$TMP/r" >/dev/null 2>"$TMP/e"; then note "FAIL $name/c: release build"; continue; fi
+    if [ $backend != c ] && ! "$Y" build "$src" "${flags[@]}" -o "$TMP/r" >/dev/null 2>"$TMP/e"; then note "FAIL $name/$backend: release build"; continue; fi
     run "$TMP/r"
     [ $rc -eq 101 ] || note "FAIL $name/$backend: release exit code $rc"
     cmp -s "$TMP/err" "$TMP/gold_head" || { note "FAIL $name/$backend: release location differs"; diff "$TMP/gold_head" "$TMP/err" | head -n 6; }
   done
+  env -u YERUX_LOCS "$Y" build "$src" -o "$TMP/p" >/dev/null 2>"$TMP/e" || { note "FAIL $name: plain C release build"; continue; }
+  run "$TMP/p"
+  case "$name" in
+    overflow|division|module) grep -v '^  at ' "$TMP/gold_head" >"$TMP/want" ;;
+    *) cp "$TMP/gold_head" "$TMP/want" ;;
+  esac
+  cmp -s "$TMP/err" "$TMP/want" || { note "FAIL $name: plain C release stderr"; diff "$TMP/want" "$TMP/err" | head -n 6; }
   YERUX_BACKTRACE=1 "$Y" build "$src" -o "$TMP/v" >/dev/null 2>"$TMP/e" || { note "FAIL $name: C release build with the variable"; continue; }
   run "$TMP/v" YERUX_BACKTRACE=1
   cmp -s "$TMP/err" "$gold" || { note "FAIL $name: C release + variable differs"; diff "$gold" "$TMP/err" | head -n 8; }
