@@ -76,23 +76,23 @@ Taken from the repository at the time of writing (re-measure with the commands s
 | Test programs | 536 `tests/*.yx`, 54 `examples/*.yx`, 597 goldens, 34 scripts, 16 fuzzers/checkers in Python | `ls` |
 | Doc-tests | every `yerux` block of the book, GUIDE.md and STDLIB.md | `bash tests/doctests.sh` |
 
-Self-hosting parity, measured on every Git-tracked `.yx` file (795 files) by `tests/selfhost_*.sh`:
+Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `tests/selfhost_*.sh`:
 
 | Stage (`selfhost/`) | Result |
 |---|---|
-| lexer | 725 files compared, 0 mismatches |
-| parser (source AST) | 779 ASTs compared plus 7 lexical and 9 syntax rejections, 0 mismatches |
-| module resolution | 761 resolved, 18 module rejections, 16 source rejections, 0 mismatches |
+| lexer | 731 files compared, 0 mismatches |
+| parser (source AST) | 783 ASTs compared plus 7 lexical and 11 syntax rejections, 0 mismatches |
+| module resolution | 765 resolved, 18 module rejections, 18 source rejections, 0 mismatches |
 | lexical bindings, types, ownership | 5 typed fixtures, 21 type and 12 ownership rejections, 0 mismatches |
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-The self-hosted code generator matches the Rust C backend on **284 of 376
-candidate programs (75.5%)**, including 93 runtime panics with identical
-messages and exit codes. The `tests/selfhost_codegen.sh` run reported 91
+The self-hosted code generator matches the Rust C backend on **311 of 379
+candidate programs (82.1%)**, up from 287 of 379 (75.7%) on the same corpus.
+The `tests/selfhost_codegen.sh` run matched 95 runtime panics and reported 67
 candidates outside the supported subset, one expected rejection, and **zero
-mismatches**. The largest rejection groups were other lowering gaps (39),
-generics and traits (13), heap types (8), and worker closure calls (6).
+mismatches**. The largest rejection groups were other lowering gaps (31),
+generics and traits (14), sequences and iteration (5), and numeric lowering (4).
 The milestone remains at 0.5 while the self-hosted compiler covers a subset
 of the language and standard library.
 
