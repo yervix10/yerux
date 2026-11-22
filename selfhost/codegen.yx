@@ -1094,6 +1094,10 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
       return temp(gen, tree, ty,
         "{source.code}.tag == 1 ? ({c}){{ .tag = 1, .v1.p0 = {transfer(gen, tree, payload)} }} : ({c}){{ .tag = 2, .v2.p0 = {transfer(gen, tree, error)} }}")
     }
+    if name == "unchecked" && tree.at(args).end > args + 1 && tree.at(args + 1).end == tree.at(args).end {
+      // `unchecked(x)` only tells the type stage to trust the range; range types are plain Int here
+      return expression(gen, tree, args + 1)
+    }
     if name != "print" && name != "assert" && name != "panic" { unsupported("call to {name}") }
     if tree.at(args).end == args + 1 || tree.at(args + 1).end != tree.at(args).end {
       unsupported("{name} arity")
@@ -2623,7 +2627,7 @@ fn assign_tuple(gen: mut Generator, tree: view List<ast.AstNode>, target: Int, w
 
 fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   let tag = String.from(tree.at(node).tag)
-  if tag == "Block" || tag == "[" || tag == "Scope" {
+  if tag == "Block" || tag == "[" || tag == "Scope" || tag == "Unsafe" {
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
     let deferred = gen.deferred.len()
@@ -2843,7 +2847,7 @@ fn returns_value(tree: view List<ast.AstNode>, node: Int) -> Bool {
     }
     return true
   }
-  if tag == "Block" || tag == "[" || tag == "Scope" {
+  if tag == "Block" || tag == "[" || tag == "Scope" || tag == "Unsafe" {
     var at = node + 1
     while at < tree.at(node).end {
       if returns_value(tree, at) { return true }
