@@ -1158,6 +1158,29 @@ impl<'a> G<'a> {
         let unchecked = op.is_unchecked(); // divisor proven non-zero and not (MIN / -1)
         let op = op.checked();
         let is_div = op == Op::Div;
+        // A signed remainder by a positive power of two can use a mask while
+        // preserving Rust/C truncation-toward-zero semantics for negative x.
+        // This also handles constants outside the sign-extended i32 immediate
+        // range (for example 2^31), which otherwise fell through to `idiv`.
+        if !is_div {
+            if let Loc::Const(c) = self.loc(y) {
+                if c > 0 && (c as u64).is_power_of_two() {
+                    let mask = c - 1;
+                    self.mov_to(RAX, x);
+                    self.a.mov_rr(RCX, RAX);
+                    self.a.shift_imm(7, RCX, 63); // sign mask: -1 for x < 0
+                    self.a.mov_imm(RDX, mask);
+                    self.a.alu(0x21, RCX, RDX); // bias = sign & mask
+                    self.a.alu(0x01, RAX, RCX); // x + bias
+                    self.a.alu(0x21, RAX, RDX); // low bits
+                    self.a.alu(0x29, RAX, RCX); // remove bias
+                    let dr = self.dreg(d, RAX);
+                    self.a.mov_rr(dr, RAX);
+                    self.fin(d, dr);
+                    return;
+                }
+            }
+        }
         let magic_c = self.imm(y).filter(|c| c.unsigned_abs() >= 2);
         let mut yr = RCX;
         if magic_c.is_none() {
