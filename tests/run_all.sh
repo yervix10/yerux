@@ -94,6 +94,8 @@ done
 AUX=(
   "fuzz_compile|python3 tests/fuzz/fuzz_compile.py --cases 600 --timeout 1.5"
   "mutate_compile|python3 tests/fuzz/mutate_compile.py --cases 250 --timeout 2 -j 4"
+  "runtime_hostile|bash tests/runtime_hostile.sh"
+  "tsan_concurrency|bash tests/tsan_concurrency.sh"
   "fuzz_parse|python3 tests/fuzz_parse.py --edge-only -j 2"
   "selfhost_fmt|bash tests/selfhost_fmt.sh"
   "selfhost_types|bash tests/selfhost_types.sh"
@@ -119,7 +121,7 @@ AUX=(
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
 )
-FAST_AUX=" fuzz_compile mutate_compile win_smoke dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
+FAST_AUX=" fuzz_compile mutate_compile runtime_hostile win_smoke dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
 aux=()
 if [ "$BLESS" = 0 ]; then
   for a in "${AUX[@]}"; do
