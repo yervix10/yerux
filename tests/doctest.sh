@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Doc-tests: every ```yerux (or ```yx) block of docs/book/*.md and docs/GUIDE.md is compiled and run, so the
+# Doc-tests: every ```yerux (or ```yx) block of docs/book/*.md, docs/GUIDE.md and docs/STDLIB.md is compiled and run, so the
 # documentation cannot drift from the compiler.
 #
 #   ```yerux                      must compile and run; exit code 0
@@ -24,7 +24,7 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-files=(docs/GUIDE.md)
+files=(docs/GUIDE.md docs/STDLIB.md)
 for f in docs/book/*.md; do [ -e "$f" ] && files+=("$f"); done
 
 # 1. cut the documents into blocks: $tmp/<n>.yx, <n>.attrs, <n>.out (expected stdout, when given), <n>.id

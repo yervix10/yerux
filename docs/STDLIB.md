@@ -459,7 +459,7 @@ A panic never runs pending `defer` statements. The compiler does not treat `todo
 
 Operations that panic by themselves: integer overflow, division by zero, failed checked conversions, out-of-range `get` / `at` / `set` / `byte`, `pop` or `remove` on an empty or short list, `Map.get` / `Map.take` with a missing key, `Option.unwrap` / `Result.unwrap` on `None` / `Err`.
 
-```yx
+```yx exit=101
 // expect-exit 101
 fn pick(n: Int) -> Text {
   if n == 1 { return "one" }
@@ -474,7 +474,7 @@ fn main() {
 }
 ```
 
-```yx
+```yx exit=101
 // expect-exit 101
 fn later() -> Int {
   todo()
@@ -535,9 +535,82 @@ struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
 ## Notes
 
 - All library code is in `src/prelude*.yx` — you can read it.
-- Generic `impl` blocks (e.g. `impl<T: Show> Show for List<T>`) exist only inside the library for now.
-- Methods on `String` and `List<T>` cannot be extended by user code yet.
-- `Map`/`Set` iteration is by entry index (`0..len()`), not a `for` loop (no `Iter` trait yet).
+- User code may write generic `impl` blocks for **its own** types (`impl<T> Stack<T> { .. }`, docs/GENERICS.md); the
+  library's generic impls (`impl<T: Show> Show for List<T>`) use the same mechanism.
+- Methods cannot be added to the built-in types (`String`, `List<T>`, `Map`, ...) from user code ("cannot add methods to the
+  built-in type"); write a free function or wrap the type in your own struct. The `std.*` modules do exactly that.
+- `Map`/`Set` are not iterable with `for` (`for k in m` is a compile error): walk entries by index (`0..len()`) as above, or use
+  `collections.map_for_each` / `set_for_each` (section `std.collections`). Lists, ranges, arrays, slices, strings'
+  `chars()` and any type with a `next(mut self) -> Option<T>` method are iterable.
+
+---
+
+## Traits provided by the language
+
+| Trait | Gives you | Implemented for | Notes |
+|---|---|---|---|
+| `Copy` | implicit duplication | numbers, `Bool`, `Char`, `Text`, structs/enums/tuples/arrays of Copy parts | marker; cannot be written by hand |
+| `Equal` | `==`, `!=` | numbers, `Bool`, `Char`, `Text`, `String`, `Option<T>`, `List<T>` (not `Map`, `Set`, `Result` or tuples) | `derive Equal` |
+| `Ordered` | `<`, `>`, `<=`, `>=`, `sort`, `min`/`max` | numbers, `Bool`, `Char`, `String`, `Text` | tuples have none; not derivable |
+| `Show` | `show()` and `"{x}"` (`print` itself takes only scalars, `Text` and `String`: write `print("{xs}")`) | numbers, `Bool`, `Char`, `Text`, `String`, `Option`, `Result`, `List`, `Map`, `Set` (not tuples) | `derive Show` |
+| `Hash` | key of `Map`/`Set` | integers, `Bool`, `Char`, `Text`, `String` | not derivable |
+| `Clone` | `x.clone()`: deep copy | everything owned that is built in | `derive Clone`; [CLONE.md](CLONE.md) |
+| `Drop` | destructor run by the compiler | your own concrete structs | [DROP.md](DROP.md) |
+
+`derive Clone, Equal, Show for Name` (a top-level item, before or after the type) generates the impls field by
+field, also for generic types; every field type must implement the trait.
+
+```yx
+struct Pair { a: Int, b: String }
+derive Clone, Equal, Show for Pair
+
+fn main() {
+  let p = Pair { a: 1, b: String.from("x") }
+  let q = p.clone()
+  print("{q} {p == q}")   // Pair { a: 1, b: x } true
+}
+```
+
+---
+
+## Iterators: `Iter<T>` (`src/prelude_iter.yx`, docs/ITERATORS.md)
+
+A type is an iterator when it has `next(mut self) -> Option<T>`; `for x in it` works on it. `Iter<T>` is the library
+iterator: lazy, owning one closure. Sources: `Iter<Int>.range(a, b)`, `list.into_iter()` (consumes the list),
+`list.cloned()` (iterates a clone; `T: Clone`). Lazy adapters: `map(f)` `filter(f)` `filter_map(f)` `flat_map(f)`
+`take(n)` `skip(n)` `step_by(n)` `chain(other)` `enumerate()` `zip(other)` `rev()` (buffers). Consumers: `to_list()`
+`to_set()` `to_map()` `count()` `fold(init, f)` `any(f)` `all(f)` `find(f)` `last()` `nth(n)` `next()` `min()` `max()`
+`min_by(cmp)` `max_by(cmp)` `sum()` `product()`. Predicates receive the item by view.
+
+```yx
+fn main() {
+  let squares = Iter<Int>.range(1, 6).map(|x| x * x).to_list()
+  print("{squares}")                                                    // [1, 4, 9, 16, 25]
+  print(Iter<Int>.range(0, 100).filter(|x| x % 7 == 0).take(4).sum())   // 42
+}
+```
+
+---
+
+## Concurrency types (`src/prelude_threads.yx`, docs/CONCURRENCY.md)
+
+`scope { .. }` joins every task started inside it; `spawn move { .. }` / `spawn move || expr` starts a thread and
+returns a `JoinHandle<T>` whose `join()` gives `Result<T, ThreadPanic>`. Shared state: `Atomic<Int>` / `Atomic<Bool>`
+(`new`, `load`, `store`, `add`, `add_wrapping`, `swap`, `compare_swap`), `Locked<T>` (`new`, `with(|v| ..)`,
+`with_view(|v| ..)`, `take`), `Shared<T>` (`new`, `clone` = reference-count bump, `get`, and the methods of its
+content). `parallel for i in a..b { .. }` / `parallel for x in list { .. }` runs iterations on worker lanes.
+
+```yx
+fn main() {
+  let n = Shared.new(Atomic.new(0))
+  scope {
+    let a = n.clone()
+    let h = spawn move { a.add(5) }
+    assert(h.join().is_ok())
+  }
+  print(n.load())   // 5
+}
+```
 
 ---
 
