@@ -6,7 +6,7 @@ import std.io
 import ast
 import locals
 
-struct Symbol { name: String, is_function: Bool, public: Bool }
+struct Symbol { name: String, is_function: Bool, is_const: Bool, public: Bool }
 struct Module { key: String, owner: String, loading: Bool, symbols: List<Symbol> }
 struct Alias { name: String, module_id: Int }
 struct FileContext { module_id: Int, aliases: List<Alias>, shadowed: List<String> }
@@ -36,8 +36,9 @@ fn alias_module(ctx: view FileContext, name: view String) -> Int {
   return -1
 }
 
-fn symbol_kind(is_function: Bool) -> Text {
+fn symbol_kind(is_function: Bool, is_const: Bool) -> Text {
   if is_function { return "function" }
+  if is_const { return "constant" }
   return "type"
 }
 
@@ -105,11 +106,11 @@ fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<a
 
 fn collect_symbol(symbols: mut List<Symbol>, tree: view List<ast.AstNode>, item: Int, decl: Int) {
   let tag = String.from(tree.at(decl).tag)
-  if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Alias" { return }
+  if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Alias" && tag != "Const" { return }
   let name = ast.name_at(tree, decl, 0)
   let old = symbol_index(symbols, name)
   let public = tree.at(ast.child(tree, item, 0)).tag == "true"
-  let symbol = Symbol { name: move name, is_function: tag == "Fn", public: public }
+  let symbol = Symbol { name: move name, is_function: tag == "Fn", is_const: tag == "Const", public: public }
   if old < 0 { symbols.push(move symbol) }
   else { symbols.set(old, move symbol) }
 }
@@ -125,7 +126,7 @@ fn resolve_qualified(resolver: mut Resolver, ctx: view FileContext, alias: view 
     issue(resolver, ctx.module_id, "private-item:{alias}:{dep}:{name}")
   } else {
     let owner = String.from(resolver.modules.at(ctx.module_id).owner)
-    let kind = symbol_kind(resolver.modules.at(id).symbols.at(index).is_function)
+    let kind = symbol_kind(resolver.modules.at(id).symbols.at(index).is_function, resolver.modules.at(id).symbols.at(index).is_const)
     let target = mangle(dep, name)
     if !resolver.link { print("qualified:{owner}:{alias}:{dep}:{name}:{kind}:{target}") }
   }
@@ -153,6 +154,7 @@ fn resolve_name(resolver: mut Resolver, ctx: view FileContext, name: view String
   for a in ctx.aliases {
     let index = symbol_index(resolver.modules.at(a.module_id).symbols, name)
     if index >= 0 && resolver.modules.at(a.module_id).symbols.at(index).public &&
+        !resolver.modules.at(a.module_id).symbols.at(index).is_const &&
         resolver.modules.at(a.module_id).symbols.at(index).is_function == (use_kind == "function") {
       issue(resolver, ctx.module_id, "unqualified:{name}:{use_kind}")
       return
@@ -249,7 +251,10 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
         issue(resolver, ctx.module_id, String.from("public-test"))
       }
     } else {
-      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && !(resolver.link && tag == "Alias") && tag != "Impl" { break }
+      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Alias" && tag != "Const" && tag != "Impl" { break }
+      if tag == "Const" && tree.at(ast.child(tree, scanned, 0)).tag == "true" && tree.at(ast.child(tree, decl, 1)).tag == "_" {
+        issue(resolver, ctx.module_id, String.from("pub-const-untyped"))
+      }
       collect_symbol(symbols, tree, scanned, decl)
     }
     scanned = tree.at(scanned).end
@@ -257,7 +262,7 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
 
   let owner = String.from(resolver.modules.at(ctx.module_id).owner)
   for symbol in symbols {
-    let kind = symbol_kind(symbol.is_function)
+    let kind = symbol_kind(symbol.is_function, symbol.is_const)
     let access = visibility(symbol.public)
     let target = mangle(owner, symbol.name)
     if !resolver.link { print("symbol:{owner}:{symbol.name}:{kind}:{access}:{target}") }
@@ -392,7 +397,7 @@ fn linked_node(resolver: mut Resolver, ctx: view FileContext, tree: view List<as
   }
   if tag != "[" { resolver.output.push_str("(") }
   var at = node + 1
-  let symbol_decl = declaration && (tag == "Fn" || tag == "Struct" || tag == "Enum" || tag == "Trait" || tag == "Alias")
+  let symbol_decl = declaration && (tag == "Fn" || tag == "Struct" || tag == "Enum" || tag == "Trait" || tag == "Alias" || tag == "Const")
   let identifier = tag == "Type" || tag == "StructLit" || tag == "GenericMember" || tag == "DynType" || tag == "Derive"
   let global_use = (tag == "Call" || tag == "Var") && bindings.identities.at(node) < 0
   if symbol_decl || identifier || global_use {
