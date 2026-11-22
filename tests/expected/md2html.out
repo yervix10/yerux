@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Notes &amp; Ideas</title></head>
+<body>
+<nav>
+<ul>
+<li><a href="#project-notes">Project Notes</a></li>
+  <li><a href="#shopping-list">Shopping list</a></li>
+  <li><a href="#code">Code</a></li>
+</ul>
+</nav>
+<h1 id="project-notes">Project Notes</h1>
+<p>A <em>short</em> intro with <strong>bold text</strong>, <code>inline &lt;code&gt;</code> and a <a href="https://example.org/a?b=1&amp;c=2">link</a>. Second line of the same paragraph, with snake_case_name left alone and an escaped *star*.</p>
+<h2 id="shopping-list">Shopping list</h2>
+<ul>
+<li>apples</li>
+<li><strong>fresh</strong> bread
+<ul>
+<li>whole wheat</li>
+<li>rye</li>
+</ul>
+</li>
+<li>milk &amp; honey</li>
+</ul>
+<ol>
+<li>first step</li>
+<li>second step
+<p>continued detail</p>
+</li>
+</ol>
+<blockquote>
+<p>Quoted wisdom continues here.</p>
+<ul>
+<li>even a list</li>
+</ul>
+</blockquote>
+<hr>
+<h2 id="code">Code</h2>
+<pre><code class="language-yerux">fn main() {
+  print(&quot;&lt;hello&gt; &amp; goodbye&quot;)
+}
+</code></pre>
+<p><img src="img/logo.png" alt="logo" title="The logo"> Final paragraph with &lt;b&gt;raw tags&lt;/b&gt; escaped.</p>
+</body>
+</html>
