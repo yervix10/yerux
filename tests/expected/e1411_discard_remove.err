@@ -1,8 +1,0 @@
-error: this expression produces an owned String value that must be used or explicitly discarded
- --> tests/e1411_discard_remove.yx:4:3
-  |
-4 |   values.remove(0)
-  |   ^^^^^^^^^^^^^^^^
-  = help: bind the value with `let` or `var`, or discard it with `let _ = ...`
-
-1 error(s). Nothing was generated.
