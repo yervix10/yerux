@@ -97,27 +97,30 @@ fn cache_import(build: mut Build, name: view String) -> Bool {
   return false
 }
 
-// Map and Set are written in Yerux (prelude_map.yx); a program that names them gets the prelude
-// in front of its source, like the Rust compiler's embedded prelude.
-fn uses_collections(text: view String) -> Bool {
-  return text.split("Map<").len() > 1 || text.split("Set<").len() > 1 ||
-    text.split("Map.").len() > 1 || text.split("Set.").len() > 1
+// Map, Set and Arena are written in Yerux (prelude_map.yx, prelude_arena.yx); a program that names them
+// gets the prelude in front of its source, like the Rust compiler's embedded prelude.
+fn uses(text: view String, needle: view String) -> Bool {
+  return text.split(needle).len() > 1
+}
+
+fn read_text(file: view String) -> String {
+  match fs.read_to_string(file) {
+    Err(error) => { return String.new() }
+    Ok(contents) => { return String.from(contents) }
+  }
+  return String.new()
 }
 
 fn with_prelude(build: view Build, source: view String) -> String {
-  let prelude = path.join(build.runtime, "prelude_map.yx")
-  if !fs.is_file(prelude) { return String.new() }
-  var text = String.new()
-  match fs.read_to_string(source) {
-    Err(error) => { return String.new() }
-    Ok(contents) => { text = String.from(contents) }
-  }
-  if !uses_collections(text) { return String.new() }
+  let text = read_text(source)
   var head = String.new()
-  match fs.read_to_string(prelude) {
-    Err(error) => { return String.new() }
-    Ok(contents) => { head = String.from(contents) }
+  if uses(text, "Map<") || uses(text, "Set<") || uses(text, "Map.") || uses(text, "Set.") {
+    head.push_str(read_text(path.join(build.runtime, "prelude_map.yx")))
   }
+  if uses(text, "Arena") {
+    head.push_str(read_text(path.join(build.runtime, "prelude_arena.yx")))
+  }
+  if head.len() == 0 { return String.new() }
   // imports must stay first: the prelude goes after the leading import lines
   var top = String.new()
   var rest = String.new()

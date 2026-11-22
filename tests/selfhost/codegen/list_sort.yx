@@ -1,0 +1,5 @@
+fn main() {
+ var l = List<Int>.new()
+ l.push(3)
+ l.sort()
+}

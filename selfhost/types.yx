@@ -931,10 +931,10 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     if signature < 0 { signature = bound_method(types, tree, types.impl_params, owner, name) }
     if signature >= 0 { return call_args(types, tree, args, name, signature, owner, receiver) }
   }
-  if receiver >= 0 && owner.starts_with("List<") && name == "sort" {
+  if receiver >= 0 && (owner.starts_with("List<") || owner == "List") && name == "sort" {
     let element = type_terms.element(owner)
     if child_count(tree, args) != 0 { issue(types, String.from("'sort' takes no arguments")) }
-    if !ordered_type(types, element) { issue(types, "{element} does not implement Ordered") }
+    if element != "?" && !ordered_type(types, element) { issue(types, "{element} does not implement Ordered") }
     var loans = List<ownership.Loan>.new()
     record_loan(types, tree, loans, receiver, String.from("Mut"), owner, true)
     return unit()

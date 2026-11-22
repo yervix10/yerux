@@ -1,0 +1,67 @@
+// Arena<T>: bump allocation, bulk release, tickets that never dangle
+struct Node {
+  id: Int,
+  name: String,
+  next: Int,
+}
+
+fn build(a: mut Arena<Node>, n: Int) -> ArenaRef {
+  var prev = -1
+  var last = a.alloc(Node { id: 0, name: String.from("n0"), next: prev })
+  var i = 1
+  while i < n {
+    let label = "node {i}"
+    last = a.alloc(Node { id: i, name: move label, next: last.slot })
+    i = i + 1
+  }
+  return last
+}
+
+fn frame(round: Int) -> Int {
+  var a = Arena<Node>.new()
+  let head = build(a, 100 + round)
+  var total = 0
+  var cur = head.slot
+  while cur >= 0 {
+    total = total + a.items.at(cur).id
+    cur = a.items.at(cur).next
+  }
+  a.items.at(a.slot(head)).name.push_str("!")
+  print(a.items.at(a.slot(head)).name)
+  return total
+}
+
+fn main() {
+  // ints: Copy access
+  var ints = Arena<Int>.new()
+  let r1 = ints.alloc(10)
+  let r2 = ints.alloc(32)
+  ints.set(r1, ints.get(r1) + 1)
+  print(ints.get(r1) + ints.get(r2))
+  print(ints.len())
+  print(ints.is_live(r2))
+  // per-frame use: everything is released together, no leaks
+  var round = 0
+  while round < 3 {
+    print(frame(round))
+    round = round + 1
+  }
+  // reset invalidates every ticket
+  ints.reset()
+  print(ints.is_live(r1))
+  print(ints.len())
+  let r3 = ints.alloc(7)
+  print(ints.get(r3))
+  print(ints.is_live(r1))
+  // owned elements are released by reset and by drop
+  var words = Arena<String>.new()
+  var k = 0
+  while k < 1000 {
+    let w = "w{k}"
+    words.alloc(move w)
+    k = k + 1
+  }
+  words.reset()
+  words.alloc(String.from("again"))
+  print(words.len())
+}

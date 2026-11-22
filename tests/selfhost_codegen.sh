@@ -93,7 +93,7 @@ source_ast() {
     cp "$tmp/ast" "$tmp/source.err"
     return 1
   }
-  if [[ $(<"$tmp/ast") == *',Import('* ]] || grep -qE '(Map|Set)[<.]' "$1"; then
+  if [[ $(<"$tmp/ast") == *',Import('* ]] || grep -qE '(Map|Set)[<.]|Arena' "$1"; then
     "$tmp/rebuilt/yerux-self" --emit-ast "$1" -o "$tmp/ast" 2>"$tmp/source.err"
   fi
 }
