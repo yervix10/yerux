@@ -1,0 +1,31 @@
+fn nested() -> String {
+  while true {
+    while true { break }
+    return "done"
+  }
+}
+fn find(xs: view List<Int>) -> Int {
+  var i = 0
+  while true {
+    if i == xs.len() { return -1 }
+    if xs.get(i) > 0 { return i }
+    i = i + 1
+  }
+}
+fn main() {
+  print(nested())
+  var xs = List<Int>.new()
+  print(find(xs))
+  xs.push(-3)
+  xs.push(4)
+  print(find(xs))
+  print(xs.is_sorted())
+  xs.push(1)
+  print(xs.is_sorted())
+  var names = List<String>.new()
+  names.push(String.from("a"))
+  names.push(String.from("b"))
+  print(names.is_sorted())
+  let empty: List<Int> = List.new()
+  print(empty.is_sorted())
+}

@@ -1,0 +1,19 @@
+fn main() {
+  var a = 1
+  var b = 2
+  (a, b) = (b, a + b)
+  print(a)
+  print(b)
+  var x = 0
+  var y = 0
+  (x, y) = (10, 20)
+  print(x + y)
+  var n = 5
+  var prev = 1
+  var cur = 1
+  while n > 0 {
+    (prev, cur) = (cur, prev + cur)
+    n = n - 1
+  }
+  print(cur)
+}

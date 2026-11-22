@@ -528,6 +528,10 @@ fn binary(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view 
   let op = ast.name_at(tree, node, 0)
   let left = expression(gen, tree, ast.child(tree, node, 1))
   if left.ty == "String" || left.ty == "Text" {
+    if op == "+" {
+      let joined = expression(gen, tree, ast.child(tree, node, 2))
+      return temp(gen, tree, String.from("String"), "nx_str_concat({text_view(left)}, {text_view(joined)})")
+    }
     if op != "==" && op != "!=" && op != "<" && op != "<=" && op != ">" && op != ">=" {
       unsupported("operator {op} on {left.ty}")
     }
@@ -1371,6 +1375,21 @@ fn sequence_method(gen: mut Generator, tree: view List<ast.AstNode>, receiver: v
       let length = sequence_length(receiver)
       return temp(gen, tree, ty, "if ({length} > 1) qsort({data}, {length}, sizeof(*{data}), sc_compare_sort_{comparator})")
     }
+    if name == "is_sorted" {
+      let ok = temp(gen, tree, String.from("Bool"), String.from("true"))
+      let id = gen.temp
+      gen.temp = id + 1
+      let length = temp(gen, tree, String.from("Int"), sequence_length(receiver))
+      var inversion = String.new()
+      if elem == "String" {
+        inversion = "sc_compare(nx_str_view(&({receiver.code}).d[i{id}]), nx_str_view(&({receiver.code}).d[i{id} - 1])) < 0"
+      } else if integer_c(elem).len() != 0 || floating_c(elem).len() != 0 {
+        inversion = "({receiver.code}).d[i{id}] < ({receiver.code}).d[i{id} - 1]"
+      } else { unsupported("is_sorted for {elem}") }
+      line(gen, "for (int64_t i{id} = 1; i{id} < {length.code}; ++i{id}) {{")
+      line(gen, "if ({inversion}) {{ {ok.code} = false; break; }} }}")
+      return move ok
+    }
     if list && name == "reverse" { return temp(gen, tree, ty, "sc_reverse_{c}({addr})") }
     if list && name == "copy" && drop_fn(gen, tree, elem).len() == 0 {
       return temp(gen, tree, ty, "sc_copy_range_{c}({addr}, 0, ({receiver.code}).len)")
@@ -1792,6 +1811,14 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
       actual = tree.at(actual).end
     }
   } else {
+    if (receiver_type == "String" || receiver_type == "Text") && (name == "cmp" || name == "eq") &&
+        tree.at(args).end == args + 1 + (tree.at(args + 1).end - (args + 1)) && tree.at(args).end > args + 1 {
+      let left = expression(gen, tree, recv)
+      let right = expression(gen, tree, args + 1)
+      let order = temp(gen, tree, String.from("Int"), "sc_compare({text_view(left)}, {text_view(right)})")
+      if name == "eq" { return temp(gen, tree, ty, "({order.code} == 0)") }
+      return temp(gen, tree, ty, "({order.code} < 0 ? -1 : {order.code} > 0 ? 1 : 0)")
+    }
     if receiver_type == "String" {
       return emit_string_method(gen, tree, recv, args, name, ty)
     }
@@ -2401,6 +2428,42 @@ fn bind_unpack(gen: mut Generator, tree: view List<ast.AstNode>, pattern: Int, v
   if at != tree.at(fields).end { unsupported("tuple unpack arity") }
 }
 
+fn tuple_target(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  return tree.at(node).tag == "StructLit" && ast.name_at(tree, node, 0).starts_with("$tuple")
+}
+
+fn assign_place(gen: mut Generator, tree: view List<ast.AstNode>, target: Int, value: Value) {
+  let place = expression(gen, tree, target)
+  if place.ty.starts_with("Slice<") { unsupported("slice assignment") }
+  let rhs = coerce(gen, tree, move value, place.ty)
+  let drop = drop_fn(gen, tree, place.ty)
+  if drop != "" {
+    let moved = transfer(gen, tree, rhs)
+    let saved = temp(gen, tree, place.ty, moved)
+    line(gen, "{drop}(&({place.code}));")
+    line(gen, "{place.code} = {transfer(gen, tree, saved)};")
+  } else { line(gen, "{place.code} = {rhs.code};") }
+}
+
+fn assign_tuple(gen: mut Generator, tree: view List<ast.AstNode>, target: Int, whole: view Value) {
+  let parts = tuple_parts(gen, tree, whole)
+  let fields = ast.child(tree, target, 2)
+  var at = fields + 1
+  var i = 0
+  while at < tree.at(fields).end {
+    if i >= parts.len() { unsupported("tuple assignment arity") }
+    let inner = ast.child(tree, at, 1)
+    let part = Value { ty: String.from(parts.at(i).ty), code: String.from(parts.at(i).code) }
+    if tuple_target(tree, inner) { assign_tuple(gen, tree, inner, part) }
+    else {
+      if !is_place(gen, tree, inner) { unsupported("assignment target") }
+      assign_place(gen, tree, inner, move part)
+    }
+    i = i + 1
+    at = tree.at(at).end
+  }
+}
+
 fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   let tag = String.from(tree.at(node).tag)
   if tag == "Block" || tag == "[" || tag == "Scope" {
@@ -2444,22 +2507,19 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     if drop != "" { line(gen, "{drop}(&({value.code}));") }
   } else if tag == "Assign" {
     let target = ast.child(tree, node, 0)
+    if tuple_target(tree, target) {
+      let source = expression(gen, tree, ast.child(tree, node, 1))
+      let whole = temp(gen, tree, source.ty, transfer(gen, tree, source))
+      assign_tuple(gen, tree, target, whole)
+      return
+    }
     if !is_place(gen, tree, target) { unsupported("assignment target") }
     let value = expression(gen, tree, ast.child(tree, node, 1))
     var saved_value = Value { ty: String.from(value.ty), code: String.from(value.code) }
     if tree.at(target).tag != "Var" {
       saved_value = temp(gen, tree, value.ty, transfer(gen, tree, value))
     }
-    let place = expression(gen, tree, target)
-    if place.ty.starts_with("Slice<") { unsupported("slice assignment") }
-    let rhs = coerce(gen, tree, move saved_value, place.ty)
-    let drop = drop_fn(gen, tree, place.ty)
-    if drop != "" {
-      let moved = transfer(gen, tree, rhs)
-      let saved = temp(gen, tree, place.ty, moved)
-      line(gen, "{drop}(&({place.code}));")
-      line(gen, "{place.code} = {transfer(gen, tree, saved)};")
-    } else { line(gen, "{place.code} = {rhs.code};") }
+    assign_place(gen, tree, target, move saved_value)
   } else if tag == "Expr" {
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
@@ -2588,6 +2648,22 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
   gen.struct_layouts.at(id).ready = true
 }
 
+// Does the loop body contain a `break` that leaves this loop? Unlabeled breaks inside nested loops do not.
+fn breaks_out(tree: view List<ast.AstNode>, node: Int, nested: Bool) -> Bool {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Break" {
+    return !nested || tree.at(ast.child(tree, node, 0)).tag != "_"
+  }
+  var inside = nested
+  if tag == "While" || tag == "For" { inside = true }
+  var at = node + 1
+  while at < tree.at(node).end {
+    if breaks_out(tree, at, inside) { return true }
+    at = tree.at(at).end
+  }
+  return false
+}
+
 fn returns_value(tree: view List<ast.AstNode>, node: Int) -> Bool {
   let tag = String.from(tree.at(node).tag)
   if tag == "Return" { return tree.at(ast.child(tree, node, 0)).tag != "_" }
@@ -2596,11 +2672,7 @@ fn returns_value(tree: view List<ast.AstNode>, node: Int) -> Bool {
     if tree.at(condition).tag != "Bool" || tree.at(ast.child(tree, condition, 0)).tag != "true" {
       return false
     }
-    let body = ast.child(tree, node, 2)
-    for at in body..tree.at(body).end {
-      if tree.at(at).tag == "Break" { return false }
-    }
-    return true
+    return !breaks_out(tree, ast.child(tree, node, 2), false)
   }
   if tag == "If" {
     return returns_value(tree, ast.child(tree, node, 1)) && returns_value(tree, ast.child(tree, node, 2))

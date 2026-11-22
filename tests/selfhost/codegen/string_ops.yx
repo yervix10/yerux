@@ -1,0 +1,12 @@
+fn main() {
+  let a = String.from("abc")
+  let b = String.from("abd")
+  let c = a + b
+  print(c)
+  print("{c} {a < b} {b < a} {a != b} {a.cmp(b)} {b.cmp(a)} {a.cmp(a)}")
+  let t = "abc"
+  print(a.eq(t))
+  print(a.eq(b))
+  let both = a + "!"
+  print(both)
+}

@@ -2200,6 +2200,7 @@ fn declare_prelude(types: mut Types) {
   prelude_method(types, string, "len", "View", "Int", "", "Own")
   prelude_method(types, string, "byte", "View", "Int", "Int", "Own")
   prelude_method(types, string, "eq", "View", "Bool", "String", "View")
+  prelude_method(types, string, "cmp", "View", "Int", "String", "View")
   prelude_method(types, string, "clear", "Mut", "nothing", "", "Own")
   prelude_method(types, string, "push_str", "Mut", "nothing", "String", "View")
   let push_slice = types.signatures.len()
