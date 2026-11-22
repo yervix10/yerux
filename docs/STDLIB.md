@@ -598,7 +598,11 @@ fn main() {
 returns a `JoinHandle<T>` whose `join()` gives `Result<T, ThreadPanic>`. Shared state: `Atomic<Int>` / `Atomic<Bool>`
 (`new`, `load`, `store`, `add`, `add_wrapping`, `swap`, `compare_swap`), `Locked<T>` (`new`, `with(|v| ..)`,
 `with_view(|v| ..)`, `take`), `Shared<T>` (`new`, `clone` = reference-count bump, `get`, and the methods of its
-content). `parallel for i in a..b { .. }` / `parallel for x in list { .. }` runs iterations on worker lanes.
+content). `Mutex<T>` (facade over `Locked`: `mutex_update`, `mutex_with`, `mutex_with_view`) and `RwLock<T>` (`rwlock_read`,
+`rwlock_write`; spinning, no fairness). Channels: `Sender<T>.bounded(n)` / `.unbounded()` return `(Sender<T>, Receiver<T>)`;
+`send(v) -> Bool`, `recv() -> Option<T>` (None when closed and drained), `recv_timeout(ms)`, `close()`, `clone()` on the sender,
+`select2(a, b, timeout_ms)`. `thread_pool_new(n)` with `parallel_for(a, b, f)`, `thread_pool_map` and an explicit `close()`.
+`parallel for i in a..b { .. }` / `parallel for x in list { .. }` runs iterations on worker lanes.
 
 ```yx
 fn main() {
@@ -622,6 +626,24 @@ fn main() {
 - Results are fresh owned values (`String`, `List`); the arguments are only borrowed (unless noted).
 - Function arguments are `view fn(..)`: write the closure in place (`|x: view Int| -> Int { return x + 1 }`) or pass a variable holding a function; it may capture local variables.
 - Offsets are byte offsets and always on character boundaries.
+
+**Index** (all 22 modules of `src/std/`; each one is a file of Yerux):
+
+| Module | What | Detailed reference |
+|---|---|---|
+| `std.text`, `std.fmt`, `std.unicode` | strings, number formatting, Unicode scalar helpers | below, [UNICODE.md](UNICODE.md) |
+| `std.math`, `std.rand` | integer helpers and constants; deterministic generator | below |
+| `std.collections`, `std.sort`, `std.iter` | queues/heaps/ordered maps, sorting and searching, list helpers | below |
+| `std.hash`, `std.hex`, `std.base64` | FNV-1a/CRC-32/SHA-256, hex, base64 | below |
+| `std.regex`, `std.csv`, `std.toml` | bounded ASCII regex, RFC 4180 CSV, manifest-style TOML | below, [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md) |
+| `std.args`, `std.env`, `std.io` | command line, environment, raw I/O and `IoError` | below, [STDLIB_IO.md](STDLIB_IO.md) |
+| `std.fs`, `std.path`, `std.time` | files and directories, path strings, `Duration`/clocks/calendar | below, [STDLIB_IO.md](STDLIB_IO.md), [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md) |
+| `std.process` | run and control child processes, pipes, signals | [STDLIB_PROCESS.md](STDLIB_PROCESS.md) |
+| `std.net`, `std.http` | blocking TCP sockets; small HTTP/1.1 client over them | [NET.md](NET.md), [HTTP.md](HTTP.md) |
+| `std.sync` | `once()`, `barrier(n)`, `semaphore(n)` (spinning coordination primitives) | [STDLIB_SYNC.md](STDLIB_SYNC.md) |
+| `std.log` | `debug`/`info`/`warn`/`error`: `[LEVEL] message` on stderr | [STDLIB_IO.md](STDLIB_IO.md) |
+| `std.kv` | persistent string/int/bool store in one file (atomic updates, single writer) | [STDLIB_KV.md](STDLIB_KV.md) |
+| `std.compress` | run-length encoding (`compress`/`decompress`), **not** gzip/deflate | [STDLIB_COMPRESS.md](STDLIB_COMPRESS.md) |
 
 ### `std.text`
 | Function | Notes |
