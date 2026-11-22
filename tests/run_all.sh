@@ -122,6 +122,7 @@ AUX=(
   "tool_fmt|bash tests/tool_fmt.sh"
   "tool_doc|bash tests/tool_doc.sh"
   "tool_add|bash tests/tool_add.sh"
+  "run_args|bash tests/run_args.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
 )
