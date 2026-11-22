@@ -13,23 +13,51 @@ pub fn base(ty: view String) -> String {
   return String.from(ty)
 }
 
-pub fn arguments(ty: view String) -> List<String> {
+fn split_types(ty: view String, first: Int, end: Int) -> List<String> {
   var args = List<String>.new()
-  let name = base(ty)
-  if name.len() == ty.len() || name.starts_with("fn(") { return move args }
-  var start = name.len() + 1
+  if first == end { return move args }
+  var start = first
   var depth = 0
-  for i in start..ty.len() - 1 {
+  for i in first..end {
     let b = ty.byte(i)
     if b == 60 || b == 40 { depth = depth + 1 }
-    if b == 62 || b == 41 { depth = depth - 1 }
+    if b == 41 || (b == 62 && ty.byte(i - 1) != 45) { depth = depth - 1 }
     if b == 44 && depth == 0 {
       args.push(ty.slice(start, i))
       start = i + 2
     }
   }
-  args.push(ty.slice(start, ty.len() - 1))
+  args.push(ty.slice(start, end))
   return move args
+}
+
+pub fn arguments(ty: view String) -> List<String> {
+  let name = base(ty)
+  if name.len() == ty.len() { return List<String>.new() }
+  return split_types(ty, name.len() + 1, ty.len() - 1)
+}
+
+// The last component is the result. The other components preserve parameter modes.
+pub fn function_parts(ty: view String) -> List<String> {
+  var depth = 1
+  for i in 3..ty.len() {
+    let b = ty.byte(i)
+    if b == 40 { depth = depth + 1 }
+    if b == 41 { depth = depth - 1 }
+    if depth == 0 {
+      var parts = split_types(ty, 3, i)
+      if i + 1 == ty.len() { parts.push(String.from("nothing")) }
+      else { parts.push(ty.slice(i + 5, ty.len())) }
+      return move parts
+    }
+  }
+  return List<String>.new()
+}
+
+pub fn parameter_prefix(ty: view String) -> Int {
+  if ty.starts_with("view ") { return 5 }
+  if ty.starts_with("mut ") { return 4 }
+  return 0
 }
 
 pub fn apply(name: view String, args: view List<String>) -> String {
@@ -46,6 +74,21 @@ pub fn bind(sub: mut Substitution, pattern: view String, actual: view String) {
     if sub.values.at(index) == "?" { sub.values.set(index, String.from(actual)) }
     return
   }
+  let mode = parameter_prefix(pattern)
+  if mode != 0 || parameter_prefix(actual) != 0 {
+    if mode == parameter_prefix(actual) {
+      bind(sub, pattern.slice(mode, pattern.len()), actual.slice(mode, actual.len()))
+    }
+    return
+  }
+  if pattern.starts_with("fn(") && actual.starts_with("fn(") {
+    let formal = function_parts(pattern)
+    let concrete = function_parts(actual)
+    if formal.len() == concrete.len() {
+      for i in 0..formal.len() { bind(sub, formal.at(i), concrete.at(i)) }
+    }
+    return
+  }
   let name = base(pattern)
   if name != base(actual) { return }
   let formal = arguments(pattern)
@@ -59,6 +102,21 @@ pub fn bind(sub: mut Substitution, pattern: view String, actual: view String) {
 pub fn substitute(ty: view String, sub: view Substitution) -> String {
   let index = sub.names.index_of(ty)
   if index >= 0 { return String.from(sub.values.at(index)) }
+  let mode = parameter_prefix(ty)
+  if mode != 0 {
+    let prefix = ty.slice(0, mode)
+    let value = substitute(ty.slice(mode, ty.len()), sub)
+    return "{prefix}{value}"
+  }
+  if ty.starts_with("fn(") {
+    var parts = function_parts(ty)
+    let result = substitute(parts.pop(), sub)
+    var params = List<String>.new()
+    for part in parts { params.push(substitute(part, sub)) }
+    let text = params.join(", ")
+    if result == "nothing" { return "fn({text})" }
+    return "fn({text}) -> {result}"
+  }
   let args = arguments(ty)
   if args.len() == 0 { return String.from(ty) }
   var values = List<String>.new()
@@ -77,18 +135,37 @@ pub fn with_names(names: view List<String>) -> Substitution {
 
 pub fn mentions(ty: view String, names: view List<String>) -> Bool {
   if names.contains(ty) { return true }
-  let args = arguments(ty)
+  let mode = parameter_prefix(ty)
+  if mode != 0 { return mentions(ty.slice(mode, ty.len()), names) }
+  var args = arguments(ty)
+  if ty.starts_with("fn(") { args = function_parts(ty) }
   for arg in args { if mentions(arg, names) { return true } }
   return false
 }
 
 pub fn compatible(expected: view String, actual: view String) -> Bool {
   if expected == actual || expected == "?" || actual == "?" { return true }
-  let name = base(expected)
-  if name != base(actual) { return false }
-  if name == "Int" { return true }
-  let a = arguments(expected)
-  let b = arguments(actual)
+  let mode = parameter_prefix(expected)
+  if mode != 0 || parameter_prefix(actual) != 0 {
+    return mode == parameter_prefix(actual) &&
+      compatible(expected.slice(mode, expected.len()), actual.slice(mode, actual.len()))
+  }
+  var a = List<String>.new()
+  var b = List<String>.new()
+  if expected.starts_with("fn(") && actual.starts_with("fn(") {
+    a = function_parts(expected)
+    b = function_parts(actual)
+  } else {
+    let name = base(expected)
+    if name != base(actual) { return false }
+    if name == "Int" { return true }
+    a = arguments(expected)
+    b = arguments(actual)
+    if name == "List" {
+      if expected == "List" { a.push(String.from("Int")) }
+      if actual == "List" { b.push(String.from("Int")) }
+    }
+  }
   if a.len() != b.len() || a.len() == 0 { return false }
   for i in 0..a.len() {
     if !compatible(a.at(i), b.at(i)) { return false }

@@ -539,7 +539,7 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     }
     var hint = String.from(expected)
     let generic = owner == "?" && type_terms.mentions(formal, sub.names)
-    if generic { hint = unknown() }
+    if generic && !formal.starts_with("fn(") { hint = unknown() }
     var mode = String.from("View")
     if sig >= 0 { mode = String.from(types.signatures.at(sig).args.at(at).mode) }
     var actual = unknown()
@@ -969,7 +969,21 @@ fn propagate(types: mut Types, tree: view List<ast.AstNode>, node: Int) -> Strin
 }
 
 fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
-  let hinted = signature_index(types, hint, true)
+  var hinted = signature_index(types, hint, true)
+  if hinted < 0 && hint.starts_with("fn(") {
+    var parts = type_terms.function_parts(hint)
+    let result = parts.pop()
+    var parameters = List<Parameter>.new()
+    for part in parts {
+      let prefix = type_terms.parameter_prefix(part)
+      var mode = String.from("Own")
+      if prefix == 5 { mode = String.from("View") }
+      else if prefix == 4 { mode = String.from("Mut") }
+      parameters.push(Parameter { mode: move mode, ty: part.slice(prefix, part.len()) })
+    }
+    hinted = types.signatures.len()
+    let spelling = add_signature(types, String.new(), move parameters, result)
+  }
   let args = param_types(types, tree, ast.child(tree, index, 4), hinted, true)
   let ret = ast.child(tree, index, 5)
   var expected = source_type(types, tree, ret)
