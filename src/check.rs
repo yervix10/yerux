@@ -1578,8 +1578,15 @@ impl<'a> Checker<'a> {
                             self.expect(tb, ta, b.pos);
                         } else {
                             let n = self.tn(ta);
-                            self.err(diag(format!("cannot compare values of type {}", n), a.pos)
-                                .note("help: == and != work on numbers and Bool, and on variables whose type implements Equal (Text, String, your own types); use `match` for enums"));
+                            let d = if self.implements(ta, "Equal") {
+                                diag(format!("cannot use `{}` here: the left side is a {} value that is not a variable", op, n), a.pos)
+                                    .note(format!("`{}` on {} calls `eq`, which borrows its left side", op, n))
+                                    .note("help: store the value with `let` first, then compare the variable (or write `value.eq(other)`)")
+                            } else {
+                                diag(format!("cannot compare values of type {}", n), a.pos)
+                                    .note("help: == and != work on numbers and Bool, and on variables whose type implements Equal (Text, String, your own types); use `match` for enums")
+                            };
+                            self.err(d);
                         }
                         Ty::Bool
                     }

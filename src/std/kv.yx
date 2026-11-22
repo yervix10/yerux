@@ -55,6 +55,10 @@ pub fn get(store: view Store, key: view String) -> Result<Option<String>, String
     for line in lines {
         let fields = line.split("\t")
         if fields.len() == 2 && fields[0] == target {
+            if fields[1] == "-" {
+                found = Option<String>.None
+                continue
+            }
             match hex.decode(fields[1]) {
                 Ok(value) => { found = Some(move value) }
                 Err(_) => { return Err(String.from("corrupt kv record")) }
@@ -106,4 +110,75 @@ pub fn get_bool(store: view Store, key: view String) -> Result<Option<Bool>, Str
         }
         Err(e) => { return Err(move e) }
     }
+}
+
+/// Remove a key. A tombstone record (`keyhex<TAB>-`) is appended, so a later `get` reports the key as missing; the
+/// result is whether the key was present.
+pub fn delete(store: view Store, key: view String) -> Result<Bool, String> {
+    match get(store, key) {
+        Ok(value) => {
+            match value {
+                None => { return Ok(false) }
+                Some(_) => {}
+            }
+        }
+        Err(e) => { return Err(move e) }
+    }
+    var current = String.new()
+    match fs.read_to_string(store.path) {
+        Ok(contents) => { current = move contents }
+        Err(e) => { return Err(String.from(e.message)) }
+    }
+    var next = String.from(current)
+    next.push_str(hex.encode(key))
+    next.push_str("\t-\n")
+    var temp = String.from(store.path)
+    temp.push_str(".tmp")
+    match fs.write(temp, next) {
+        Ok(_) => {
+            match fs.rename(temp, store.path) {
+                Ok(_) => { return Ok(true) }
+                Err(e) => { return Err(String.from(e.message)) }
+            }
+        }
+        Err(e) => { return Err(String.from(e.message)) }
+    }
+}
+
+/// The live keys, in the order they were first written.
+pub fn keys(store: view Store) -> Result<List<String>, String> {
+    var contents = String.new()
+    match fs.read_to_string(store.path) {
+        Ok(value) => { contents = move value }
+        Err(e) => {
+            if e.code == 2 { return Ok(List<String>.new()) }
+            return Err(String.from(e.message))
+        }
+    }
+    var live = List<String>.new()
+    for line in contents.split("\n") {
+        let fields = line.split("\t")
+        if fields.len() != 2 {
+            continue
+        }
+        match hex.decode(fields[0]) {
+            Ok(key) => {
+                var at = -1
+                for i in 0..live.len() {
+                    if live.at(i) == key {
+                        at = i
+                    }
+                }
+                if fields[1] == "-" {
+                    if at >= 0 {
+                        let gone = live.remove(at)
+                    }
+                } else if at < 0 {
+                    live.push(move key)
+                }
+            }
+            Err(_) => { return Err(String.from("corrupt kv record")) }
+        }
+    }
+    return Ok(move live)
 }

@@ -1,0 +1,93 @@
+> LOAD emp tests/minidb_employees.csv
+ok (8)
+> TABLES
+  emp (8 rows)
+ok (1)
+> SELECT * FROM emp LIMIT 3
+id  name              dept  salary  city
+--  ----------------  ----  ------  -----
+1   Ana Ruiz          eng   5200    Lima
+2   Bruno Diaz        eng   4800    Quito
+3   Carla "CJ" Jones  ops   3900    Lima
+(3 rows)
+ok (3)
+> SELECT name, salary FROM emp WHERE dept = eng AND salary >= 4800 ORDER BY salary DESC
+name        salary
+----------  ------
+Elena Soto  6100
+Ana Ruiz    5200
+Bruno Diaz  4800
+(3 rows)
+ok (3)
+> SELECT name, city FROM emp WHERE name = 'Fox, Mulder'
+name         city
+-----------  -----
+Fox, Mulder  Quito
+(1 rows)
+ok (1)
+> SELECT dept, COUNT(*), SUM(salary), AVG(salary), MIN(salary), MAX(salary) FROM emp GROUP BY dept
+dept   COUNT(*)  SUM(salary)  AVG(salary)  MIN(salary)  MAX(salary)
+-----  --------  -----------  -----------  -----------  -----------
+eng    4         19100        4775.0       3000         6100
+ops    2         7400         3700.0       3500         3900
+sales  2         8600         4300.0       4100         4500
+(3 rows)
+ok (3)
+> SELECT COUNT(*), AVG(salary) FROM emp WHERE city != Lima
+COUNT(*)  AVG(salary)
+--------  -----------
+4         3850.0
+(1 rows)
+ok (1)
+> SELECT name FROM emp ORDER BY name LIMIT 4
+name
+----------------
+Ana Ruiz
+Bruno Diaz
+Carla "CJ" Jones
+Diego Paz
+(4 rows)
+ok (4)
+> INSERT INTO emp VALUES 9, 'Irene Mora', eng, 5000, Lima
+ok (1)
+> INSERT INTO emp VALUES 10, Jon, ops
+error: emp has 5 columns, got 3 values
+> INSERT INTO emp VALUES x, Jon, ops, 1, Lima
+error: column id is INT, got x
+> UPDATE emp SET salary = 3300 WHERE name = 'Hugo Vega'
+ok (1)
+> DELETE FROM emp WHERE dept = sales
+ok (2)
+> SELECT dept, COUNT(*) FROM emp GROUP BY dept
+dept  COUNT(*)
+----  --------
+eng   5
+ops   2
+(2 rows)
+ok (2)
+> SAVE emp
+ok (7)
+> DROP emp
+ok (1)
+> TABLES
+ok (0)
+> SELECT * FROM emp
+error: usage: SELECT cols FROM <existing table> ...
+> RESTORE emp
+ok (7)
+> SELECT id, name, salary FROM emp WHERE salary < 4000 ORDER BY id
+id  name              salary
+--  ----------------  ------
+3   Carla "CJ" Jones  3900
+6   Fox, Mulder       3500
+8   Hugo Vega         3300
+(3 rows)
+ok (3)
+> SELECT bogus FROM emp
+error: unknown column bogus
+> FROB x
+error: unknown command FROB
+> PURGE
+ok (2)
+> RESTORE emp
+error: emp is not in the store

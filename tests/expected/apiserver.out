@@ -1,0 +1,17 @@
+GET /tasks -> 200 {"count":0,"tasks":[]}
+POST /tasks -> 201 {"id":1,"title":"write the book","done":false,"tags":["docs","yerux"]}
+POST /tasks -> 201 {"id":2,"title":"say \"hi\"","done":false,"tags":[]}
+POST /tasks (bad) -> 400 {"error":"title must be a string"}
+POST /tasks (broken) -> 400 {"error":"invalid JSON at byte 9: expected JSON value"}
+PUT /tasks/1 -> 200 {"id":1,"title":"write the book","done":true,"tags":["docs","yerux"]}
+GET /tasks?done=true -> 200 {"count":1,"tasks":[{"id":1,"title":"write the book","done":true,"tags":["docs","yerux"]}]}
+GET /tasks/2 -> 200 {"id":2,"title":"say \"hi\"","done":false,"tags":[]}
+GET /tasks/9 -> 404 {"error":"no such task"}
+DELETE /tasks/2 -> 200 {"deleted":2}
+DELETE /tasks/2 -> 404 {"error":"no such task"}
+DELETE /tasks -> 405 {"error":"use GET or POST on /tasks"}
+GET /nowhere -> 404 {"error":"no such route"}
+burst: 20 created
+GET /stats -> 200 {"tasks":21,"requests":34}
+POST /shutdown -> 200 {"bye":true}
+connections accepted and handled: 36

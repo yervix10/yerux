@@ -1,0 +1,11 @@
+fn main() {
+  let f = 0.1 + 0.2
+  print("f={f}")
+  let u: UInt8 = 7
+  print("u={u} {u + 1}")
+  let s = f.show()
+  print(s.len())
+  print("{1.5f32}")
+  let t = (1.5, 2)
+  print(t.0 * 2.0)
+}

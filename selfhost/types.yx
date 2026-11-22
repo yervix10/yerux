@@ -895,6 +895,17 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
       return number
     }
   }
+  if receiver >= 0 && name == "cmp" {
+    let number = numeric_type(owner)
+    if integer(number) || floating(number) {
+      if child_count(tree, args) != 1 {
+        issue(types, "'cmp' expects 1 argument")
+        return unknown()
+      }
+      expect_type(types, number, infer(types, tree, args + 1, number))
+      return String.from("Int")
+    }
+  }
   if receiver < 0 && shape >= 0 && types.shapes.at(shape).is_enum {
     return nominal_constructor(types, tree, owner, name, args, hint)
   }

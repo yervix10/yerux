@@ -228,6 +228,7 @@ const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]
+       (run: `yerux run file.yx [flags] -- ARGS...` passes ARGS to the program)
        yerux add NAME --path DIR | --git URL [--tag T | --version REQ]   (dependency in yerux.toml; updates yerux.lock)
        yerux remove NAME
        yerux doc [--html] [-o DIR] [dir|file.yx ...]
@@ -653,6 +654,10 @@ fn real_main() {
             } else {
                 Command::new(&exe)
             };
+            // `yerux run file.yx [flags] -- a b c`: what follows `--` is the program's own command line
+            if let Some(dash) = args.iter().position(|a| a == "--") {
+                cmd.args(&args[dash + 1..]);
+            }
             let st = cmd.status().expect(
                 "could not run the program (for --target windows on this OS, wine is needed)",
             );

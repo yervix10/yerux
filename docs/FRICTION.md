@@ -359,3 +359,50 @@ The language has no unwinding, so `io.exit` cannot run the cleanup of its caller
 call, explicit name) and `io.run_status(f)`, which runs `f: fn() -> Int` to completion (destructors and defers run)
 and then exits with its status. Tests `io_exit_drop`, `io_exit_skips_drop`. Not done: an `exit` that unwinds.
 
+# Round 2: Markdown converter, in-memory database, JSON API server
+
+Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400, 570 and 500 lines).
+
+## Fixed in round 2
+
+- **`kv` had no delete or key listing.** `kv.delete(store, key)` (a tombstone record) and `kv.keys(store)` were added
+  ([STDLIB_KV.md](STDLIB_KV.md); test `std_kv`). The database needed them to purge saved tables.
+- **`std.http` could only GET and POST.** `http.put_json` and `http.delete` were added (test: the API server's client).
+- **`yerux run file.yx a b` ignored the arguments.** The program saw an empty command line. Now
+  `yerux run file.yx [flags] -- a b` passes them (`tests/run_args.sh`).
+- **`==` on a call result gave a misleading error.** `text.to_upper(s) == "HEY"` said "cannot compare values of type
+  String" (Strings are comparable) and then blamed the other operand. It now says that the left side is a String value
+  that is not a variable, and suggests `let` first or `.eq` (test `e1410_eq_on_temporary`), like `<` already did.
+
+## Open in round 2 (minimal cases)
+
+1. **No `if` or `match` expressions.** `let x = if ok { 1 } else { 2 }` fails with "unexpected keyword 'if' here".
+   All three programs needed a `var` plus an `if` statement, or a one-line helper function. The biggest everyday
+   papercut; the parser also reports it as a syntax error rather than explaining that `if` is a statement.
+2. **A pattern binding with the name of an imported module is an error.** `import std.text` followed by
+   `match r { Ok(text) => { .. } .. }` reports "'text' is a module, not a value" at both uses. Parameters, `let` and
+   `for` are scoped correctly; match-arm and closure bindings are not. A loader fix exists in outline (treat `Ok(x) => {`
+   like a parameter) but it must be mirrored in `selfhost/resolve.yx` or `selfhost_resolve` fails, so it was left.
+3. **A borrowed list element cannot be named.** `let line = lines.at(i)` is "cannot move 'lines.at(..)' out of its
+   List"; the only ways are `String.from(lines.at(i))` (a copy) or passing `lines.at(i)` straight to a `view`
+   parameter. Every loop over rows of a table copied each row or went through a helper taking `view Table`.
+4. **A dropped `JoinHandle` joins, silently.** `for w in 0..3 { let t = spawn move { worker(rx) } }` deadlocks: the
+   handle is dropped at the end of the first iteration, which waits for a worker that waits for work. There is no
+   diagnostic, and a `List<JoinHandle<T>>` is rejected ("a List cannot contain JoinHandle values"), so the usual
+   "start N workers" loop has no direct form. The programs name each handle (`w1`, `w2`, `w3`) and report results
+   through a channel.
+5. **No struct-literal shorthand and `move` on last use.** `Task { title: move title, tags: move tags }` is required
+   even though `title` is not used afterwards; `Task { title, tags }` is not accepted.
+6. **JSON in strings needs doubled braces.** `"{{\"id\":{t.id}}}"`: every literal `{` and `}` is doubled, and `\{` is
+   an error with a good hint. A raw string literal would remove most of the noise.
+7. **`std.args` is thin.** Options only take the `--key=value` form (`--title TEXT` is a positional), the first
+   positional word lands in `subcommand`, and there is no typed accessor.
+8. **Methods versus functions are inconsistent.** `s.split(..)` and `s.trim()` are methods but `s.lines()`,
+   `s.to_upper()` and `s.is_alnum` are `text.lines(s)`, `text.to_upper(s)`; the error ("String has no method 'lines'")
+   does not mention `std.text`.
+9. **A removed list element must be used.** `list.remove(i)` as a statement is "a String is created and immediately
+   discarded (memory leak)"; write `let gone = list.remove(i)`. Same for `list.pop()`, which also returns the element
+   itself rather than an `Option` (an empty list panics).
+10. **The cascade after the `==` error.** The fixed message is followed by a second error about the right operand
+    ("'word' is a String and is not copied") that is a consequence of the first.
+
