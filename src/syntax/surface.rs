@@ -479,7 +479,11 @@ impl Parser {
             && !matches!(self.peek_at(3), Tok::Id(n) if n == "while" || n == "for");
         let empty_literal =
             *self.peek_at(1) == Tok::Sym("}") && (args.is_some() || self.source_struct_name(&path));
-        if self.is_sym("{") && (has_fields || empty_literal) {
+        // `Point { x, y }`: only for a known struct name, so `if ok { x }` stays a block
+        let shorthand = matches!(self.peek_at(1), Tok::Id(n) if !KW.contains(&n.as_str()))
+            && matches!(self.peek_at(2), Tok::Sym(",") | Tok::Sym("}"))
+            && self.source_struct_name(&path);
+        if self.is_sym("{") && (has_fields || empty_literal || shorthand) {
             let (fields, end) = self.struct_lit_fields()?;
             return Ok(mk(
                 EK::GenStruct {
