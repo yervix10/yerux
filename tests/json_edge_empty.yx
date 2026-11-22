@@ -1,0 +1,42 @@
+// std.json edge cases: empty containers, empty members, empty strings, whitespace,
+// nested empties and the minified/pretty forms of each. Every input is valid JSON.
+import json.codec
+
+fn show(src: view String) {
+  match codec.parse(src) {
+    Ok(v) => { print(codec.format(v, false)) }
+    Err(e) => {
+      let (line, col) = codec.location(src, e.offset)
+      print("ERR {line}:{col}: {e.message}")
+    }
+  }
+}
+
+fn show_pretty(src: view String) {
+  match codec.parse(src) {
+    Ok(v) => { print(codec.format(v, true)) }
+    Err(e) => {
+      let (line, col) = codec.location(src, e.offset)
+      print("ERR {line}:{col}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("{{}}")
+  show("[]")
+  show("[[]]")
+  show("[{{}}]")
+  show("[{{}}, []]")
+  show("{{\"a\": {{}}}}")
+  show("{{\"a\": []}}")
+  show("{{ \"a\" : [ ] }}")
+  show("   {{}}   ")
+  show("{{\"\": 1}}")
+  show("{{\"a\": \"\"}}")
+  show("{{\"\": \"\"}}")
+  show("[[[[[]]]]]")
+  show("{{\"a\": {{\"b\": {{}}}}}}")
+  show_pretty("{{\"a\": [], \"b\": {{}}}}")
+  show_pretty("[{{}}, []]")
+}

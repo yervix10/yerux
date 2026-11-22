@@ -1,0 +1,45 @@
+// std.json edge cases: numbers at the borders of the JSON grammar. The codec keeps
+// the original spelling, so big integers, long fractions and extreme exponents survive.
+// Also covers the number-shaped inputs that must be rejected and where the error points.
+import json.codec
+
+fn show(src: view String) {
+  match codec.parse(src) {
+    Ok(v) => { print(codec.format(v, false)) }
+    Err(e) => {
+      let (line, col) = codec.location(src, e.offset)
+      print("ERR {line}:{col}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("0")
+  show("-0")
+  show("0.0")
+  show("-0.0")
+  show("1e10")
+  show("1E10")
+  show("1e+10")
+  show("1e-10")
+  show("123456789012345678901234567890")
+  show("1.7976931348623157e308")
+  show("1e400")
+  show("0.1")
+  show("3.141592653589793238462643383279")
+  show("-9223372036854775808")
+  show("9223372036854775807")
+  show("9223372036854775808")
+  show("[0, -0, 1e0, 1E0]")
+  show("01")
+  show("-")
+  show("1.")
+  show(".5")
+  show("1e")
+  show("1e+")
+  show("+1")
+  show("00")
+  show("1.2.3")
+  show("1..2")
+  show("--1")
+}

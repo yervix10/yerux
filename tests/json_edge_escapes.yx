@@ -1,0 +1,40 @@
+// std.json edge cases: string quoting and escapes. Covers every standard escape,
+// a surrogate pair, a raw UTF-8 character, and the malformed escapes the parser rejects.
+import json.codec
+
+fn show(src: view String) {
+  match codec.parse(src) {
+    Ok(v) => { print(codec.format(v, false)) }
+    Err(e) => {
+      let (line, col) = codec.location(src, e.offset)
+      print("ERR {line}:{col}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("\"\"")
+  show("\"abc\"")
+  show("\"a\\\"b\"")
+  show("\"a\\\\b\"")
+  show("\"a\\/b\"")
+  show("\"a\\bb\"")
+  show("\"a\\fb\"")
+  show("\"a\\nb\"")
+  show("\"a\\rb\"")
+  show("\"a\\tb\"")
+  show("\"\\u0041\"")
+  show("\"\\u00e9\"")
+  show("\"\\u20ac\"")
+  show("\"\\ud83d\\ude00\"")
+  show("\"\\uD83D\\uDE00\"")
+  show("\"tab\there\"")
+  show("\"\\q\"")
+  show("\"\\u00g0\"")
+  show("\"\\ud800x\"")
+  show("\"\\udc00\"")
+  show("\"abc")
+  show("\"a\\\"")
+  show("\"\\u\"")
+  show("\"\\u12\"")
+}
