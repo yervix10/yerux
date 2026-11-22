@@ -1,0 +1,20 @@
+struct Pair<A, B> { a: A, b: B }
+derive Clone for Pair
+
+enum Wrapped<T> { Empty, One(T) }
+derive Clone for Wrapped
+
+fn main() {
+  var list = List<String>.new()
+  list.push(String.from("owned"))
+  let pair = Pair { a: 7, b: move list }
+  let second = pair.clone()
+  print(pair.a)
+  print(second.b.at(0))
+  let wrapper = Wrapped.One(move second)
+  let other = wrapper.clone()
+  match move other {
+    Empty => { print("empty") }
+    One(item) => { print(item.b.at(0)) }
+  }
+}

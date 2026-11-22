@@ -404,17 +404,6 @@ impl Parser {
                 if is_struct { "Struct" } else { "Enum" },
                 [n, generics, list(entries)],
             )
-        } else if self.source_eat_kw("derive") {
-            // `derive Clone, Equal for Name` (expanded into impls by `expand_derives` before the real parser)
-            let mut traits = vec![name(&self.ident()?.0)];
-            while self.eat_sym(",") {
-                traits.push(name(&self.ident()?.0));
-            }
-            if !self.source_eat_kw("for") {
-                return Err(diag("expected `for` in `derive`", self.pos()));
-            }
-            let target = name(&self.ident()?.0);
-            node("Derive", [list(traits), target])
         } else if self.source_eat_kw("trait") {
             let n = name(&self.ident()?.0);
             self.expect_sym("{")?;

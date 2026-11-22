@@ -1,0 +1,13 @@
+import std.time
+
+fn main() {
+  let d = time.utc(2024, 3, 1, 0, 0, 0)
+  match d {
+    Ok(dt) => {
+      assert(time.day_of_year(dt) == 61)
+      assert(time.weekday(dt) == 5)
+      assert(time.format_iso(dt).eq("2024-03-01T00:00:00Z"))
+    }
+    Err(_) => { assert(false) }
+  }
+}

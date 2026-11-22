@@ -3,5 +3,6 @@ error: duplicate field 'x'
   |
 1 | struct P { x: Int, y: Int, x: Int }
   |                            ^
+  = help: rename or remove the repeated declaration
 
 1 error(s). Nothing was generated.

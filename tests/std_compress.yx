@@ -1,0 +1,14 @@
+import std.compress
+
+fn main() {
+    let source = String.from("aaabcccccccccccccccccccccc")
+    let packed = compress.compress(source)
+    match compress.decompress(packed) {
+        Ok(value) => { print(value) }
+        Err(_) => { print("decode error") }
+    }
+    match compress.decompress("x") {
+        Ok(_) => { print("bad") }
+        Err(_) => { print("invalid rejected") }
+    }
+}

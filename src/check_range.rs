@@ -158,21 +158,30 @@ impl<'a> Checker<'a> {
 
     /// Facts that hold when the (already checked) condition `c` evaluates to `truth`.
     pub(super) fn cond_facts(&self, c: &Expr, truth: bool, out: &mut Vec<(usize, (i128, i128))>) {
+        self.cond_facts_d(c, truth, out, 0)
+    }
+
+    /// `depth` bounds the walk: a very long `a && b && c ..` chain would otherwise make every `&&` re-walk its
+    /// whole left side (quadratic). Facts are only an optimisation, so giving up on deep conditions is safe.
+    fn cond_facts_d(&self, c: &Expr, truth: bool, out: &mut Vec<(usize, (i128, i128))>, depth: usize) {
+        if depth > 64 {
+            return;
+        }
         match &c.k {
-            EK::Un("!", x) => self.cond_facts(x, !truth, out),
+            EK::Un("!", x) => self.cond_facts_d(x, !truth, out, depth + 1),
             EK::Bin("&&", a, b) if truth => {
-                self.cond_facts(a, true, out);
-                self.cond_facts(b, true, out);
+                self.cond_facts_d(a, true, out, depth + 1);
+                self.cond_facts_d(b, true, out, depth + 1);
             }
             EK::Bin("||", a, b) if !truth => {
-                self.cond_facts(a, false, out);
-                self.cond_facts(b, false, out);
+                self.cond_facts_d(a, false, out, depth + 1);
+                self.cond_facts_d(b, false, out, depth + 1);
             }
             // one of the two sides holds: what both sides would prove is the hull of the two
             EK::Bin(op @ ("||" | "&&"), a, b) if (*op == "||") == truth => {
                 let (mut fa, mut fb) = (vec![], vec![]);
-                self.cond_facts(a, truth, &mut fa);
-                self.cond_facts(b, truth, &mut fb);
+                self.cond_facts_d(a, truth, &mut fa, depth + 1);
+                self.cond_facts_d(b, truth, &mut fb, depth + 1);
                 let fold = |v: Vec<(usize, (i128, i128))>| {
                     let mut m: HashMap<usize, (i128, i128)> = HashMap::new();
                     for (id, (l, h)) in v {

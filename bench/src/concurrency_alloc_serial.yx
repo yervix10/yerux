@@ -1,0 +1,16 @@
+fn work(item: Int) -> Int {
+  var total = item
+  for _ in 0..100 {
+    let value = String.from("allocator contention workload")
+    total = total + value.len()
+  }
+  return total
+}
+
+fn main() {
+  var total = 0
+  for _ in 0..4 {
+    for i in 0..5000 { total = total + work(i) }
+  }
+  print(total)
+}

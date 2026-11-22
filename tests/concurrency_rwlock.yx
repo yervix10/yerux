@@ -1,0 +1,15 @@
+fn main() {
+  let lock = Shared.new(RwLock<Int>.new(0))
+  scope {
+    let b = lock.clone()
+    let writer = spawn move {
+      rwlock_write(b.get(), |value| {
+        value = value + 1
+        return 1
+      })
+      return 1
+    }
+    print(writer.join().unwrap())
+  }
+  print(rwlock_read(lock.get(), |value| value))
+}

@@ -11,12 +11,14 @@ error: expected Char but this is Int
   |
 4 |   let e = c == 97
   |                ^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 error: expected Int but this is Char
  --> tests/e52_char_types.yx:5:25
   |
 5 |   let f = Char.from_int('a')
   |                         ^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 error: Char has no method 'shout'
  --> tests/e52_char_types.yx:6:11
@@ -24,11 +26,13 @@ error: Char has no method 'shout'
 6 |   let g = c.shout()
   |           ^^^^^^^^^
   = methods: to_int(), utf8_len()   (functions: Char.from_int(n), Char.is_valid(n))
+  = help: check the receiver type and method name, or define the method in an `impl` block
 
 error: expected Char but this is Int
  --> tests/e52_char_types.yx:7:13
   |
 7 |   print(c < 5)
   |             ^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 5 error(s). Nothing was generated.

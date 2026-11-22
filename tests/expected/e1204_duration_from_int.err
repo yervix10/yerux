@@ -3,5 +3,6 @@ error: expected time.Duration but this is Int
   |
 5 |   time.sleep(5)
   |              ^
+  = help: check the value at this expression; convert it explicitly or change the expected type
 
 1 error(s). Nothing was generated.

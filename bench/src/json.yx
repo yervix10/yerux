@@ -1,0 +1,28 @@
+fn parse_numbers(input: view String) -> Int {
+  var sum = 0
+  var number = 0
+  var i = 0
+  while i < input.len() {
+    let c = input.char_at(i).to_int()
+    if c >= 48 && c <= 57 {
+      number = number * 10 + c - 48
+    } else {
+      sum = sum + number
+      number = 0
+    }
+    i = i + input.char_size(i)
+  }
+  return sum + number
+}
+fn main() {
+  var input = String.new()
+  input.push_char(Char.from_int(91))
+  var i = 0
+  while i < 100000 {
+    if i > 0 { input.push_char(Char.from_int(44)) }
+    input.push_int(i)
+    i = i + 1
+  }
+  input.push_char(Char.from_int(93))
+  print(parse_numbers(input))
+}

@@ -1,0 +1,16 @@
+import std.process
+
+fn main() {
+  var args = List<String>.new()
+  args.push(String.from("-c"))
+  args.push(String.from("printf done"))
+  let quick = process.run_timeout("/bin/sh", args, 1000)
+  match quick {
+    Ok(Some(out)) => { assert(out.stdout.eq("done")); assert(out.status.success()) }
+    _ => { assert(false) }
+  }
+  var slow = List<String>.new()
+  slow.push(String.from("1"))
+  let timed = process.run_timeout("/bin/sleep", slow, 5)
+  match timed { Ok(None) => { assert(true) }, _ => { assert(false) } }
+}

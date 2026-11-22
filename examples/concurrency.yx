@@ -1,0 +1,13 @@
+fn main() {
+  let total = Shared.new(Atomic<Int>.new(0))
+  scope {
+    for lane in 0..4 {
+      let counter = total.clone()
+      let worker = spawn move {
+        for _ in 0..1000 { counter.get().add(1) }
+      }
+      worker.join()
+    }
+  }
+  print(total.get().load())
+}

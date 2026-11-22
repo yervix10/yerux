@@ -1,0 +1,13 @@
+fn work(item: Int) -> Int {
+  var value = item + 1
+  for _ in 0..12000 { value = (value * 1103515245 + 12345) % 2147483647 }
+  return value
+}
+
+fn main() {
+  var total = 0
+  for _ in 0..4 {
+    for i in 0..5000 { total = total + work(i) }
+  }
+  print(total)
+}

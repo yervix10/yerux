@@ -597,3 +597,19 @@ pub fn parse_iso(s: view String) -> Result<DateTime, io.IoError> {
   }
   return utc(y, mo, d, h, mi, se)
 }
+
+/// Day of year in UTC, in the range 1..365 (or 1..366 in leap years).
+pub fn day_of_year(dt: view DateTime) -> Int {
+  var day = dt.day
+  var month = 1
+  while month < dt.month {
+    day = day + days_in_month(dt.year, month)
+    month = month + 1
+  }
+  return day
+}
+
+/// ISO weekday number: Monday is 1 and Sunday is 7.
+pub fn weekday(dt: view DateTime) -> Int {
+  return dt.weekday
+}

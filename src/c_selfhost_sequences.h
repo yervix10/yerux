@@ -19,6 +19,41 @@ static inline E sc_pop_##C(C *l) { \
   if (l->len == 0) nx_panic("pop from an empty list"); \
   return l->d[--l->len]; \
 } \
+static inline void sc_insert_##C(C *l, int64_t i, E x) { \
+  if (i < 0 || i > l->len) nx_panic("List.insert index out of range"); \
+  sc_push_##C(l, x); \
+  memmove(l->d + i + 1, l->d + i, (size_t)(l->len - i - 1) * sizeof(E)); \
+  l->d[i] = x; \
+} \
+static inline E sc_remove_##C(C *l, int64_t i, bool swap) { \
+  if (i < 0 || i >= l->len) \
+    nx_panic(swap ? "List.swap_remove index out of range" : "List.remove index out of range"); \
+  E result = l->d[i]; \
+  --l->len; \
+  if (swap) l->d[i] = l->d[l->len]; \
+  else memmove(l->d + i, l->d + i + 1, (size_t)(l->len - i) * sizeof(E)); \
+  l->d[l->len] = (E){0}; \
+  return result; \
+} \
+static inline void sc_reverse_##C(C *l) { \
+  for (int64_t lo = 0, hi = l->len - 1; lo < hi; ++lo, --hi) { \
+    E x = l->d[lo]; l->d[lo] = l->d[hi]; l->d[hi] = x; \
+  } \
+} \
+static inline C sc_copy_range_##C(const C *l, int64_t lo, int64_t hi) { \
+  if (lo < 0 || lo > hi || hi > l->len) nx_panic("List.slice range out of bounds"); \
+  C result = {0}; \
+  for (int64_t i = lo; i < hi; ++i) sc_push_##C(&result, l->d[i]); \
+  return result; \
+} \
+static inline void sc_extend_##C(C *l, C other) { \
+  for (int64_t i = 0; i < other.len; ++i) sc_push_##C(l, other.d[i]); \
+  free(other.d); \
+} \
+static inline void sc_truncate_##C(C *l, int64_t n) { \
+  if (n < 0) nx_panic("List.truncate length is negative"); \
+  while (l->len > n) { --l->len; DROP(&l->d[l->len]); } \
+} \
 static inline void sc_clear_##C(C *l) { \
   for (int64_t i = 0; i < l->len; ++i) DROP(&l->d[i]); \
   l->len = 0; \

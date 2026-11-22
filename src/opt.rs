@@ -10,6 +10,14 @@
 // Finally vregs are compacted (parameters keep ids 0..nparams).
 use crate::ir::*;
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
+
+fn profile_pass(name: &str, func: &str, start: Instant) {
+    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+    if elapsed >= 1.0 && std::env::var_os("YERUX_PROFILE").is_some() {
+        eprintln!("yerux profile: opt {name} {func}: {elapsed:.3} ms");
+    }
+}
 
 pub fn run(p: &mut IrProgram) {
     for f in &mut p.funcs {
@@ -44,16 +52,8 @@ fn finalize(f: &mut IrFunc) {
         }
     }
     if did {
-        opt_func(f);
+        opt_func_inner(f, false);
     }
-}
-
-fn snapshot(f: &IrFunc) -> String {
-    let mut s = String::new();
-    for b in &f.blocks {
-        s += &format!("{:?}{:?};", b.insts, b.term);
-    }
-    s
 }
 
 /// Debug switch: `YERUX_OPT_OFF=constprop,copyprop,sroa,memopt,rangeopt,coalesce,dce,cfg,inline,versioning,strength` disables the
@@ -75,41 +75,65 @@ fn pass_off(name: &str) -> bool {
 const HUGE_FUNC: usize = 6_000_000;
 
 fn opt_func(f: &mut IrFunc) {
+    opt_func_inner(f, true);
+}
+
+fn opt_func_inner(f: &mut IrFunc, range_analysis: bool) {
     if f.blocks.len().saturating_mul(f.nvregs) > HUGE_FUNC {
         cfg(f);
         compact_vregs(f);
         return;
     }
+    let mut ranged = false;
     for _ in 0..16 {
-        let before = snapshot(f);
+        let before = f.blocks.clone();
         if !pass_off("constprop") {
+            let start = Instant::now();
             constprop(f);
+            profile_pass("constprop", &f.name, start);
         }
         if !pass_off("copyprop") {
+            let start = Instant::now();
             copyprop(f);
+            profile_pass("copyprop", &f.name, start);
+        }
+        if range_analysis && !ranged && !pass_off("rangeopt") {
+            let start = Instant::now();
+            rangeopt(f);
+            profile_pass("rangeopt", &f.name, start);
+            ranged = true;
         }
         if !pass_off("sroa") {
+            let start = Instant::now();
             crate::sroa::run(f);
+            profile_pass("sroa", &f.name, start);
         }
         if !pass_off("memopt") {
+            let start = Instant::now();
             crate::memopt::run(f);
+            profile_pass("memopt", &f.name, start);
         }
         if !pass_off("copyprop") {
+            let start = Instant::now();
             copyprop(f);
-        }
-        if !pass_off("rangeopt") {
-            rangeopt(f);
+            profile_pass("copyprop", &f.name, start);
         }
         if !pass_off("coalesce") {
+            let start = Instant::now();
             coalesce(f);
+            profile_pass("coalesce", &f.name, start);
         }
         if !pass_off("dce") {
+            let start = Instant::now();
             dce(f);
+            profile_pass("dce", &f.name, start);
         }
         if !pass_off("cfg") {
+            let start = Instant::now();
             cfg(f);
+            profile_pass("cfg", &f.name, start);
         }
-        if snapshot(f) == before {
+        if f.blocks == before {
             break;
         }
     }
@@ -1004,10 +1028,11 @@ fn refine(st: &mut RState, op: Op, a: V, b: V) -> bool {
         _ => {
             // Ne: only a constant at the end of the other interval can be peeled off
             if xl == xh
-                && (yl == xl && !narrow(st, b, xl + 1, yh) || yh == xl && !narrow(st, b, yl, xl - 1))
-                {
-                    return false;
-                }
+                && (yl == xl && !narrow(st, b, xl + 1, yh)
+                    || yh == xl && !narrow(st, b, yl, xl - 1))
+            {
+                return false;
+            }
             if yl == yh {
                 let (x, c) = (st.r[a], yl);
                 if x.0 as i128 == c && !narrow(st, a, c + 1, x.1 as i128)

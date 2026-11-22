@@ -1,0 +1,11 @@
+import std.fs
+
+fn main() {
+  assert(fs.is_dir("."))
+  assert(fs.is_file("Cargo.toml"))
+  assert(!fs.is_symlink("Cargo.toml"))
+  // Linux exposes this process link; symlink_metadata must not follow it.
+  assert(fs.is_symlink("/proc/self/exe"))
+  let entries = fs.read_dir_entries(".")
+  match entries { Ok(v) => { assert(v.len() > 0) }, Err(_) => { assert(false) } }
+}

@@ -1,0 +1,12 @@
+// Imported standard modules occupy separate source spans; report this instantiated borrow error here.
+import std.fs
+
+struct Holder<T> { value: T }
+impl<T> Holder<T> {
+  fn borrowed_take(view self) -> T { return self.value }
+}
+
+fn main() {
+  let holder = Holder<String> { value: String.from("value") }
+  let value = holder.borrowed_take()
+}

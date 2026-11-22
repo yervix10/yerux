@@ -176,3 +176,17 @@ destructors (`Drop`, owned `String`/`List` memory) of every live frame do not ru
 let `main` return normally: write the real program as `fn real_main() -> Int` (returning the status) and make `main`
 only `io.run_status(real_main)`, which calls it, lets everything it owns drop, and only then exits with a non-zero
 status. Tests: `tests/io_exit_drop.yx`, `tests/io_exit_skips_drop.yx`, `tests/io_exit.yx`.
+
+## `std.path` relative paths
+
+`path.relative(from, to)` lexically normalizes both inputs and returns the relative path from one directory to the other (`.` when equal). Absolute and relative paths cannot be mixed and produce `Err(String)`. No filesystem access or symlink resolution occurs. Covered by `tests/std_path_complete.yx`.
+
+`std.time` calendar helpers also expose `day_of_year(dt)` (1-based, leap-year aware) and `weekday(dt)` (ISO Monday=1 through Sunday=7). See `tests/std_time_calendar.yx`.
+
+## `std.log`
+
+`log.debug/info/warn/error(message)` write `[LEVEL] message` lines to stderr. Logging is best effort and does not return write errors. See `tests/std_log.yx`.
+
+`fs.is_symlink(path)` checks the link itself with `lstat` semantics and returns false when metadata cannot be read. Directory entry metadata remains available through `read_dir_entries`. See `tests/std_fs_metadata.yx`.
+
+`env.get_int(name)` parses a decimal integer while preserving the distinction between a missing variable (`Ok(None)`) and malformed content (`Err(String)`). See `tests/std_env_typed.yx`.

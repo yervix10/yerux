@@ -822,7 +822,6 @@ struct Rt {
     panic_bytes: usize,
     push: usize,
     alloc: usize,
-    get: usize,
     free: usize,
     realloc: usize,
     memcpy: usize,
@@ -1694,8 +1693,16 @@ impl<'a> G<'a> {
             Inst::ListGet(d, l, i) => {
                 self.mov_to(RDI, *l);
                 self.mov_to(RSI, *i);
-                let t = self.rt.get;
-                self.a.call(t);
+                // Keep the checked list load in the caller. These accesses sit in
+                // tight loops (notably sorting and map probing); a runtime call
+                // per element prevents the native backend from matching C.
+                self.a.ld(RAX, RDI, 8);
+                self.a.alu(0x39, RSI, RAX);
+                self.a.jcc(CC_AE, self.rt.panic[P_INDEX]);
+                self.a.ld(RDX, RDI, 0);
+                self.a.shl(RSI, 3);
+                self.a.alu(0x01, RDX, RSI);
+                self.a.ld(RAX, RDX, 0);
                 let dr = self.dreg(*d, RAX);
                 self.a.mov_rr(dr, RAX);
                 self.fin(*d, dr);
@@ -2508,6 +2515,7 @@ const THREAD_RECOVER: i32 = THREAD_TLS + TLS_RECOVERY;
 const RECOVERY_IN_DESTRUCTOR: i64 = 2;
 const THREAD_UNWINDING: i32 = 16;
 const THREAD_CLEANUP_HEAD: i32 = 24;
+const TLS_ALLOC_FREE: i32 = 1040; // one cached block for each small allocation size class
 const THREAD_STACK_END: i32 = 2 * 4096 + 2 * 1024 * 1024;
 
 fn emit_tls_load(a: &mut Asm, reg: u8, offset: i32) {
@@ -2621,6 +2629,25 @@ fn emit_threads(
     a.mov_imm(RSI, 0);
     a.call_r(RAX);
     a.bind(child_exit);
+    // Return cached small blocks to the shared lists before discarding this
+    // worker's TLS mapping. One global lock covers the whole cache flush.
+    acquire_runtime_lock(a, G, G_HEAP_LOCK);
+    emit_tls_load(a, RDX, 0);
+    a.add_imm(RDX, TLS_ALLOC_FREE);
+    for class in 0..17 {
+        let empty = a.label();
+        a.ld(RAX, RDX, class * 8);
+        a.test_rax();
+        a.jcc(CC_E, empty);
+        a.mov_imm(RBX, 0);
+        a.st(RDX, class * 8, RBX);
+        a.mov_imm(RBX, G + G_FREE as i64 + class as i64 * 8);
+        a.ld(RCX, RBX, 0);
+        a.st(RAX, 0, RCX);
+        a.st(RBX, 0, RAX);
+        a.bind(empty);
+    }
+    release_runtime_lock(a, G, G_HEAP_LOCK);
     a.mov_imm(RDI, 0);
     a.mov_imm(RAX, 60); // exit this thread; the kernel clears TID and wakes the joiner
     a.syscall();
@@ -3084,13 +3111,29 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     // Small blocks (<= 64 KiB) are power-of-two size classes served from per-class free lists,
     // then bumped out of 1 MiB arenas. Larger blocks get their own mmap (page rounded).
     {
-        let (l_large, l_bump, l_newarena, l_release, l_done) =
-            (a.label(), a.label(), a.label(), a.label(), a.label());
+        let (l_large, l_bump, l_newarena, l_release, l_done, l_shared) =
+            (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
         a.bind(l_alloc);
         a.add_imm(RDI, 8);
         a.cmp_imm(RDI, SMALL_MAX);
         a.jcc(CC_A, l_large);
         if has_workers {
+            a.size_class(RDI, RSI, RCX);
+            emit_tls_load(&mut a, RDX, 0);
+            a.add_imm(RDX, TLS_ALLOC_FREE);
+            a.rm_sib(0x8B, RAX, RDX, RCX, 3, 0); // thread-local free-list head
+            a.test_rax();
+            a.jcc(CC_E, l_shared);
+            a.ld(RBX, RAX, 0); // pop cached block
+            a.rm_sib(0x89, RBX, RDX, RCX, 3, 0);
+            if debug_alloc {
+                a.ld(RBX, RAX, -8);
+                a.mov_imm(RCX, !FREED);
+                a.alu(0x21, RBX, RCX);
+                a.st(RAX, -8, RBX);
+            }
+            a.jmp(l_done);
+            a.bind(l_shared);
             acquire_runtime_lock(&mut a, g, G_HEAP_LOCK);
         }
         a.size_class(RDI, RSI, RCX); // rsi = block size (smallest 2^k >= rdi), rcx = k
@@ -3157,7 +3200,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
 
     // rt_free: rdi = payload pointer (0 is ignored).
     {
-        let (l_ret, l_large) = (a.label(), a.label());
+        let (l_ret, l_large, l_shared) = (a.label(), a.label(), a.label());
         a.bind(l_free);
         a.raw(&[0x48, 0x85, 0xFF]); // test rdi, rdi
         a.jcc(CC_E, l_ret);
@@ -3165,27 +3208,36 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             a.mov_imm(RBX, g);
             a.atomic_inc_mem(RBX, G_NFREE);
         }
-        if has_workers {
-            acquire_runtime_lock(&mut a, g, G_HEAP_LOCK);
-        }
         a.ld(RSI, RDI, -8); // block size
         if debug_alloc {
             a.mov_imm(RBX, FREED);
             a.alu(0x21, RBX, RSI); // and rbx, rsi
             a.jcc(CC_NE, l_panic[P_DOUBLE_FREE]);
-        }
-        a.cmp_imm(RSI, SMALL_MAX);
-        a.jcc(CC_A, l_large);
-        a.bsr(RCX, RSI); // the header holds the class size 2^k
-        a.mov_rr(RDX, RCX);
-        a.shl(RDX, 3);
-        a.mov_imm(RBX, g + G_FREE as i64);
-        a.alu(0x01, RDX, RBX); // rdx = &free_list[class]
-        if debug_alloc {
             a.mov_imm(RBX, FREED);
             a.alu(0x09, RBX, RSI); // rbx = size | FREED
             a.st(RDI, -8, RBX);
         }
+        a.cmp_imm(RSI, SMALL_MAX);
+        a.jcc(CC_A, l_large);
+        a.bsr(RCX, RSI); // the header holds the class size 2^k
+        if has_workers {
+            emit_tls_load(&mut a, RDX, 0);
+            a.add_imm(RDX, TLS_ALLOC_FREE);
+            a.rm_sib(0x8B, RBX, RDX, RCX, 3, 0);
+            a.test_rr(RBX);
+            a.jcc(CC_NE, l_shared);
+            a.mov_imm(RAX, 0);
+            a.st(RDI, 0, RAX);
+            a.rm_sib(0x89, RDI, RDX, RCX, 3, 0); // keep one hot block per size class locally
+            a.ret();
+            a.bind(l_shared);
+            acquire_runtime_lock(&mut a, g, G_HEAP_LOCK);
+            a.bsr(RCX, RSI); // the lock helper clobbers rcx
+        }
+        a.mov_rr(RDX, RCX);
+        a.shl(RDX, 3);
+        a.mov_imm(RBX, g + G_FREE as i64);
+        a.alu(0x01, RDX, RBX); // rdx = &free_list[class]
         a.ld(RBX, RDX, 0);
         a.st(RDI, 0, RBX); // block.next = head
         a.st(RDX, 0, RDI); // head = block
@@ -3194,9 +3246,6 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         a.ret();
         a.bind(l_large);
-        if has_workers {
-            release_runtime_lock(&mut a, g, G_HEAP_LOCK);
-        }
         a.sub_imm(RDI, 8);
         match os {
             Os::Linux => {
@@ -3418,7 +3467,6 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         panic_bytes: l_panic_bytes,
         push: l_push,
         alloc: l_alloc,
-        get: l_get,
         free: l_free,
         realloc: l_realloc,
         memcpy: l_memcpy,

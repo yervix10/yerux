@@ -1,0 +1,297 @@
+// Driver for the self-hosted compiler. The four stage binaries are installed beside it.
+import std.env
+import std.fs
+import std.io
+import std.path
+import std.process
+import ast
+
+struct Build {
+  runtime: String,
+  stages: String,
+  root: String,
+  work: String,
+  seen: List<String>,
+}
+
+fn report(step: view String, message: view String) {
+  io.eprintln("yerux-self: {step}: {message}")
+}
+
+fn invoke(program: view String, args: view List<String>, step: view String) -> Option<String> {
+  match process.run(program, args) {
+    Err(error) => { report(step, error.message); return None }
+    Ok(output) => {
+      if output.stderr.len() > 0 { let written = io.write_stderr(output.stderr) }
+      if output.status.code == 0 { return Some(String.from(output.stdout)) }
+      if output.stdout.len() > 0 { let written = io.write_stderr(output.stdout) }
+      if output.status.signal != 0 { report(step, "signal {output.status.signal}") }
+      else { report(step, "exit code {output.status.code}") }
+      return None
+    }
+  }
+}
+
+fn write(file: view String, contents: view String) -> Bool {
+  match fs.write(file, contents) {
+    Ok(count) => { return true }
+    Err(error) => { report(file, error.message); return false }
+  }
+}
+
+fn cache_source(build: mut Build, source: view String, key: view String, interface_only: Bool) -> Bool {
+  if build.seen.contains(key) { return true }
+  build.seen.push(String.from(key))
+  let tokens_path = path.join(build.work, "tokens")
+  let lexer = path.join(build.stages, "lexer")
+  var args = List<String>.new()
+  args.push(String.from(source))
+  args.push(String.from("--positioned"))
+  match invoke(lexer, args, "lexing {source}") {
+    None => { return false }
+    Some(tokens) => { if !write(tokens_path, tokens) { return false } }
+  }
+  let parser = path.join(build.stages, "parser")
+  args.clear()
+  args.push(String.from(tokens_path))
+  args.push(String.from("--build"))
+  match invoke(parser, args, "parsing {source}") {
+    None => { return false }
+    Some(contents) => {
+      let cache_path = path.join(build.work, key)
+      args.clear()
+      args.push(String.from("-p"))
+      args.push(String.from("--"))
+      args.push(path.parent(cache_path))
+      match invoke("mkdir", args, "creating AST cache") {
+        None => { return false }
+        Some(ok) => { if !write(cache_path, contents) { return false } }
+      }
+      if interface_only { return true }
+
+      let parsed = ast.decode(move contents)
+      let items = ast.child(parsed.nodes, 0, 0)
+      var at = items + 1
+      while at < parsed.nodes.at(items).end {
+        let declaration = ast.child(parsed.nodes, at, 2)
+        if parsed.nodes.at(declaration).tag == "Import" {
+          let module = ast.name_at(parsed.nodes, declaration, 0)
+          if !cache_import(build, module) { return false }
+        }
+        at = parsed.nodes.at(at).end
+      }
+    }
+  }
+  return true
+}
+
+fn cache_import(build: mut Build, name: view String) -> Bool {
+  let parts = name.replace(".", "/")
+  let file = "{parts}.yx"
+  if name.starts_with("std.") {
+    let source = path.join(build.runtime, file)
+    if fs.is_file(source) { return cache_source(build, source, "src/{file}", ast.bootstrap_module(name)) }
+  }
+  let source = path.join(build.root, file)
+  if fs.is_file(source) { return cache_source(build, source, file, ast.bootstrap_module(name)) }
+  report("resolving {name}", "source file not found: {source}")
+  return false
+}
+
+fn compile(build: mut Build, source: view String, output: view String, emit_ast: Bool) -> Bool {
+  let entry = path.file_name(source)
+  if !cache_source(build, source, entry, false) { return false }
+  let resolver = path.join(build.stages, "resolve")
+  let linked_path = path.join(build.work, "linked.ast")
+  var args = List<String>.new()
+  args.push(String.from("--link"))
+  args.push(String.from(build.work))
+  args.push(move entry)
+  match invoke(resolver, args, "resolving {source}") {
+    None => { return false }
+    Some(linked) => {
+      if emit_ast { return publish(linked_path, output, linked) }
+      if !write(linked_path, linked) { return false }
+    }
+  }
+  let generator = path.join(build.stages, "codegen")
+  let c_file = path.join(build.work, "program.c")
+  args.clear()
+  args.push(move linked_path)
+  match invoke(generator, args, "checking and generating C for {source}") {
+    None => { return false }
+    Some(body) => { if !write(c_file, body) { return false } }
+  }
+
+  let exe = path.join(build.work, "program")
+  args = String.from("-std=gnu11,-O2,-w,-fno-math-errno,-ffp-contract=off,-pthread,-I").split(",")
+  args.push(String.from(build.runtime))
+  args.push(move c_file)
+  args.push(String.from("-o"))
+  args.push(String.from(exe))
+  args.push(String.from("-lm"))
+  match invoke("cc", args, "compiling C for {source}") {
+    None => { return false }
+    Some(ok) => {}
+  }
+  return move_output(exe, output)
+}
+
+fn publish(file: view String, output: view String, contents: view String) -> Bool {
+  return write(file, contents) && move_output(file, output)
+}
+
+fn move_output(file: view String, output: view String) -> Bool {
+  var args = List<String>.new()
+  args.push(String.from("-T"))
+  args.push(String.from("--"))
+  args.push(String.from(file))
+  args.push(String.from(output))
+  match invoke("mv", args, "publishing {output}") {
+    None => { return false }
+    Some(ok) => { return true }
+  }
+}
+
+fn valid_name(name: view String) -> Bool {
+  if name.len() == 0 { return false }
+  for i in 0..name.len() {
+    let c = name.byte(i)
+    if !(c >= 48 && c <= 57) && !(c >= 65 && c <= 90) && !(c >= 97 && c <= 122) &&
+        c != 45 && c != 95 { return false }
+  }
+  return true
+}
+
+fn package_name(manifest: view String) -> Option<String> {
+  match fs.read_to_string(manifest) {
+    Err(error) => { report(manifest, error.message); return None }
+    Ok(contents) => {
+      var section = String.new()
+      var name = String.new()
+      for raw in contents.split("\n") {
+        let row = raw.trim()
+        if row.len() == 0 || row.starts_with("#") { continue }
+        if row.starts_with("[") {
+          section = String.from(row)
+        } else if section == "[dependencies]" {
+          report(manifest, "package dependencies are unsupported")
+          return None
+        } else if section == "[package]" {
+          let sep = row.find("=")
+          if sep < 0 { continue }
+          let key = row.slice(0, sep).trim()
+          if key == "name" {
+            let value = row.slice(sep + 1, row.len()).trim()
+            if value.len() >= 2 && value.starts_with("\"") && value.ends_with("\"") {
+              name = value.slice(1, value.len() - 1)
+            }
+          }
+        }
+      }
+      if valid_name(name) { return Some(move name) }
+      report(manifest, "expected a quoted package name with ASCII letters, digits, '-' or '_'")
+      return None
+    }
+  }
+}
+
+fn usage() {
+  print("usage: yerux-self [build] [FILE.yx|PROJECT_DIR|yerux.toml] [-o OUTPUT] [--runtime DIRECTORY] [--emit-ast]")
+}
+
+fn main() {
+  let cli = env.args()
+  var input = String.new()
+  var output = String.new()
+  var runtime = String.new()
+  var emit_ast = false
+  var i = 1
+  if i < cli.len() && cli.at(i) == "build" { i = i + 1 }
+  while i < cli.len() {
+    let arg = String.from(cli.at(i))
+    if arg == "--help" || arg == "-h" { usage(); return }
+    if arg == "--emit-ast" { emit_ast = true }
+    else if arg == "-o" || arg == "--runtime" {
+      i = i + 1
+      if i >= cli.len() { usage(); env.exit(2); return }
+      if arg == "-o" { output = String.from(cli.at(i)) }
+      else { runtime = String.from(cli.at(i)) }
+    } else if arg.starts_with("-") || input.len() != 0 {
+      usage()
+      env.exit(2)
+      return
+    } else { input = move arg }
+    i = i + 1
+  }
+
+  var stages = String.new()
+  match env.current_exe() {
+    Err(error) => { report("locating stage binaries", error.message); env.exit(1); return }
+    Ok(exe) => { stages = path.parent(exe) }
+  }
+  if runtime.len() == 0 { runtime = path.join(stages, "runtime") }
+  if !fs.is_file(path.join(runtime, "c_runtime.h")) {
+    report(runtime, "runtime headers not found")
+    env.exit(1)
+    return
+  }
+
+  var args = List<String>.new()
+  if !input.ends_with(".yx") {
+    if input.len() == 0 { input = String.from(".") }
+    var manifest = path.join(input, "yerux.toml")
+    let base = path.file_name(input)
+    if base == "yerux.toml" {
+      manifest = String.from(input)
+      input = path.parent(input)
+    }
+    match package_name(manifest) {
+      None => { env.exit(1); return }
+      Some(name) => {
+        if output.len() == 0 {
+          let target = path.join(input, "target")
+          args.push(String.from("-p"))
+          args.push(String.from("--"))
+          args.push(String.from(target))
+          match invoke("mkdir", args, "creating project target directory") {
+            None => { env.exit(1); return }
+            Some(ok) => {
+              output = path.join(target, name)
+              if emit_ast { output.push_str(".ast") }
+            }
+          }
+        }
+      }
+    }
+    input = path.join(input, "src/main.yx")
+  } else if output.len() == 0 {
+    if emit_ast { output = path.with_extension(input, "ast") }
+    else { output = path.with_extension(input, "") }
+  }
+
+  let work_root = path.parent(output)
+  let template = path.join(work_root, ".yerux-self.XXXXXX")
+  args.clear()
+  args.push(String.from("-d"))
+  args.push(String.from("--"))
+  args.push(move template)
+  match invoke("mktemp", args, "creating build directory") {
+    None => { env.exit(1) }
+    Some(created) => {
+      var build = Build {
+        runtime: move runtime, stages: move stages, root: path.parent(input),
+        work: created.slice(0, created.len() - 1), seen: List<String>.new(),
+      }
+      let success = compile(build, input, output, emit_ast)
+      args.clear()
+      args.push(String.from("-rf"))
+      args.push(String.from("--"))
+      args.push(String.from(build.work))
+      match invoke("rm", args, "removing build directory") {
+        None => { env.exit(1) }
+        Some(ok) => { if !success { env.exit(1) } }
+      }
+    }
+  }
+}

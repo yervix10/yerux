@@ -1,0 +1,16 @@
+fn main() {
+  let counter = Shared.new(Mutex<Int>.new(0))
+  scope {
+    let a = counter.clone()
+    let b = counter.clone()
+    let first = spawn move {
+      for _ in 0..1000 { mutex_update(a.get(), |value| { value = value + 1 }) }
+    }
+    let second = spawn move {
+      for _ in 0..1000 { mutex_update(b.get(), |value| { value = value + 1 }) }
+    }
+    first.join()
+    second.join()
+  }
+  print(mutex_with_view(counter.get(), |value| value))
+}

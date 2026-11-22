@@ -1,0 +1,280 @@
+// dataproc: a small data-processing tool that reads CSV or JSON (line-delimited),
+// applies simple transformations, and writes the result.
+//
+//   dataproc csv <file>             parse CSV and print row count + first 3 rows
+//   dataproc csv-sum <col> <file>   sum a numeric column (0-indexed) of a CSV file
+//   dataproc csv-filter <col> <val> <file>  keep rows where column equals value
+//   dataproc json <file>            parse line-delimited JSON objects; print field counts
+//   dataproc pivot <key> <file>     group CSV rows by the value of a named column
+//
+// All subcommands read from stdin if <file> is "-".
+// Exit status: 0 ok, 1 parse or I/O error, 2 usage error.
+import std.args
+import std.csv
+import std.fs
+import std.io
+
+// ───────────────────────── I/O helpers ─────────────────────────
+
+fn read_input(path: view String) -> Result<String, io.IoError> {
+  if path.eq("-") { return io.read_all() }
+  return fs.read_to_string(path)
+}
+
+fn die(code: Int, msg: view String) -> Int {
+  io.eprintln("dataproc: {msg}")
+  return code
+}
+
+// ───────────────────────── minimal JSON object scanner ──────────
+
+// Count top-level key-value pairs in a JSON object (flat, no nesting).
+fn json_field_count(line: view String) -> Int {
+  let trimmed = line.trim()
+  if trimmed.len() < 2 { return 0 }
+  if trimmed.byte(0) != '{'.to_int() { return 0 }
+  var count = 0
+  var in_string = false
+  var escaped = false
+  var depth = 0
+  var i = 0
+  while i < trimmed.len() {
+    let b = trimmed.byte(i)
+    if escaped { escaped = false }
+    else if in_string && b == '\\'.to_int() { escaped = true }
+    else if b == '"'.to_int() { in_string = !in_string }
+    else if !in_string {
+      if b == '{'.to_int() || b == '['.to_int() { depth = depth + 1 }
+      else if b == '}'.to_int() || b == ']'.to_int() { depth = depth - 1 }
+      else if b == ':'.to_int() && depth == 1 { count = count + 1 }
+    }
+    i = i + 1
+  }
+  return count
+}
+
+// Extract a plain string value for `key` from a flat JSON object line.
+fn json_get(line: view String, key: view String) -> Option<String> {
+  var needle = String.from("\"")
+  needle.push_str(key)
+  needle.push_str("\":\"")
+  let pos = line.find(needle)
+  if pos < 0 { return None }
+  let start = pos + needle.len()
+  var value = String.new()
+  var i = start
+  while i < line.len() {
+    let b = line.byte(i)
+    if b == '"'.to_int() { return Some(move value) }
+    value.push_byte(b)
+    i = i + 1
+  }
+  return None
+}
+
+// ───────────────────────── subcommands ─────────────────────────
+
+fn cmd_csv(path: view String) -> Int {
+  match read_input(path) {
+    Err(e) => { return die(1, e.message) }
+    Ok(data) => {
+      let rows = csv.parse(data)
+      print("rows: {rows.len()}")
+      let preview = rows.len().min(3)
+      for i in 0..preview {
+        var row_str = String.from("[")
+        for j in 0..rows.at(i).len() {
+          if j > 0 { row_str.push_str(", ") }
+          row_str.push_str(rows.at(i).at(j))
+        }
+        row_str.push_char(']')
+        print("  {row_str}")
+      }
+      return 0
+    }
+  }
+}
+
+fn cmd_csv_sum(col: Int, path: view String) -> Int {
+  match read_input(path) {
+    Err(e) => { return die(1, e.message) }
+    Ok(data) => {
+      let rows = csv.parse(data)
+      var total = 0
+      var bad = 0
+      var row_i = 0
+      // Skip a header row if first cell is not numeric.
+      var start_row = 0
+      if rows.len() > 0 && rows.at(0).len() > col {
+        var dummy = 0
+        if !rows.at(0).at(col).trim().parse_int(dummy) { start_row = 1 }
+      }
+      var i = start_row
+      while i < rows.len() {
+        if rows.at(i).len() > col {
+          let cell = rows.at(i).at(col).trim()
+          var n = 0
+          if cell.parse_int(n) {
+            total = total + n
+          } else {
+            bad = bad + 1
+          }
+        }
+        i = i + 1
+      }
+      print("sum: {total}")
+      if bad > 0 { print("skipped {bad} non-numeric cell(s)") }
+      return 0
+    }
+  }
+}
+
+fn cmd_csv_filter(col: Int, val: view String, path: view String) -> Int {
+  match read_input(path) {
+    Err(e) => { return die(1, e.message) }
+    Ok(data) => {
+      let rows = csv.parse(data)
+      var matched = 0
+      for row in rows {
+        if row.len() > col && row.at(col).eq(val) {
+          var row_str = String.new()
+          for j in 0..row.len() {
+            if j > 0 { row_str.push_char(',') }
+            row_str.push_str(row.at(j))
+          }
+          print(row_str)
+          matched = matched + 1
+        }
+      }
+      io.eprintln("{matched} row(s) matched")
+      return 0
+    }
+  }
+}
+
+fn cmd_json(path: view String) -> Int {
+  match read_input(path) {
+    Err(e) => { return die(1, e.message) }
+    Ok(data) => {
+      let lines = data.split("\n")
+      var objects = 0
+      var total_fields = 0
+      var errors = 0
+      for line in lines {
+        let trimmed = line.trim()
+        if trimmed.is_empty() { continue }
+        if trimmed.byte(0) == '{'.to_int() {
+          let count = json_field_count(trimmed)
+          if count > 0 || trimmed.eq("{{}}") {
+            objects = objects + 1
+            total_fields = total_fields + count
+          } else {
+            errors = errors + 1
+          }
+        } else {
+          errors = errors + 1
+        }
+      }
+      print("objects: {objects}")
+      print("total fields: {total_fields}")
+      if objects > 0 {
+        // Integer division for average
+        let avg = total_fields / objects
+        print("avg fields/object: {avg}")
+      }
+      if errors > 0 { print("unparseable lines: {errors}") }
+      return 0
+    }
+  }
+}
+
+fn cmd_pivot(key_col: Int, path: view String) -> Int {
+  match read_input(path) {
+    Err(e) => { return die(1, e.message) }
+    Ok(data) => {
+      let rows = csv.parse(data)
+      // Build a map of key -> count using parallel lists (Map<String,Int> would need Copy).
+      var keys = List<String>.new()
+      var counts = List<Int>.new()
+      var start_row = 0
+      // Skip header if present (first row's key column is non-numeric when others might be).
+      for row in rows {
+        if row.len() <= key_col { continue }
+        let key = String.from(row.at(key_col))
+        // Find or insert key.
+        var found = false
+        for ki in 0..keys.len() {
+          if keys.at(ki).eq(key) {
+            counts.set(ki, counts.get(ki) + 1)
+            found = true
+          }
+        }
+        if !found {
+          keys.push(move key)
+          counts.push(1)
+        }
+      }
+      print("groups: {keys.len()}")
+      for ki in 0..keys.len() {
+        print("  {keys.at(ki)}: {counts.at(ki)}")
+      }
+      return 0
+    }
+  }
+}
+
+// ───────────────────────── main ─────────────────────────────────
+
+fn run() -> Int {
+  let p = args.parse_process()
+  let sub = p.subcommand.clone()
+
+  if sub.eq("csv") {
+    if p.positionals.is_empty() { return die(2, "csv: expected <file>") }
+    return cmd_csv(p.positionals.at(0))
+  }
+
+  if sub.eq("csv-sum") {
+    if p.positionals.len() < 2 { return die(2, "csv-sum: expected <col> <file>") }
+    var col = 0
+    if !p.positionals.at(0).parse_int(col) || col < 0 {
+      return die(2, "csv-sum: column must be a non-negative integer")
+    }
+    return cmd_csv_sum(col, p.positionals.at(1))
+  }
+
+  if sub.eq("csv-filter") {
+    if p.positionals.len() < 3 { return die(2, "csv-filter: expected <col> <value> <file>") }
+    var col = 0
+    if !p.positionals.at(0).parse_int(col) || col < 0 {
+      return die(2, "csv-filter: column must be a non-negative integer")
+    }
+    return cmd_csv_filter(col, p.positionals.at(1), p.positionals.at(2))
+  }
+
+  if sub.eq("json") {
+    if p.positionals.is_empty() { return die(2, "json: expected <file>") }
+    return cmd_json(p.positionals.at(0))
+  }
+
+  if sub.eq("pivot") {
+    if p.positionals.len() < 2 { return die(2, "pivot: expected <col> <file>") }
+    var col = 0
+    if !p.positionals.at(0).parse_int(col) || col < 0 {
+      return die(2, "pivot: column must be a non-negative integer")
+    }
+    return cmd_pivot(col, p.positionals.at(1))
+  }
+
+  if sub.is_empty() || sub.eq("help") || sub.eq("--help") {
+    print("usage: dataproc <csv|csv-sum|csv-filter|json|pivot> [args...] <file>")
+    return 0
+  }
+
+  return die(2, "unknown subcommand: {sub}")
+}
+
+fn main() {
+  let code = run()
+  if code != 0 { io.exit(code) }
+}

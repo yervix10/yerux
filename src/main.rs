@@ -9,8 +9,8 @@ mod dropscc;
 mod elfdyn;
 mod fmt;
 mod inline;
-mod json;
 mod ir;
+mod json;
 mod layout;
 mod loopopt;
 mod lsp;
@@ -26,18 +26,35 @@ mod syntax;
 mod x64;
 
 use std::process::{exit, Command};
+use std::time::Instant;
 use std::{env, fs};
 use syntax::Parser;
+
+fn profile_stage(stage: &str, start: Instant) {
+    if env::var_os("YERUX_PROFILE").is_some() {
+        eprintln!(
+            "yerux profile: {stage}: {:.3} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+}
 
 fn checked_frontend(
     file: &str,
     mode: modules::Mode,
 ) -> Result<(syntax::Program, check::Sigs, modules::Loaded), Vec<String>> {
+    let start = Instant::now();
     let loaded = modules::load(file, mode)?;
-    let mut ps = Parser::new(loaded.toks.clone());
+    profile_stage("module load", start);
+    let start = Instant::now();
+    let mut loaded = loaded;
+    let mut ps = Parser::new(std::mem::take(&mut loaded.toks));
     let mut prog = ps.program().map_err(|d| vec![loaded.render(&d)])?;
+    profile_stage("parse", start);
+    let start = Instant::now();
     let sigs = check::check_program(&mut prog, &mut ps)
         .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
+    profile_stage("type and ownership check", start);
     Ok((prog, sigs, loaded))
 }
 
@@ -46,8 +63,10 @@ fn frontend(
     mode: modules::Mode,
 ) -> Result<(syntax::Program, check::Sigs), Vec<String>> {
     let (mut prog, sigs, loaded) = checked_frontend(file, mode)?;
+    let start = Instant::now();
     comptime::run(&mut prog)
         .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
+    profile_stage("compile-time evaluation", start);
     Ok((prog, sigs))
 }
 
@@ -66,11 +85,43 @@ fn tmp_path(ext: &str) -> std::path::PathBuf {
     env::temp_dir().join(format!("yerux_{}_{}.{}", std::process::id(), n, ext))
 }
 
+/// The C compiler used for the C backend: `$YERUX_CC`, else the first of cc, gcc, clang that runs
+/// (on Windows also MinGW's `x86_64-w64-mingw32-gcc`). MSVC's `cl` is not supported: the generated C uses
+/// POSIX threads and sockets, which MinGW-w64 and clang provide.
+fn find_c_compiler() -> Option<String> {
+    static CC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    CC.get_or_init(|| {
+        let works = |name: &str| {
+            Command::new(name)
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        if let Ok(cc) = env::var("YERUX_CC") {
+            if !cc.is_empty() {
+                return works(&cc).then_some(cc);
+            }
+        }
+        let mut names = vec!["cc", "gcc", "clang"];
+        if cfg!(windows) {
+            names.push("x86_64-w64-mingw32-gcc");
+        }
+        names.into_iter().find(|n| works(n)).map(|n| n.to_string())
+    })
+    .clone()
+}
+
+const NO_CC: &str = "no C compiler found (looked for $YERUX_CC, cc, gcc, clang). Install gcc/clang (on Windows: MinGW-w64 or LLVM), set YERUX_CC, or use the native backend: `yerux build prog.yx --native`";
+
 /// Compile generated C with the system C compiler.
 fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
+    let cc = find_c_compiler().ok_or_else(|| NO_CC.to_string())?;
     let cfile = tmp_path("c");
     fs::write(&cfile, c).map_err(|_| "could not write the temporary C file".to_string())?;
-    let mut cmd = Command::new("cc");
+    let mut cmd = Command::new(&cc);
     cmd.args([
         "-O2",
         "-w",
@@ -82,6 +133,9 @@ fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
     ])
     .arg(&cfile)
     .arg("-lm");
+    if let Ok(extra) = env::var("YERUX_CC_FLAGS") {
+        cmd.args(extra.split_whitespace());
+    }
     for lib in links {
         if lib.starts_with("lib") && lib.contains(".so") {
             cmd.arg(format!("-Wl,-l:{}", lib));
@@ -91,7 +145,7 @@ fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
     }
     let st = cmd
         .status()
-        .map_err(|_| "C compiler (cc) not found".to_string())?;
+        .map_err(|_| format!("C compiler ({}) could not be started", cc))?;
     let _ = fs::remove_file(&cfile);
     if st.success() {
         Ok(())
@@ -114,12 +168,16 @@ fn native_build(
         );
         exit(1);
     }
+    let start = Instant::now();
     let mut ir = ir::lower(prog).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         exit(1)
     });
+    profile_stage("IR lowering", start);
     if optimize {
+        let start = Instant::now();
         opt::run(&mut ir);
+        profile_stage("native optimization", start);
     }
     if !target.is_empty() && target != "linux" {
         if let Some(what) = ir::os_intrinsics_error(&ir) {
@@ -129,12 +187,15 @@ fn native_build(
     }
     // --target aarch64 selects the AArch64 Linux backend, --target windows the x86-64 Windows (PE32+)
     // one (default: x86-64 Linux)
+    let start = Instant::now();
     let exe = match target {
         "aarch64" => a64::compile(&ir, debug_alloc),
         "windows" => x64::compile_os(&ir, debug_alloc, x64::Os::Windows),
         _ => x64::compile(&ir, debug_alloc),
     };
+    profile_stage("native code generation", start);
     fs::write(out, &exe).expect("could not write the executable");
+    #[cfg(unix)]
     if target != "windows" {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(out, fs::Permissions::from_mode(0o755)).expect("chmod failed");
@@ -142,6 +203,7 @@ fn native_build(
 }
 
 const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+       yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
@@ -199,7 +261,13 @@ fn dump_ast(file: &str, parse: fn(&str) -> Result<String, syntax::Diag>) {
     match parse(&src) {
         Ok(ast) => println!("{}", ast),
         Err(d) => {
-            println!("Error:{}:{}:{}:{}", hex(d.msg.as_bytes()), d.pos.line, d.pos.col, d.pos.len);
+            println!(
+                "Error:{}:{}:{}:{}",
+                hex(d.msg.as_bytes()),
+                d.pos.line,
+                d.pos.col,
+                d.pos.len
+            );
             for note in d.notes {
                 println!("Note:{}", hex(note.as_bytes()));
             }
@@ -223,8 +291,123 @@ fn main() {
     }
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `yerux doctor`: what this installation can do. Returns the exit code (1 when nothing can build programs).
+fn doctor() -> i32 {
+    println!("yerux {}", VERSION);
+    match env::current_exe() {
+        Ok(p) => println!("  binary:      {}", p.display()),
+        Err(e) => println!("  binary:      unknown ({})", e),
+    }
+    println!("  std library: built in (the prelude and std.* modules are part of the binary; nothing to locate)");
+    let tool = |name: &str, arg: &str| -> Option<String> {
+        let o = Command::new(name).arg(arg).output().ok()?;
+        let text = String::from_utf8_lossy(if o.stdout.is_empty() {
+            &o.stderr
+        } else {
+            &o.stdout
+        })
+        .to_string();
+        Some(text.lines().next().unwrap_or("").to_string())
+    };
+    let cc = find_c_compiler().map(|name| {
+        let v = tool(&name, "--version").unwrap_or_default();
+        (name, v)
+    });
+    match &cc {
+        Some((n, v)) => println!("  C compiler:  ok  {} ({})", n, v),
+        None => println!("  C compiler:  MISSING  none of $YERUX_CC, cc, gcc, clang runs: the C backend needs one (install gcc/clang; on Windows MinGW-w64 or LLVM); the native backend works without it"),
+    }
+    println!(
+        "  native:      writes {} executables itself (no linker needed){}",
+        if cfg!(windows) {
+            "Windows PE"
+        } else {
+            "x86-64 Linux ELF"
+        },
+        if cfg!(target_arch = "x86_64") {
+            ""
+        } else {
+            "; this build is not x86-64, use the C backend"
+        }
+    );
+    println!("  platform:    {} / {}", env::consts::OS, env::consts::ARCH);
+    match tool("wine", "--version") {
+        Some(v) => println!("  wine:        found ({}), used to run Windows targets", v),
+        None => println!(
+            "  wine:        not found (optional: only for running --target windows output)"
+        ),
+    }
+    let dir = env::temp_dir();
+    let writable = fs::write(
+        dir.join(format!("yerux_doctor_{}", std::process::id())),
+        b"x",
+    )
+    .map(|_| {
+        let _ = fs::remove_file(dir.join(format!("yerux_doctor_{}", std::process::id())));
+    })
+    .is_ok();
+    println!(
+        "  temp dir:    {} ({})",
+        dir.display(),
+        if writable { "writable" } else { "NOT writable" }
+    );
+    // end-to-end check: compile and run a tiny program with each backend
+    let src = dir.join(format!("yerux_doctor_{}.yx", std::process::id()));
+    let _ = fs::write(&src, "fn main() {\n  print(6 * 7)\n}\n");
+    let exe = env::current_exe().ok();
+    let mut ok_any = false;
+    for (label, flag) in [("C backend", None), ("native backend", Some("--native"))] {
+        if label == "C backend" && cc.is_none() {
+            continue;
+        }
+        let out = dir.join(format!(
+            "yerux_doctor_{}_{}",
+            std::process::id(),
+            if flag.is_some() { "n" } else { "c" }
+        ));
+        let mut c = Command::new(exe.clone().unwrap_or_else(|| "yerux".into()));
+        c.arg("build").arg(&src).arg("-o").arg(&out);
+        if let Some(f) = flag {
+            c.arg(f);
+        }
+        let built = c.output().map(|o| o.status.success()).unwrap_or(false);
+        let ran = built
+            && Command::new(&out)
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "42")
+                .unwrap_or(false);
+        println!(
+            "  self-test:   {} {}",
+            label,
+            if ran {
+                "ok (compiled and ran a program)"
+            } else {
+                "FAILED"
+            }
+        );
+        ok_any |= ran;
+        let _ = fs::remove_file(&out);
+    }
+    let _ = fs::remove_file(&src);
+    if ok_any {
+        0
+    } else {
+        println!("  result:      no backend can build programs here");
+        1
+    }
+}
+
 fn real_main() {
     let args: Vec<String> = env::args().collect();
+    if args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V" | "version") {
+        println!("yerux {}", VERSION);
+        return;
+    }
+    if args.len() == 2 && args[1] == "doctor" {
+        exit(doctor());
+    }
     if args.len() == 3 {
         match args[1].as_str() {
             "tokens" | "tokens-positioned" => {
@@ -267,14 +450,20 @@ fn real_main() {
     if args.len() == 3 && args[1] == "new" {
         match project::new_project(&args[2]) {
             Ok(()) => println!("created project: {}", args[2]),
-            Err(e) => { eprintln!("{e}"); exit(1); }
+            Err(e) => {
+                eprintln!("{e}");
+                exit(1);
+            }
         }
         return;
     }
     if args.len() == 2 && matches!(args[1].as_str(), "build" | "run" | "test") {
         match project::run(&args[1]) {
             Ok(code) => exit(code),
-            Err(e) => { eprintln!("{e}"); exit(1); }
+            Err(e) => {
+                eprintln!("{e}");
+                exit(1);
+            }
         }
     }
     if args.len() >= 2 && args[1] == "test" {
@@ -299,12 +488,37 @@ fn real_main() {
     if args.iter().any(|a| a == "--check-ranges") {
         ir::CHECK_RANGES.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let target = args
+    let explicit_target = args
         .iter()
         .position(|a| a == "--target")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str())
         .unwrap_or("");
+    let want_native = debug_alloc || args.iter().any(|a| a == "--native");
+    // On a Windows host the native backend produces Windows executables, and without any C compiler the
+    // native backend is used instead of failing (`yerux doctor` explains what is missing).
+    let host_windows = cfg!(windows) && matches!(explicit_target, "" | "windows");
+    let auto_native = cmd != "c"
+        && cmd != "check"
+        && cmd != "ir"
+        && !want_native
+        && explicit_target.is_empty()
+        && find_c_compiler().is_none();
+    if auto_native {
+        eprintln!(
+            "note: no C compiler found, using the native backend ({})",
+            if cfg!(windows) {
+                "Windows .exe"
+            } else {
+                "x86-64 Linux"
+            }
+        );
+    }
+    let target = if explicit_target.is_empty() && (want_native || auto_native) && host_windows {
+        "windows"
+    } else {
+        explicit_target
+    };
     if !matches!(target, "" | "linux" | "aarch64" | "windows") {
         eprintln!(
             "unknown target: {} (expected linux, aarch64 or windows)",
@@ -313,9 +527,7 @@ fn real_main() {
         exit(2);
     }
     // Explicit cross targets select the corresponding native backend.
-    let native = debug_alloc
-        || matches!(target, "aarch64" | "windows")
-        || args.iter().any(|a| a == "--native");
+    let native = want_native || auto_native || matches!(target, "aarch64" | "windows");
     if cmd == "ir" {
         match ir::lower(&prog) {
             Ok(mut p) => {
@@ -331,16 +543,22 @@ fn real_main() {
         }
         return;
     }
+    let start = Instant::now();
     let c = if native {
         String::new()
     } else {
         cgen::generate(&prog, sigs)
     };
+    if !native {
+        profile_stage("C generation", start);
+    }
     let build = |out: &str| {
+        let start = Instant::now();
         if let Err(e) = c_compile(&c, out, &prog.links) {
             eprintln!("{}", e);
             exit(1);
         }
+        profile_stage("C compiler", start);
     };
     match cmd {
         "check" => println!("ok: no type or ownership errors"),
@@ -352,7 +570,7 @@ fn real_main() {
                 .and_then(|i| args.get(i + 1).cloned())
                 .unwrap_or_else(|| {
                     let stem = file.trim_end_matches(".yx");
-                    if target == "windows" {
+                    if target == "windows" || cfg!(windows) {
                         format!("{}.exe", stem)
                     } else {
                         stem.to_string()
@@ -366,7 +584,11 @@ fn real_main() {
             println!("built: {}", out);
         }
         "run" => {
-            let ext = if target == "windows" { "exe" } else { "bin" };
+            let ext = if target == "windows" || cfg!(windows) {
+                "exe"
+            } else {
+                "bin"
+            };
             let exe = tmp_path(ext).to_string_lossy().to_string();
             if native {
                 native_build(&prog, &exe, debug_alloc, !no_opt, target);
@@ -434,10 +656,21 @@ fn run_one_test(
         if optimize {
             opt::run(&mut ir);
         }
-        let bytes = x64::compile(&ir, false);
+        let bytes = x64::compile_os(
+            &ir,
+            false,
+            if cfg!(windows) {
+                x64::Os::Windows
+            } else {
+                x64::Os::Linux
+            },
+        );
         fs::write(&exe, &bytes).map_err(|e| vec![format!("error: {}", e)])?;
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&exe, fs::Permissions::from_mode(0o755));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&exe, fs::Permissions::from_mode(0o755));
+        }
     } else {
         c_compile(&cgen::generate(&prog, sigs), &exe, &prog.links)
             .map_err(|e| vec![format!("error: {}", e)])?;

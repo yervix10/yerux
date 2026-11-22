@@ -103,6 +103,146 @@ impl Atomic<Bool> {
     }
 }
 
+// Typed MPSC queue. Capacity 0 means unbounded. send/recv are synchronous
+// and spin while a bounded queue is full or an open queue is empty.
+struct ChannelState<T> {
+    queue: List<T>,
+    capacity: Int,
+    closed: Bool,
+    receiver_open: Bool,
+    sender_count: Int,
+}
+
+struct Sender<T> { state: Shared<Locked<ChannelState<T>>> }
+struct Receiver<T> { state: Shared<Locked<ChannelState<T>>> }
+
+fn __channel_monotonic_ns() -> Int {
+    let ts = __alloc(16)
+    let result = __syscall(228, 1, ts, 0, 0, 0, 0)
+    var ns = 0
+    if result == 0 { ns = __load64(ts) * 1000000000 + __load64(ts + 8) }
+    __free(ts)
+    return ns
+}
+
+fn __channel_try_send<T>(state: view Locked<ChannelState<T>>, value: T) -> (Int, Option<T>) {
+    let held = __lock_word(__box_address(state.mutex))
+    if state.locked_value().closed || !state.locked_value().receiver_open { return (-1, Some(move value)) }
+    if state.locked_value().capacity > 0 && state.locked_value().queue.len() >= state.locked_value().capacity {
+        return (0, Some(move value))
+    }
+    state.locked_value().queue.push(move value)
+    return (1, Option<T>.None)
+}
+
+fn __channel_try_recv<T>(state: view Locked<ChannelState<T>>) -> (Bool, Option<T>) {
+    let held = __lock_word(__box_address(state.mutex))
+    if state.locked_value().queue.len() > 0 {
+        let item = state.locked_value().queue.remove(0)
+        return (state.locked_value().closed, Some(move item))
+    }
+    return (state.locked_value().closed, Option<T>.None)
+}
+
+impl<T> Sender<T> {
+    fn bounded(capacity: Int) -> (Sender<T>, Receiver<T>) {
+        if capacity < 0 { panic("channel capacity cannot be negative") }
+        let state = Shared.new(Locked.new(ChannelState<T> {
+            queue: List<T>.new(), capacity: capacity, closed: false, receiver_open: true, sender_count: 1,
+        }))
+        return (Sender<T> { state: state.clone() }, Receiver<T> { state: move state })
+    }
+
+    fn unbounded() -> (Sender<T>, Receiver<T>) {
+        let state = Shared.new(Locked.new(ChannelState<T> {
+            queue: List<T>.new(), capacity: 0, closed: false, receiver_open: true, sender_count: 1,
+        }))
+        return (Sender<T> { state: state.clone() }, Receiver<T> { state: move state })
+    }
+
+    fn clone(view self) -> Sender<T> {
+        self.state.get().with(|state| state.sender_count = state.sender_count + 1)
+        return Sender<T> { state: self.state.clone() }
+    }
+
+    fn send(view self, value: T) -> Bool {
+        var pending = move value
+        while true {
+            let (status, item) = __channel_try_send(self.state.get(), move pending)
+            if status > 0 { return true }
+            if status < 0 { return false }
+            pending = item.unwrap()
+        }
+        return false
+    }
+
+    fn close(view self) {
+        self.state.get().with(|state| state.closed = true)
+    }
+}
+
+impl<T> Drop for Sender<T> {
+    fn drop(mut self) {
+        self.state.get().with(|state| {
+            state.sender_count = state.sender_count - 1
+            if state.sender_count == 0 { state.closed = true }
+        })
+    }
+}
+
+impl<T> Receiver<T> {
+    fn recv(view self) -> Option<T> {
+        while true {
+            let (closed, item) = __channel_try_recv(self.state.get())
+            if item.is_some() || closed { return item }
+        }
+        return None
+    }
+
+    fn close(view self) {
+        self.state.get().with(|state| {
+            state.receiver_open = false
+            state.closed = true
+        })
+    }
+
+    fn recv_timeout(view self, timeout_ms: Int) -> Option<T> {
+        if timeout_ms < 0 { panic("channel timeout cannot be negative") }
+        let deadline = __channel_monotonic_ns() + timeout_ms * 1000000
+        while true {
+            let (closed, item) = __channel_try_recv(self.state.get())
+            if item.is_some() || closed { return item }
+            if __channel_monotonic_ns() >= deadline { return None }
+        }
+        return None
+    }
+}
+
+impl<T> Drop for Receiver<T> {
+    fn drop(mut self) {
+        self.state.get().with(|state| {
+            state.receiver_open = false
+            state.closed = true
+        })
+    }
+}
+
+// Selects the first available item from either receiver, polling left first.
+// None means the deadline elapsed or both channels are closed and drained.
+fn select2<T>(left: view Receiver<T>, right: view Receiver<T>, timeout_ms: Int) -> Option<(Int, T)> {
+    if timeout_ms < 0 { panic("channel timeout cannot be negative") }
+    let deadline = __channel_monotonic_ns() + timeout_ms * 1000000
+    while true {
+        let (left_closed, left_item) = __channel_try_recv(left.state.get())
+        if left_item.is_some() { return Some((0, left_item.unwrap())) }
+        let (right_closed, right_item) = __channel_try_recv(right.state.get())
+        if right_item.is_some() { return Some((1, right_item.unwrap())) }
+        if left_closed && right_closed { return None }
+        if __channel_monotonic_ns() >= deadline { return None }
+    }
+    return None
+}
+
 struct SharedCell<T> {
     count: Int,
     value: T,
@@ -175,6 +315,96 @@ fn __locked_with_view<T, R>(lock: view Locked<T>, body: view fn(view T) -> R) ->
     return body(lock.locked_value())
 }
 
+// Fast typed mutation for a protected list. Avoids creating a capturing closure
+// for every result written by thread_pool_map.
+impl<T> Locked<List<T>> {
+    fn set_index(view self, index: Int, value: T) {
+        let address = __box_address(self.mutex)
+        let held = __lock_word(address)
+        self.locked_value().set(index, move value)
+    }
+}
+
+// Named mutex facade for code that prefers the standard synchronization term.
+struct Mutex<T> { inner: Locked<T> }
+
+impl<T> Mutex<T> {
+    fn new(value: T) -> Mutex<T> {
+        return Mutex<T> { inner: Locked.new(move value) }
+    }
+}
+
+fn mutex_with<T, R>(lock: view Mutex<T>, body: view fn(mut T) -> R) -> R {
+    return lock.inner.with(body)
+}
+
+fn mutex_update<T>(lock: view Mutex<T>, body: view fn(mut T)) {
+    lock.inner.with(|value| {
+        body(value)
+        return 0
+    })
+}
+
+fn mutex_with_view<T, R>(lock: view Mutex<T>, body: view fn(view T) -> R) -> R {
+    return lock.inner.with_view(body)
+}
+
+// Reader/writer lock: readers increment a shared count after checking the
+// writer flag, then recheck it to close the writer/read race. Writers claim
+// the flag and wait for the count to reach zero. The lock is spin-based.
+struct RwLock<T> {
+    readers: Box<Int>,
+    writer: Box<Int>,
+    value: Locked<T>,
+}
+
+impl<T> RwLock<T> {
+    fn new(value: T) -> RwLock<T> {
+        __check_shared_content(value)
+        return RwLock<T> {
+            readers: Box.new(0),
+            writer: Box.new(0),
+            value: Locked.new(move value),
+        }
+    }
+}
+
+fn __rw_read_lock<T>(lock: view RwLock<T>) -> Int {
+    let readers = __box_address(lock.readers)
+    let writer = __box_address(lock.writer)
+    while true {
+        while __atomic_load(writer) != 0 {}
+        __atomic_fetch_add(readers, 1)
+        if __atomic_load(writer) == 0 {
+            return readers
+        }
+        __atomic_fetch_add(readers, -1)
+    }
+    return readers
+}
+
+fn __rw_write_lock<T>(lock: view RwLock<T>) -> Int {
+    let writer = __box_address(lock.writer)
+    let readers = __box_address(lock.readers)
+    while __atomic_cmpxchg(writer, 0, 1) != 0 {}
+    while __atomic_load(readers) != 0 {}
+    return writer
+}
+
+fn rwlock_read<T, R>(lock: view RwLock<T>, body: view fn(view T) -> R) -> R {
+    let held = __rw_read_lock(lock)
+    let result = body(lock.value.locked_value())
+    __atomic_fetch_add(held, -1)
+    return result
+}
+
+fn rwlock_write<T, R>(lock: view RwLock<T>, body: view fn(mut T) -> R) -> R {
+    let held = __rw_write_lock(lock)
+    let result = body(lock.value.locked_value())
+    __atomic_store(held, 0)
+    return result
+}
+
 fn __parallel_lane(first: Int, end: Int, inclusive: Bool, body: Int) {
     var index = first
     while index < end || (inclusive && index == end) {
@@ -201,6 +431,112 @@ fn __parallel_range(first: Int, end: Int, inclusive: Bool, body: view fn(Int)) {
 
 fn __parallel_list<T>(items: view List<T>, body: view fn(view T)) {
     __parallel_range(0, items.len(), false, |index| body(items.at(index)))
+}
+
+// A small reusable OS-worker pool. Workers wait between parallel_for calls;
+// close must be called to stop and join them.
+struct ThreadPoolState {
+    generation: Int,
+    remaining: Int,
+    next: Int,
+    end: Int,
+    chunk: Int,
+    body: Int,
+    closed: Bool,
+}
+
+struct ThreadPool {
+    state: Shared<Locked<ThreadPoolState>>,
+    threads: List<Int>,
+    worker_count: Int,
+}
+
+fn __thread_pool_worker(state: Shared<Locked<ThreadPoolState>>) -> Int {
+    var seen = 0
+    while true {
+        let (closed, generation) = state.get().with_view(|s| (s.closed, s.generation))
+        if closed { return 0 }
+        if generation == seen { continue }
+        seen = generation
+        while true {
+            let (first, limit, body) = state.get().with(|s| {
+                if s.next >= s.end { return (-1, -1, s.body) }
+                let first = s.next
+                var limit = first + s.chunk
+                if limit > s.end { limit = s.end }
+                s.next = limit
+                return (first, limit, s.body)
+            })
+            if first < 0 { break }
+            for index in first..limit { __parallel_call(body, index) }
+        }
+        state.get().with(|s| {
+            s.remaining = s.remaining - 1
+            return 0
+        })
+    }
+    return 0
+}
+
+impl ThreadPool {
+    fn parallel_for(view self, first: Int, end: Int, body: view fn(Int)) {
+        if first >= end { return }
+        let address = __parallel_address(body)
+        self.state.get().with(|s| {
+            if s.closed { panic("thread pool is closed") }
+            s.next = first
+            s.end = end
+            let chunk = (end - first) / (self.worker_count * 8)
+            s.chunk = chunk
+            if s.chunk < 1 { s.chunk = 1 }
+            s.body = address
+            s.remaining = self.worker_count
+            s.generation = s.generation + 1
+            return 0
+        })
+        while self.state.get().with_view(|s| s.remaining > 0) {}
+    }
+
+    fn close(mut self) {
+        self.state.get().with(|s| {
+            s.closed = true
+            return 0
+        })
+        while self.threads.len() > 0 {
+            __thread_wait(self.threads.pop())
+        }
+    }
+}
+
+fn thread_pool_new(count: Int) -> ThreadPool {
+    var n = count
+    if n < 1 { n = 1 }
+    let state = Shared.new(Locked.new(ThreadPoolState {
+        generation: 0, remaining: 0, next: 0, end: 0, chunk: 1, body: 0, closed: false,
+    }))
+    var threads = List<Int>.new()
+    for _ in 0..n {
+        let worker_state = state.clone()
+        threads.push(__thread_start(move || __thread_pool_worker(worker_state.clone())))
+    }
+    return ThreadPool { state: move state, threads: move threads, worker_count: n }
+}
+
+// Run indexed tasks over a persistent pool and collect owned results in input
+// order. Returning is a join point: all callbacks have finished.
+fn thread_pool_map<T>(pool: view ThreadPool, first: Int, end: Int, body: view fn(Int) -> T) -> List<T> {
+    var slots = List<Option<T>>.new()
+    for _ in first..end { slots.push(Option<T>.None) }
+    let results = Shared.new(Locked.new(move slots))
+    pool.parallel_for(first, end, |index| {
+        results.get().set_index(index - first, Some(body(index)))
+    })
+    return results.get().with(|items| {
+        var output = List<T>.new()
+        while items.len() > 0 { output.push(items.pop().unwrap()) }
+        output.reverse()
+        return output
+    })
 }
 
 

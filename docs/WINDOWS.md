@@ -79,3 +79,25 @@ Not verified / known gaps:
 * Only the console subsystem; no GUI entry, no command line arguments, no environment, no files (same as Linux).
 * The code is the unoptimised "every vreg in a stack slot" output (see BACKEND.md); no Windows-specific speed work.
 * `aarch64` Windows and 32-bit x86 are out of scope.
+
+
+## Running the compiler on Windows (host support)
+
+The compiler itself is portable Rust with no OS-specific code besides POSIX file permissions, now behind
+`#[cfg(unix)]`. **Verified:** `cargo check --tests --target x86_64-pc-windows-gnu` passes (CI job
+`windows-check`). **Not verified on real Windows** (none was available): the behaviour below is implemented
+and covered by the `windows` CI job (`.github/workflows/ci.yml`, `windows-latest`, Git Bash), which will be the
+first real run.
+
+| Topic | Behaviour |
+|---|---|
+| Native backend on a Windows host | `yerux build prog.yx --native` (and `run`) produce a Windows PE `.exe` (target defaults to `windows` when the host is Windows); the default output name gets `.exe` |
+| C compiler | `$YERUX_CC`, else the first of `cc`, `gcc`, `clang`, `x86_64-w64-mingw32-gcc` that runs. Extra flags: `$YERUX_CC_FLAGS`. MSVC `cl` is not supported (the generated C uses POSIX threads/sockets; MinGW-w64 and clang provide them) |
+| No C compiler | build/run fall back to the native backend with a note; `check`, `c`, `ir`, `fmt`, `lsp` need none |
+| `yerux doctor` | reports the compiler found (or MISSING and why), wine, temp dir, platform, and compiles + runs a program with each backend; exit 1 only if no backend works |
+| Paths and command lines | temp files use `std::env::temp_dir()`; file arguments may contain spaces and either slash; CRLF and BOM sources are accepted (checked by `tests/win_smoke.sh`) |
+| Limits | the native Windows backend has the limits listed above (no extern C, OS intrinsics such as files, processes and sockets are rejected with `not supported on the windows target yet`); programs using them need the C backend (MinGW) or Linux |
+
+`tests/win_smoke.sh` is host-agnostic (passes on Linux too: 33 programs): `--version`, `doctor`, `run` on a CRLF
+source in a directory with spaces, the default output name, and every example plus `tests/fast.list` through
+the native backend, compared with the goldens. `--all` covers every program with a golden.

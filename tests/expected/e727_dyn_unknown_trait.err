@@ -3,5 +3,6 @@ error: unknown trait 'Handler'
   |
 1 | fn invoke(handler: view dyn Handler) {}
   |                         ^^^
+  = help: check the trait name and declare or import that trait before using it
 
 1 error(s). Nothing was generated.

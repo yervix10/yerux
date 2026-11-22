@@ -75,7 +75,7 @@ impl<'a> Checker<'a> {
                 };
                 self.sigs.insert(name.to_string(), sig.clone());
                 self.queue
-                    .push((f, "the built-in numeric library".to_string()));
+                    .push((f, "the built-in numeric library".to_string(), self.inst_origin));
                 Some(sig)
             }
             Err(d) => {

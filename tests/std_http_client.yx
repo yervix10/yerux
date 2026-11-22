@@ -1,0 +1,42 @@
+import std.http
+import std.net
+import std.io
+
+fn serve(listener: net.TcpListener) -> Result<Int, io.IoError> {
+  var passed = 0
+  for i in 0..2 {
+    let peer = net.accept(listener)?
+    let req = net.read(peer, 8192)?
+    if i == 0 && req.starts_with("GET /health HTTP/1.1") { passed = passed + 1 }
+    if i == 1 && req.starts_with("POST /items HTTP/1.1") && req.contains("application/json") && req.contains("n\":1") { passed = passed + 1 }
+    let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nX-Test: yes\r\n\r\nok"
+    let sent = net.write(peer, response)?
+    let closed = net.close_stream(move peer)?
+  }
+  let closed = net.close_listener(move listener)?
+  return Ok(passed)
+}
+
+fn exercise() -> Result<Int, io.IoError> {
+  let a = net.address("127.0.0.1", 43996)?
+  let listener = net.listen(a)?
+  scope {
+          let worker = spawn move || serve(move listener)
+          var hs = List<(String, String)>.new()
+          hs.push((String.from("X-Client"), String.from("test")))
+          let get_result = http.get(a, "127.0.0.1:43996", "/health", hs)
+          let gr = move get_result?
+  assert(gr.status == 200); assert(gr.body.eq("ok")); assert(gr.headers.len() == 3)
+          let post_result = http.post_json(a, "127.0.0.1:43996", "/items", hs, "{{\"n\":1}}")
+          let pr = move post_result?
+  assert(pr.status == 200); assert(pr.body.eq("ok"))
+          var n = 0
+          match worker.join() { Ok(v) => { match move v { Ok(value) => { n = value }, Err(_) => { assert(false) } } }, Err(_) => { assert(false) } }
+  assert(n == 2)
+  }
+  return Ok(0)
+}
+
+fn main() {
+  match exercise() { Ok(_) => {}, Err(e) => { print(e.message); assert(false) } }
+}

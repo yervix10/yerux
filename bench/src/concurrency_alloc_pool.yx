@@ -1,0 +1,19 @@
+fn work(item: Int) -> Int {
+  var total = item
+  for _ in 0..100 {
+    let value = String.from("allocator contention workload")
+    total = total + value.len()
+  }
+  return total
+}
+
+fn main() {
+  var pool = thread_pool_new(4)
+  var total = 0
+  for _ in 0..4 {
+    let values = thread_pool_map(pool, 0, 5000, |i| work(i))
+    for value in values { total = total + value }
+  }
+  pool.close()
+  print(total)
+}

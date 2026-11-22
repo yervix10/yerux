@@ -8,10 +8,12 @@ The x86-64 Linux backend has internal thread start and wait operations. Each
 worker gets a 2 MiB stack with a guard page, a TLS base, and a task record.
 Start transfers the closure environment to the worker, which drops it after
 the call. Wait uses the kernel's clear-child-tid futex notification, reads the
-result, and unmaps the worker stack and task record. The allocator serializes
-small-block arena and free-list operations with a futex-backed mutex in
-programs that start workers. Allocation counters use atomic
-increments. The C oracle uses pthreads and C11 atomics.
+result, and unmaps the worker stack and task record. Small blocks use a
+one-entry-per-size-class cache in each thread's TLS; cache hits avoid the
+global allocator lock. Cache misses and spills use the shared arena/free lists
+under a futex-backed mutex. A worker returns its cache to the shared lists
+under one lock when it exits. Allocation counters use atomic increments. The
+C oracle uses pthreads and C11 atomics.
 
 The reserved runtime intrinsics are `__thread_start(fn() -> Int) -> Int` and
 `__thread_wait(Int) -> Int`. The returned integer is an opaque handle that the
@@ -59,6 +61,114 @@ up to four interleaved lanes with OS workers joined before the loop returns.
 Each iteration can read ordinary data and mutate shared state through
 `Atomic` or `Locked`. Work stealing, pooled workers, explicit steps and
 disjoint mutable slicing remain planned.
+
+The prelude also exposes `Mutex<T>` as a named facade over `Locked<T>`.
+`mutex_update(lock, f)` runs a mutating callback; `mutex_with(lock, f)` and
+`mutex_with_view(lock, f)` can return owned callback results. These use the
+same exclusive futex mutex and scoped-borrow restrictions as `Locked`.
+
+`RwLock<T>` offers `rwlock_read` and `rwlock_write` scoped callback APIs.
+Readers increment a shared count, so multiple readers can proceed together;
+writers claim an exclusive flag and wait for active readers. Acquisition is
+spin-based and does not guarantee fairness. A panic inside a callback can
+leave the lock held; recoverable panic-safe release is future work.
+The prelude atomics remain `Atomic<Int>` and `Atomic<Bool>` with sequentially
+consistent operations. `Sender<T>.bounded(capacity)` and
+`Sender<T>.unbounded()` create typed MPSC endpoints. `send`, `recv` and `close`
+are available. Bounded sends and empty receives spin while they wait; queues
+share one exclusive lock, and removing from the queue front is linear in queue
+length. Dropping the final sender closes the channel after queued values are
+drained. Dropping the receiver makes later sends return `false`.
+`recv_timeout(ms)` returns `None` on timeout or when the closed channel is
+drained. `select2(left, right, timeout_ms)` polls two receivers with the same
+element type and returns the chosen index and value. `thread_pool_new(n)` starts `n` persistent
+workers; `parallel_for` dispatches ranges across them, and `close()` stops and
+joins all workers. Pool shutdown must be explicit. The `scope`/`spawn` path and
+each `parallel for` still create their own workers.
+`scope` and `spawn` provide structured worker lifetimes, and each
+`parallel for` creates and joins its own workers rather than reusing a pool.
+The actor/channel examples below describe APIs beyond this release.
+
+## Current APIs and runnable examples
+
+The examples in `examples/` and fixtures in `tests/` use the implemented
+prelude APIs. Run them with `tests/run_all.sh --fast` (or
+`tests/run_all.sh concurrency_` for the focused concurrency fixtures).
+
+### Channels
+
+`Sender<T>.bounded(capacity)` and `Sender<T>.unbounded()` return a sender and
+single receiver. `send(value)` returns `Bool`; `recv()` returns `Option<T>`.
+The sender may be cloned for multiple producers. Call `close()` on a sender to
+stop new sends, or let the final sender drop. The receiver drains queued values
+and then gets `None`. Closing or dropping the receiver makes later sends return
+`false`. `recv_timeout(ms)` returns `None` if it times out or the closed channel
+is drained. `select2(left, right, timeout_ms)` waits on two receivers with the
+same item type and returns `(0, value)` or `(1, value)`; it polls left first if
+both have queued items.
+`tests/concurrency_channel.yx` and `examples/concurrency_channels.yx` show
+bounded back-pressure, unbounded transfer, and draining after close. Both
+`send` on a full bounded queue and `recv` on an empty open queue spin until
+progress is possible. Queue removal from the front is linear in queue length.
+
+```yerux
+let (tx, rx) = Sender<Int>.bounded(2)
+tx.send(20)
+tx.send(22)
+tx.close()
+print(rx.recv().unwrap() + rx.recv().unwrap())
+print(rx.recv().is_none())
+```
+
+### Locks and atomics
+
+`Mutex<T>` is a named facade over `Locked<T>`. Use `mutex_update` for a
+mutation and `mutex_with_view`/`mutex_with` when the callback returns an owned
+result. The callback keeps the lock held, so do not block or wait for another
+worker inside it. `RwLock<T>` exposes `rwlock_read` and `rwlock_write`; several
+read callbacks may overlap, while a write callback is exclusive. Acquisition
+spins and does not promise writer fairness. A panic in an RwLock callback can
+leave it held. `Atomic<Int>` and `Atomic<Bool>` expose sequentially consistent
+load/store and compare-and-swap operations (integer atomics also provide
+`add`).
+
+Runnable examples: `tests/concurrency_mutex.yx` and
+`tests/concurrency_rwlock.yx`. Atomic operations are also used by the thread
+pool and channel implementations. For a standalone counter, wrap the atomic
+in `Shared` before moving clones into workers:
+
+```yerux
+let counter = Shared.new(Atomic<Int>.new(0))
+scope {
+  let a = counter.clone()
+  let worker = spawn move { a.get().add(1) }
+  worker.join()
+}
+print(counter.get().load())
+```
+
+### Persistent thread pool
+
+`thread_pool_new(n)` creates `n` persistent workers;
+`pool.parallel_for(start, end, callback)` distributes integer indices and
+waits for the submitted range to finish. Call `pool.close()` to stop and join
+the workers. Shutdown is explicit. See `examples/thread_pool.yx` and
+`tests/concurrency_thread_pool.yx`.
+
+`thread_pool_map(pool, start, end, callback)` runs the same indexed task shape
+and returns a `List<T>` of owned results in index order. It waits for every
+callback before returning, so it is a join point. For a single result-bearing
+task, `spawn move { ... }` returns `JoinHandle<T>` and `join()` yields
+`Result<T, ThreadPanic>`. A `scope { ... }` joins any handle not explicitly
+joined before the block exits.
+
+```yerux
+let pool = thread_pool_new(4)
+pool.parallel_for(0, 100, |i| { print(i) })
+pool.close()
+```
+
+The sample prints from concurrent workers, so line order is unspecified.
 
 The sections below retain the broader design. The implementation status above
 and SPEC.md define the available syntax and behavior where those differ.
@@ -151,7 +261,7 @@ print(counter.with(n => n))
 ```
 - `Locked<T>` pairs a mutex with an owned `T`. The *only* access is the scoped method `l.with(f)`, where `f` is a **second-class closure that receives the content as a parameter** (`view T` or `mut T`). The lock is released when `f` returns. Because borrows are second-class, the content reference cannot leak out of `f`, so no guard objects, no `MutexGuard<'a>`, no forgetting to unlock, no lock held across `.await`-like points by accident.
 - `with` returns whatever `f` returns (it must be an owned value: `Int`, `String`, a moved value). Returning the borrowed parameter is already an error by the existing "cannot return a borrow" rule.
-- `l.with_view(f)` = shared lock for readers (reader-writer lock); `l.with(f)` = exclusive. Fairness: writers are not starved (queue ordered by arrival, readers batched).
+- `l.with_view(f)` currently also takes the exclusive lock. A reader-writer lock and fairness guarantee are future work.
 - Inside `f` the closure may not call `with` on the same `Locked` (self-deadlock; detected statically in the simple case, see section 11) and may not `spawn`/`join`/block on a channel (error E-C6, "do not wait while holding a lock").
 - `Locked.take(move self) -> T` consumes the lock when you hold the only handle (after the scope).
 - Lock poisoning does not exist: if a task panics while holding a lock the process ends (exit 101). Panics are not recoverable, so no state can be observed half-updated.
@@ -174,7 +284,7 @@ scope {
 - `Sender<T>` and `Receiver<T>` are owned, non-Copy values; `send(move x)` transfers ownership of `x` across threads (hence `T` must be thread-safe, section 6). `Sender` is `clone()`-able (multi-producer); `Receiver` is single consumer unless wrapped (`rx.share()` gives a multi-consumer handle).
 - `recv() -> Option<T>`: `None` when closed and drained. `try_recv`, `recv_timeout(ms)`. `send` returns `Result<(), Closed<T>>` giving the value back when the receiver is gone.
 - Bounded by default to give back-pressure. Unbounded: `Channel<T>.unbounded()` (explicit, because it hides memory growth).
-- Implemented in the library with `Locked<Queue<T>>` + futex-backed condition (section 12), not in the compiler.
+- Planned for the library on top of `Locked<Queue<T>>` + a futex-backed condition (section 12); it is not implemented yet.
 
 ### 5.5 Moving values across threads: what is allowed
 

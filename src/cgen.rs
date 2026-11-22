@@ -103,6 +103,7 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
         .types
         .user_drop
         .iter()
+        .filter(|(s, _)| !g.types.has_param(Ty::Struct(**s)))
         .map(|(s, f)| (*s, f.clone()))
         .collect();
     user_drops.sort();
