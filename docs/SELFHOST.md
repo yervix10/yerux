@@ -222,7 +222,7 @@ as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
 2026-11-22 run matched **395 of 418 candidates (94.5%)**, with 100 runtime
-panics reproduced exactly, 31 candidates outside the supported subset, one
+panics reproduced exactly, 22 candidates outside the supported subset, one
 expected type rejection and zero mismatches. (82.1% on 2026-11-21 before the
 codegen/front-end work of that day; the history is in `git log selfhost/`.)
 
