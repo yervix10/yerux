@@ -1,0 +1,2 @@
+panic: assertion failed
+  at tests/assert_fail.yx:4:3

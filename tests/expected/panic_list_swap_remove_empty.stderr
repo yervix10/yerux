@@ -1,1 +1,2 @@
 panic: List.swap_remove index out of range
+  at tests/panic_list_swap_remove_empty.yx:6:9

@@ -1,0 +1,2 @@
+panic: integer overflow in multiplication
+  at tests/range_mul_boundary.yx:8:11

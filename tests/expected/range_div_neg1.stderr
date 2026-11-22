@@ -1,0 +1,2 @@
+panic: integer overflow in division
+  at tests/range_div_neg1.yx:7:21

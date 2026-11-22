@@ -1,1 +1,2 @@
 panic: chunk size must be positive
+  at tests/slice_chunks_zero.yx:7:12

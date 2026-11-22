@@ -1,0 +1,5 @@
+panic: division by zero
+  at tests/panic_trace/lib_mod.yx:2:10
+stack backtrace:
+   0: lib_mod__halve
+   1: main

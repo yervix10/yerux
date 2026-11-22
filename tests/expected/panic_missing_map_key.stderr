@@ -1,1 +1,2 @@
 panic: Map.get key not found
+  at tests/panic_missing_map_key.yx:3:11

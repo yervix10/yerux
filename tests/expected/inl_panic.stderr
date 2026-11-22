@@ -1,0 +1,2 @@
+panic: integer overflow in multiplication
+  at tests/inl_panic.yx:3:45

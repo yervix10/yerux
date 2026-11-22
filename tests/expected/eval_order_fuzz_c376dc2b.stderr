@@ -1,0 +1,2 @@
+panic: integer overflow in addition
+  at tests/eval_order_fuzz_c376dc2b.yx:6:38

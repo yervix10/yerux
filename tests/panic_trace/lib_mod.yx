@@ -1,0 +1,3 @@
+pub fn halve(n: Int) -> Int {
+  return 100 / n
+}

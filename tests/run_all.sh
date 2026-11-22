@@ -127,6 +127,7 @@ AUX=(
   "run_args|bash tests/run_args.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
+  "panic_trace|bash tests/panic_trace.sh"
 )
 FAST_AUX=" fuzz_compile mutate_compile runtime_hostile parser_depth win_smoke dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
 aux=()

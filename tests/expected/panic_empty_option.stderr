@@ -1,1 +1,2 @@
 panic: called `Option.unwrap()` on a `None` value
+  at tests/panic_empty_option.yx:3:11

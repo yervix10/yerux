@@ -1,0 +1,6 @@
+panic: called `Option.unwrap()` on a `None` value
+  at tests/panic_trace/unwrap.yx:5:10
+stack backtrace:
+   0: Y_Option__Int__unwrap
+   1: pick
+   2: main

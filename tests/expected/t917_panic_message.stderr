@@ -1,1 +1,2 @@
 panic: negative input: -3
+  at tests/t917_panic_message.yx:3:14

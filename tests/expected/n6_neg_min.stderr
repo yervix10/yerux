@@ -1,0 +1,2 @@
+panic: integer overflow in negation
+  at tests/n6_neg_min.yx:9:9

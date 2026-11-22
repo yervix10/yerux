@@ -1,1 +1,2 @@
 panic: index out of range
+  at tests/panic_list_swap_oob.yx:8:3

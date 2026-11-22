@@ -1,0 +1,2 @@
+panic: List.remove index out of range
+  at tests/coll_panic_remove.yx:6:11

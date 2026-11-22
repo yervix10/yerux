@@ -1,0 +1,13 @@
+// A panic inside the library (`Option.unwrap`) is reported where the program called it.
+fn pick(table: view List<Int>, i: Int) -> Int {
+  var found: Option<Int> = None
+  if i < table.len() { found = Option.Some(table[i]) }
+  return found.unwrap()
+}
+
+fn main() {
+  var table = List.new()
+  table.push(7)
+  print(pick(table, 0))
+  print(pick(table, 3))
+}

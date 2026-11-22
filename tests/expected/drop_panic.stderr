@@ -1,1 +1,2 @@
 panic: destructor
+  at tests/drop_panic.yx:5:5

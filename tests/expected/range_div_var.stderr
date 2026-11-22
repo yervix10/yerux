@@ -1,0 +1,2 @@
+panic: division by zero
+  at tests/range_div_var.yx:5:10

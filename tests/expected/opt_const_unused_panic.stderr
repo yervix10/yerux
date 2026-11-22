@@ -1,0 +1,2 @@
+panic: modulo by zero
+  at tests/opt_const_unused_panic.yx:3:16

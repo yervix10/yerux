@@ -1,1 +1,2 @@
 panic: modulo by zero
+  at tests/t_modself_native_opt.yx:2:12

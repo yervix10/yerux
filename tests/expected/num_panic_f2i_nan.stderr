@@ -1,0 +1,2 @@
+panic: float is NaN or out of range for the integer type
+  at tests/num_panic_f2i_nan.yx:3:12

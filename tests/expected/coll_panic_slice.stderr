@@ -1,0 +1,2 @@
+panic: String.slice end is not a character boundary
+  at tests/coll_panic_slice.yx:4:9

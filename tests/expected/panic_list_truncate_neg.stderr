@@ -1,1 +1,2 @@
 panic: List.truncate length is negative
+  at tests/panic_list_truncate_neg.yx:10:3

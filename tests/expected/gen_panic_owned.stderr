@@ -1,0 +1,2 @@
+panic: pop from an empty list
+  at tests/gen_panic_owned.yx:3:42

@@ -1,0 +1,2 @@
+panic: index out of range
+  at tests/n5_string_index.yx:4:9

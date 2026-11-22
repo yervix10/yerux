@@ -1,0 +1,19 @@
+// An out-of-range index three calls deep: the panic names the .yx position and (with YERUX_BACKTRACE=1) the stack.
+fn third(xs: view List<Int>, i: Int) -> Int {
+  return xs[i] + 1
+}
+
+fn second(xs: view List<Int>, i: Int) -> Int {
+  return third(xs, i + 1) * 2
+}
+
+fn first(xs: view List<Int>) -> Int {
+  return second(xs, 5)
+}
+
+fn main() {
+  var xs = List.new()
+  xs.push(10)
+  xs.push(20)
+  print(first(xs))
+}

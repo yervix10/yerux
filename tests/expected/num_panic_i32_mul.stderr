@@ -1,0 +1,2 @@
+panic: integer overflow in multiplication
+  at tests/num_panic_i32_mul.yx:4:11

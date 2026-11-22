@@ -1,0 +1,2 @@
+panic: integer overflow in subtraction
+  at tests/num_panic_u64_sub.yx:4:11

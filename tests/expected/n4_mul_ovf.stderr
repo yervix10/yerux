@@ -1,0 +1,2 @@
+panic: integer overflow in multiplication
+  at tests/n4_mul_ovf.yx:3:9

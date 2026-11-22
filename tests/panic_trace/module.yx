@@ -1,0 +1,7 @@
+// The position of a panic in another file names that file.
+import lib_mod
+
+fn main() {
+  print(lib_mod.halve(4))
+  print(lib_mod.halve(0))
+}

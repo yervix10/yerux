@@ -1,1 +1,2 @@
 panic: division by zero
+  at tests/t_divself_zero.yx:2:10

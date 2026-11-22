@@ -1,0 +1,2 @@
+panic: integer overflow in negation
+  at tests/num_panic_i8_neg.yx:4:11

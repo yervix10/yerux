@@ -1,0 +1,2 @@
+panic: index out of range
+  at tests/agg_list_oob_owned.yx:7:9

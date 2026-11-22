@@ -1,1 +1,2 @@
 panic: integer overflow in negation
+  at tests/arr_index_neg_overflow.yx:3:12

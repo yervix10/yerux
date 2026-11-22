@@ -1,0 +1,9 @@
+// Integer overflow in a helper: reported at the expression that overflows, not at the call.
+fn grow(n: Int) -> Int {
+  return n * 4611686018427387904 + 1
+}
+
+fn main() {
+  print(grow(1))
+  print(grow(3))
+}

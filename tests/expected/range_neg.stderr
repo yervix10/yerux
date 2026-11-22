@@ -1,0 +1,2 @@
+panic: integer overflow in negation
+  at tests/range_neg.yx:3:10

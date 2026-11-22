@@ -1,0 +1,2 @@
+panic: stale arena reference (the arena was reset)
+  at tests/arena_stale.yx:9:9

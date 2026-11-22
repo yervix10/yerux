@@ -1,0 +1,2 @@
+panic: integer overflow in addition
+  at tests/opt_const_panic_add.yx:4:11

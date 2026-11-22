@@ -1,1 +1,2 @@
 panic: modulo by zero
+  at tests/panic_mod_zero.yx:3:10
