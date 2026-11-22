@@ -28,6 +28,11 @@ disables native optimization; with the C backend it uses `-O0 -g` so C debuggers
 symbols. Choose only one profile. `--no-opt` remains available as a low-level alias for disabling native
 optimization.
 
+Native executables currently have no DWARF line tables or symbol sections, so
+`--debug` does not yet provide source-level gdb/lldb stepping or Yerux function
+names for native backtraces. The C backend's `--debug` profile does include C
+debug symbols and the generated `#line` source mappings.
+
 ## Tests: `yerux test`
 
 A `test "name" { .. }` block at the top level of any `.yx` file is a test: its body runs as `main`, and a
