@@ -1577,6 +1577,7 @@ pub struct TraitMethod {
     pub name: String,
     pub tok: usize, // index of the `fn` token
     pub sig: FnTy,
+    pub default: bool,
 }
 
 pub struct TraitDef {
@@ -2673,6 +2674,7 @@ impl Parser {
                 });
             }
         }
+        self.complete_trait_defaults(&mut funcs)?;
         // templates: every generic function with its type parameters abstract, checked once against its bounds
         let mut templates = vec![];
         for gi in 0..self.gfns.len() {
@@ -2919,15 +2921,15 @@ impl Parser {
             }
             // advance past this signature (the real parse above restored the cursor)
             self.bump(); // fn
+            let mut default = false;
             while !(self.is_kw("fn") || self.is_sym("}") || self.is_sym(";")) {
                 if matches!(self.peek(), Tok::Eof) {
                     return Err(diag("missing closing '}'", pos));
                 }
                 if self.is_sym("{") {
-                    return Err(
-                        diag("a trait lists signatures only: remove the body", self.pos())
-                            .note("the body goes in `impl Trait for Type { .. }`"),
-                    );
+                    self.skip_braces()?;
+                    default = true;
+                    break;
                 }
                 self.bump();
             }
@@ -2940,6 +2942,7 @@ impl Parser {
                 name: h.name,
                 tok,
                 sig,
+                default,
             });
         }
         self.expect_sym("}")?;
@@ -3042,6 +3045,38 @@ impl Parser {
             methods,
             prelude,
         });
+        Ok(())
+    }
+
+    fn complete_trait_defaults(&mut self, funcs: &mut Vec<Func>) -> PR<()> {
+        for ii in 0..self.impls.len() {
+            let im = &self.impls[ii];
+            let Some(tn) = im.trait_name.clone() else { continue };
+            let defaults: Vec<(String, usize)> = self.traits.iter().find(|t| t.name == tn)
+                .map(|t| t.methods.iter().filter(|m| m.default && !im.methods.iter().any(|have| have.name == m.name))
+                    .map(|m| (m.name.clone(), m.tok)).collect())
+                .unwrap_or_default();
+            if defaults.is_empty() { continue; }
+            let ty = im.self_ty;
+            let prelude = im.prelude;
+            let lazy = prelude || !im.generics.is_empty();
+            let ipos = im.pos;
+            let subst: Vec<(String, Ty)> = im.generics.iter().map(|g| g.name.clone())
+                .zip(im.pids.iter().map(|id| Ty::Param(*id))).collect();
+            for (name, tok) in defaults {
+                if !lazy {
+                    let (h, body) = self.parse_fn_at(tok, subst.clone(), Some(ty), false)?;
+                    funcs.push(Func {
+                        name: impl_fn_name(&self.types, Some(&tn), ty, &h.name),
+                        params: h.params,
+                        ret: h.ret,
+                        body: body.unwrap_or_default(),
+                        pos: h.pos,
+                    });
+                }
+                self.impls[ii].methods.push(ImplMethod { name, tok, parsed: !lazy, pos: ipos });
+            }
+        }
         Ok(())
     }
 
