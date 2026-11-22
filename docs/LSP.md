@@ -8,12 +8,13 @@ JSON reader/writer, `src/lsp.rs` the server). The VS Code client is in [`editors
 
 | Request / notification | Behaviour |
 |---|---|
-| `initialize` | capabilities: incremental sync (`change: 2`, `openClose`, `save`), completion (trigger `.`), signature help (`(` and `,`), definition, hover, references, rename (with `prepareProvider`), document symbols, formatting, semantic tokens (full) |
+| `initialize` | capabilities: incremental sync (`change: 2`, `openClose`, `save`), completion (trigger `.`), signature help (`(` and `,`), definition, hover, code actions, references, rename (with `prepareProvider`), document symbols, formatting, semantic tokens (full) |
 | `didOpen` / `didChange` / `didSave` / `didClose` | `didOpen`/`didSave` run the front end at once; `didChange` applies the ranged edits and waits for a typing pause (150 ms, `YERUX_LSP_DEBOUNCE_MS`) before publishing, so a burst of edits costs one analysis |
 | `textDocument/publishDiagnostics` | the compiler's errors with ranges and notes |
 | `textDocument/documentSymbol` | hierarchical outline: `fn`, `struct` (fields), `enum` (variants), `trait` and `impl` (methods), `const`, `type` |
 | `textDocument/definition` | locals, parameters, loop variables, tuple-pattern names, closure parameters, `match` arm bindings, items, variants, fields and methods **by the type of the receiver**, `alias.item` of an imported module, and items of `std.*`, the prelude and the compiler builtins |
-| `textDocument/hover` | the checked type of a `let`/`var` (`let total: Int`), the declaration of parameters, functions, methods, types and module items |
+| `textDocument/hover` | the checked type of a `let`/`var` (`let total: Int`), the declaration of parameters, functions, methods, types and module items; contiguous `///` comments above declarations are included as Markdown documentation |
+| `textDocument/codeAction` | quick fixes to import a missing public standard-library function or derive `Clone`, `Equal` or `Show` for a local struct/enum when the diagnostic names the missing trait |
 | `textDocument/completion` | after `.`: fields and methods of the receiver's type (generics applied: `names.` on `List<String>`), items of a module (`fs.`), variants and associated functions of a type (`Shape.`); elsewhere: locals and parameters in scope, the file's items, imported modules, prelude items, types, snippets (`fn`, `struct`, `enum`, `match`, `for`, `if`, `while`, `impl`, `trait`, `test`) and keywords; after `import`: module names (`std.` lists the standard library) |
 | `textDocument/signatureHelp` | the callee's signature (function, module function or method) with the active parameter |
 | `textDocument/references` | every use of a declaration in the open files, scope-aware (a shadowing `let` is another declaration) |
@@ -68,7 +69,7 @@ Any other request gets a `-32601` error; an unparsable message is skipped.
   with operators or closures in the middle of a chain are not typed.
 * References and rename see the open files only; a closed file that imports the renamed item is not edited.
 * Pattern names inside struct patterns are not recognised as declarations.
-* No workspace symbols, code actions, call hierarchy or range-formatting; semantic tokens are `full` only and
+* No workspace symbols, call hierarchy or range-formatting; code actions cover standard-library function imports and the built-in derives `Clone`, `Equal` and `Show`; semantic tokens are `full` only and
   skip string/number literals and comments (the TextMate grammar colors those).
 * The formatter has one style, so formatting ignores the editor's tab settings.
 

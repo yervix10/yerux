@@ -78,7 +78,8 @@ press **F5** (Extension Development Host).
 | Diagnostics as you type | the compiler's own errors, with ranges; unsaved imported files count; recomputed after a short typing pause |
 | Completion (`.` and Ctrl+Space) | members by the **type** of the receiver (`names.` on a `List<String>`), module items (`fs.`), enum variants (`Shape.`), locals and parameters in scope, items, standard-library modules after `import std.`, keywords and snippets (`fn`, `struct`, `enum`, `match`, `for`, `if`, `while`, `impl`, `trait`, `test`) |
 | Go to definition (F12) | locals, parameters, `match` arm and closure/tuple bindings, items, fields, methods by receiver type, `module.item`, and into `std.*`, the prelude and compiler builtins (read-only copies in the temp directory) |
-| Hover | checked type of a variable, signature of functions/methods/types |
+| Hover | checked type of a variable, signature of functions/methods/types, and adjacent `///` documentation |
+| Quick fixes | import a missing public standard-library function; derive `Clone`, `Equal` or `Show` for a struct or enum |
 | Signature help | on `(` and `,`, with the active parameter |
 | References (Shift+F12) | scope-aware, across the open files |
 | Rename (F2) | refuses std/prelude/builtin names, keywords, bad names and clashes; edits every open file that uses the item |
