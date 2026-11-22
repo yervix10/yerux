@@ -876,7 +876,13 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     return unknown()
   }
   if !integer(a) && !floating(a) {
-    if types.generics.contains(a) { return unknown() }
+    if types.generics.contains(a) {
+      if ordered {
+        expect_type(types, a, b)
+        return boolean
+      }
+      return unknown()
+    }
     if ordered {
       if a == "Bool" && tree.at(left).tag != "Var" {
         issue(types, "cannot use `{op}` here: the left side is a Bool value that is not a variable")
