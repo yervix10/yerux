@@ -2206,6 +2206,20 @@ fn pattern_bound(digits: view String) -> String {
   return "INT64_C({digits})"
 }
 
+fn tuple_parts(gen: view Generator, tree: view List<ast.AstNode>, value: view Value) -> List<Value> {
+  var parts = List<Value>.new()
+  let args = type_terms.arguments(value.ty)
+  let shape = find_named(tree, gen.structs, type_terms.base(value.ty))
+  if shape < 0 || !value.ty.starts_with("$tuple") { unsupported("tuple pattern on {value.ty}") }
+  var field = ast.child(tree, shape, 2) + 1
+  for ty in args {
+    let name = String.from(tree.at(ast.child(tree, field, 0)).tag)
+    parts.push(Value { ty: String.from(ty), code: "({value.code}).m{name}" })
+    field = tree.at(field).end
+  }
+  return parts
+}
+
 fn pattern_test(gen: view Generator, tree: view List<ast.AstNode>, node: Int, value: view Value) -> String {
   let tag = String.from(tree.at(node).tag)
   if tag == "_" || tag == "Wild" { return String.from("true") }
@@ -2256,6 +2270,20 @@ fn pattern_test(gen: view Generator, tree: view List<ast.AstNode>, node: Int, va
     let joined = tests.join(" && ")
     return "({joined})"
   }
+  if tag == "TuplePat" {
+    let parts = tuple_parts(gen, tree, value)
+    let items = ast.child(tree, node, 0)
+    var at = items + 1
+    var i = 0
+    while at < tree.at(items).end {
+      if i >= parts.len() { unsupported("tuple pattern arity") }
+      tests.push(pattern_test(gen, tree, at, parts.at(i)))
+      i = i + 1
+      at = tree.at(at).end
+    }
+    let joined = tests.join(" && ")
+    return "({joined})"
+  }
   unsupported("pattern {tag}")
   return String.new()
 }
@@ -2286,6 +2314,16 @@ fn bind_pattern(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, val
     while at < tree.at(fields).end {
       let field = enum_payload(gen, value, slot, i)
       bind_pattern(gen, tree, at, field, mode, guarded)
+      i = i + 1
+      at = tree.at(at).end
+    }
+  } else if tag == "TuplePat" {
+    let parts = tuple_parts(gen, tree, value)
+    let items = ast.child(tree, node, 0)
+    var at = items + 1
+    var i = 0
+    while at < tree.at(items).end {
+      bind_pattern(gen, tree, at, parts.at(i), mode, guarded)
       i = i + 1
       at = tree.at(at).end
     }
@@ -2372,6 +2410,9 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     var at = node + 1
     while at < tree.at(node).end {
       statement(gen, tree, at)
+      // the type stage does not look at code after a statement that always exits
+      let tag = String.from(tree.at(at).tag)
+      if tag == "Return" || tag == "Break" || tag == "Continue" || returns_value(tree, at) { break }
       at = tree.at(at).end
     }
     emit_defers(gen, tree, deferred)

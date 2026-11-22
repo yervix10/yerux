@@ -1,0 +1,21 @@
+fn f(a: Int, b: Int) -> String {
+  match (a % 3 == 0, b % 5 == 0) {
+    (true, true) => { return "both" }
+    (true, _) => { return "a" }
+    (_, true) => { return "b" }
+    _ => { return "none" }
+  }
+  return "?"
+}
+fn g(p: (Int, Int)) -> Int {
+  match p {
+    (0, _) => { return 0 }
+    (n, m) if n > m => { return n }
+    (n, m) => { return n + m }
+  }
+  return -1
+}
+fn main() {
+  print(f(3, 5)); print(f(3, 1)); print(f(1, 5)); print(f(1, 1))
+  print(g((0, 9))); print(g((4, 1))); print(g((2, 7)))
+}

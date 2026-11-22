@@ -1664,6 +1664,19 @@ fn check_pattern(types: mut Types, tree: view List<ast.AstNode>, node: Int, subj
       check_pattern(types, tree, i, payload, mode, borrows)
       i = tree.at(i).end
     }
+  } else if tag == "TuplePat" {
+    if !subject.starts_with("$tuple") { return }
+    let parts = type_terms.arguments(subject)
+    let items = ast.child(tree, node, 0)
+    if child_count(tree, items) != parts.len() {
+      issue(types, "the tuple pattern binds {child_count(tree, items)} value(s) but the tuple has {parts.len()}")
+      return
+    }
+    var i = items + 1
+    for part in parts {
+      check_pattern(types, tree, i, part, mode, borrows)
+      i = tree.at(i).end
+    }
   } else if tag == "PatRange" {
     let char = tree.at(ast.child(tree, node, 0)).tag == "true"
     if char { expect_type(types, subject, String.from("Char")) }
@@ -1701,6 +1714,15 @@ fn specialize_row(tree: view List<ast.AstNode>, rows: mut List<PatternRow>, row:
       prefix.push(i)
       i = tree.at(i).end
     }
+  } else if tree.at(head).tag == "TuplePat" {
+    if name != "$tuple" { return }
+    let pats = ast.child(tree, head, 0)
+    if child_count(tree, pats) != arity { return }
+    var i = pats + 1
+    while i < tree.at(pats).end {
+      prefix.push(i)
+      i = tree.at(i).end
+    }
   } else if !(tree.at(head).tag == "Bool" && tree.at(ast.child(tree, head, 0)).tag == name) {
     return
   }
@@ -1722,7 +1744,8 @@ fn specialized_witness(types: view Types, tree: view List<ast.AstNode>, rows: vi
     var parts = List<String>.new()
     for i in 0..payload.len() { parts.push(String.from(witness.at(i))) }
     let text = parts.join(", ")
-    out.push("{name}({text})")
+    if name == "$tuple" { out.push("({text})") }
+    else { out.push("{name}({text})") }
   }
   for i in payload.len()..witness.len() { out.push(String.from(witness.at(i))) }
   return true
@@ -1756,6 +1779,10 @@ fn missing_pattern(types: view Types, tree: view List<ast.AstNode>, rows: view L
       if variant_witness(types, tree, rows, columns, shape, variant, out) { return true }
     }
     return false
+  }
+  if !wild && columns.at(0).starts_with("$tuple") {
+    let parts = type_terms.arguments(columns.at(0))
+    return specialized_witness(types, tree, rows, columns, String.from("$tuple"), parts, out)
   }
   if !wild && columns.at(0) == "Bool" {
     return specialized_witness(types, tree, rows, columns, String.from("false"), none, out) ||
