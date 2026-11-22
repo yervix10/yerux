@@ -150,6 +150,10 @@ fn c_compile_mode(c: &str, out: &str, links: &[String], debug: bool) -> Result<(
     ])
     .arg(&cfile)
     .arg("-lm");
+    // with YERUX_BACKTRACE set at build time every Yerux function keeps its own frame, so the panic stack is complete
+    if env::var("YERUX_BACKTRACE").map(|v| !v.is_empty() && v != "0").unwrap_or(false) {
+        cmd.arg("-fno-inline");
+    }
     if let Ok(extra) = env::var("YERUX_CC_FLAGS") {
         cmd.args(extra.split_whitespace());
     }
