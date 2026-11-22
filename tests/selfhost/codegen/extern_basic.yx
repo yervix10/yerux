@@ -1,0 +1,18 @@
+link "libm.so.6"
+extern "C" {
+  fn strlen(s: Text) -> UInt64
+  fn abs(x: Int32) -> Int32
+  fn getpid() -> Int32
+  fn sqrt(x: Float) -> Float
+  fn pow(x: Float, y: Float) -> Float
+}
+
+fn main() {
+  unsafe {
+    print(strlen("hello"))
+    print(abs(-19))
+    print(getpid() > 0)
+    print(sqrt(81.0))
+    print(pow(2.0, 10.0))
+  }
+}

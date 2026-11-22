@@ -1485,6 +1485,10 @@ fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view Str
     expect_type(types, bits, infer(types, tree, args + 1, bits))
     return float
   }
+  if name == "__comptime" && child_count(tree, args) == 1 {
+    // `comptime e` has the type of `e`; the value is computed at run time here
+    return infer(types, tree, args + 1, unknown())
+  }
   if name == "std__fmt_lit" || name == "std__fmt_val" {
     if child_count(tree, args) != 2 { return unknown() }
     let first = infer(types, tree, args + 1, unknown())
