@@ -10,6 +10,8 @@ struct Dependency {
     value: String,
     git: bool,
     tag: Option<String>,
+    /// version requirement (`^1.2`, `~1.2`, `>=1.0`, `=1.2.3`, `1.2`, `*`) the package must satisfy
+    version: Option<String>,
 }
 
 fn quoted(s: &str) -> Option<String> {
@@ -47,6 +49,7 @@ fn manifest(root: &Path) -> Result<(String, String, Vec<Dependency>), String> {
                 value: String::new(),
                 git: false,
                 tag: None,
+                version: None,
             };
             if value.starts_with('"') {
                 dep.value = quoted(value).ok_or("invalid dependency path")?;
@@ -64,6 +67,11 @@ fn manifest(root: &Path) -> Result<(String, String, Vec<Dependency>), String> {
                                 dep.git = true;
                             }
                             "tag" => dep.tag = quoted(v),
+                            "version" => {
+                                let r = quoted(v).ok_or("invalid version requirement")?;
+                                Req::parse(&r)?;
+                                dep.version = Some(r);
+                            }
                             _ => return Err(format!("unknown dependency field {}", k.trim())),
                         }
                     }
@@ -87,6 +95,12 @@ fn resolve(root: &Path, deps: &[Dependency]) -> Result<(), String> {
     for dep in deps {
         let resolved = if dep.git {
             let dir = root.join(".yerux/git").join(&dep.name);
+            // a checkout is reused only for the same url and tag
+            let marker = root.join(".yerux/git").join(format!("{}.rev", dep.name));
+            let wanted = format!("{}\n{}\n", dep.value, dep.tag.as_deref().unwrap_or(""));
+            if dir.exists() && fs::read_to_string(&marker).ok().as_deref() != Some(wanted.as_str()) {
+                let _ = fs::remove_dir_all(&dir);
+            }
             if !dir.exists() {
                 fs::create_dir_all(dir.parent().unwrap()).map_err(|e| e.to_string())?;
                 let mut cmd = Command::new("git");
@@ -102,6 +116,7 @@ fn resolve(root: &Path, deps: &[Dependency]) -> Result<(), String> {
                 if !status.success() {
                     return Err(format!("git clone failed for {}", dep.name));
                 }
+                fs::write(&marker, &wanted).map_err(|e| e.to_string())?;
             }
             dir
         } else {
@@ -115,9 +130,21 @@ fn resolve(root: &Path, deps: &[Dependency]) -> Result<(), String> {
             }
             path
         };
+        let (_, found, _) = manifest(&resolved)
+            .map_err(|e| format!("dependency {}: {e}", dep.name))?;
+        if let Some(req) = &dep.version {
+            let ok = Ver::parse(&found).is_some_and(|v| Req::parse(req).is_ok_and(|r| r.matches(&v)));
+            if !ok {
+                return Err(format!(
+                    "dependency {} is version {} but yerux.toml requires {}",
+                    dep.name, found, req
+                ));
+            }
+        }
         lock.push_str(&format!(
-            "\n[[package]]\nname = \"{}\"\nsource = \"{}\"\n",
+            "\n[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"{}\"\n",
             dep.name,
+            found,
             resolved.display()
         ));
         if let Some(tag) = &dep.tag {
@@ -196,4 +223,385 @@ pub fn run(command: &str) -> Result<i32, String> {
         .status()
         .map_err(|e| e.to_string())?;
     Ok(st.code().unwrap_or(1))
+}
+
+// ───────────────────────── versions ─────────────────────────
+
+/// A `MAJOR.MINOR.PATCH` version (a leading `v` is accepted; pre-release tags are not versions).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Ver(pub u64, pub u64, pub u64);
+
+impl Ver {
+    pub fn parse(s: &str) -> Option<Ver> {
+        let s = s.trim().strip_prefix('v').unwrap_or(s.trim());
+        let mut it = s.split('.');
+        let n = |x: Option<&str>| x?.parse::<u64>().ok();
+        let v = Ver(n(it.next())?, n(it.next())?, n(it.next())?);
+        if it.next().is_some() {
+            return None;
+        }
+        Some(v)
+    }
+}
+
+impl std::fmt::Display for Ver {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
+
+/// A version requirement: `lo <= v < hi` (or `v == lo` for `=X.Y.Z`).
+#[derive(Debug, PartialEq)]
+pub struct Req {
+    lo: Ver,
+    hi: Option<Ver>,
+    exact: bool,
+}
+
+impl Req {
+    /// `*` any, `=1.2.3` exact, `>=1.2` at least, `^1.2.3` / `1.2` compatible (same leading non-zero part),
+    /// `~1.2.3` patch-level changes only (`~1` allows any 1.x).
+    pub fn parse(text: &str) -> Result<Req, String> {
+        let t = text.trim();
+        let bad = || format!("invalid version requirement \"{}\" (use *, =1.2.3, >=1.2, ^1.2, ~1.2 or 1.2)", text);
+        if t == "*" {
+            return Ok(Req { lo: Ver(0, 0, 0), hi: None, exact: false });
+        }
+        let (op, rest) = if let Some(r) = t.strip_prefix(">=") {
+            (">=", r)
+        } else if let Some(r) = t.strip_prefix('=') {
+            ("=", r)
+        } else if let Some(r) = t.strip_prefix('~') {
+            ("~", r)
+        } else if let Some(r) = t.strip_prefix('^') {
+            ("^", r)
+        } else {
+            ("^", t)
+        };
+        let parts: Vec<u64> = rest
+            .trim()
+            .trim_start_matches('v')
+            .split('.')
+            .map(|p| p.parse::<u64>().map_err(|_| bad()))
+            .collect::<Result<_, _>>()?;
+        if parts.is_empty() || parts.len() > 3 {
+            return Err(bad());
+        }
+        let at = |i: usize| parts.get(i).copied().unwrap_or(0);
+        let lo = Ver(at(0), at(1), at(2));
+        let n = parts.len();
+        Ok(match op {
+            ">=" => Req { lo, hi: None, exact: false },
+            "=" => {
+                if n != 3 {
+                    return Err(bad());
+                }
+                Req { lo, hi: None, exact: true }
+            }
+            "~" => {
+                let hi = if n == 1 { Ver(lo.0 + 1, 0, 0) } else { Ver(lo.0, lo.1 + 1, 0) };
+                Req { lo, hi: Some(hi), exact: false }
+            }
+            _ => {
+                // caret: bump the first non-zero component among those given (or the last given one)
+                let hi = if lo.0 > 0 || n == 1 {
+                    Ver(lo.0 + 1, 0, 0)
+                } else if lo.1 > 0 || n == 2 {
+                    Ver(0, lo.1 + 1, 0)
+                } else {
+                    Ver(0, 0, lo.2 + 1)
+                };
+                Req { lo, hi: Some(hi), exact: false }
+            }
+        })
+    }
+
+    pub fn matches(&self, v: &Ver) -> bool {
+        if self.exact {
+            return *v == self.lo;
+        }
+        *v >= self.lo && self.hi.is_none_or(|h| *v < h)
+    }
+}
+
+/// The highest version among `tags` (like `v1.2.0`, `2.0.1`) that satisfies `req`, with the tag as written.
+pub fn best_tag(tags: &[String], req: &Req) -> Option<(Ver, String)> {
+    tags.iter()
+        .filter_map(|t| Ver::parse(t).map(|v| (v, t.clone())))
+        .filter(|(v, _)| req.matches(v))
+        .max_by_key(|(v, _)| *v)
+}
+
+fn remote_tags(url: &str) -> Result<Vec<String>, String> {
+    let out = Command::new("git")
+        .args(["ls-remote", "--tags", "--refs", url])
+        .output()
+        .map_err(|e| format!("git ls-remote failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("cannot list the tags of {url}"));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split("refs/tags/").nth(1))
+        .map(|t| t.to_string())
+        .collect())
+}
+
+// ───────────────────────── yerux add / remove ─────────────────────────
+
+fn is_section(line: &str) -> bool {
+    let l = line.trim();
+    l.starts_with('[') && l.ends_with(']')
+}
+
+fn dep_key(line: &str) -> Option<&str> {
+    let l = line.split('#').next().unwrap_or("").trim();
+    if l.is_empty() || is_section(l) {
+        return None;
+    }
+    l.split_once('=').map(|(k, _)| k.trim())
+}
+
+/// Insert or replace `name = entry` in the `[dependencies]` section of a manifest text.
+pub fn set_dependency(text: &str, name: &str, entry: &str) -> String {
+    let line = format!("{name} = {entry}");
+    let mut out: Vec<String> = Vec::new();
+    let (mut in_deps, mut seen_section, mut done) = (false, false, false);
+    let mut last_dep_line = None; // index in `out` after which a new dependency goes
+    for raw in text.lines() {
+        if is_section(raw) {
+            if in_deps && !done {
+                let at = last_dep_line.map_or(out.len(), |i| i + 1);
+                out.insert(at, line.clone());
+                done = true;
+            }
+            in_deps = raw.trim() == "[dependencies]";
+            seen_section |= in_deps;
+            if in_deps {
+                last_dep_line = Some(out.len());
+            }
+        } else if in_deps {
+            if dep_key(raw) == Some(name) {
+                if !done {
+                    out.push(line.clone());
+                    done = true;
+                }
+                last_dep_line = Some(out.len() - 1);
+                continue;
+            }
+            if dep_key(raw).is_some() {
+                last_dep_line = Some(out.len());
+            }
+        }
+        out.push(raw.to_string());
+    }
+    if !done {
+        if !seen_section {
+            if out.last().is_some_and(|l| !l.trim().is_empty()) {
+                out.push(String::new());
+            }
+            out.push("[dependencies]".into());
+            out.push(line);
+        } else {
+            let at = last_dep_line.map_or(out.len(), |i| i + 1);
+            out.insert(at, line);
+        }
+    }
+    let mut s = out.join("\n");
+    s.push('\n');
+    s
+}
+
+/// Remove `name` from `[dependencies]`; `None` when it is not there.
+pub fn remove_dependency(text: &str, name: &str) -> Option<String> {
+    let (mut in_deps, mut found) = (false, false);
+    let mut out: Vec<&str> = Vec::new();
+    for raw in text.lines() {
+        if is_section(raw) {
+            in_deps = raw.trim() == "[dependencies]";
+        } else if in_deps && dep_key(raw) == Some(name) {
+            found = true;
+            continue;
+        }
+        out.push(raw);
+    }
+    if !found {
+        return None;
+    }
+    let mut s = out.join("\n");
+    s.push('\n');
+    Some(s)
+}
+
+/// `yerux add NAME --path DIR | --git URL [--tag T] [--version REQ]`
+pub fn add(args: &[String]) -> Result<String, String> {
+    let usage = "usage: yerux add NAME --path DIR [--version REQ]\n       yerux add NAME --git URL [--tag TAG | --version REQ]";
+    let mut name = None;
+    let (mut path, mut git, mut tag, mut version) = (None, None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        let value = |i: &mut usize| -> Result<String, String> {
+            *i += 1;
+            args.get(*i).cloned().ok_or_else(|| format!("{flag} needs a value\n{usage}"))
+        };
+        match flag {
+            "--path" => path = Some(value(&mut i)?),
+            "--git" => git = Some(value(&mut i)?),
+            "--tag" => tag = Some(value(&mut i)?),
+            "--version" => version = Some(value(&mut i)?),
+            a if a.starts_with("--") => return Err(format!("unknown option {a}\n{usage}")),
+            a if name.is_none() => name = Some(a.to_string()),
+            _ => return Err(usage.into()),
+        }
+        i += 1;
+    }
+    let name = name.ok_or(usage)?;
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err(format!("invalid dependency name \"{name}\" (letters, digits and _)"));
+    }
+    if path.is_some() == git.is_some() {
+        return Err(format!("usage: give exactly one of --path and --git\n{}", &usage["usage: ".len()..]));
+    }
+    if tag.is_some() && version.is_some() {
+        return Err("give --tag or --version, not both".into());
+    }
+    if path.is_some() && tag.is_some() {
+        return Err("--tag only applies to --git".into());
+    }
+    let req = match &version {
+        Some(v) => Some(Req::parse(v)?),
+        None => None,
+    };
+    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    let manifest_path = root.join("yerux.toml");
+    let text = fs::read_to_string(&manifest_path).map_err(|e| format!("cannot read yerux.toml: {e}"))?;
+    manifest(&root)?; // the manifest must be valid before it is edited
+
+    let entry;
+    let summary;
+    if let Some(p) = &path {
+        let dir = root.join(p);
+        let (dep_name, dep_version, _) =
+            manifest(&dir).map_err(|e| format!("{} is not a Yerux package: {e}", dir.display()))?;
+        if dep_name != name {
+            return Err(format!("{} is the package \"{dep_name}\", not \"{name}\"", p));
+        }
+        if let Some(r) = &req {
+            if !Ver::parse(&dep_version).is_some_and(|v| r.matches(&v)) {
+                return Err(format!("{name} at {p} is version {dep_version}, which does not satisfy {}", version.clone().unwrap()));
+            }
+        }
+        entry = match &version {
+            Some(v) => format!("{{ path = \"{p}\", version = \"{v}\" }}"),
+            None => format!("{{ path = \"{p}\" }}"),
+        };
+        summary = format!("added {name} {dep_version} (path {p})");
+    } else {
+        let url = git.unwrap();
+        let chosen = match (&tag, &req) {
+            (Some(t), _) => t.clone(),
+            (None, Some(r)) => {
+                let tags = remote_tags(&url)?;
+                best_tag(&tags, r)
+                    .ok_or_else(|| format!("no tag of {url} satisfies {}", version.clone().unwrap()))?
+                    .1
+            }
+            (None, None) => {
+                let tags = remote_tags(&url)?;
+                best_tag(&tags, &Req::parse("*")?)
+                    .ok_or_else(|| format!("{url} has no version tags (use --tag)"))?
+                    .1
+            }
+        };
+        entry = match &version {
+            Some(v) => format!("{{ git = \"{url}\", tag = \"{chosen}\", version = \"{v}\" }}"),
+            None => format!("{{ git = \"{url}\", tag = \"{chosen}\" }}"),
+        };
+        summary = format!("added {name} (git {url}, tag {chosen})");
+    }
+    let new_text = set_dependency(&text, &name, &entry);
+    fs::write(&manifest_path, &new_text).map_err(|e| format!("cannot write yerux.toml: {e}"))?;
+    // resolve now: a bad dependency is rejected and the manifest restored
+    let (_, _, deps) = manifest(&root)?;
+    if let Err(e) = resolve(&root, &deps) {
+        let _ = fs::write(&manifest_path, &text);
+        return Err(e);
+    }
+    Ok(summary)
+}
+
+/// `yerux remove NAME`
+pub fn remove(args: &[String]) -> Result<String, String> {
+    let [name] = args else {
+        return Err("usage: yerux remove NAME".into());
+    };
+    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    let manifest_path = root.join("yerux.toml");
+    let text = fs::read_to_string(&manifest_path).map_err(|e| format!("cannot read yerux.toml: {e}"))?;
+    let new_text = remove_dependency(&text, name).ok_or_else(|| format!("{name} is not a dependency"))?;
+    fs::write(&manifest_path, &new_text).map_err(|e| format!("cannot write yerux.toml: {e}"))?;
+    let (_, _, deps) = manifest(&root)?;
+    resolve(&root, &deps)?;
+    let _ = fs::remove_dir_all(root.join(".yerux/git").join(name));
+    let _ = fs::remove_file(root.join(".yerux/git").join(format!("{name}.rev")));
+    Ok(format!("removed {name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(s: &str) -> Req {
+        Req::parse(s).unwrap()
+    }
+    fn ok(r: &str, v: &str) -> bool {
+        req(r).matches(&Ver::parse(v).unwrap())
+    }
+
+    #[test]
+    fn version_requirements() {
+        assert!(ok("^1.2.3", "1.9.0") && !ok("^1.2.3", "2.0.0") && !ok("^1.2.3", "1.2.2"));
+        assert!(ok("1.2", "1.2.0") && ok("1.2", "1.7.1") && !ok("1.2", "1.1.9"));
+        assert!(ok("^0.2.3", "0.2.9") && !ok("^0.2.3", "0.3.0"));
+        assert!(ok("^0.0.3", "0.0.3") && !ok("^0.0.3", "0.0.4"));
+        assert!(ok("~1.2.3", "1.2.9") && !ok("~1.2.3", "1.3.0") && ok("~1", "1.9.9"));
+        assert!(ok(">=1.5", "3.0.0") && !ok(">=1.5", "1.4.9"));
+        assert!(ok("=1.2.3", "1.2.3") && !ok("=1.2.3", "1.2.4"));
+        assert!(ok("*", "0.0.1"));
+        assert!(Req::parse("^x").is_err() && Req::parse("=1.2").is_err() && Req::parse("1.2.3.4").is_err());
+        assert_eq!(Ver::parse("v1.2.3"), Some(Ver(1, 2, 3)));
+        assert_eq!(Ver::parse("1.2.3-rc1"), None);
+        assert_eq!(Ver::parse("1.2"), None);
+    }
+
+    #[test]
+    fn best_tag_picks_the_highest_match() {
+        let tags: Vec<String> = ["v1.0.0", "v1.2.0", "v1.10.0", "v2.0.0", "nightly", "v1.3.0-rc1"].map(String::from).to_vec();
+        assert_eq!(best_tag(&tags, &req("^1")).unwrap().1, "v1.10.0");
+        assert_eq!(best_tag(&tags, &req("~1.2")).unwrap().1, "v1.2.0");
+        assert_eq!(best_tag(&tags, &req("*")).unwrap().1, "v2.0.0");
+        assert!(best_tag(&tags, &req("^3")).is_none());
+    }
+
+    #[test]
+    fn edits_the_dependencies_section() {
+        let t = "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[dependencies]\na = { path = \"../a\" }\n\n[other]\nx = 1\n";
+        let t2 = set_dependency(t, "b", "{ path = \"../b\" }");
+        assert_eq!(
+            t2,
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[dependencies]\na = { path = \"../a\" }\nb = { path = \"../b\" }\n\n[other]\nx = 1\n"
+        );
+        // replacing keeps the position
+        let t3 = set_dependency(&t2, "a", "{ path = \"../a2\" }");
+        assert!(t3.contains("a = { path = \"../a2\" }\nb = "));
+        // no section yet
+        assert_eq!(set_dependency("[package]\nname = \"p\"\n", "a", "\"x\""), "[package]\nname = \"p\"\n\n[dependencies]\na = \"x\"\n");
+        // empty section at the end
+        assert_eq!(set_dependency("[dependencies]\n", "a", "\"x\""), "[dependencies]\na = \"x\"\n");
+        let r = remove_dependency(&t2, "a").unwrap();
+        assert!(!r.contains("../a\"") && r.contains("b = ") && r.contains("[other]"));
+        assert!(remove_dependency(&t2, "zzz").is_none());
+        assert!(remove_dependency("[other]\na = 1\n", "a").is_none(), "only [dependencies] is edited");
+    }
 }

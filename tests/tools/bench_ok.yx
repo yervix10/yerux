@@ -1,0 +1,22 @@
+fn fib(n: Int) -> Int {
+  if n < 2 {
+    return n
+  }
+  return fib(n - 1) + fib(n - 2)
+}
+
+bench "fib 20" {
+  assert(fib(20) == 6765)
+}
+
+bench "sum loop" {
+  var s = 0
+  for i in 0..100000 {
+    s = s + i
+  }
+  assert(s == 4999950000)
+}
+
+test "tests are not benchmarks" {
+  assert(fib(5) == 5)
+}

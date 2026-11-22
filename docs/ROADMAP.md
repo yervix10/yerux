@@ -87,12 +87,14 @@ Self-hosting parity, measured on every Git-tracked `.yx` file (795 files) by `te
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-Self-hosted code generator, run against the Rust C backend on 375 candidate programs (`tests/selfhost_codegen.sh`):
-**240 produce identical output (92 of them runtime panics with the same message and exit code, 64.0% of candidates)**, 133 are outside the
-subset the self-hosted compiler supports (grouped by first diagnostic: other lowering 40, closures 19, checking 13, generics and
-traits 12, standard library 11, ...), 2 are expected rejections and **none differ** (the `tests/drop_generic.yx` discrepancy was fixed).
-The subset is the reason this milestone counts 0.5, not 1: the compiler does not yet compile the whole language, the whole
-standard library or closures in general.
+The self-hosted code generator matches the Rust C backend on **284 of 376
+candidate programs (75.5%)**, including 93 runtime panics with identical
+messages and exit codes. The `tests/selfhost_codegen.sh` run reported 91
+candidates outside the supported subset, one expected rejection, and **zero
+mismatches**. The largest rejection groups were other lowering gaps (39),
+generics and traits (13), heap types (8), and worker closure calls (6).
+The milestone remains at 0.5 while the self-hosted compiler covers a subset
+of the language and standard library.
 
 **Cumulative effort estimate (serial): about 135-205 pm (11-17 years of one person).** Shipping product thresholds: **M6** = usable Linux toy toolkit (about 30-45 pm in); **M9** = two-OS toolkit (about 60-90 pm); **M11** = serious toolkit; M12 = Flutter-class reach.
 
