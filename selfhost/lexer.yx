@@ -19,6 +19,7 @@ fn hex(s: view String) -> String {
 // A zero line keeps the original position-free dump format.
 fn emit_row(line: Int, row: view String) {
   if line == 0 { print(row) }
+  else if line >= 1000000 { print("{line % 1000000}:{line / 1000000}:{row}") }
   else { print("{line}:{row}") }
 }
 
@@ -51,7 +52,7 @@ fn emit_interp(parts: view List<Part>, count: Int, line: Int) {
   emit_row(line, String.from("Sym:28"))
   emit_interp(parts, count - 1, line)
   emit_row(line, String.from("Sym:2c"))
-  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false, line) }
+  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false, line % 1000000, false) }
   else { emit(line, "Str:", parts.at(count - 1).text) }
   emit_row(line, String.from("Sym:29"))
 }
@@ -132,15 +133,31 @@ fn main() {
         Err(e) => { print("could not read {p}: {e.message}"); env.exit(2); return }
         Ok(src) => {
           var line = 0
+          var columns = false
           match env.arg(2) {
             Some(flag) => { if flag == "--positioned" { line = 1 } }
             None => {}
           }
-          lex(src, true, line)
+          match env.arg(3) {
+            Some(flag) => { if flag == "--columns" { columns = true } }
+            None => {}
+          }
+          lex(src, true, line, columns)
         }
       }
     }
   }
+}
+
+// 1-based column of byte offset `at` in the line that starts at `start`
+fn column_of(src: view String, start: Int, at: Int) -> Int {
+  var col = 1
+  var i = start
+  while i < at {
+    col = col + 1
+    i = i + src.char_size(i)
+  }
+  return col
 }
 
 fn raw_start(src: view String, at: Int) -> Bool {
@@ -159,14 +176,17 @@ fn raw_closes(src: view String, at: Int, hashes: Int) -> Bool {
   return true
 }
 
-fn lex(src: view String, eof: Bool, first_line: Int) {
+fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
   var line = first_line
+  var line_start = 0
   let n = src.len()
   var i = 0
   while i < n {
     let b = src.byte(i)
+    var tokpos = line
+    if columns && line > 0 { tokpos = line + 1000000 * column_of(src, line_start, i) }
     if b == 10 || b == 13 || b == 32 || b == 9 {
-      if b == 10 && line > 0 { line = line + 1 }
+      if b == 10 && line > 0 { line = line + 1; line_start = i + 1 }
       i = i + 1
     }
     else if b == 47 && i + 1 < n && src.byte(i + 1) == 47 {
@@ -180,7 +200,7 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
       let body = i
       while i < n && src.byte(i) != 10 && !raw_closes(src, i, hashes) { i = i + 1 }
       if i >= n || src.byte(i) == 10 { report_error(src, "unterminated raw string", body - hashes - 2, 1, "a raw string ends with a quote followed by as many `#` as it started with: r#\"{{\"a\": 1}}\"#; it must fit on one line", "") }
-      emit(line, "Str:", src.slice(body, i))
+      emit(tokpos, "Str:", src.slice(body, i))
       i = i + 1 + hashes
     }
     else if is_alpha(b) {
@@ -189,8 +209,8 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
       while i < n && is_alnum(src.byte(i)) { i = i + 1 }
       let ident = src.slice(start, i)
       if ident == "print" && print_interp_arg(src, i) {
-        emit(line, "Id:", String.from("std__print_owned"))
-      } else { emit(line, "Id:", src.slice(start, i)) }
+        emit(tokpos, "Id:", String.from("std__print_owned"))
+      } else { emit(tokpos, "Id:", src.slice(start, i)) }
     }
     else if is_digit(b) {
       let start = i
@@ -230,7 +250,7 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
       let core = src.slice(start, core_end).replace("_", "")
       let suffix = raw.slice(core_end - start, raw.len())
       if is_float || suffix == "f32" || suffix == "f64" {
-        let row = "Float:{hex(core)}:{suffix}"; emit_row(line, row)
+        let row = "Float:{hex(core)}:{suffix}"; emit_row(tokpos, row)
       } else if radix != 10 {
         var value = 0
         var j = digits_start
@@ -240,19 +260,19 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
           j = j + 1
         }
         if value >= 0 {
-          if suffix.len() == 0 { let row = "Num:{value}"; emit_row(line, row) }
-          else { let row = "NumT:{value}:{suffix}"; emit_row(line, row) }
-        } else { emit(line, "UnsupportedNumber:", raw) }
+          if suffix.len() == 0 { let row = "Num:{value}"; emit_row(tokpos, row) }
+          else { let row = "NumT:{value}:{suffix}"; emit_row(tokpos, row) }
+        } else { emit(tokpos, "UnsupportedNumber:", raw) }
       } else {
         var value = 0
         if core.parse_int(value) {
-          if suffix.len() == 0 { let row = "Num:{value}"; emit_row(line, row) }
-          else { let row = "NumT:{value}:{suffix}"; emit_row(line, row) }
+          if suffix.len() == 0 { let row = "Num:{value}"; emit_row(tokpos, row) }
+          else { let row = "NumT:{value}:{suffix}"; emit_row(tokpos, row) }
         } else {
           let unsigned_max = String.from("18446744073709551615")
           if core.len() < unsigned_max.len() || (core.len() == unsigned_max.len() && core <= unsigned_max) {
-            let row = "NumT:{core}:{suffix}"; emit_row(line, row)
-          } else { emit(line, "UnsupportedNumber:", raw) }
+            let row = "NumT:{core}:{suffix}"; emit_row(tokpos, row)
+          } else { emit(tokpos, "UnsupportedNumber:", raw) }
         }
       }
     }
@@ -292,7 +312,7 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
       }
       if j < n && src.byte(j) == 39 { j = j + 1 }
       else { report_error(src, "a character literal must contain exactly one character", i, (j - i).max(1), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
-      let row = "Char:{value}"; emit_row(line, row)
+      let row = "Char:{value}"; emit_row(tokpos, row)
       i = j
     }
     else if b == 34 {
@@ -354,28 +374,28 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
       if i < n && src.byte(i) == 34 { i = i + 1 }
       if interpolated {
         if value.len() > 0 { parts.push(Part { expr: false, text: move value }) }
-        emit_interp(parts, parts.len(), line)
-      } else { emit(line, "Str:", value) }
+        emit_interp(parts, parts.len(), tokpos)
+      } else { emit(tokpos, "Str:", value) }
     }
     else {
       if b >= 128 {
-        let row = "UnsupportedCharacter:{i}"; emit_row(line, row)
+        let row = "UnsupportedCharacter:{i}"; emit_row(tokpos, row)
         i = i + src.char_size(i)
       } else {
       var three = String.new()
       var two = String.new()
       if i + 2 < n && src.byte(i + 1) < 128 && src.byte(i + 2) < 128 { three = src.slice(i, i + 3) }
       if i + 1 < n && src.byte(i + 1) < 128 { two = src.slice(i, i + 2) }
-      if three == "..=" { emit(line, "Sym:", three); i = i + 3 }
+      if three == "..=" { emit(tokpos, "Sym:", three); i = i + 3 }
       else if two == "==" || two == "!=" || two == "<=" || two == ">=" || two == "&&" || two == "||" || two == "->" || two == "=>" || two == ".." {
-        emit(line, "Sym:", two); i = i + 2
+        emit(tokpos, "Sym:", two); i = i + 2
       }
       else {
         let one = src.slice(i, i + 1)
         if one == "(" || one == ")" || one == "{{" || one == "}}" || one == "[" || one == "]" || one == "," || one == ":" || one == ";" || one == "=" || one == "<" || one == ">" || one == "+" || one == "-" || one == "*" || one == "/" || one == "%" || one == "!" || one == "." || one == "|" || one == "@" || one == "?" {
-          emit(line, "Sym:", one); i = i + 1
+          emit(tokpos, "Sym:", one); i = i + 1
         } else {
-          let row = "UnsupportedCharacter:{i}"; emit_row(line, row)
+          let row = "UnsupportedCharacter:{i}"; emit_row(tokpos, row)
           i = i + src.char_size(i)
         }
       }

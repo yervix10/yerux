@@ -2,7 +2,7 @@
 import std.env
 import std.fs
 
-struct Token { kind: String, value: String, text: String, line: Int }
+struct Token { kind: String, value: String, text: String, line: Int, col: Int }
 struct Parser {
   tokens: List<Token>,
   structs: List<String>,
@@ -126,6 +126,12 @@ fn finish(out: mut String) { out.push_str("]") }
 fn unary(p: view Parser, op: view String, value: view String) -> String {
   if p.legacy { return "Un({op}, {value})" }
   return node2("Un", op, value)
+}
+
+// `,Pos(line,col)` of token `at` when building with columns (the driver): where a panic of that node is reported
+fn pos_of(p: view Parser, at: Int) -> String {
+  if !p.build || p.tokens.at(at).col == 0 { return String.new() }
+  return ",Pos({p.tokens.at(at).line},{p.tokens.at(at).col})"
 }
 
 fn call(p: view Parser, name: view String, args: view String) -> String {
@@ -339,6 +345,9 @@ fn after_name(p: mut Parser, name: view String) -> String {
   p.i = start
   if sym(p, "(") {
     let values = args(p)
+    if name == hex("panic") || name == hex("assert") || name == hex("assert_eq") || name == hex("assert_ne") {
+      return "Call({name},{values}{pos_of(p, start - 1)})"
+    }
     return call(p, name, values)
   }
   return node1("Var", name)
@@ -470,8 +479,9 @@ fn primary(p: mut Parser) -> String {
   return String.new()
 }
 
-fn postfix(p: mut Parser, base: String) -> String {
+fn postfix(p: mut Parser, base: String, first: Int) -> String {
   var out = move base
+  let at = pos_of(p, first)
   while !p.failed {
     if sym(p, "(") && same_line(p) &&
         (out.starts_with("Call(") || out.starts_with("CallFn(") || out.starts_with("Method(")) {
@@ -485,10 +495,10 @@ fn postfix(p: mut Parser, base: String) -> String {
         var hi = missing()
         if !sym(p, "]") { hi = parse_expr(p) }
         expect(p, "]")
-        out = node3("Slice", out, lo, hi)
+        out = "Slice({out},{lo},{hi}{at})"
       } else {
         expect(p, "]")
-        out = "Method({out},6174,[{lo}])"
+        out = "Method({out},6174,[{lo}]{at})"
       }
     } else if eat(p, "?") {
       out = unary(p, String.from("3f"), out)
@@ -501,7 +511,7 @@ fn postfix(p: mut Parser, base: String) -> String {
         let member = ident(p)
         if sym(p, "(") {
           let values = args(p)
-          out = node3("Method", out, member, values)
+          out = "Method({out},{member},{values}{at})"
         } else { out = node2("Field", out, member) }
       }
     } else { break }
@@ -527,8 +537,9 @@ fn parse_unary(p: mut Parser) -> String {
     let value = parse_unary(p)
     return "Call(5f5f636f6d7074696d65,[{value}])"
   }
+  let first = p.i
   let base = primary(p)
-  return postfix(p, move base)
+  return postfix(p, move base, first)
 }
 
 fn binary(p: mut Parser, minimum: Int) -> String {
@@ -1048,6 +1059,11 @@ fn run(source: view String, build: Bool) {
       legacy = false
       start = colon + 1
     }
+    var col = 0
+    // `line:col:Kind..` (the lexer's --columns): a second number before the kind
+    let second = row.slice(start, row.len()).find(":")
+    if start > 0 && second > 0 && row.slice(start, start + second).parse_int(col) { start = start + second + 1 }
+    else { col = 0 }
     let rest = row.slice(start, row.len())
     let split = rest.find(":")
     var tag = String.from(rest)
@@ -1058,7 +1074,7 @@ fn run(source: view String, build: Bool) {
       value = rest.slice(split + 1, rest.len())
       if tag == "Id" || tag == "Sym" { decoded = unhex(value) }
     }
-    tokens.push(Token { kind: move tag, value: move value, text: move decoded, line: line })
+    tokens.push(Token { kind: move tag, value: move value, text: move decoded, line: line, col: col })
   }
   if tokens.len() == 0 || tokens.at(tokens.len() - 1).kind != "Eof" {
     print("invalid token dump")

@@ -211,6 +211,7 @@ fn cache_source(build: mut Build, original: view String, key: view String) -> Bo
   var args = List<String>.new()
   args.push(String.from(source))
   args.push(String.from("--positioned"))
+  args.push(String.from("--columns"))
   match invoke(lexer, args, "lexing {source}") {
     None => { return false }
     Some(tokens) => { if !write(tokens_path, tokens) { return false } }
@@ -340,7 +341,7 @@ fn with_prelude(build: view Build, source: view String) -> String {
     else { rest.push_str(line); rest.push_str("\n") }
   }
   let combined = path.join(build.work, "with_prelude.yx")
-  if !write(combined, "{top}{head}\n{rest}\n{tail}") { return String.new() }
+  if !write(combined, "{top}{rest}\n{head}\n{tail}") { return String.new() }
   return combined
 }
 
@@ -367,6 +368,10 @@ fn compile(build: mut Build, source: view String, output: view String, emit_ast:
   let c_file = path.join(build.work, "program.c")
   args.clear()
   args.push(move linked_path)
+  // panic locations: the name printed after `at`, and how many lines are the user's (the prelude follows them)
+  let user_lines = read_text(source).split("\n").len()
+  args.push(String.from(source))
+  args.push("{user_lines}")
   match invoke(generator, args, "checking and generating C for {source}") {
     None => { return false }
     Some(body) => { if !write(c_file, body) { return false } }

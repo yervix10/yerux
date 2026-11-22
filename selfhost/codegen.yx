@@ -48,6 +48,12 @@ struct Generator {
   worker_cleanup: Bool,
   user_box: Bool,
   override_node: Int,
+  at_file: String,
+  user_lines: Int,
+  locs: List<Int>,
+  last_line: Int,
+  slice_node: Int,
+  site: Int,
   override_ty: String,
   override_code: String,
   no_args: Bool,
@@ -59,6 +65,7 @@ fn unsupported(message: view String) {
 }
 
 fn line(gen: mut Generator, text: view String) {
+  gen.last_line = gen.out.len()
   for i in 0..gen.indent { gen.out.push_str("  ") }
   gen.out.push_str(text)
   gen.out.push_str("\n")
@@ -1116,7 +1123,10 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
     }
     let value = expression(gen, tree, args + 1)
     if name == "print" { emit_print(gen, tree, value) }
-    else if name == "panic" { line(gen, "nx_panic_str({text_view(value)});") }
+    else if name == "panic" {
+      if gen.site != 0 { line(gen, "nxl_panic_str({text_view(value)}, {gen.site});") }
+      else { line(gen, "nx_panic_str({text_view(value)});") }
+    }
     else {
       if value.ty != "Bool" { unsupported("assert argument type") }
       line(gen, "nx_assert({value.code});")
@@ -1578,7 +1588,9 @@ fn sequence_method(gen: mut Generator, tree: view List<ast.AstNode>, receiver: v
     return temp(gen, tree, ty, "sc_truncate_{c}({addr}, {arg.code})")
   }
   let index = temp(gen, tree, arg.ty, arg.code)
-  let dest = "(*sc_at_{c}({addr}, {index.code}))"
+  var stamped = String.from(index.code)
+  if gen.site != 0 { stamped = "(nx_cur_loc = {gen.site}, {index.code})" }
+  let dest = "(*sc_at_{c}({addr}, {stamped}))"
   let second = tree.at(first).end
   if second == end {
     if name == "at" { return Value { ty: move elem, code: move dest } }
@@ -2204,6 +2216,88 @@ fn range_conversion(gen: mut Generator, tree: view List<ast.AstNode>, input: Int
   return temp(gen, tree, range, "(int64_t){wide}")
 }
 
+// The `Pos(line,col)` the parser put as child `index` of a Method, Slice or Call (columns mode), as a location
+// id of the program's table (0 = none). Sites in the prelude, past the user's lines, are skipped: a panic there
+// reports the caller's site.
+fn site_loc(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, index: Int) -> Int {
+  if gen.at_file.len() == 0 { return 0 }
+  var at = node + 1
+  for k in 0..index {
+    if at >= tree.at(node).end { return 0 }
+    at = tree.at(at).end
+  }
+  if at >= tree.at(node).end || tree.at(at).tag != "Pos" { return 0 }
+  var line = 0
+  var col = 0
+  let l = String.from(tree.at(at + 1).tag)
+  let c = String.from(tree.at(at + 2).tag)
+  if !l.parse_int(line) || !c.parse_int(col) { return 0 }
+  if line > gen.user_lines { return 0 }
+  let key = line * 65536 + col
+  let existing = gen.locs.index_of(key)
+  if existing >= 0 { return existing + 1 }
+  gen.locs.push(key)
+  return gen.locs.len()
+}
+
+// Which sites print `at file:line:col`, as in the Rust C backend's plain build: element access and mutation
+// (at, get, set, swap, pop), unwrap/expect of an Option, explicit panic (unless its message is a built temporary)
+// and assert; slices and chunks are handled where they are lowered.
+fn reports_site(gen: view Generator, tree: view List<ast.AstNode>, node: Int) -> Bool {
+  let name = ast.name_at(tree, node, 1)
+  let receiver = type_terms.substitute(gen.checked.expressions.at(ast.child(tree, node, 0)), gen.sub)
+  if name == "at" || name == "get" || name == "set" || name == "swap" || name == "pop" {
+    let base = type_terms.base(receiver)
+    return base == "List" || base == "Array" || base == "Slice"
+  }
+  if name == "unwrap" || name == "expect" { return receiver.starts_with("Option<") }
+  return false
+}
+
+fn reports_call(gen: view Generator, tree: view List<ast.AstNode>, node: Int) -> Bool {
+  let name = ast.name_at(tree, node, 0)
+  if name == "assert" || name == "assert_eq" || name == "assert_ne" { return true }
+  if name != "panic" { return false }
+  let args = ast.child(tree, node, 1)
+  return args + 1 < tree.at(args).end && tree.at(args + 1).tag != "Call"
+}
+
+// Run the C emitted since `mark` with `nx_cur_loc` set at the failing statements: every line that calls
+// `nx_panic*` (not already preceded by a nested site's own stamp) and the last line (the operation itself, cleared
+// afterwards). A value that emitted no line carries the stamp in its expression.
+fn located(gen: mut Generator, value: Value, mark: Int, loc: Int) -> Value {
+  if loc == 0 { return move value }
+  if gen.out.len() == mark {
+    return Value { ty: String.from(value.ty), code: "(nx_cur_loc = {loc}, {value.code})" }
+  }
+  let head = gen.out.slice(0, mark)
+  let span = gen.out.slice(mark, gen.out.len())
+  let rows = span.split("\n")
+  var text = String.new()
+  var previous_stamped = false
+  var index = 0
+  let last = rows.len() - 2
+  for row in rows {
+    if row.len() == 0 && index == rows.len() - 1 { break }
+    var pad = String.new()
+    var k = 0
+    while k < row.len() && row.byte(k) == 32 { pad.push_str(" "); k = k + 1 }
+    let trimmed = row.trim()
+    let stamp = trimmed.starts_with("nx_cur_loc = ") && !trimmed.starts_with("nx_cur_loc = 0;")
+    // a stamp never goes before `else` or a closing brace (it would split an if/else)
+    let joins = trimmed.starts_with("else") || trimmed.starts_with("}}")
+    let stamped_here = !stamp && !previous_stamped && !joins && (row.contains("nx_panic") || index == last)
+    if stamped_here { text.push_str("{pad}nx_cur_loc = {loc};\n") }
+    text.push_str(row)
+    text.push_str("\n")
+    if stamped_here && index == last { text.push_str("{pad}nx_cur_loc = 0;\n") }
+    previous_stamped = stamp
+    index = index + 1
+  }
+  gen.out = "{head}{text}"
+  return move value
+}
+
 fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Value {
   if node == gen.override_node {
     // the receiver of an adapted user iterator was already converted by `into_iter`
@@ -2266,6 +2360,16 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
   }
   if tag == "StructLit" { return struct_literal(gen, tree, node, ty) }
   if tag == "Array" || tag == "ArrayFill" { return array_literal(gen, tree, node, ty) }
+  if tag == "Slice" && gen.slice_node != node {
+    let loc = site_loc(gen, tree, node, 3)
+    if loc != 0 {
+      let mark = gen.out.len()
+      gen.slice_node = node
+      let value = expression(gen, tree, node)
+      gen.slice_node = -1
+      return located(gen, move value, mark, loc)
+    }
+  }
   if tag == "Slice" {
     let seq = expression(gen, tree, ast.child(tree, node, 0))
     var lo = String.from("0")
@@ -2312,13 +2416,31 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
     unsupported("generic member {owner}.{member}")
   }
   if tag == "Bin" { return binary(gen, tree, node, ty) }
-  if tag == "Call" { return call(gen, tree, node, ty) }
+  if tag == "Call" {
+    var loc = 0
+    if reports_call(gen, tree, node) { loc = site_loc(gen, tree, node, 2) }
+    let mark = gen.out.len()
+    let outer_site = gen.site
+    if loc != 0 { gen.site = loc }
+    let value = call(gen, tree, node, ty)
+    gen.site = outer_site
+    return located(gen, move value, mark, loc)
+  }
   if tag == "CallFn" {
     let callee = expression(gen, tree, ast.child(tree, node, 0))
     return indirect_call(gen, tree, callee, ast.child(tree, node, 1), ty)
   }
   if tag == "Closure" { return closure(gen, tree, node, ty) }
-  if tag == "Method" { return string_method(gen, tree, node, ty) }
+  if tag == "Method" {
+    var loc = 0
+    if reports_site(gen, tree, node) { loc = site_loc(gen, tree, node, 3) }
+    let mark = gen.out.len()
+    let outer_site = gen.site
+    if loc != 0 { gen.site = loc }
+    let value = string_method(gen, tree, node, ty)
+    gen.site = outer_site
+    return located(gen, move value, mark, loc)
+  }
   if tag == "Un" {
     let op = ast.name_at(tree, node, 0)
     let arg = ast.child(tree, node, 1)
@@ -2420,7 +2542,10 @@ fn emit_for(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     let length = temp(gen, tree, String.from("Int"), sequence_length(source))
     var noun = String.from("chunk")
     if name == "windows" { noun = String.from("window") }
-    line(gen, "if ({k.code} <= 0) nx_panic(\"{noun} size must be positive\");")
+    let at_loc = site_loc(gen, tree, iter, 3)
+    var guard = "if ({k.code} <= 0) nx_panic(\"{noun} size must be positive\");"
+    if at_loc != 0 { guard = "if ({k.code} <= 0) {{ nx_cur_loc = {at_loc}; nx_panic(\"{noun} size must be positive\"); }}" }
+    line(gen, guard)
     gen.references.set(id, false)
     if name == "chunks" {
       line(gen, "for (int64_t i{id} = 0; i{id} < {length.code}; i{id} += {k.code}) {{")
@@ -3245,6 +3370,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
   if tree.at(params).end != params + 1 || tree.at(ast.child(tree, entry, 3)).tag != "_" {
     unsupported("main must take no arguments and return nothing")
   }
+  if gen.at_file.len() > 0 { global(gen, String.from("#define NX_SELFHOST_LOCS 1")) }
   global(gen, String.from("#include \"c_runtime.h\""))
   global(gen, String.from("#include \"c_selfhost_text.h\""))
   global(gen, String.from("#include \"c_selfhost_numeric.h\""))
@@ -3278,8 +3404,8 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
 
 fn main() {
   let args = env.args()
-  if args.len() != 2 {
-    io.eprintln("usage: codegen FILE.ast")
+  if args.len() < 2 || args.len() > 4 {
+    io.eprintln("usage: codegen FILE.ast [SOURCE-NAME USER-LINES]")
     env.exit(2)
     return
   }
@@ -3304,14 +3430,28 @@ fn main() {
         function_values: List<Int>.new(), closure_envs: List<Int>.new(), wrappers: String.new(),
         references: List<Bool>.new(), out: String.new(),
         indent: 0, temp: 0, loops: List<Loop>.new(), deferred: List<Int>.new(), result: String.new(),
-        worker_cleanup: false, user_box: false, override_node: -1, override_ty: String.new(), override_code: String.new(), no_args: false,
+        worker_cleanup: false, user_box: false, at_file: String.new(), user_lines: 0, locs: List<Int>.new(), last_line: 0, slice_node: -1, site: 0, override_node: -1, override_ty: String.new(), override_code: String.new(), no_args: false,
       }
       for i in 0..gen.locals.bindings.len() { gen.references.push(false) }
+      if args.len() == 4 {
+        gen.at_file = String.from(args.at(2))
+        if !args.at(3).parse_int(gen.user_lines) { gen.user_lines = 0 }
+      }
       generate(gen, file.nodes)
       print(gen.globals)
       print(gen.prototypes)
       print(gen.wrappers)
       print(gen.out)
+      if gen.at_file.len() > 0 {
+        // the location table the runtime's `nx_dbg` reads (id 0 = unknown)
+        var table = String.from("static const NxLoc nx_locs_tbl[] = {{ {{0,0,0}}")
+        for key in gen.locs { table.push_str(", {{0,{key / 65536},{key % 65536}}}") }
+        table.push_str(" }};")
+        print(table)
+        let quoted = gen.at_file.replace("\\", "\\\\").replace("\"", "\\\"")
+        print("static const char *const nx_files_tbl[] = {{ \"{quoted}\" }};")
+        print("const NxDebug nx_dbg = {{ nx_locs_tbl, {gen.locs.len() + 1}, nx_files_tbl }};")
+      }
     }
   }
 }

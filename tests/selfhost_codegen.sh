@@ -88,7 +88,7 @@ grep -q 'this deferred statement uses' "$tmp/deferred-move.err"
 
 source_ast() {
   : >"$tmp/source.err"
-  "$tmp/rebuilt/lexer" "$1" --positioned >"$tmp/tokens" 2>"$tmp/source.err" || return
+  "$tmp/rebuilt/lexer" "$1" --positioned --columns >"$tmp/tokens" 2>"$tmp/source.err" || return
   "$tmp/rebuilt/parser" "$tmp/tokens" --build >"$tmp/ast" || {
     cp "$tmp/ast" "$tmp/source.err"
     return 1
@@ -176,9 +176,9 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
     continue
   fi
   status=0
-  "$tmp/rebuilt/codegen" "$tmp/ast" >"$tmp/self.c" 2>"$tmp/codegen.err" || status=$?
+  "$tmp/rebuilt/codegen" "$tmp/ast" "$file" "$(wc -l <"$file")" >"$tmp/self.c" 2>"$tmp/codegen.err" || status=$?
   seed_status=0
-  "$tmp/codegen" "$tmp/ast" >"$tmp/seed.c" 2>"$tmp/seed.err" || seed_status=$?
+  "$tmp/codegen" "$tmp/ast" "$file" "$(wc -l <"$file")" >"$tmp/seed.c" 2>"$tmp/seed.err" || seed_status=$?
   if [[ $status != "$seed_status" ]] || ! cmp -s "$tmp/self.c" "$tmp/seed.c" ||
       ! cmp -s "$tmp/codegen.err" "$tmp/seed.err"; then
     fail "rebuilt codegen differs from seed (seed $seed_status, rebuilt $status)"

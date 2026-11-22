@@ -69,7 +69,13 @@ __attribute__((noreturn, noinline, cold)) static void nx_panic_tail(uint32_t l) 
 __attribute__((noreturn)) static void nx_panic0(const char *m) { nx_try_worker_panic(); fprintf(stderr, "panic: %s\n", m); nx_panic_tail(0); }
 __attribute__((noreturn)) static void nx_panic_at_(const char *m, uint32_t l) { nx_try_worker_panic(); fprintf(stderr, "panic: %s\n", m); nx_panic_tail(l); }
 #define nx_panic_at(m, l) nx_panic_at_((m), (l))
-#define nx_panic(m) nx_panic_at_((m), 0)
+/* programs of the self-hosted compiler define NX_SELFHOST_LOCS: their panics report `nx_cur_loc`, which the generated code sets around the sites that carry a position */
+#ifdef NX_SELFHOST_LOCS
+#define NX_LOC0 0xFFFFFFFFu
+#else
+#define NX_LOC0 0
+#endif
+#define nx_panic(m) nx_panic_at_((m), NX_LOC0)
 /* a function value: code pointer and environment (0, or a heap block whose first word is its drop function) */
 typedef struct { void *code; void *env; } NxFn;
 typedef void (*NxDynSlot)(void);
@@ -150,7 +156,7 @@ __attribute__((noreturn)) static void nxl_panic_str(Str s, uint32_t l) {
   fputs("panic: ", stderr); if (s.n > 0) fwrite(s.p, 1, (size_t)s.n, stderr); fputc('\n', stderr);
   nx_panic_tail(l);
 }
-#define nx_panic_str(s) nxl_panic_str((s), 0)
+#define nx_panic_str(s) nxl_panic_str((s), NX_LOC0)
 static inline Str nx_str_text(const char *s) { Str r = { s, (int64_t)strlen(s) }; return r; }
 static inline Str nx_str_view(const String *s) { Str r = { s->d, s->len }; return r; }
 static inline String nx_str_new(void) { String s = {0, 0, 0}; return s; }
@@ -281,7 +287,7 @@ static inline int64_t nx_load64(int64_t p) { return *(int64_t *)(intptr_t)p; }
 static inline void nx_store8(int64_t p, int64_t v) { *(uint8_t *)(intptr_t)p = (uint8_t)v; }
 static inline void nx_store64(int64_t p, int64_t v) { *(int64_t *)(intptr_t)p = v; }
 static inline void nxl_assert(bool c, uint32_t l) { if (!c) nx_panic_at("assertion failed", l); }
-static inline void nx_assert(bool c) { nxl_assert(c, 0); }
+static inline void nx_assert(bool c) { nxl_assert(c, NX_LOC0); }
 static inline int64_t nxl_add(int64_t a, int64_t b, uint32_t l) { int64_t r; if (__builtin_add_overflow(a, b, &r)) nx_panic_at("integer overflow in addition", l); return r; }
 static inline int64_t nx_add(int64_t a, int64_t b) { return nxl_add(a, b, 0); }
 static inline int64_t nxl_sub(int64_t a, int64_t b, uint32_t l) { int64_t r; if (__builtin_sub_overflow(a, b, &r)) nx_panic_at("integer overflow in subtraction", l); return r; }

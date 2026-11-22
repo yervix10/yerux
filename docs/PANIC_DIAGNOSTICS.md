@@ -44,7 +44,7 @@ failing operation (overflow, index, slice, unwrap/expect, division, explicit `pa
   Functions that call are no longer frameless. Active only when the program has user markers:
   hello world 3301 -> 3327 bytes.
 * Limits: aarch64 ignores markers (no location line); Windows prints no locations;
-  programs built by the selfhost compiler print no location (loc 0).
+  programs built by the selfhost compiler print the location of the same sites as the plain C release build (see below).
 
 ## Design: DWARF / gdb for native (not implemented)
 Minimal viable plan: emit section headers into the ELF with `.symtab`/`.strtab` (one FUNC symbol
@@ -54,3 +54,16 @@ tables give offset->(file,line,col)). That gives `bt`, `break main.foo` and `lis
 by line in gdb. `.debug_info` (CU + subprograms with `low_pc/high_pc`) is a small addition;
 variables/types (`DW_TAG_variable`, location lists from regalloc) are the expensive part and
 are out of scope. Work is mostly a writer for those sections plus offsets recorded per inst in x64.rs.
+
+## Self-hosted compiler
+`yerux-self` programs print `at file:line:col` for the sites the plain C release build reports: element access and
+mutation on List/Array/Slice (`at`, `get`, `set`, `swap`, `pop`, `xs[i]`, `xs[a..b]`), `chunks`/`windows` with a zero
+size, `unwrap`/`expect` of an Option, `assert*` and `panic` (unless its message is a built temporary, e.g. an
+interpolated string). The lexer's `--columns` adds the column to each token row (`line:col:Kind..`); in `--build`
+mode the parser appends `Pos(line,col)` as the last child of `Method`, `Slice` and the `panic`/`assert*` `Call`
+(position of the start of the expression, as in the Rust compiler); the AST of the parity scripts is unchanged.
+`codegen FILE.ast NAME USER-LINES` stamps `nx_cur_loc` around those sites and writes the `nx_dbg` table; the runtime
+reads it because the program defines `NX_SELFHOST_LOCS`. The driver puts the prelude *after* the user's source so
+lines stay true, and sites past `USER-LINES` (prelude code) carry no position. Limits: every site is attributed
+to the entry file (modules print their line under the entry name); positions inside `{..}` interpolations use the
+string's column.
