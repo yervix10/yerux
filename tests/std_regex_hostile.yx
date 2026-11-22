@@ -1,0 +1,7 @@
+import std.regex
+
+fn main() {
+  var text = String.new()
+  for i in 0..5000 { text.push_char('a') }
+  print(regex.is_match("a*a*a*a*a*a*a*a*b", text))
+}

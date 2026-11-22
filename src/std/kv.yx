@@ -14,7 +14,7 @@ pub fn open(path: view String) -> Result<Store, String> {
 
 pub fn set(store: view Store, key: view String, value: view String) -> Result<Int, String> {
     var current = String.new()
-    match fs.read_to_string(store.path) {
+    match fs.read_to_string_limit(store.path, 16777216) {
         Ok(contents) => { current = move contents }
         Err(e) => {
             if e.code != 2 { return Err(String.from(e.message)) }
@@ -42,7 +42,7 @@ pub fn set(store: view Store, key: view String, value: view String) -> Result<In
 
 pub fn get(store: view Store, key: view String) -> Result<Option<String>, String> {
     var contents = String.new()
-    match fs.read_to_string(store.path) {
+    match fs.read_to_string_limit(store.path, 16777216) {
         Ok(value) => { contents = move value }
         Err(e) => {
             if e.code == 2 { return Ok(None) }

@@ -3,6 +3,17 @@
 import std.text
 
 fn raw_value(input: view String, wanted: view String) -> String {
+  // A hostile manifest should not allocate a String for every blank line.
+  if input.len() > 16777216 { return String.new() }
+  var line_count = 0
+  var scan = 0
+  while scan < input.len() {
+    if input.byte(scan) == 10 {
+      line_count = line_count + 1
+      if line_count > 100000 { return String.new() }
+    }
+    scan = scan + 1
+  }
   let lines = input.split(String.from("\n"))
   var table = String.new()
   var i = 0
