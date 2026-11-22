@@ -1,0 +1,90 @@
+// String split/lines/join edges: empty fields, multi-byte separators and every line ending.
+fn show(items: view List<String>) {
+  var i = 0
+  while i < items.len() {
+    print("[{items.at(i)}] {items.at(i).len()}")
+    i = i + 1
+  }
+}
+
+fn main() {
+  let empty = String.from("")
+  let one = empty.split(",")
+  print(one.len())
+  print(one.at(0).len())
+  let sep_only = String.from("--")
+  let two = sep_only.split("--")
+  print(two.len())
+  print("{two.at(0).len()} {two.at(1).len()}")
+  let ends = String.from("--a--b--")
+  let parts = ends.split("--")
+  show(parts)
+  let j = parts.join("|")
+  print(j)
+  let back = parts.join("--")
+  print(back.eq(ends))
+  let mb = String.from("αxααyα")
+  let mp = mb.split("α")
+  show(mp)
+  let mj = mp.join("/")
+  print(mj)
+  let absent = String.from("abc")
+  let no = absent.split(";")
+  print(no.len())
+  print(no.at(0).eq(absent))
+
+  // Join with an empty separator, empty pieces and a single piece.
+  var es = List<String>.new()
+  let j0 = es.join(",")
+  print("[{j0}] {es.len()}")
+  es.push(String.from(""))
+  let j1 = es.join(",")
+  print("[{j1}] {es.len()}")
+  es.push(String.from(""))
+  let j2 = es.join(",")
+  let j3 = es.join("")
+  print("[{j2}] [{j3}] {es.len()}")
+  let empty_sep = String.from("")
+  let j4 = es.join(empty_sep)
+  print(j4.len())
+
+  // Lines: CRLF, lone CR, blank lines, trailing newline and no newline.
+  let text = String.from("a\r\n\r\nb\n\nc\r")
+  let lines = text.lines()
+  show(lines)
+  let blanks = String.from("\n\n\n")
+  let bl = blanks.lines()
+  print(bl.len())
+  var i = 0
+  while i < bl.len() {
+    print(bl.at(i).is_empty())
+    i = i + 1
+  }
+  let no_nl = String.from("only")
+  let nl = no_nl.lines()
+  print("{nl.len()} {nl.at(0).eq(no_nl)}")
+  let just_nl = String.from("\n")
+  let jn = just_nl.lines()
+  print(jn.len())
+  print(jn.at(0).is_empty())
+
+  // List<String> search over empty and multi-byte entries.
+  var words = List<String>.new()
+  words.push(String.from(""))
+  words.push(String.from("é"))
+  words.push(String.from("€"))
+  words.push(String.from(""))
+  let e = String.from("é")
+  let euro = String.from("€")
+  let missing = String.from("z")
+  print("{words.len()} {words.index_of(empty)} {words.index_of(e)} {words.index_of(euro)}")
+  print("{words.index_of(missing)} {words.contains(empty)} {words.contains(missing)}")
+
+  // Replace interplay with empty fields.
+  let csv = String.from("a,,c")
+  let cells = csv.split(",")
+  let norm = cells.join(";")
+  let expanded = norm.replace(";;", ";empty;")
+  print(norm)
+  print(expanded)
+}
