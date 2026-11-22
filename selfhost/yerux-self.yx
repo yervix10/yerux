@@ -275,19 +275,61 @@ fn read_text(file: view String) -> String {
   return String.new()
 }
 
+// A user type with `fn next(mut self) -> Option<T>` gets `into_iter(self) -> Iter<T>` (the Rust compiler adds the
+// same impl), which is what lets the Iter adapters and `for` work on it. Line-based: `impl Name {` opens the
+// impl, the `fn` lines are matched inside it.
+fn iterator_impls(text: view String) -> String {
+  var out = String.new()
+  var names = List<String>.new()
+  var items = List<String>.new()
+  var done = List<String>.new()
+  var current = String.new()
+  for line in text.split("\n") {
+    let t = line.trim()
+    if t.starts_with("impl ") {
+      current = String.new()
+      if t.ends_with("{{") && !t.contains(" for ") && !t.contains("<") { current = String.from(t.slice(5, t.len() - 1).trim()) }
+    } else if t.starts_with("fn into_iter(") {
+      done.push(String.from(current))
+    } else if t.starts_with("fn next(mut self) -> Option<") {
+      let rest = t.slice(28, t.len())
+      var close = rest.len() - 1
+      while close > 0 && rest.byte(close) != 62 { close = close - 1 }
+      if close > 0 && current.len() > 0 {
+        names.push(String.from(current))
+        items.push(String.from(rest.slice(0, close)))
+      }
+    }
+  }
+  for i in 0..names.len() {
+    if done.contains(names.at(i)) { continue }
+    let name = String.from(names.at(i))
+    let item = String.from(items.at(i))
+    out.push_str("impl {name} {{ fn into_iter(self) -> Iter<{item}> {{ var s = move self\nreturn Iter<{item}> {{ nxt: move || {{ return s.next() }} }} }} }}\n")
+  }
+  return out
+}
+
 fn with_prelude(build: view Build, source: view String) -> String {
   let text = read_text(source)
   var head = String.new()
-  if uses(text, "Map<") || uses(text, "Set<") || uses(text, "Map.") || uses(text, "Set.") {
+  let iterates = uses(text, "Iter<") || uses(text, "Iter.") || uses(text, ".into_iter(") || uses(text, "fn next(mut self) -> Option<")
+  // the iterator prelude has to_set / to_map, which need Set and Map
+  if iterates || uses(text, "Map<") || uses(text, "Set<") || uses(text, "Map.") || uses(text, "Set.") {
     head.push_str(read_text(path.join(build.runtime, "prelude_map.yx")))
   }
-  if uses(text, "Iter<") || uses(text, "Iter.") || uses(text, ".into_iter(") {
+  if iterates {
     head.push_str(read_text(path.join(build.runtime, "prelude_iter.yx")))
+  }
+  if uses(text, ".context(") || uses(text, ".with_context(") || uses(text, ".wrap(") {
+    head.push_str(read_text(path.join(build.runtime, "prelude_error.yx")))
   }
   if uses(text, "Arena") {
     head.push_str(read_text(path.join(build.runtime, "prelude_arena.yx")))
   }
-  if head.len() == 0 { return String.new() }
+  var tail = String.new()
+  if iterates { tail = iterator_impls(text) }
+  if head.len() == 0 && tail.len() == 0 { return String.new() }
   // imports must stay first: the prelude goes after the leading import lines
   var top = String.new()
   var rest = String.new()
@@ -298,7 +340,7 @@ fn with_prelude(build: view Build, source: view String) -> String {
     else { rest.push_str(line); rest.push_str("\n") }
   }
   let combined = path.join(build.work, "with_prelude.yx")
-  if !write(combined, "{top}{head}\n{rest}") { return String.new() }
+  if !write(combined, "{top}{head}\n{rest}\n{tail}") { return String.new() }
   return combined
 }
 

@@ -1,7 +1,7 @@
 import std.env
 
 // A flat syntax tree. Children immediately follow their parent; end skips a subtree.
-pub struct AstNode { tag: String, end: Int }
+pub struct AstNode { tag: String, end: Int, start: Int, stop: Int }
 pub struct AstReader { source: String, cursor: Int, nodes: List<AstNode> }
 
 // The bootstrap backend supplies C shims for these standard-library modules.
@@ -42,7 +42,7 @@ fn read_node(reader: mut AstReader) {
   }
 
   let index = reader.nodes.len()
-  reader.nodes.push(AstNode { tag: move label, end: index + 1 })
+  reader.nodes.push(AstNode { tag: move label, end: index + 1, start: start, stop: reader.cursor })
   if close == 0 { return }
 
   if tree_byte(reader) != close {
@@ -58,6 +58,7 @@ fn read_node(reader: mut AstReader) {
   }
   reader.cursor = reader.cursor + 1
   reader.nodes.at(index).end = reader.nodes.len()
+  reader.nodes.at(index).stop = reader.cursor
 }
 
 pub fn decode(source: String) -> AstReader {
@@ -68,6 +69,101 @@ pub fn decode(source: String) -> AstReader {
     artifact_error("expected a File AST")
   }
   return move reader
+}
+
+struct Edit { at: Int, stop: Int, text: String }
+
+// Trait default methods: a trait method with a body is copied into every `impl Trait for T` that does not
+// define it, and the trait keeps only the signature. Text edits on the AST source, applied back to front.
+pub fn decode_linked(source: String) -> AstReader {
+  let first = decode(String.from(source))
+  let text = expand_defaults(first.nodes, first.source)
+  if text.len() == 0 { return move first }
+  return decode(move text)
+}
+
+fn expand_defaults(nodes: view List<AstNode>, source: view String) -> String {
+  var edits = List<Edit>.new()
+  let items = child(nodes, 0, 0)
+  var at = items + 1
+  while at < nodes.at(items).end {
+    let decl = child(nodes, at, 2)
+    if nodes.at(decl).tag == "Trait" {
+      let methods = child(nodes, decl, 1)
+      var f = methods + 1
+      while f < nodes.at(methods).end {
+        let body = child(nodes, f, 4)
+        if nodes.at(body).tag != "_" { edits.push(Edit { at: nodes.at(body).start, stop: nodes.at(body).stop, text: String.from("_") }) }
+        f = nodes.at(f).end
+      }
+    }
+    at = nodes.at(at).end
+  }
+  let any = edits.len() > 0
+  if !any { return String.new() }
+  // copy the defaults into the impls
+  at = items + 1
+  while at < nodes.at(items).end {
+    let decl = child(nodes, at, 2)
+    if nodes.at(decl).tag == "Impl" && nodes.at(child(nodes, decl, 1)).tag == "Type" {
+      let trait_name = String.from(nodes.at(child(nodes, child(nodes, decl, 1), 0)).tag)
+      let methods = child(nodes, decl, 3)
+      var t = items + 1
+      var added = String.new()
+      var count = nodes.at(methods).end - methods - 1
+      while t < nodes.at(items).end {
+        let td = child(nodes, t, 2)
+        if nodes.at(td).tag == "Trait" && nodes.at(child(nodes, td, 0)).tag == trait_name {
+          let tm = child(nodes, td, 1)
+          var f = tm + 1
+          while f < nodes.at(tm).end {
+            let body = child(nodes, f, 4)
+            if nodes.at(body).tag != "_" {
+              let fname = String.from(nodes.at(child(nodes, f, 0)).tag)
+              var defined = false
+              var m = methods + 1
+              while m < nodes.at(methods).end {
+                if nodes.at(child(nodes, m, 0)).tag == fname { defined = true }
+                m = nodes.at(m).end
+              }
+              if !defined {
+                let text = source.slice(nodes.at(f).start, nodes.at(f).stop)
+                if added.len() > 0 || count > 0 { added.push_str(",") }
+                added.push_str(text)
+                count = count + 1
+              }
+            }
+            f = nodes.at(f).end
+          }
+        }
+        t = nodes.at(t).end
+      }
+      if added.len() > 0 { edits.push(Edit { at: nodes.at(methods).stop - 1, stop: nodes.at(methods).stop - 1, text: move added }) }
+    }
+    at = nodes.at(at).end
+  }
+  // apply from the back: sort by position, descending
+  var order = List<Int>.new()
+  for i in 0..edits.len() { order.push(i) }
+  var i = 1
+  while i < order.len() {
+    var j = i
+    while j > 0 && edits.at(order.at(j - 1)).at < edits.at(order.at(j)).at {
+      let a = order.at(j - 1)
+      let b = order.at(j)
+      order.set(j - 1, b)
+      order.set(j, a)
+      j = j - 1
+    }
+    i = i + 1
+  }
+  var text = String.from(source)
+  for k in order {
+    let head = text.slice(0, edits.at(k).at)
+    let tail = text.slice(edits.at(k).stop, text.len())
+    text = "{head}{edits.at(k).text}{tail}"
+  }
+  return move text
 }
 
 pub fn child(tree: view List<AstNode>, parent: Int, offset: Int) -> Int {

@@ -871,7 +871,7 @@ fn function(p: mut Parser, body: Bool, method: Bool, external: Bool) -> String {
   finish(params)
   let ret = return_type(p)
   var statements = missing()
-  if body { statements = block(p) }
+  if body || (method && !external && sym(p, "{{")) { statements = block(p) }
   else { let semi = eat(p, ";") }
   return "Fn({n},{generic},{params},{ret},{statements})"
 }

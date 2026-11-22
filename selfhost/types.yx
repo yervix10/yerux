@@ -820,6 +820,21 @@ fn bound_method(types: view Types, tree: view List<ast.AstNode>, params: Int,
   return -1
 }
 
+// The Iter<T> a user type turns into through its `into_iter(self) -> Iter<T>`, or "" when it is not an iterator.
+fn user_iterator(types: view Types, owner: view String) -> String {
+  var has_next = false
+  var result = String.new()
+  for i in 0..types.signatures.len() {
+    if types.signatures.at(i).owner != owner || types.signatures.at(i).receiver == "" { continue }
+    if types.signatures.at(i).name == "next" { has_next = true }
+    if types.signatures.at(i).name == "into_iter" {
+      result = String.from(types.signatures.at(i).result)
+    }
+  }
+  if !has_next || !result.starts_with("Iter<") { return String.new() }
+  return result
+}
+
 fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     name: view String, args: Int, receiver: Int, hint: view String) -> String {
   var payload = unknown()
@@ -994,6 +1009,12 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     var loans = List<ownership.Loan>.new()
     record_loan(types, tree, loans, receiver, String.from("Mut"), owner, true)
     return unit()
+  }
+  if receiver >= 0 && name != "into_iter" && name != "next" {
+    // a user iterator (`next` plus the generated `into_iter`) uses the adapters of Iter: `it.map(f)` is
+    // `it.into_iter().map(f)`
+    let adapted = user_iterator(types, owner)
+    if adapted != "" { return member(types, tree, adapted, name, args, receiver, hint) }
   }
   if receiver >= 0 {
     let free = signature_index(types, "std__iter_{name}", false)
@@ -1294,6 +1315,12 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   types.defer_floor = floor
   var result = String.from(state.expected)
   if result == "?" { result = String.from(state.inferred) }
+  else if result.contains("?") && !state.inferred.contains("?") {
+    // the expected result had unresolved arguments (`Option<?>`): the body decides them
+    let wanted = type_terms.base(result)
+    let found = type_terms.base(state.inferred)
+    if wanted == found { result = String.from(state.inferred) }
+  }
   if worker && types.verify_ownership {
     var visited = List<String>.new()
     if !transferable(types, result, visited) { issue(types, "spawn cannot return a value of type {result}") }
@@ -2667,7 +2694,8 @@ fn main() {
   match fs.read_to_string(args.at(2)) {
     Err(e) => { print(e.message); env.exit(2) }
     Ok(source) => {
-      let file = ast.decode(move source)
+      var file = ast.decode(String.from(source))
+      if args.at(1) != "locals" { file = ast.decode_linked(move source) }
       let bindings = locals.resolve(file.nodes)
       if args.at(1) == "locals" {
         for row in bindings.rows { print(row) }
