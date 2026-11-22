@@ -1,0 +1,8 @@
+error: 'HIDDEN' is private in module 'lib'
+ --> tests/mod_err/private_const/main.yx:2:19
+  |
+2 | fn main() { print(lib.HIDDEN) }
+  |                   ^^^^^^^^^^
+  = help: add `pub` before the constant in lib.yx to share it: `pub const HIDDEN`
+
+1 error(s). Nothing was generated.

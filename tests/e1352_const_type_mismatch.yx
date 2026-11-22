@@ -1,0 +1,5 @@
+const A: Bool = 3
+
+fn main() {
+  print(A)
+}

@@ -1,0 +1,13 @@
+import std.compress
+
+fn main() {
+  var encoded = String.new()
+  for i in 0..65795 {
+    encoded.push_byte(255)
+    encoded.push_byte(65)
+  }
+  match compress.decompress(encoded) {
+    Ok(_) => { print("unexpected success") }
+    Err(message) => { print(message) }
+  }
+}

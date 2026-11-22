@@ -1,0 +1,11 @@
+pub const SIDES: Int = 4
+pub const HALF: Int = SIDES / 2
+pub const NAME: Char = 'q'
+pub const ON: Bool = SIDES > 3
+pub type Point = (Int, Int)
+pub struct Rect { w: Int, h: Int }
+pub type Box2 = Rect
+const SECRET: Int = 7
+pub fn area(r: Box2) -> Int { return r.w * r.h + SECRET - 7 }
+pub fn origin() -> Point { return (0, 0) }
+pub fn grid() -> [Int; SIDES] { return [1, 2, 3, 4] }

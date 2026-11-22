@@ -1,0 +1,7 @@
+import std.csv
+
+fn main() {
+  let rows = csv.parse("é,\"日本語\"\r\n")
+  print(rows.at(0).at(0))
+  print(rows.at(0).at(1))
+}

@@ -50,7 +50,7 @@ files are named `a.b`); a file argument is one module.
 
 What is documented is read from the text, so it works even if the program does not compile:
 
-- `pub` top-level `fn`, `struct`, `enum` and `trait`, with the declaration as written (no body);
+- `pub` top-level `fn`, `struct`, `enum`, `trait`, `const` and `type` (alias), with the declaration as written (no body);
 - the methods of `impl` blocks of public types, and the methods declared in public traits;
 - `///` lines directly above an item are its documentation (Markdown-ish: paragraphs, `` `code` `` and fenced blocks);
   a blank line detaches the comment from the next item;

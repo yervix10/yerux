@@ -1,0 +1,2 @@
+pub const A: Int = B
+pub const B: Int = A

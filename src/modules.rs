@@ -52,7 +52,8 @@ pub struct Loaded {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Kind {
     Func,
-    Type, // struct, enum or trait
+    Type, // struct, enum, trait or `type` alias
+    Const, // `const NAME[: T] = expr`
 }
 
 struct Item {
@@ -105,6 +106,7 @@ impl Kind {
         match self {
             Kind::Func => "function",
             Kind::Type => "type",
+            Kind::Const => "constant",
         }
     }
 }
@@ -408,6 +410,17 @@ impl Loader {
         let mut items: HashMap<String, Item> = HashMap::new();
         let mut export_list: Vec<(String, Kind)> = vec![];
         for sp in &spans {
+            if sp.kind == Kind::Const && sp.public && !toks.get(sp.head + 2).is_some_and(|t| is_sym(t, ":")) {
+                self.trace(file, "error", &["pub-const-untyped"]);
+                self.report(
+                    file,
+                    diag(
+                        format!("a `pub const` needs an explicit type: `pub const {}: Int = ...`", sp.name.clone().unwrap_or_default()),
+                        toks[sp.head + 1].pos,
+                    )
+                    .note("the type of a public constant is part of the module's interface, so it is written out"),
+                );
+            }
             if let Some(n) = &sp.name {
                 if items
                     .insert(
@@ -682,15 +695,10 @@ impl Loader {
                             self.report(file, d);
                         }
                         Some(it) if !it.public => {
-                            let what = if it.kind == Kind::Func {
-                                "function"
-                            } else {
-                                "type"
-                            };
-                            let declaration = if it.kind == Kind::Func {
-                                "fn"
-                            } else {
-                                "struct"
+                            let (what, declaration) = match it.kind {
+                                Kind::Func => ("function", "fn"),
+                                Kind::Const => ("constant", "const"),
+                                Kind::Type => ("type", "struct"),
                             };
                             self.trace(file, "error", &["private-item", &x, &dep, &y]);
                             self.report(
@@ -739,6 +747,7 @@ impl Loader {
                 // `fn read_line(` (a method definition) and `x.read_line(` (a method call) are not uses
                 let method = matches!(prev, Some(p) if is_id(p, "fn") || is_sym(p, "."));
                 let flag = match kind {
+                    Kind::Const => false,
                     Kind::Func => !method && matches!(next, Some(n) if is_sym(n, "(")),
                     Kind::Type => {
                         matches!(next, Some(n) if is_sym(n, "{"))
@@ -807,7 +816,7 @@ impl Loader {
                 if self.trace.is_some() && it.kind == Kind::Func && call && !prev_fn {
                     self.trace(file, "call", &[&x, &mangle(ekey, &x)]);
                 }
-                if !ekey.is_empty() && (it.kind == Kind::Type || call) {
+                if !ekey.is_empty() && (it.kind != Kind::Func || call) {
                     out.push(Token {
                         t: Tok::Id(mangle(ekey, &x)),
                         pos: t.pos,
@@ -865,6 +874,29 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
                 (Kind::Func, None, Some(n))
             }
             Tok::Id(w) if w == "impl" => (Kind::Func, None, None),
+            // `const NAME[: T] = expr` and `type NAME = T`: one declaration on one line (no body)
+            Tok::Id(w) if (w == "const" || w == "type") && toks.get(i + 1).and_then(id_of).is_some() => {
+                let line = item.pos.line;
+                let mut end = i + 2;
+                while end < toks.len() && !matches!(toks[end].t, Tok::Eof) && toks[end].pos.line == line {
+                    end += 1;
+                }
+                if end < toks.len() && is_sym(&toks[end], ";") {
+                    end += 1;
+                }
+                v.push(Span {
+                    start: s,
+                    end,
+                    public,
+                    head,
+                    name: toks.get(i + 1).and_then(id_of).map(|n| n.to_string()),
+                    kind: if w == "const" { Kind::Const } else { Kind::Type },
+                    test: None,
+                    bench: false,
+                });
+                i = end;
+                continue;
+            }
             _ => break,
         };
         // find the body

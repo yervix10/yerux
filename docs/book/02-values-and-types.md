@@ -141,4 +141,33 @@ one
 1 = one
 ```
 
+## Constants and type aliases
+
+`const NAME: Type = expr` names a value the compiler computes while compiling: literals, earlier consts and
+arithmetic, comparisons and logic (overflow and division by zero are compile errors). Consts are `Int`
+(or `Int<lo..hi>`), `Bool` or `Char`, and may be used as array lengths. `type Name = T` gives another name to a type;
+it is the same type, not a new one.
+
+```yerux
+const SIZE: Int = 4
+const LAST: Int = SIZE - 1
+const DEBUG: Bool = SIZE > 3
+type Row = [Int; SIZE]
+type Point = (Int, Int)
+
+fn main() {
+  let row: Row = [10, 20, 30, 40]
+  let p: Point = (1, 2)
+  print(row[LAST] + p.0 + p.1)
+  print(DEBUG)
+}
+```
+
+```output
+43
+true
+```
+
+In a module, `pub const` (with an explicit type) and `pub type` are shared with importers: chapter 13.
+
 Next: [functions](03-functions.md).

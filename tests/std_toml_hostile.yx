@@ -1,0 +1,7 @@
+import std.toml
+
+fn main() {
+  var input = String.new()
+  for i in 0..100001 { input.push_byte(10) }
+  print(toml.get_int(input, "answer"))
+}

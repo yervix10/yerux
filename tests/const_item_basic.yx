@@ -1,0 +1,39 @@
+const SIZE: Int = 4
+const MASK: Int = SIZE * 4 - 1
+const LETTER: Char = 'k'
+const DEBUG: Bool = SIZE > 3 && !(MASK == 0)
+const SMALL: Int<0..9> = 7
+type Id = Int
+type Pair = (Int, Int)
+type Table = [Int; SIZE]
+type Op = fn(Int) -> Int
+
+struct Item {
+  id: Id,
+  at: Pair,
+}
+
+fn double(x: Int) -> Int {
+  return x * 2
+}
+
+fn apply(f: Op, x: Id) -> Id {
+  return f(x)
+}
+
+fn fill() -> Table {
+  return [1, 2, 3, 4]
+}
+
+fn main() {
+  print(MASK)
+  print(LETTER)
+  print(DEBUG)
+  print(SMALL + 1)
+  let item = Item { id: 5, at: (1, 2) }
+  print(apply(double, item.id) + item.at.0 + item.at.1)
+  let t: Table = fill()
+  print(t[SIZE - 1])
+  let SIZE = 100
+  print(SIZE)
+}
