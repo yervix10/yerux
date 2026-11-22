@@ -763,12 +763,15 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
   if receiver < 0 && shape >= 0 && types.shapes.at(shape).is_enum {
     return nominal_constructor(types, tree, owner, name, args, hint)
   }
+  var method_owner = String.from(owner)
+  if receiver >= 0 && owner.starts_with("Int<") { method_owner = String.from("Int") }
   for i in 0..types.signatures.len() {
     let formal = String.from(types.signatures.at(i).owner)
     let mode = String.from(types.signatures.at(i).receiver)
     if types.signatures.at(i).name == name && ((receiver >= 0) == (mode != "")) {
-      if formal == owner {
-        return call_args(types, tree, args, name, i, owner, receiver)
+      if formal == method_owner {
+        if !types.trace && method_owner != owner { types.expressions.set(receiver, String.from(method_owner)) }
+        return call_args(types, tree, args, name, i, method_owner, receiver)
       }
       let base = type_terms.base(formal)
       if types.signatures.at(i).generics.len() > 0 && base == type_terms.base(owner) {
