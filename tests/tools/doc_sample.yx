@@ -1,0 +1,33 @@
+//! Geometry helpers for the doc test.
+
+/// A point in the plane.
+///
+/// ```yerux
+/// let p = Point { x: 1, y: 2 }
+/// ```
+pub struct Point {
+  x: Int,
+  y: Int,
+}
+
+impl Point {
+  /// Sum of both coordinates.
+  fn total(view self) -> Int {
+    return self.x + self.y
+  }
+}
+
+/// Adds two numbers: a < b & c.
+pub fn add(a: Int, b: Int) -> Int {
+  return a + b
+}
+
+fn internal_helper() -> Int {
+  return 0
+}
+
+pub const LIMIT: Int = 3
+
+fn main() {
+  print(add(1, 2))
+}

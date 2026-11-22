@@ -15,6 +15,28 @@ of every file that would change and exits 1 (use it in CI); `--stdout` prints th
 syntax error is reported as `path: line N: message` and makes the exit code 1; a missing path or unknown option exits 2.
 Formatting is idempotent and never changes the generated program (`tests/fmt.sh` checks this on every example).
 
+## `yerux doc`
+
+```
+yerux doc [--html] [-o DIR] [dir|file.yx ...]
+```
+
+Writes API pages (Markdown, or HTML with `--html`) into `DIR` (default `target/doc`): one page per module plus an
+`index` with a row per module (summary and item count). With no argument it documents `src/` in a project, or the
+current directory. A directory argument is the module root (`src/std` gives modules `args`, `base64`, ...; nested
+files are named `a.b`); a file argument is one module.
+
+What is documented is read from the text, so it works even if the program does not compile:
+
+- `pub` top-level `fn`, `struct`, `enum`, `trait`, `const` and `type`, with the declaration as written (no body);
+- the methods of `impl` blocks of public types, and the methods declared in public traits;
+- `///` lines directly above an item are its documentation (Markdown-ish: paragraphs, `` `code` `` and fenced blocks);
+  a blank line detaches the comment from the next item;
+- `//!` lines at the top of a file document the module; without them the leading block of `//` comments is used.
+
+Private items, `test` and `bench` blocks are left out. Exit codes: 0 ok, 1 I/O error or nothing to document, 2 bad
+arguments or missing path.
+
 ## `yerux bench`
 
 ```

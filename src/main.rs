@@ -2,6 +2,7 @@
 // Pipeline: lexer -> parser -> checker (types + ownership) -> C backend -> cc
 mod a64;
 mod bench;
+mod doc;
 mod cgen;
 mod check;
 mod check_trace;
@@ -208,6 +209,7 @@ const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]
+       yerux doc [--html] [-o DIR] [dir|file.yx ...]
        yerux bench [file.yx|dir ...] [--native] [--no-opt] [--filter text] [--runs N]";
 
 fn hex(bytes: &[u8]) -> String {
@@ -467,6 +469,9 @@ fn real_main() {
                 exit(1);
             }
         }
+    }
+    if args.len() >= 2 && args[1] == "doc" {
+        exit(doc::run_cli(&args[2..]));
     }
     if args.len() >= 2 && args[1] == "bench" {
         exit(bench::run_cli(&args[2..]));
