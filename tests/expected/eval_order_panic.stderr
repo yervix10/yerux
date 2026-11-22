@@ -1,0 +1,2 @@
+panic: integer overflow in subtraction
+  at tests/eval_order_panic.yx:6:16

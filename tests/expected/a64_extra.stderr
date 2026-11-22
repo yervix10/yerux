@@ -1,0 +1,2 @@
+panic: integer overflow in negation
+  at tests/a64_extra.yx:2:32

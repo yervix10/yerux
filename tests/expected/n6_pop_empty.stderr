@@ -1,0 +1,2 @@
+panic: pop from an empty list
+  at tests/n6_pop_empty.yx:6:11

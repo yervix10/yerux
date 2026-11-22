@@ -1,0 +1,2 @@
+panic: integer overflow in multiplication
+  at tests/opt_strength.yx:77:9

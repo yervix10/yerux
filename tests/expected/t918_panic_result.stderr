@@ -1,1 +1,2 @@
 panic: called `Result.unwrap()` on an `Err` value: cannot parse 'oops'
+  at tests/t918_panic_result.yx:16:9

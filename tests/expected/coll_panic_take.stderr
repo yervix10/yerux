@@ -1,0 +1,2 @@
+panic: Map.take key not found
+  at tests/coll_panic_take.yx:5:9

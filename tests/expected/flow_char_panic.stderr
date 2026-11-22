@@ -1,0 +1,2 @@
+panic: invalid Unicode scalar value
+  at tests/flow_char_panic.yx:40:9

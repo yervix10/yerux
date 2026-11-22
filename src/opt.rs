@@ -80,6 +80,7 @@ fn opt_func(f: &mut IrFunc) {
 
 fn opt_func_inner(f: &mut IrFunc, range_analysis: bool) {
     if f.blocks.len().saturating_mul(f.nvregs) > HUGE_FUNC {
+        clean_locs(f);
         cfg(f);
         compact_vregs(f);
         return;
@@ -128,6 +129,7 @@ fn opt_func_inner(f: &mut IrFunc, range_analysis: bool) {
             dce(f);
             profile_pass("dce", &f.name, start);
         }
+        clean_locs(f);
         if !pass_off("cfg") {
             let start = Instant::now();
             cfg(f);
@@ -141,6 +143,46 @@ fn opt_func_inner(f: &mut IrFunc, range_analysis: bool) {
 }
 
 // ───────────────────────── helpers ─────────────────────────
+
+/// Drop the location markers that apply to nothing: a repeat of the marker in force, and one with no instruction
+/// that can panic (or call) before the next marker or the end of its block. A block that only held such markers
+/// becomes empty again, so the CFG clean-up can remove it.
+fn clean_locs(f: &mut IrFunc) {
+    for b in &mut f.blocks {
+        if !b.insts.iter().any(|i| matches!(i, Inst::Loc(_))) {
+            continue;
+        }
+        let n = b.insts.len();
+        let mut keep = vec![true; n];
+        let mut cur = 0u32;
+        for (i, ins) in b.insts.iter().enumerate() {
+            if let Inst::Loc(l) = ins {
+                if *l == cur {
+                    keep[i] = false;
+                } else {
+                    cur = *l;
+                }
+            }
+        }
+        let mut needed = false;
+        for i in (0..n).rev() {
+            match &b.insts[i] {
+                Inst::Loc(_) => {
+                    if keep[i] {
+                        keep[i] = needed;
+                        needed = false;
+                    }
+                }
+                ins => needed |= needs_loc(ins),
+            }
+        }
+        let mut k = 0;
+        b.insts.retain(|_| {
+            k += 1;
+            keep[k - 1]
+        });
+    }
+}
 
 pub(crate) fn def(i: &Inst) -> Option<V> {
     match i {
@@ -208,6 +250,7 @@ pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
         | Inst::Text(..)
         | Inst::FnAddr(..)
         | Inst::VTableAddr(..)
+        | Inst::Loc(_)
         | Inst::Global(..) => {}
         Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => {
             args.iter_mut().for_each(f)
@@ -434,6 +477,7 @@ fn cp_step(i: &Inst, st: &mut CState) -> Option<Inst> {
         | Inst::Panic(..)
         | Inst::Check(..)
         | Inst::CheckNonEmpty(..)
+        | Inst::Loc(_)
         | Inst::Assert(..) => {}
     }
     repl

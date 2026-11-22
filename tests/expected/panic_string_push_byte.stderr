@@ -1,1 +1,2 @@
 panic: byte value out of range (0..255)
+  at tests/panic_string_push_byte.yx:7:3

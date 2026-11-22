@@ -1,0 +1,5 @@
+panic: too big
+  at tests/panic_trace/explicit.yx:4:15
+stack backtrace:
+   0: check
+   1: main

@@ -1,0 +1,2 @@
+panic: division by zero
+  at tests/opt_const_div0.yx:4:11

@@ -25,7 +25,7 @@ pub fn rotate_loops(f: &IrFunc) -> IrFunc {
             _ => continue,
         };
         // only worth it when one way out of the copy falls through to the next block
-        if f.blocks[h].insts.len() > MAX_HEADER_INSTS
+        if f.blocks[h].insts.iter().filter(|i| !matches!(i, Inst::Loc(_))).count() > MAX_HEADER_INSTS
             || (t != p + 1 && e != p + 1)
             || t == h
             || e == h
@@ -38,6 +38,7 @@ pub fn rotate_loops(f: &IrFunc) -> IrFunc {
     }
     IrFunc {
         name: f.name.clone(),
+        lib: f.lib,
         nparams: f.nparams,
         vranges: f.vranges.clone(),
         nvregs: f.nvregs,
@@ -71,6 +72,7 @@ pub fn cold_to_end(f: &IrFunc, cold_fn: &[bool]) -> (IrFunc, Vec<bool>) {
         return (
             IrFunc {
                 name: f.name.clone(),
+                lib: f.lib,
                 nparams: f.nparams,
                 vranges: f.vranges.clone(),
                 nvregs: f.nvregs,
@@ -109,6 +111,7 @@ pub fn cold_to_end(f: &IrFunc, cold_fn: &[bool]) -> (IrFunc, Vec<bool>) {
     (
         IrFunc {
             name: f.name.clone(),
+            lib: f.lib,
             nparams: f.nparams,
             vranges: f.vranges.clone(),
             nvregs: f.nvregs,

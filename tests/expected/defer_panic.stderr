@@ -1,0 +1,2 @@
+panic: index out of range
+  at tests/defer_panic.yx:4:10

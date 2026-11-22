@@ -6,6 +6,7 @@
 // (own ABI, documented there); what does not fit is spilled to the frame.
 use crate::ir::*;
 use crate::regalloc::{self, Alloc, Loc};
+use std::collections::HashMap;
 
 const RAX: u8 = 0;
 const RCX: u8 = 1;
@@ -20,6 +21,9 @@ const R9: u8 = 9;
 const R10: u8 = 10;
 const SYSV_ARG_REGS: [u8; 6] = [RDI, RSI, RDX, RCX, R8, R9];
 const R12: u8 = 12;
+const R13: u8 = 13;
+const R14: u8 = 14;
+const R15: u8 = 15;
 /// internal ABI: the first NREG_ARGS call arguments travel in these registers (scratch, never allocated)
 const ARG_REGS: [u8; 4] = [RDI, RSI, RDX, RCX];
 
@@ -74,6 +78,10 @@ struct Asm {
     ifix: Vec<(usize, usize)>, // (position of rel32, import index): call [rip+IAT slot] (Windows)
     xfix: Vec<(usize, usize)>, // Linux imported call displacement
     os: Os,
+    /// the panic report is built in (see `emit_report`)
+    report: bool,
+    /// panic site table: (offset of the return address after a call, location id), see `emit_report`
+    sites: Vec<(usize, u32)>,
     // Windows runtime stubs (labels are only bound when os == Windows)
     l_oswrite: usize,
     l_osexit: usize,
@@ -91,6 +99,8 @@ impl Asm {
             ifix: vec![],
             xfix: vec![],
             os,
+            report: false,
+            sites: vec![],
             l_oswrite: 0,
             l_osexit: 0,
         }
@@ -813,6 +823,11 @@ struct Rt {
     vtable_blob: usize,
     funcs: Vec<usize>,
     panic: Vec<usize>,
+    /// entries of the same stubs for a panic raised by compiled code: entered with `call`, they record where
+    /// (see `emit_report`); empty on Windows
+    panic_at: Vec<usize>,
+    /// per function id: a library function (its call sites are recorded in the panic site table)
+    lib: Vec<bool>,
     /// rdi = value, rsi = lo, rdx = hi: "panic: integer conversion out of range: V not in LO..HI"
     range_panic: usize,
     print_int: usize,
@@ -858,11 +873,47 @@ struct G<'a> {
     spill_base: i32,     // rbp displacement of spill slot 0 is -(spill_base + 8)
     slot_off: Vec<i32>,  // rbp displacement of every aggregate slot
     cur: (usize, usize), // block / instruction being generated
-    /// out-of-line failure paths of `Chk(Iv)`: (label, register holding the value, lo, hi)
-    stubs: Vec<(usize, u8, i64, i64)>,
+    /// out-of-line failure paths of `Chk(Iv)`: (label, register holding the value, lo, hi, location, frame fix)
+    stubs: Vec<(usize, u8, i64, i64, u32, bool)>,
+    /// location of every instruction (see `ir::strip_locs`)
+    locs: Vec<Vec<u32>>,
+    /// out-of-line panic paths: (label, panic kind, location, frame fix), one per distinct triple
+    pstubs: Vec<(usize, usize, u32, bool)>,
+    pmap: HashMap<(usize, u32, bool), usize>,
+    /// the running code has no frame record of its own (frameless function or shrink-wrapped early block)
+    no_frame: bool,
+    linux: bool,
 }
 
 impl<'a> G<'a> {
+    /// The label a failed check jumps to. On Linux every failure goes through a cold stub of the function that
+    /// `call`s the panic routine, so the return address identifies the site and the routine can print its
+    /// `.yx` position (and walk the frames). A function without a frame record gets one in the stub.
+    fn pl(&mut self, kind: usize) -> usize {
+        if !self.linux {
+            return self.rt.panic[kind];
+        }
+        let loc = self.locs[self.cur.0][self.cur.1];
+        let key = (kind, loc, self.no_frame);
+        if let Some(l) = self.pmap.get(&key) {
+            return *l;
+        }
+        let l = self.a.label();
+        self.pstubs.push((l, kind, loc, self.no_frame));
+        self.pmap.insert(key, l);
+        l
+    }
+    /// Record the return address of the call just emitted as a site of the current instruction's location.
+    fn note_site(&mut self) {
+        if self.linux {
+            let loc = self.locs[self.cur.0][self.cur.1];
+            if loc != 0 {
+                let at = self.a.code.len();
+                self.a.sites.push((at, loc));
+            }
+        }
+    }
+
     fn spill_disp(&self, s: usize) -> i32 {
         -(self.spill_base + 8 * (s as i32 + 1))
     }
@@ -1055,10 +1106,10 @@ impl<'a> G<'a> {
         if comm && self.in_reg(y, dr) && !self.in_reg(x, dr) {
             std::mem::swap(&mut x, &mut y);
         }
-        let panic = |rt: &Rt| match op {
-            Op::Add => rt.panic[P_ADD],
-            Op::Sub => rt.panic[P_SUB],
-            _ => rt.panic[P_MUL],
+        let kind = match op {
+            Op::Add => P_ADD,
+            Op::Sub => P_SUB,
+            _ => P_MUL,
         };
         let work = if !comm && self.in_reg(y, dr) && !self.in_reg(x, dr) {
             RAX
@@ -1117,7 +1168,7 @@ impl<'a> G<'a> {
             self.a.mov_rr(dr, yr);
             self.a.f7(3, dr);
             if chk {
-                let l = panic(self.rt);
+                let l = self.pl(kind);
                 self.a.jcc(CC_O, l);
             }
             self.fin(d, dr);
@@ -1147,7 +1198,7 @@ impl<'a> G<'a> {
             }
         }
         if chk {
-            let l = panic(self.rt);
+            let l = self.pl(kind);
             self.a.jcc(CC_O, l);
         }
         self.a.mov_rr(dr, work);
@@ -1227,13 +1278,13 @@ impl<'a> G<'a> {
         } else {
             let (l_do, l_done) = (self.a.label(), self.a.label());
             self.a.test_rr(yr);
-            let l0 = self.rt.panic[if is_div { P_DIV0 } else { P_MOD0 }];
+            let l0 = self.pl(if is_div { P_DIV0 } else { P_MOD0 });
             self.a.jcc(CC_E, l0);
             self.a.cmp_imm(yr, -1);
             self.a.jcc(CC_NE, l_do);
             if is_div {
                 self.a.f7(3, RAX); // neg rax (x / -1)
-                let l = self.rt.panic[P_DIV];
+                let l = self.pl(P_DIV);
                 self.a.jcc(CC_O, l);
             } else {
                 self.a.raw(&[0x31, 0xC0]); // xor eax, eax (x % -1 == 0)
@@ -1362,7 +1413,7 @@ impl<'a> G<'a> {
                 self.a.movq_rx(RCX, xa);
                 self.a.mov_imm(RDX, 0xC3E0_0000_0000_0000u64 as i64);
                 self.a.alu(0x39, RCX, RDX);
-                let l = self.rt.panic[P_F2I];
+                let l = self.pl(P_F2I);
                 self.a.jcc(CC_NE, l);
                 self.a.bind(ok);
                 let dr = self.dreg(d, RAX);
@@ -1372,12 +1423,15 @@ impl<'a> G<'a> {
             NOp::Chk(rng, msg) => {
                 let (lo, hi) = rng.bounds();
                 let ar = self.reg(a, RAX);
-                let mut l = self.rt.panic[CHK_PANIC[msg as usize]];
-                if let (Rng::Iv(..), MSG_CONV) = (rng, msg) {
+                let l = if let (Rng::Iv(..), MSG_CONV) = (rng, msg) {
                     // the message names the value and the bounds: a cold stub per check loads them
-                    l = self.a.label();
-                    self.stubs.push((l, ar, lo, hi));
-                }
+                    let l = self.a.label();
+                    let loc = self.locs[self.cur.0][self.cur.1];
+                    self.stubs.push((l, ar, lo, hi, loc, self.no_frame));
+                    l
+                } else {
+                    self.pl(CHK_PANIC[msg as usize])
+                };
                 if rng == Rng::NonNeg {
                     self.a.test_rr(ar);
                     self.a.jcc(CC_S, l);
@@ -1419,7 +1473,7 @@ impl<'a> G<'a> {
                 let br = self.reg(b, RCX);
                 self.a
                     .alu(if op == NOp::UAdd { 0x01 } else { 0x29 }, work, br);
-                let l = self.rt.panic[if op == NOp::UAdd { P_ADD } else { P_SUB }];
+                let l = self.pl(if op == NOp::UAdd { P_ADD } else { P_SUB });
                 self.a.jcc(CC_B, l);
                 self.a.mov_rr(dr, work);
                 self.fin(d, dr);
@@ -1428,7 +1482,7 @@ impl<'a> G<'a> {
                 self.mov_to(RAX, a);
                 let br = self.reg(b, RCX);
                 self.a.f7(4, br); // mul: rdx:rax = rax * b
-                let l = self.rt.panic[P_MUL];
+                let l = self.pl(P_MUL);
                 self.a.jcc(CC_O, l);
                 let dr = self.dreg(d, RAX);
                 self.a.mov_rr(dr, RAX);
@@ -1438,7 +1492,7 @@ impl<'a> G<'a> {
                 self.mov_to(RAX, a);
                 let br = self.reg(b, RCX);
                 self.a.test_rr(br);
-                let l = self.rt.panic[if op == NOp::UDiv { P_DIV0 } else { P_MOD0 }];
+                let l = self.pl(if op == NOp::UDiv { P_DIV0 } else { P_MOD0 });
                 self.a.jcc(CC_E, l);
                 self.a.raw(&[0x31, 0xD2]); // xor edx, edx
                 self.a.f7(6, br); // div
@@ -1486,6 +1540,7 @@ impl<'a> G<'a> {
     fn inst_inner(&mut self, ins: &Inst, fused: bool) {
         match ins {
             Inst::N(op, d, a, b) => self.numop(*op, *d, *a, *b),
+            Inst::Loc(_) => {} // stripped before code generation
             Inst::Const(d, n) => {
                 if let Loc::Xmm(x) = self.loc(*d) {
                     self.fconst(x, *n as u64);
@@ -1528,7 +1583,7 @@ impl<'a> G<'a> {
                 let dr = self.dreg(*d, RAX);
                 self.mov_to(dr, *s);
                 self.a.f7(3, dr);
-                let l = self.rt.panic[P_NEG];
+                let l = self.pl(P_NEG);
                 self.a.jcc(CC_O, l);
                 self.fin(*d, dr);
             }
@@ -1579,6 +1634,9 @@ impl<'a> G<'a> {
                     Inst::Call(_, fid, _) => {
                         let l = self.rt.funcs[*fid];
                         self.a.call(l);
+                        if self.rt.lib[*fid] {
+                            self.note_site();
+                        }
                     }
                     Inst::CallInd(_, code, _) => {
                         // rax is neither an argument register nor allocatable
@@ -1721,7 +1779,8 @@ impl<'a> G<'a> {
                 // per element prevents the native backend from matching C.
                 self.a.ld(RAX, RDI, 8);
                 self.a.alu(0x39, RSI, RAX);
-                self.a.jcc(CC_AE, self.rt.panic[P_INDEX]);
+                let l = self.pl(P_INDEX);
+                self.a.jcc(CC_AE, l);
                 self.a.ld(RDX, RDI, 0);
                 self.a.shl(RSI, 3);
                 self.a.alu(0x01, RDX, RSI);
@@ -1893,8 +1952,13 @@ impl<'a> G<'a> {
             Inst::Panic(p, n) => {
                 self.mov_to(RSI, *p);
                 self.mov_to(RDX, *n);
+                if self.linux && self.no_frame {
+                    self.a.raw(&[0x55]); // push rbp
+                    self.a.mov_rr(RBP, RSP); // a frame record, for the panic routine's walk
+                }
                 let t = self.rt.panic_bytes;
                 self.a.call(t);
+                self.note_site();
             }
             Inst::Check(i, n) => {
                 let ir = self.reg(*i, RAX);
@@ -1904,19 +1968,19 @@ impl<'a> G<'a> {
                     let nr = self.reg(*n, RCX);
                     self.a.alu(0x39, ir, nr); // unsigned: negative indices fail too
                 }
-                let l = self.rt.panic[P_INDEX];
+                let l = self.pl(P_INDEX);
                 self.a.jcc(CC_AE, l);
             }
             Inst::CheckNonEmpty(n) => {
                 let r = self.reg(*n, RAX);
                 self.a.test_rr(r);
-                let l = self.rt.panic[P_POP];
+                let l = self.pl(P_POP);
                 self.a.jcc(CC_E, l);
             }
             Inst::Assert(n) => {
                 let r = self.reg(*n, RAX);
                 self.a.test_rr(r);
-                let l = self.rt.panic[P_ASSERT];
+                let l = self.pl(P_ASSERT);
                 self.a.jcc(CC_E, l);
             }
             Inst::PrintInt(v) => {
@@ -2052,6 +2116,10 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         Some(crate::layout::rotate_loops(f))
     };
     let f = rotated.as_ref().unwrap_or(f);
+    // the location markers leave the instruction stream here: allocation and emission see the same function as
+    // without them, and the locations travel beside it
+    let (stripped, locs) = strip_locs(f);
+    let f = &stripped;
     let al = regalloc::allocate(f, &cold);
     if std::env::var_os("YERUX_RA_STATS").is_some() {
         let regs = al.loc.iter().filter(|l| matches!(l, Loc::Reg(_))).count();
@@ -2079,7 +2147,12 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         .blocks
         .iter()
         .any(|b| b.insts.iter().any(|i| matches!(i, Inst::ExternCall(..))));
-    let frameless = frame == 0 && f.nparams <= ARG_REGS.len() && !has_extern;
+    // (on Linux a function that calls has a frame record too: the panic routine walks the rbp chain)
+    let has_call = a.report
+        && f.blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(i, Inst::Call(..) | Inst::CallInd(..))));
+    let frameless = frame == 0 && f.nparams <= ARG_REGS.len() && !has_extern && !has_call;
     let callee: Vec<u8> = al.callee_used.clone();
     let nb = f.blocks.len();
     let early = if frameless || std::env::var_os("YERUX_NO_SHRINKWRAP").is_some() {
@@ -2087,6 +2160,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
     } else {
         early_blocks(f, &al)
     };
+    let linux = a.report;
     let mut g = G {
         a,
         rt,
@@ -2095,6 +2169,11 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         slot_off,
         cur: (0, 0),
         stubs: vec![],
+        locs,
+        pstubs: vec![],
+        pmap: HashMap::new(),
+        no_frame: frameless,
+        linux,
     };
     // frame setup, callee-saved saves and parameter moves (the "prologue"); when `early` blocks exist it is
     // emitted out of line, after the early-exit region
@@ -2238,6 +2317,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             g.a.align_small(align_max);
         }
         g.a.bind(bl[bi]);
+        g.no_frame = frameless || early[bi];
         // early blocks run before the prologue: parameters are still in their argument registers
         let saved: Vec<Loc> = if early[bi] {
             (0..f.nparams).map(|p| g.al.loc[p]).collect()
@@ -2328,13 +2408,38 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             g.a.jmp(bl[t]);
         }
     }
-    for (l, r, lo, hi) in std::mem::take(&mut g.stubs) {
+    for (l, r, lo, hi, loc, fix) in std::mem::take(&mut g.stubs) {
         g.a.bind(l);
         g.a.mov_rr(RDI, r);
         g.a.mov_imm(RSI, lo);
         g.a.mov_imm(RDX, hi);
         let t = g.rt.range_panic;
-        g.a.jmp(t);
+        if linux {
+            if fix {
+                g.a.raw(&[0x55]); // push rbp
+                g.a.mov_rr(RBP, RSP);
+            }
+            g.a.call(t);
+            if loc != 0 {
+                let at = g.a.code.len();
+                g.a.sites.push((at, loc));
+            }
+        } else {
+            g.a.jmp(t);
+        }
+    }
+    for (l, kind, loc, fix) in std::mem::take(&mut g.pstubs) {
+        g.a.bind(l);
+        if fix {
+            g.a.raw(&[0x55]); // push rbp
+            g.a.mov_rr(RBP, RSP); // the frame record of the function that has none
+        }
+        let t = g.rt.panic_at[kind];
+        g.a.call(t);
+        if loc != 0 {
+            let at = g.a.code.len();
+            g.a.sites.push((at, loc));
+        }
     }
 }
 
@@ -2719,6 +2824,13 @@ fn emit_worker_panic_probe(a: &mut Asm, recover: usize, double_panic: usize) {
 
 fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> Built {
     let mut a = Asm::new(os);
+    // panic reports (position, backtrace) exist when some user code has a checked operation or calls the library
+    a.report = os == Os::Linux
+        && ir
+            .funcs
+            .iter()
+            .any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Loc(_)))));
+    let report = a.report;
     let has_workers = os == Os::Linux
         && ir.funcs.iter().any(|f| {
             f.blocks.iter().any(|b| {
@@ -2763,6 +2875,21 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         data.push(b);
     }
 
+    // panic report (Linux): strings of the stack backtrace, and the site / function / location tables, which are
+    // only known after the code is generated (the blob is filled in below)
+    let d_bt_hdr = data.len();
+    data.push(b"stack backtrace:\n".to_vec());
+    let d_sp2 = data.len();
+    data.push(b"  ".to_vec());
+    let d_sp1 = data.len();
+    data.push(b" ".to_vec());
+    let d_at = data.len();
+    data.push(b"  at ".to_vec());
+    let d_colon = data.len();
+    data.push(b":".to_vec());
+    let dbg_id = data.len();
+    data.push(vec![]);
+
     a.pool_base = data.len() + ir.vtables.len();
     let l_start = a.label();
     let l_print_int = a.label();
@@ -2774,6 +2901,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     let l_write_int2 = a.label();
     let l_write2 = a.label();
     let l_panic: Vec<usize> = (0..PANIC_MSGS.len()).map(|_| a.label()).collect();
+    let l_panic_at: Vec<usize> = (0..PANIC_MSGS.len()).map(|_| a.label()).collect();
+    let l_report = a.label();
     let (l_segv, l_restorer) = (a.label(), a.label());
     let (l_mmap, l_alloc, l_free, l_push, l_get) =
         (a.label(), a.label(), a.label(), a.label(), a.label());
@@ -2827,11 +2956,12 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.alu_imm(0, RSP, 64); // add rsp, 64
     }
     if os == Os::Linux
-        && ir.funcs.iter().any(|f| {
-            f.blocks
-                .iter()
-                .any(|b| b.insts.iter().any(|i| matches!(i, Inst::Global(..))))
-        })
+        && (report
+            || ir.funcs.iter().any(|f| {
+                f.blocks
+                    .iter()
+                    .any(|b| b.insts.iter().any(|i| matches!(i, Inst::Global(..))))
+            }))
     {
         // global cell 0: the initial stack pointer (argc, argv.., 0, envp.., 0), read by std.io
         a.mov_imm(RBX, g);
@@ -2876,7 +3006,19 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
 
     // panic stubs: "panic: <msg>\n" to stderr, exit(101)
     for (i, l) in l_panic.iter().enumerate() {
-        a.bind(*l);
+        if report {
+            // entered by `call` from a check of compiled code: r12 = where the return address is, r13 = rbp
+            let over = a.label();
+            a.bind(l_panic_at[i]);
+            a.mov_rr(R12, RSP);
+            a.mov_rr(R13, RBP);
+            a.jmp(over);
+            a.bind(*l);
+            a.mov_imm(R12, 0); // raised by the runtime: no position
+            a.bind(over);
+        } else {
+            a.bind(*l);
+        }
         if has_workers
             && !matches!(
                 i,
@@ -2894,7 +3036,206 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.lea_data(RSI, D_NL);
         a.mov_imm(RDX, 1);
         a.call(l_write2);
+        if report {
+            a.call(l_report);
+        }
         a.exit(101);
+    }
+
+
+    // report: called by the panic routines after the message, on Linux. r12 = where the return address of the
+    // panic site is on the stack (0: the panic came from the runtime), r13 = rbp. Prints "  at file:line:col" (the
+    // first return address on the stack, the site and then the rbp chain, that is in the site table: library code
+    // has none, so its panics are reported at the user call that led to them), then, with YERUX_BACKTRACE set,
+    // the Yerux function of every frame. The tables are the `dbg` blob (u64 words), see below.
+    if report {
+        let (done, l_find, l_scan, l_hit, l_next, l_noloc, l_ok) =
+            (a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+        a.bind(l_report);
+        a.test_rr(R12);
+        a.jcc(CC_E, done);
+        a.lea_label(R14, l_start);
+        a.lea_data(R15, dbg_id);
+        a.ld(RBX, R12, 0); // return address under examination
+        a.mov_rr(R8, R13); // frame record to walk next
+        a.mov_imm(R9, 64); // frames to look at
+        a.bind(l_find);
+        a.mov_rr(RAX, RBX);
+        a.alu(0x29, RAX, R14); // code offset
+        a.ld32(RCX, R15, 0); // nsites
+        a.ld32(RDI, R15, 8);
+        a.alu(0x01, RDI, R15); // &sites[0]
+        a.bind(l_scan);
+        a.test_rr(RCX);
+        a.jcc(CC_E, l_next);
+        a.ld32(RDX, RDI, 0);
+        a.alu(0x39, RDX, RAX);
+        a.jcc(CC_E, l_hit);
+        a.add_imm(RDI, 8);
+        a.sub_imm(RCX, 1);
+        a.jmp(l_scan);
+        a.bind(l_next);
+        a.test_rr(R8);
+        a.jcc(CC_E, l_noloc);
+        a.sub_imm(R9, 1);
+        a.jcc(CC_E, l_noloc);
+        a.ld(RBX, R8, 8);
+        a.ld(RAX, R8, 0);
+        a.alu(0x39, RAX, R8);
+        a.jcc(CC_A, l_ok); // the next record must be higher up the stack
+        a.mov_imm(RAX, 0);
+        a.bind(l_ok);
+        a.mov_rr(R8, RAX);
+        a.jmp(l_find);
+        a.bind(l_hit);
+        // "  at <file>:<line>:<col>\n"; the location row is (file, line, col), 12 bytes
+        a.ld32(RAX, RDI, 4); // location id
+        a.mov_rr(RCX, RAX);
+        a.shl(RAX, 1);
+        a.alu(0x01, RAX, RCX);
+        a.shl(RAX, 2); // id * 12
+        a.ld32(RDI, R15, 12);
+        a.alu(0x01, RDI, RAX);
+        a.alu(0x01, RDI, R15); // &locs[id]
+        a.ld32(RBX, RDI, 4); // line
+        a.ld32(R8, RDI, 8); // column
+        a.ld32(R9, RDI, 0); // file index
+        a.lea_data(RSI, d_at);
+        a.mov_imm(RDX, 5);
+        a.call(l_write2);
+        a.mov_rr(RAX, R9);
+        a.shl(RAX, 3);
+        a.ld32(RDI, R15, 16);
+        a.alu(0x01, RDI, RAX);
+        a.alu(0x01, RDI, R15); // &files[index]: (name offset, length)
+        a.ld32(RSI, RDI, 0);
+        a.ld32(RDX, RDI, 4);
+        a.ld32(RAX, R15, 24);
+        a.alu(0x01, RSI, RAX);
+        a.alu(0x01, RSI, R15);
+        a.call(l_write2);
+        a.lea_data(RSI, d_colon);
+        a.mov_imm(RDX, 1);
+        a.call(l_write2);
+        a.mov_rr(RAX, RBX);
+        a.call(l_write_int2);
+        a.lea_data(RSI, d_colon);
+        a.mov_imm(RDX, 1);
+        a.call(l_write2);
+        a.mov_rr(RAX, R8);
+        a.call(l_write_int2);
+        a.lea_data(RSI, D_NL);
+        a.mov_imm(RDX, 1);
+        a.call(l_write2);
+        a.bind(l_noloc);
+        // YERUX_BACKTRACE in the environment (cell 0 holds the initial stack: argc, argv.., 0, envp.., 0)?
+        let (l_env, l_envnext, l_bt) = (a.label(), a.label(), a.label());
+        a.mov_imm(RAX, g + G_USER);
+        a.ld(RAX, RAX, 0);
+        a.test_rr(RAX);
+        a.jcc(CC_E, done);
+        a.ld(RCX, RAX, 0);
+        a.shl(RCX, 3);
+        a.alu(0x01, RAX, RCX);
+        a.add_imm(RAX, 16); // &envp[0]
+        a.bind(l_env);
+        a.ld(RSI, RAX, 0);
+        a.test_rr(RSI);
+        a.jcc(CC_E, done);
+        a.mov_imm(RDX, 0x41425F5855524559u64 as i64); // "YERUX_BA"
+        a.ld(RCX, RSI, 0);
+        a.alu(0x39, RCX, RDX);
+        a.jcc(CC_NE, l_envnext);
+        a.mov_imm(RDX, 0x3D45434152544B43u64 as i64); // "CKTRACE="
+        a.ld(RCX, RSI, 8);
+        a.alu(0x39, RCX, RDX);
+        a.jcc(CC_NE, l_envnext);
+        a.movzx8_mem(RCX, RSI, 16);
+        a.test_rr(RCX);
+        a.jcc(CC_E, l_envnext); // empty value
+        a.cmp_imm(RCX, 0x30);
+        a.jcc(CC_NE, l_bt);
+        a.movzx8_mem(RCX, RSI, 17);
+        a.test_rr(RCX);
+        a.jcc(CC_NE, l_bt); // "0" alone switches it off
+        a.bind(l_envnext);
+        a.add_imm(RAX, 8);
+        a.jmp(l_env);
+        a.bind(l_bt);
+        a.lea_data(RSI, d_bt_hdr);
+        a.mov_imm(RDX, 17);
+        a.call(l_write2);
+        let (l_frame, l_fscan, l_fdone, l_fnext, l_fok, l_pad) =
+            (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+        a.ld(RBX, R12, 0);
+        a.mov_rr(R8, R13);
+        a.mov_imm(R9, 64); // frames left
+        a.mov_imm(R10, 0); // frames printed
+        a.bind(l_frame);
+        // the function containing the call (return address - 1): the last table entry that starts at or before it
+        a.mov_rr(RAX, RBX);
+        a.alu(0x29, RAX, R14);
+        a.sub_imm(RAX, 1);
+        a.ld32(RCX, R15, 4); // nfuncs
+        a.ld32(RDI, R15, 20);
+        a.alu(0x01, RDI, R15); // &funcs[0]: (start, name offset, name length)
+        a.mov_imm(RDX, 0); // best entry
+        a.bind(l_fscan);
+        a.test_rr(RCX);
+        a.jcc(CC_E, l_fdone);
+        a.ld32(RSI, RDI, 0);
+        a.alu(0x39, RSI, RAX);
+        a.jcc(CC_A, l_fdone);
+        a.mov_rr(RDX, RDI);
+        a.add_imm(RDI, 12);
+        a.sub_imm(RCX, 1);
+        a.jmp(l_fscan);
+        a.bind(l_fdone);
+        a.test_rr(RDX);
+        a.jcc(CC_E, l_fnext);
+        a.ld32(RCX, RDX, 8);
+        a.test_rr(RCX);
+        a.jcc(CC_E, l_fnext); // a runtime helper: not shown
+        a.mov_rr(RBP, RDX); // entry kept in rbp (the system call clobbers r11)
+        a.lea_data(RSI, d_sp2);
+        a.mov_imm(RDX, 2);
+        a.call(l_write2);
+        a.cmp_imm(R10, 10);
+        a.jcc(CC_AE, l_pad);
+        a.lea_data(RSI, d_sp1);
+        a.mov_imm(RDX, 1);
+        a.call(l_write2);
+        a.bind(l_pad);
+        a.mov_rr(RAX, R10);
+        a.call(l_write_int2);
+        a.lea_data(RSI, D_RNG0); // ": "
+        a.mov_imm(RDX, 2);
+        a.call(l_write2);
+        a.ld32(RSI, RBP, 4);
+        a.ld32(RCX, R15, 24);
+        a.alu(0x01, RSI, RCX);
+        a.alu(0x01, RSI, R15);
+        a.ld32(RDX, RBP, 8);
+        a.call(l_write2);
+        a.lea_data(RSI, D_NL);
+        a.mov_imm(RDX, 1);
+        a.call(l_write2);
+        a.add_imm(R10, 1);
+        a.bind(l_fnext);
+        a.test_rr(R8);
+        a.jcc(CC_E, done);
+        a.sub_imm(R9, 1);
+        a.jcc(CC_E, done);
+        a.ld(RBX, R8, 8);
+        a.ld(RAX, R8, 0);
+        a.alu(0x39, RAX, R8);
+        a.jcc(CC_A, l_fok);
+        a.mov_imm(RAX, 0);
+        a.bind(l_fok);
+        a.mov_rr(R8, RAX);
+        a.jmp(l_frame);
+        a.bind(done);
+        a.ret();
     }
 
     // write_int2: rax = value. Writes its decimal digits (no newline) to stderr.
@@ -2931,6 +3272,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
 
     // range_panic: rdi = value, rsi = lo, rdx = hi. "panic: integer conversion out of range: V not in LO..HI", exit(101).
     a.bind(l_range_panic);
+    if report {
+        a.mov_rr(R12, RSP); // entered by `call` from a cold stub of compiled code
+        a.mov_rr(R13, RBP);
+    }
     if has_workers {
         emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
         // clobbers only rax and r8
@@ -2954,6 +3299,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     a.lea_data(RSI, D_NL);
     a.mov_imm(RDX, 1);
     a.call(l_write2);
+    if report {
+        a.call(l_report);
+    }
     a.exit(101);
 
     // SIGSEGV handler (Linux): rsi = siginfo, rdx = ucontext. A fault address within [rsp - 4 KiB, rsp + 16 MiB)
@@ -3089,6 +3437,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     {
         let l_nl = a.label();
         a.bind(l_panic_bytes);
+        if report {
+            a.mov_rr(R12, RSP); // entered by `call` (`panic(..)` in compiled code)
+            a.mov_rr(R13, RBP);
+        }
         if has_workers {
             emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
         }
@@ -3104,6 +3456,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.lea_data(RSI, D_NL);
         a.mov_imm(RDX, 1);
         a.call(l_write2);
+        if report {
+            a.call(l_report);
+        }
         a.exit(101);
     }
 
@@ -3482,6 +3837,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         vtable_blob: data.len(),
         funcs: l_funcs.clone(),
         panic: l_panic.clone(),
+        panic_at: l_panic_at.clone(),
+        lib: ir.funcs.iter().map(|f| f.lib).collect(),
         range_panic: l_range_panic,
         print_int: l_print_int,
         print_bool: l_print_bool,
@@ -3504,6 +3861,58 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         a.bind(l_funcs[fi]);
         gen_func(&mut a, &rt, f, &cold_fn);
+    }
+
+    // the tables read by the panic report (see `l_report`), u32 words: a header, the panic site table (return
+    // address offset, location id), the locations (file, line, column; indexed by location id), the source files
+    // and the functions (start offset, name offset, name length; length 0 = not shown). Names share one blob.
+    if report {
+        let sites = std::mem::take(&mut a.sites);
+        let mut names: Vec<u8> = vec![];
+        let mut file_rows: Vec<(u32, u32)> = vec![];
+        for name in &ir.files {
+            file_rows.push((names.len() as u32, name.len() as u32));
+            names.extend_from_slice(name.as_bytes());
+        }
+        let mut fn_rows: Vec<(u32, u32, u32)> = vec![];
+        for (fi, f) in ir.funcs.iter().enumerate() {
+            let start = a.labels[l_funcs[fi]].unwrap() as u32;
+            let off = names.len() as u32;
+            if !(f.name.starts_with("__") || f.name.starts_with('$')) {
+                names.extend_from_slice(f.name.as_bytes());
+            }
+            fn_rows.push((start, off, names.len() as u32 - off));
+        }
+        let off_sites = 32u32;
+        let off_locs = off_sites + 8 * sites.len() as u32;
+        let off_files = off_locs + 12 * ir.locs.len() as u32;
+        let off_funcs = off_files + 8 * file_rows.len() as u32;
+        let off_names = off_funcs + 12 * fn_rows.len() as u32;
+        let mut blob: Vec<u8> = vec![];
+        let put = |blob: &mut Vec<u8>, w: u32| blob.extend_from_slice(&w.to_le_bytes());
+        for w in [sites.len() as u32, fn_rows.len() as u32, off_sites, off_locs, off_files, off_funcs, off_names, 0] {
+            put(&mut blob, w);
+        }
+        for (at, loc) in &sites {
+            put(&mut blob, *at as u32);
+            put(&mut blob, *loc);
+        }
+        for (f, l, c) in &ir.locs {
+            put(&mut blob, *f);
+            put(&mut blob, *l);
+            put(&mut blob, *c);
+        }
+        for (o, n) in &file_rows {
+            put(&mut blob, *o);
+            put(&mut blob, *n);
+        }
+        for (st, o, n) in &fn_rows {
+            put(&mut blob, *st);
+            put(&mut blob, *o);
+            put(&mut blob, *n);
+        }
+        blob.extend_from_slice(&names);
+        data[dbg_id] = blob;
     }
 
     // ── Windows API stubs (Microsoft x64 convention: rcx, rdx, r8, r9, 32-byte shadow space,

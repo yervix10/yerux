@@ -1093,6 +1093,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
             a.bind(bl[bi]);
             for ins in &b.insts {
                 match ins {
+                    Inst::Loc(_) => {}
                     Inst::Thread(..) | Inst::Atomic(..) | Inst::Syscall(..) | Inst::Global(..) => {
                         unreachable!("rejected by os_intrinsics_error")
                     }

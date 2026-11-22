@@ -1,0 +1,7 @@
+panic: index out of range
+  at tests/panic_trace/index.yx:3:10
+stack backtrace:
+   0: third
+   1: second
+   2: first
+   3: main

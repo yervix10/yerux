@@ -1,0 +1,2 @@
+panic: integer overflow in division
+  at tests/n5_min_div.yx:8:9

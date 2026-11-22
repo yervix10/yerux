@@ -1,1 +1,2 @@
 panic: operation stopped
+  at tests/panic_message.yx:8:5

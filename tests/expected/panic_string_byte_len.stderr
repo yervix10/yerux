@@ -1,1 +1,2 @@
 panic: index out of range
+  at tests/panic_string_byte_len.yx:5:9

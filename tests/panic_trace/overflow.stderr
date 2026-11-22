@@ -1,0 +1,5 @@
+panic: integer overflow in multiplication
+  at tests/panic_trace/overflow.yx:3:10
+stack backtrace:
+   0: grow
+   1: main

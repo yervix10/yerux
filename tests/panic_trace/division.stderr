@@ -1,0 +1,5 @@
+panic: division by zero
+  at tests/panic_trace/division.yx:2:10
+stack backtrace:
+   0: per
+   1: main

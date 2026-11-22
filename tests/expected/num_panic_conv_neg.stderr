@@ -1,0 +1,2 @@
+panic: integer conversion out of range
+  at tests/num_panic_conv_neg.yx:3:11

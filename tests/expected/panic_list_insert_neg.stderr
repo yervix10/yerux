@@ -1,1 +1,2 @@
 panic: List.insert index out of range
+  at tests/panic_list_insert_neg.yx:6:3

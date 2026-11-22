@@ -88,6 +88,7 @@ pub fn inst_uses(i: &Inst) -> Vec<V> {
         | Inst::Slot(..)
         | Inst::FnAddr(..)
         | Inst::VTableAddr(..)
+        | Inst::Loc(_)
         | Inst::Global(..) => vec![],
         Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => {
             args.clone()

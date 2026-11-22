@@ -1,1 +1,2 @@
 panic: eleven is missing
+  at tests/panic_option_expect.yx:15:9

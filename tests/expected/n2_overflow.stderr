@@ -1,0 +1,2 @@
+panic: integer overflow in addition
+  at tests/n2_overflow.yx:4:7

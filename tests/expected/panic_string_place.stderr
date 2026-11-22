@@ -1,1 +1,2 @@
 panic: from a list
+  at tests/panic_string_place.yx:9:5

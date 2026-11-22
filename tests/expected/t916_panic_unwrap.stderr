@@ -1,1 +1,2 @@
 panic: called `Option.unwrap()` on a `None` value
+  at tests/t916_panic_unwrap.yx:16:9

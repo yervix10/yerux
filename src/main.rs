@@ -150,6 +150,14 @@ fn c_compile_mode(c: &str, out: &str, links: &[String], debug: bool) -> Result<(
     ])
     .arg(&cfile)
     .arg("-lm");
+    // with YERUX_BACKTRACE set at build time every Yerux function keeps its own frame, so the panic stack is complete
+    let bt = env::var("YERUX_BACKTRACE").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
+    if bt {
+        cmd.args(["-fno-inline", "-fno-optimize-sibling-calls"]);
+    }
+    if bt || debug {
+        cmd.arg("-DNX_BACKTRACE");
+    }
     if let Ok(extra) = env::var("YERUX_CC_FLAGS") {
         cmd.args(extra.split_whitespace());
     }
@@ -181,6 +189,7 @@ fn native_build(
     debug_alloc: bool,
     optimize: bool,
     target: &str,
+    source_files: &[String],
 ) {
     if !prog.externs.is_empty() && (target == "aarch64" || target == "windows") {
         eprintln!(
@@ -195,6 +204,7 @@ fn native_build(
         exit(1)
     });
     profile_stage("IR lowering", start);
+    ir.files = source_files.to_vec();
     if optimize {
         let start = Instant::now();
         opt::run(&mut ir);
@@ -534,6 +544,9 @@ fn real_main() {
         exit(2);
     }
     let no_opt = args.iter().any(|a| a == "--no-opt") || debug;
+    if debug || std::env::var_os("YERUX_BACKTRACE").is_some() || std::env::var_os("YERUX_LOCS").is_some() {
+        cgen::FULL_LOCS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if args.iter().any(|a| a == "--check-ranges") {
         ir::CHECK_RANGES.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -628,7 +641,7 @@ fn real_main() {
                     }
                 });
             if native {
-                native_build(&prog, &out, debug_alloc, !no_opt, target);
+                native_build(&prog, &out, debug_alloc, !no_opt, target, &source_files);
             } else {
                 build(&out);
             }
@@ -642,7 +655,7 @@ fn real_main() {
             };
             let exe = tmp_path(ext).to_string_lossy().to_string();
             if native {
-                native_build(&prog, &exe, debug_alloc, !no_opt, target);
+                native_build(&prog, &exe, debug_alloc, !no_opt, target, &source_files);
             } else {
                 build(&exe);
             }

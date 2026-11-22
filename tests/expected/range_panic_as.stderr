@@ -1,1 +1,2 @@
 panic: integer conversion out of range: 100 not in 0..99
+  at tests/range_panic_as.yx:3:11

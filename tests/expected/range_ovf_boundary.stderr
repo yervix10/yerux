@@ -1,0 +1,2 @@
+panic: integer overflow in addition
+  at tests/range_ovf_boundary.yx:17:9

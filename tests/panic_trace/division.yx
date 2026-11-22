@@ -1,0 +1,8 @@
+fn per(total: Int, parts: Int) -> Int {
+  return total / parts
+}
+
+fn main() {
+  print(per(10, 5))
+  print(per(10, 0))
+}

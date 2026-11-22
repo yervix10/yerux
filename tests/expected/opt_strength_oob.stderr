@@ -1,0 +1,2 @@
+panic: index out of range
+  at tests/opt_strength_oob.yx:12:11

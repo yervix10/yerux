@@ -1,0 +1,2 @@
+panic: division by zero
+  at tests/hard2_closure_call_order.yx:7:42

@@ -19,6 +19,17 @@ struct Gen<'a> {
     scopes: Vec<Vec<usize>>, // owned variables per scope (to free)
     tmp: usize,
     loops: Vec<std::rc::Rc<CLoop>>,
+    /// Source locations of the checked operations (index 0 = unknown), interned while the bodies are written.
+    locs: std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32)>>>,
+    loc_ix: std::rc::Rc<std::cell::RefCell<HashMap<(u32, u32, u32), u32>>>,
+    files: std::rc::Rc<Vec<String>>,
+    track: bool,
+    /// Library functions that report a failure at their caller's position: the caller stores it in `nx_cur_loc` just
+    /// before the call (a global read only on the failure path, so library code keeps the same shape as before).
+    tfuncs: std::rc::Rc<HashSet<String>>,
+    /// Functions whose address is taken (closures, drop glue, trait objects): called with a fixed signature.
+    valued: std::rc::Rc<std::cell::RefCell<HashSet<String>>>,
+    in_t: std::cell::Cell<bool>,
 }
 
 /// An enclosing loop while its body is generated: `break`/`continue` free the scopes inside it, then `goto`.
@@ -34,16 +45,49 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
     generate_inner(prog, sigs, None)
 }
 
+/// `unwrap`/`expect` family: its only failure is an explicit panic, so recording the caller's position before
+/// the call is cheap enough for every build (the other library calls only do it when FULL_LOCS).
+fn unwrap_like(name: &str) -> bool {
+    ["__unwrap", "__expect", "__unwrap_err", "__expect_err"].iter().any(|s| name.ends_with(s))
+}
+
+/// Keep per-site locations on arithmetic checks (see `Gen::loc_hot`).
+pub static FULL_LOCS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn generate_with_files(prog: &Program, sigs: Sigs, source_files: &[String]) -> String {
     generate_inner(prog, sigs, Some(source_files))
 }
 
 fn generate_inner(prog: &Program, sigs: Sigs, source_files: Option<&[String]>) -> String {
+    // pass 1 finds the functions used as values; pass 2 writes the program with the final signatures
+    let (_, valued) = generate_pass(prog, &sigs, source_files, &HashSet::new());
+    let tfuncs: HashSet<String> = if source_files.is_some() {
+        prog.funcs
+            .iter()
+            .filter(|f| f.pos.line >= PRELUDE_LINE && f.name != "main" && !valued.contains(&f.name))
+            .map(|f| f.name.clone())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    generate_pass(prog, &sigs, source_files, &tfuncs).0
+}
+
+fn generate_pass(
+    prog: &Program,
+    sigs: &Sigs,
+    source_files: Option<&[String]>,
+    tfuncs: &HashSet<String>,
+) -> (String, HashSet<String>) {
+    let mut valued: HashSet<String> = prog.types.user_drop.values().cloned().collect();
+    for t in &prog.types.dyn_tables {
+        valued.extend(t.methods.iter().cloned());
+    }
     let mut g = Gen {
         out: String::from(C_HEADER),
         ind: 0,
         types: &prog.types,
-        sigs: &sigs,
+        sigs,
         externs: prog.externs.iter().map(|f| f.name.clone()).collect(),
         vars: HashMap::new(),
         capture_flags: HashSet::new(),
@@ -51,6 +95,13 @@ fn generate_inner(prog: &Program, sigs: Sigs, source_files: Option<&[String]>) -
         scopes: vec![],
         tmp: 0,
         loops: vec![],
+        locs: std::rc::Rc::new(std::cell::RefCell::new(vec![(0, 0, 0)])),
+        loc_ix: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+        files: std::rc::Rc::new(source_files.map(|f| f.to_vec()).unwrap_or_default()),
+        track: source_files.is_some(),
+        tfuncs: std::rc::Rc::new(tfuncs.clone()),
+        valued: std::rc::Rc::new(std::cell::RefCell::new(valued)),
+        in_t: std::cell::Cell::new(false),
     };
     // 1. forward declarations (types may refer to each other through List<T> and Box<T>)
     let mut all: Vec<Ty> = vec![];
@@ -215,7 +266,20 @@ fn generate_inner(prog: &Program, sigs: Sigs, source_files: Option<&[String]>) -
     // global cell 0 holds the address of an image of the initial process stack (argc, argv.., 0, envp.., 0), as
     // the native backend's _start stores it
     g.line("int main(int argc, char **argv) { int ne = 0; while (environ && environ[ne]) ne++; int64_t st[argc + ne + 3]; int k = 0; st[k++] = argc; for (int i = 0; i < argc; i++) st[k++] = (int64_t)(intptr_t)argv[i]; st[k++] = 0; for (int i = 0; i < ne; i++) st[k++] = (int64_t)(intptr_t)environ[i]; st[k++] = 0; nx_globals[0] = (int64_t)(intptr_t)st; nx_f_main(); fflush(stdout); return 0; }");
-    g.out
+    if g.track {
+        // location table (read only by the panic report): file names, then one {file, line, col} per site
+        let files: Vec<String> = g
+            .files
+            .iter()
+            .map(|f| format!("\"{}\"", f.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect();
+        g.line(&format!("static const char *const nx_file_names[] = {{ {} }};", if files.is_empty() { "\"\"".to_string() } else { files.join(", ") }));
+        let rows: Vec<String> = g.locs.borrow().iter().map(|(f, l, c)| format!("{{{f},{l},{c}}}")).collect();
+        g.line(&format!("static const NxLoc nx_loc_table[] = {{ {} }};", rows.join(", ")));
+        g.line(&format!("const NxDebug nx_dbg = {{ nx_loc_table, {}, nx_file_names }};", rows.len()));
+    }
+    let valued = g.valued.borrow().clone();
+    (g.out, valued)
 }
 
 impl Gen<'_> {
@@ -277,6 +341,44 @@ impl Gen<'_> {
                 slots.join(", ")
             ));
         }
+    }
+
+    /// The `uint32_t l` argument of a checked operation at `pos`: an index into the location table, or the
+    /// `nx_cur_loc` inside a library function (its caller's location), or 0 (unknown).
+    fn loc(&self, pos: Pos) -> String {
+        if self.in_t.get() {
+            return "0xFFFFFFFFu".into(); // nx_cur_loc, resolved on the failure path
+        }
+        if !self.track || pos.line >= PRELUDE_LINE || pos.line == 0 {
+            return "0".into();
+        }
+        let key = ((pos.line >> 20) as u32, (pos.line & 0xFFFFF) as u32, pos.col as u32);
+        let mut ix = self.loc_ix.borrow_mut();
+        if let Some(i) = ix.get(&key) {
+            return i.to_string();
+        }
+        let mut locs = self.locs.borrow_mut();
+        let i = locs.len() as u32;
+        locs.push(key);
+        ix.insert(key, i);
+        i.to_string()
+    }
+
+    /// Location of a check that sits in hot code (arithmetic, string byte ops, conversions, calls into the
+    /// library). Distinct per-site constants stop GCC from merging those failure paths and it duplicates hot
+    /// blocks (structs +14 %, textops +19 %, json +15 %), so a plain release build leaves them out (0 = no
+    /// `at` line); --debug, YERUX_BACKTRACE or YERUX_LOCS keep them. Index/slice checks, explicit `panic`
+    /// and `assert` always carry their position: measured at ~0 %.
+    fn loc_hot(&self, pos: Pos) -> String {
+        if FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) {
+            self.loc(pos)
+        } else {
+            "0".into()
+        }
+    }
+
+    fn loc_arg(&self, pos: Pos) -> Arg {
+        Arg { code: self.loc(pos), val: true, lit: true, impure: false }
     }
 
     fn is_ref(&self, mode: Mode, ty: Ty) -> bool {
@@ -477,15 +579,15 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 let et = self.types.cty(el);
                 let c = &cname;
                 self.line(&format!("struct {c} {{ {et} e[{n}]; }};"));
-                self.line(&format!("static inline {et} *nx_at_{c}({c} *a, int64_t i) {{ if (i < 0 || i >= {n}) nx_panic(\"index out of range\"); return &a->e[i]; }}"));
+                self.line(&format!("static inline {et} *nx_at_{c}({c} *a, int64_t i, uint32_t l) {{ if (i < 0 || i >= {n}) nx_panic_at(\"index out of range\", l); return &a->e[i]; }}"));
                 self.line(&format!(
                     "static inline int64_t nx_len_{c}({c} *a) {{ (void)a; return {n}; }}"
                 ));
                 if !self.types.owned(el) {
                     // (with owned elements `nx_set_` drops the old value: emitted with the drop functions)
-                    self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ *nx_at_{c}(a, i) = v; }}"));
+                    self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v, uint32_t l) {{ *nx_at_{c}(a, i, l) = v; }}"));
                 }
-                self.line(&format!("static inline void nx_swap_{c}({c} *a, int64_t i, int64_t j) {{ {et} *x = nx_at_{c}(a, i); {et} *y = nx_at_{c}(a, j); {et} t = *x; *x = *y; *y = t; }}"));
+                self.line(&format!("static inline void nx_swap_{c}({c} *a, int64_t i, int64_t j, uint32_t l) {{ {et} *x = nx_at_{c}(a, i, l); {et} *y = nx_at_{c}(a, j, l); {et} t = *x; *x = *y; *y = t; }}"));
             }
             Ty::Struct(i) => {
                 let def = self.types.structs[i].clone();
@@ -561,13 +663,13 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                     "static inline int64_t nx_len_{c}({c} *l) {{ return l->len; }}"
                 ));
                 self.line(&format!(
-                    "static inline {et} *nx_at_{c}({c} *l, int64_t i) {{"
+                    "static inline {et} *nx_at_{c}({c} *l, int64_t i, uint32_t L) {{"
                 ));
-                self.line("  if (i < 0 || i >= l->len) nx_panic(\"index out of range\");");
+                self.line("  if (i < 0 || i >= l->len) nx_panic_at(\"index out of range\", L);");
                 self.line("  return &l->d[i];");
                 self.line("}");
-                self.line(&format!("static inline {et} nx_pop_{c}({c} *l) {{"));
-                self.line("  if (l->len == 0) nx_panic(\"pop from an empty list\");");
+                self.line(&format!("static inline {et} nx_pop_{c}({c} *l, uint32_t L) {{"));
+                self.line("  if (l->len == 0) nx_panic_at(\"pop from an empty list\", L);");
                 self.line("  return l->d[--l->len];");
                 self.line("}");
                 let drop_p = if owned {
@@ -575,16 +677,16 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 } else {
                     String::new()
                 };
-                self.line(&format!("static inline void nx_set_{c}({c} *l, int64_t i, {et} v) {{ {et} *p = nx_at_{c}(l, i);{drop_p} *p = v; }}"));
+                self.line(&format!("static inline void nx_set_{c}({c} *l, int64_t i, {et} v, uint32_t L) {{ {et} *p = nx_at_{c}(l, i, L);{drop_p} *p = v; }}"));
                 let drop_i = if owned {
                     format!(" {};", self.drop_call(el, "&l->d[i]"))
                 } else {
                     String::new()
                 };
-                self.line(&format!("static inline void nx_swap_{c}({c} *l, int64_t i, int64_t j) {{ {et} *a = nx_at_{c}(l, i); {et} *b = nx_at_{c}(l, j); {et} t = *a; *a = *b; *b = t; }}"));
+                self.line(&format!("static inline void nx_swap_{c}({c} *l, int64_t i, int64_t j, uint32_t L) {{ {et} *a = nx_at_{c}(l, i, L); {et} *b = nx_at_{c}(l, j, L); {et} t = *a; *a = *b; *b = t; }}"));
                 // slices `[T]` share this header: elements [lo, hi) of a buffer, of a List, or of a slice
-                self.line(&format!("static inline {c} nx_slice_{c}({et} *d, int64_t n, int64_t lo, int64_t hi) {{ if (hi < 0 || hi > n || lo < 0 || lo > hi) nx_panic(\"index out of range\"); {c} s = {{ d + lo, hi - lo, hi - lo }}; return s; }}"));
-                self.line(&format!("static inline {c} nx_slicel_{c}({c} *l, int64_t lo, int64_t hi, bool whole) {{ return nx_slice_{c}(l->d, l->len, lo, whole ? l->len : hi); }}"));
+                self.line(&format!("static inline {c} nx_slice_{c}({et} *d, int64_t n, int64_t lo, int64_t hi, uint32_t L) {{ if (hi < 0 || hi > n || lo < 0 || lo > hi) nx_panic_at(\"index out of range\", L); {c} s = {{ d + lo, hi - lo, hi - lo }}; return s; }}"));
+                self.line(&format!("static inline {c} nx_slicel_{c}({c} *l, int64_t lo, int64_t hi, bool whole, uint32_t L) {{ return nx_slice_{c}(l->d, l->len, lo, whole ? l->len : hi, L); }}"));
                 if let Some(members) = self.types.general_scc(HeapNode::List(i)) {
                     // recursive through lists/boxes: released by the component's worklist (clear gives the buffer up too)
                     let tag = members
@@ -612,7 +714,7 @@ while (n) {{ NxWI it = w[--n]; switch (it.tag) {{{cases} default: break; }} }} f
                 let d = self.drop_call(el, "&s->e[i]");
                 self.line(&format!("static void nx_drop_{c}({c} *s) {{ for (int64_t i = 0; i < {n}; i++) {{ {d}; }} }}"));
                 let dp = self.drop_call(el, "p");
-                self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v) {{ {et} *p = nx_at_{c}(a, i); {dp}; *p = v; }}"));
+                self.line(&format!("static inline void nx_set_{c}({c} *a, int64_t i, {et} v, uint32_t l) {{ {et} *p = nx_at_{c}(a, i, l); {dp}; *p = v; }}"));
             }
             Ty::Struct(i) => {
                 let def = self.types.structs[i].clone();
@@ -771,7 +873,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             EK::Method { recv, args, .. } => {
                 let c = self.types.cty(recv.ty);
                 let list = self.place_with_indices(recv, index);
-                format!("(*nx_at_{}(&{}, {}))", c, list, index(&args[0]))
+                format!("(*nx_at_{}(&{}, {}, {}))", c, list, index(&args[0]), self.loc(e.pos))
             }
             EK::Deref(p) => format!("(*({} *)(intptr_t)({}))", self.types.cty(e.ty), self.ex(p)),
             _ => format!("({})", self.ex(e)), // a field of a temporary: `pair().0`
@@ -864,6 +966,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             });
             self.vars.insert(p.id, (n, r, p.ty));
         }
+        let t = self.tfuncs.contains(&f.name);
+        // only the library functions whose caller records its position (see `unwrap_like`) read it
+        self.in_t.set(t && (FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || unwrap_like(&f.name)));
         let params = if ps.is_empty() {
             "void".to_string()
         } else {
@@ -1203,6 +1308,22 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
         format!("({{ {}{}({}); }})", pre, f, names.join(", "))
     }
 
+    /// A call that records the caller's position in `nx_cur_loc` AFTER its arguments are evaluated (they may
+    /// call library functions that record their own).
+    fn call_c_at(&self, f: &str, args: Vec<Arg>, loc: &str) -> String {
+        let mut pre = String::new();
+        let mut names = vec![String::new(); args.len()];
+        for pass in [true, false] {
+            for (k, a) in args.iter().enumerate() {
+                if a.val == pass {
+                    pre += &format!("__auto_type a{}_ = {}; ", k, a.code);
+                    names[k] = format!("a{}_", k);
+                }
+            }
+        }
+        format!("({{ {}nx_cur_loc = {}; {}({}); }})", pre, loc, f, names.join(", "))
+    }
+
     fn cmp_c(&self, op: &str, args: Vec<Arg>) -> String {
         let impure = args.iter().any(|a| a.impure);
         let nonlit = args.iter().filter(|a| !a.lit).count();
@@ -1254,6 +1375,13 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     scopes: self.scopes.clone(),
                     tmp: 0,
                     loops: self.loops.clone(),
+                    locs: self.locs.clone(),
+                    loc_ix: self.loc_ix.clone(),
+                    files: self.files.clone(),
+                    track: self.track,
+                    tfuncs: self.tfuncs.clone(),
+                    valued: self.valued.clone(),
+                    in_t: self.in_t.clone(),
                 };
                 nested.scopes.push(vec![]);
                 nested.stmts(stmts);
@@ -1279,7 +1407,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             }
             EK::Int(_) | EK::Float(..) => self.num_lit(e),
             EK::Char(n) => format!("INT64_C({})", n),
-            EK::Conv(x, trunc) => self.conv_c(x, e.ty, *trunc),
+            EK::Conv(x, trunc) => self.conv_c(x, e.ty, *trunc, e.pos),
             EK::IsVariant(b, vid) => format!("({}.tag == {})", self.ex(b), vid),
             EK::Payload(b, vid, k) => {
                 let Ty::Enum(eid) = b.ty else { unreachable!() };
@@ -1339,9 +1467,9 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 } else if crate::numeric::is_float(e.ty) {
                     format!("(-{})", c)
                 } else if matches!(e.ty, Ty::Int | Ty::Range(..)) {
-                    format!("nx_neg({})", c)
+                    format!("nxl_neg({}, {})", c, self.loc_hot(e.pos))
                 } else {
-                    format!("nx_neg_{}({})", nsfx(e.ty), c)
+                    format!("nxl_neg_{}({}, {})", nsfx(e.ty), c, self.loc_hot(e.pos))
                 }
             }
             EK::Bin(op, a, b) => {
@@ -1355,7 +1483,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 match *op {
                     "&&" | "||" => format!("({} {} {})", args[0].code, op, args[1].code), // sequenced in C
                     "+" | "-" | "*" | "/" | "%" | "+%" | "-%" | "*%" => {
-                        self.num_bin(op, a, b, args)
+                        self.num_bin(op, a, b, args, e.pos)
                     }
                     o => {
                         // comparison: operands are unsequenced in C too
@@ -1377,12 +1505,20 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                                 },
                             );
                         }
-                        self.call_c(&format!("nx_str_{}", m), a)
+                        if matches!(m.as_str(), "byte" | "push_byte" | "push_slice" | "char_at" | "char_size") {
+                            a.push(Arg { code: self.loc_hot(e.pos), val: true, lit: true, impure: false });
+                            self.call_c(&format!("nxl_str_{}", m), a)
+                        } else {
+                            self.call_c(&format!("nx_str_{}", m), a)
+                        }
                     }
                     _ => {
                         let c = self.types.cty(recv.ty);
                         for x in args {
                             a.push(self.val_c(x));
+                        }
+                        if matches!(m.as_str(), "get" | "at" | "set" | "swap" | "pop") {
+                            a.push(self.loc_arg(e.pos));
                         }
                         if m == "get" {
                             format!("(*{})", self.call_c(&format!("nx_at_{}", c), a))
@@ -1416,15 +1552,11 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 f,
                 args,
             } => {
-                format!(
-                    "{}({})",
-                    if f == "is_valid" {
-                        "nx_char_valid"
-                    } else {
-                        "nx_char_from_int"
-                    },
-                    self.ex(&args[0])
-                )
+                if f == "is_valid" {
+                    format!("nx_char_valid({})", self.ex(&args[0]))
+                } else {
+                    format!("nxl_char_from_int({}, {})", self.ex(&args[0]), self.loc_hot(e.pos))
+                }
             }
             EK::Static { ty, f, args } => match ty {
                 Ty::String => {
@@ -1472,6 +1604,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                             int(&None, n.to_string()),
                             int(lo, "0".into()),
                             int(hi, n.to_string()),
+                            self.loc_arg(e.pos),
                         ];
                         self.call_c(&format!("nx_slice_{lc}"), args)
                     }
@@ -1481,6 +1614,7 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                             int(lo, "0".into()),
                             int(hi, "0".into()),
                             int(&None, (if hi.is_none() { "true" } else { "false" }).into()),
+                            self.loc_arg(e.pos),
                         ];
                         self.call_c(&format!("nx_slicel_{lc}"), args)
                     }
@@ -1569,7 +1703,10 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
             EK::AddrOf(p, _) => format!("((int64_t)(intptr_t)&{})", self.place_c(p)),
             EK::Deref(_) => self.place_c(e),
             EK::MkClosure { func, env, caps } => match env {
-                None => format!("(NxFn){{ (void *)nx_f_{}, 0 }}", func),
+                None => {
+                    self.valued.borrow_mut().insert(func.clone());
+                    format!("(NxFn){{ (void *)nx_f_{}, 0 }}", func)
+                }
                 Some(sid) => {
                     let c = self.types.cty(Ty::Struct(*sid));
                     let mut s = format!("({{ {c} *e_ = ({c} *)malloc(sizeof({c})); if (!e_) nx_panic(\"out of memory\"); e_->f_env_drop = (int64_t)(intptr_t)nx_envdrop_{c}; ");
@@ -1579,7 +1716,8 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                             s += &format!("e_->f_{flag} = 1; ");
                         }
                     }
-                    s += &format!("(NxFn){{ (void *)nx_f_{}, e_ }}; }})", func);
+                    self.valued.borrow_mut().insert(func.clone());
+                                        s += &format!("(NxFn){{ (void *)nx_f_{}, e_ }}; }})", func);
                     s
                 }
             },
@@ -1615,13 +1753,13 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                 format!("({{ NxFn *f_ = &{}; {}; }})", self.place_c(callee), call)
             }
             EK::Call(name, args) => match name.as_str() {
-                "assert" => format!("nx_assert({})", self.ex(&args[0])),
+                "assert" => format!("nxl_assert({}, {})", self.ex(&args[0]), self.loc(e.pos)),
                 "panic" => match args[0].ty {
                     Ty::String => {
                         let p = self.place_c(&args[0]);
-                        format!("nx_panic_str(nx_str_view(&({p})))")
+                        format!("nxl_panic_str(nx_str_view(&({p})), {})", self.loc(e.pos))
                     }
-                    _ => format!("nx_panic({})", self.ex(&args[0])),
+                    _ => format!("nx_panic_at({}, {})", self.ex(&args[0]), self.loc(e.pos)),
                 },
                 "__atomic_load" | "__atomic_store" | "__atomic_cmpxchg" | "__atomic_fetch_add"
                 | "__futex_park" | "__futex_wake" => {
@@ -1734,7 +1872,15 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     } else {
                         format!("nx_f_{}", name)
                     };
-                    self.call_c(&target, a)
+                    if self.tfuncs.contains(name)
+                        && !self.in_t.get()
+                        && (FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || unwrap_like(name))
+                    {
+                        // the callee reports a failure at its caller's position (read only on the failure path)
+                        self.call_c_at(&target, a, &self.loc(e.pos))
+                    } else {
+                        self.call_c(&target, a)
+                    }
                 }
             },
         }
@@ -1825,7 +1971,7 @@ impl Gen<'_> {
         }
     }
 
-    fn conv_c(&self, x: &Expr, to: Ty, trunc: bool) -> String {
+    fn conv_c(&self, x: &Expr, to: Ty, trunc: bool, pos: Pos) -> String {
         use crate::numeric::*;
         let from = x.ty;
         let c = self.ex(x);
@@ -1848,19 +1994,19 @@ impl Gen<'_> {
                                 format!("INT64_C({})", n)
                             }
                         };
-                        format!("nx_to_range((__int128)({}), {}, {})", c, k(lo), k(hi))
+                        format!("nxl_to_range((__int128)({}), {}, {}, {})", c, k(lo), k(hi), self.loc_hot(pos))
                     }
                 } else {
-                    format!("nx_to_{}({})", nsfx(to), c)
+                    format!("nxl_to_{}({}, {})", nsfx(to), c, self.loc_hot(pos))
                 }
             }
             (false, true) => format!("(({}){})", ct, c),
             (true, true) => format!("(({}){})", ct, c),
-            (true, false) => format!("nx_f2i_{}((double)({}))", nsfx(to), c),
+            (true, false) => format!("nxl_f2i_{}((double)({}), {})", nsfx(to), c, self.loc_hot(pos)),
         }
     }
 
-    fn num_bin(&self, op: &str, a: &Expr, _b: &Expr, args: Vec<Arg>) -> String {
+    fn num_bin(&self, op: &str, a: &Expr, _b: &Expr, mut args: Vec<Arg>, pos: Pos) -> String {
         use crate::numeric::*;
         let t = a.ty;
         if is_float(t) {
@@ -1878,10 +2024,15 @@ impl Gen<'_> {
             "-%" => "wsub",
             _ => "wmul",
         };
+        let checked = !f.starts_with('w');
+        if checked {
+            args.push(Arg { code: self.loc_hot(pos), val: true, lit: true, impure: false });
+        }
+        let p = if checked { "nxl" } else { "nx" };
         let name = if matches!(t, Ty::Int | Ty::Range(..)) {
-            format!("nx_{}", f)
+            format!("{}_{}", p, f)
         } else {
-            format!("nx_{}_{}", f, s)
+            format!("{}_{}_{}", p, f, s)
         };
         self.call_c(&name, args)
     }

@@ -1,1 +1,2 @@
 panic: invalid Unicode scalar value
+  at tests/panic_char_value.yx:2:11

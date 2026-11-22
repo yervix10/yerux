@@ -1,0 +1,2 @@
+panic: index out of range
+  at tests/opt_bce_panic_inner.yx:14:15

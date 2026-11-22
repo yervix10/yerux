@@ -1,0 +1,2 @@
+panic: index out of range
+  at tests/agg_index_negative.yx:4:9

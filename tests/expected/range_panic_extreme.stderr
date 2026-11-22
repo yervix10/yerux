@@ -1,1 +1,2 @@
 panic: integer conversion out of range: -9223372036854775808 not in -5..5
+  at tests/range_panic_extreme.yx:6:9

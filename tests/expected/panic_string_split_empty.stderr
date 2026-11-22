@@ -1,1 +1,2 @@
 panic: String.split separator is empty
+  at tests/panic_string_split_empty.yx:6:14

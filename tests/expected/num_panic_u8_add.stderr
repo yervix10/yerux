@@ -1,0 +1,2 @@
+panic: integer overflow in addition
+  at tests/num_panic_u8_add.yx:4:11

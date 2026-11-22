@@ -1,0 +1,2 @@
+panic: index out of range
+  at tests/listopt_oob.yx:12:13
