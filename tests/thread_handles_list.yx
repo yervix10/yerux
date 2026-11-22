@@ -1,0 +1,72 @@
+// A List<JoinHandle<T>> holds the workers started in a loop; joining happens when you say so
+// (join / pop+join) or, for handles still in the list, when the list is dropped.
+fn square(n: Int) -> Int { return n * n }
+
+fn main() {
+  scope {
+    // start N workers in a loop, join them in order
+    var handles = List<JoinHandle<Int>>.new()
+    for i in 1..5 {
+      let h = spawn move { return square(i) }
+      handles.push(move h)
+    }
+    print(handles.len())
+    var total = 0
+    while handles.len() > 0 {
+      let h = handles.remove(0)
+      match h.join() {
+        Ok(v) => { total = total + v }
+        Err(e) => { print("worker panicked") }
+      }
+    }
+    print(total)
+  }
+
+  // workers fed through one channel each: the usual "pool of N" shape
+  let (done_tx, done_rx) = Sender<Int>.unbounded()
+  scope {
+    var inboxes = List<Sender<Int>>.new()
+    var workers = List<JoinHandle<Int>>.new()
+    for w in 0..3 {
+      let (tx, rx) = Sender<Int>.unbounded()
+      inboxes.push(move tx)
+      let out = done_tx.clone()
+      let h = spawn move {
+        var sum = 0
+        while true {
+          match rx.recv() {
+            Some(n) => { sum = sum + n }
+            None => { break }
+          }
+        }
+        out.send(sum)
+        return sum
+      }
+      workers.push(move h)
+    }
+    for round in 0..6 {
+      inboxes.at(round % 3).send(round + 1)
+    }
+    for tx in inboxes { tx.close() }
+    var ids = 0
+    while workers.len() > 0 {
+      let h = workers.pop()
+      ids = ids + h.join().unwrap()
+    }
+    print(ids)
+  }
+  var all = 0
+  for k in 0..3 { all = all + done_rx.recv().unwrap() }
+  print(all)
+
+  // handles left in the list are joined when it goes out of scope
+  scope {
+    var left = List<JoinHandle<Int>>.new()
+    for i in 0..3 {
+      let h = spawn move { return square(i) }
+      left.push(move h)
+    }
+    print("scope ends")
+  }
+  print("done")
+}

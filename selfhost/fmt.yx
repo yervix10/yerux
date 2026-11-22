@@ -13,6 +13,22 @@ struct Open { multi: Bool, decl: Bool, lit: Bool, pd: Int, cont: Bool }
 fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
 fn is_alpha(b: Int) -> Bool { return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 }
 fn is_alnum(b: Int) -> Bool { return is_alpha(b) || is_digit(b) }
+
+fn raw_start(src: view String, at: Int) -> Bool {
+  var j = at + 1
+  while j < src.len() && src.byte(j) == 35 { j = j + 1 }
+  return j < src.len() && src.byte(j) == 34
+}
+
+fn raw_closes(src: view String, at: Int, hashes: Int) -> Bool {
+  if src.byte(at) != 34 { return false }
+  var h = 1
+  while h <= hashes {
+    if at + h >= src.len() || src.byte(at + h) != 35 { return false }
+    h = h + 1
+  }
+  return true
+}
 fn tok(out: mut List<T>, k: K, src: view String, start: Int, end: Int, nl: Int, line: Int) {
   out.push(T { k: k, start: start, end: end, nl: nl, line: line })
 }
@@ -34,6 +50,14 @@ fn tokenize(src: view String) -> List<T> {
         i = i + 2
         while i < src.len() && src.byte(i) != 10 { i = i + 1 }
         tok(out, K.Comment, src, start, i, before_nl, start_line)
+      } else if b == 114 && raw_start(src, i) {
+        var hashes = 0
+        i = i + 1
+        while src.byte(i) == 35 { hashes = hashes + 1; i = i + 1 }
+        i = i + 1
+        while i < src.len() && src.byte(i) != 10 && !raw_closes(src, i, hashes) { i = i + 1 }
+        if i < src.len() && src.byte(i) != 10 { i = i + 1 + hashes }
+        tok(out, K.Str, src, start, i, before_nl, start_line)
       } else if is_alpha(b) {
         i = i + 1
         while i < src.len() && is_alnum(src.byte(i)) { i = i + 1 }

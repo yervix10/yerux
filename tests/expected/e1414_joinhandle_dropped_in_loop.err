@@ -1,0 +1,9 @@
+error: the JoinHandle 't' is dropped at the end of every iteration, which waits for its worker
+ --> tests/e1414_joinhandle_dropped_in_loop.yx:3:5
+  |
+3 |     for w in 0..3 {
+  |     ^^^
+  = dropping a JoinHandle joins the thread, so a worker started in a loop and never joined runs one at a time (and deadlocks if it waits for work sent later)
+  = help: collect the handles with `handles.push(move t)` into a `List<JoinHandle<T>>` and join them after the loop, or call `t.join()` inside the loop
+
+1 error(s). Nothing was generated.

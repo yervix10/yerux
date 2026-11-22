@@ -105,6 +105,33 @@ fn tokenize(src: &str) -> Result<Vec<T>, String> {
             }
             k = K::Num;
             s = cs[start..i].iter().collect();
+        } else if c == 'r' && {
+            let mut j = i + 1;
+            while cs.get(j) == Some(&'#') {
+                j += 1;
+            }
+            cs.get(j) == Some(&'"')
+        } {
+            // raw string: kept verbatim
+            let mut hashes = 0;
+            i += 1;
+            while cs[i] == '#' {
+                hashes += 1;
+                i += 1;
+            }
+            i += 1;
+            while i < cs.len()
+                && cs[i] != '\n'
+                && !(cs[i] == '"' && (1..=hashes).all(|h| cs.get(i + h) == Some(&'#')))
+            {
+                i += 1;
+            }
+            if i >= cs.len() || cs[i] == '\n' {
+                return Err(format!("line {}: unterminated raw string", line));
+            }
+            i += 1 + hashes;
+            k = K::Str;
+            s = cs[start..i].iter().collect();
         } else if c.is_ascii_alphabetic() || c == '_' {
             while i < cs.len() && (cs[i].is_ascii_alphanumeric() || cs[i] == '_') {
                 i += 1;

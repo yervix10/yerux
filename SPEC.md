@@ -175,6 +175,7 @@ let line = "{name} has {names.len()} friends"                        // a String
 ```
 - A literal with at least one `{expr}` is a **String** (a literal without any is still a `Text`). `{expr}` is one expression (a variable, field, `l.at(i)`, method call, arithmetic); it cannot contain a quote or a brace: store such a value in a variable first. Its type needs `impl Show` (Int, Bool, Text, String, `List<T>`, `Map`, `Set` have it; write `impl Show for Point` for yours). Owned temporaries (`{xs.slice(0, 3)}`, `{s.to_upper()}`) are fine: they are shown and freed.
 - Implementation: the lexer rewrites `"a {x} b"` into nested calls of two library functions (`std__fmt_lit`, `std__fmt_val`), so the checker and both backends need nothing special. `print("..{x}..")` prints the temporary String and frees it; in general `print` accepts a String temporary (`print(s.trim())`).
+- **Raw strings**: `r"C:\dir\new"` and `r#"{"id": 7, "tag": "a"}"#` take their text verbatim: no escapes, no `{expr}` interpolation, no doubled braces. Add `#`s (`r##"..."##`) so the text may contain `"` or `"#`; the literal ends at a quote followed by as many `#` as it opened with. It is a `Text`, must fit on one line, and an unterminated one is an error (`e1413`). A name `r` followed by anything else is still an ordinary identifier.
 - `x.to_string()` is `x.show()`. `a + b` on a String variable `a` gives a new String (`b`: a String variable or a Text); for longer chains use interpolation.
 - **Text where a `view String` is expected.** A Text literal or Text variable passed to a `view String` parameter (library methods such as `s.starts_with("ab")`, or your own functions) is copied into a hidden String for that statement and freed with the enclosing scope.
 
@@ -270,6 +271,7 @@ On native x86-64 Linux and the C backend, `scope { ... }` is a block in which
 value. A standalone `spawn` statement implicitly retains its handle until the
 enclosing block exits. Dropping a handle waits and discards its result.
 A handle cannot escape through a return, an assignment, or a closure capture.
+A `List<JoinHandle<T>>` is allowed (push with `move`, take out with `remove`/`pop`; handles left in it are joined when it is dropped), which is how to start N workers in a loop. A handle owned by a loop body and still unjoined at the end of the iteration is an error (`e1414`), since dropping it would wait for its worker.
 A worker can copy or take ownership of thread-transferable values, including
 ordinary data and explicit sharing handles. It cannot capture a borrow.
 `@thread_bound` on a struct or enum excludes it and containers that hold it
