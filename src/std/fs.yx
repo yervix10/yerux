@@ -159,6 +159,39 @@ pub fn read_to_string(path: view String) -> Result<String, io.IoError> {
     return io.read_file(path)
 }
 
+/// Read a UTF-8 file up to `limit` bytes. Stops after one byte over the limit,
+/// even if the file grows while it is being read.
+pub fn read_to_string_limit(path: view String, limit: Int) -> Result<String, io.IoError> {
+    if limit < 0 || limit > 16777216 {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "file read limit must be 0..16 MiB"))
+    }
+    let f = open(path)?
+    let p = __alloc(65536)
+    var out = String.new()
+    while true {
+        let want = (limit + 1 - out.len()).min(65536)
+        match read_raw(f, p, want) {
+            Ok(n) => {
+                if n == 0 { break }
+                if n > limit - out.len() {
+                    __free(p)
+                    let closed = close(move f)
+                    return Err(io.custom_error(io.IoErrorKind.InvalidData, "file exceeds read limit"))
+                }
+                out.push_raw(p, n)
+            }
+            Err(e) => {
+                __free(p)
+                let closed = close(move f)
+                return Err(move e)
+            }
+        }
+    }
+    __free(p)
+    let closed = close(move f)?
+    return io.checked_text(move out)
+}
+
 /// The lines of a file without their line endings (`\n` or `\r\n`); a final line ending adds no empty line.
 pub fn read_lines(path: view String) -> Result<List<String>, io.IoError> {
     let text = io.read_file(path)?
