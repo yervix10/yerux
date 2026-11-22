@@ -1,6 +1,6 @@
 # Yerux Guide
 
-A beginner-friendly tour of the Yerux language (v0.4). Every `yx` code block in this guide is a complete program: save it as `file.yx` and run `yerux run file.yx` (or `yerux run file.yx --native`). The programs were run on both backends and the comments show their real output.
+A one-page tour of the Yerux language (v0.5, the version in `Cargo.toml`; `yerux --version`). For a progressive tutorial see [The Yerux Book](book/README.md). Every `yx` code block in this guide is a complete program: save it as `file.yx` and run `yerux run file.yx` (or `yerux run file.yx --native`). The programs were run on both backends and the comments show their real output.
 
 ---
 
@@ -659,12 +659,13 @@ fn main() {
 - A trait lists method signatures only (no default bodies). Every method's first parameter is `self`: `view self`, `mut self`, or `self` (consumes the receiver).
 - `impl Trait for Type { ... }` must define every method with exactly the trait's signature.
 - `impl Type { ... }` adds plain methods to your own struct or enum.
-- Dispatch is static; there is no `dyn` yet.
+- Dispatch is static for generics. For run-time dispatch box the value as a trait object, `Box<dyn Trait>` (see the book, chapter 8, and `tests/dyn_shapes.yx`); a `view dyn Trait` parameter borrows one.
 - Functions, structs and enums can be generic. They are **monomorphised**: each distinct use compiles to a specialised copy, with zero run-time cost.
 - Type arguments of function calls are **inferred** (never written). Struct and enum values infer them from field values or the expected type; otherwise write them (`Maybe<Int>.None`).
 - A generic body is checked once against its bounds: inside, `T` is *moved* unless `T: Copy` is declared.
 - Built-in traits: `Copy`, `Equal` (`==`), `Ordered` (`<`, `>`), `Show` (`show()`, `"{x}"`), `Hash` (for `Map`/`Set` keys).
-- Not yet: explicit type arguments on calls, bounds on struct parameters, generic `impl` blocks and generic methods in user code.
+- Generic `impl` blocks work for your own types (`impl<T> Stack<T> { .. }`, `impl<T: Show> Show for Pair<T>`, with `Stack<Int>.new()` for functions without `self`); see docs/GENERICS.md.
+- Not yet: explicit type arguments on function calls, bounds on struct/enum parameters, and generic *methods* (`fn map<U>(..)` inside an impl).
 
 ---
 
@@ -966,7 +967,7 @@ fn main() {
 - Fields are `.0`, `.1`, ...; `t.1.len()` borrows an owned element.
 - `let (a, b) = e` consumes the tuple (use `move t` for an owned tuple variable). `_` discards an element, which is still freed.
 - A tuple is Copy when all elements are Copy and owned when any element is owned.
-- `==` and `<` on tuples are not provided yet.
+- Tuples have no `==`, `<` or `Show` (`print("{t}")` is an error): compare or show the elements. A tuple has **2 to 6** elements: the compiler rejects `(1,)` ("a tuple needs at least two elements") and a 7-tuple ("a tuple has at most 6 elements", use a struct).
 
 ---
 
@@ -1204,20 +1205,115 @@ fn main() {
 ## 23. Running the Compiler
 
 ```bash
+yerux --version                      # yerux 0.5.0
+yerux doctor                         # C compiler, wine, both backends: what this installation can do
 yerux check file.yx                  # type-check only
 yerux c file.yx                      # emit C code to stdout
+yerux ir file.yx                     # print the optimised IR
 yerux build file.yx -o out           # compile to a binary (C backend)
 yerux build file.yx --native -o out  # native backend (no C compiler needed)
+yerux build file.yx --target windows # Windows .exe | --target aarch64: ARM64 ELF (native backend)
 yerux run file.yx                    # build + run (C backend)
 yerux run file.yx --native           # build + run (native backend)
-yerux fmt file.yx                    # format
-yerux test [file.yx|dir]             # run tests
+yerux new app                        # a project: app/yerux.toml + app/src/main.yx
+yerux build | run | test             # (no file) the same, from a project root
+yerux fmt [--check|--stdout] file.yx # format
+yerux test [file.yx|dir]             # run `test "name" { .. }` blocks
+yerux lsp                            # language server on stdin/stdout (editors/vscode)
 ```
+
+---
+
+## 24. `derive` and `Clone`
+
+`derive Trait, Trait for Name` writes `Clone`, `Equal` and `Show` for you; `x.clone()` is a deep copy of an owned value.
+
+```yx
+struct Person { name: String, tags: List<String>, age: Int }
+derive Clone, Equal, Show for Person
+
+fn main() {
+  var tags = List<String>.new()
+  tags.push(String.from("admin"))
+  let ana = Person { name: String.from("Ana"), tags: move tags, age: 30 }
+  var copy = ana.clone()
+  copy.age = 31
+  print("{ana}")                 // Person { name: Ana, tags: [admin], age: 30 }
+  print(ana == copy)             // false
+}
+```
+
+See docs/CLONE.md.
+
+---
+
+## 25. Iterators
+
+Any type with `next(mut self) -> Option<T>` works in `for`; `Iter<T>` offers lazy adapters and consumers.
+
+```yx
+fn main() {
+  let squares = Iter<Int>.range(1, 6).map(|x| x * x).to_list()
+  print("{squares}")                                                   // [1, 4, 9, 16, 25]
+  print(Iter<Int>.range(0, 100).filter(|x| x % 7 == 0).take(4).sum())  // 42
+}
+```
+
+See docs/ITERATORS.md.
+
+---
+
+## 26. Threads
+
+`scope { .. }` joins every task started inside it; `spawn move { .. }` returns a handle whose `join()` is a
+`Result<T, ThreadPanic>`. Shared state goes through `Shared<T>`, `Locked<T>`, `RwLock<T>` and `Atomic<Int>`;
+`Sender<T>.bounded(n)` / `.unbounded()` give channels; `parallel for` runs range iterations on workers.
+
+```yx
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let total = Shared.new(Atomic.new(0))
+  scope {
+    let t = tx.clone()
+    let h = spawn move {
+      for i in 1..=4 { t.send(i) }
+      return 0
+    }
+    for _ in 0..4 { total.add(rx.recv().unwrap()) }
+    h.join()
+  }
+  print(total.load())            // 10
+}
+```
+
+See docs/CONCURRENCY.md. Threads need the Linux x86-64 native backend or the C backend; the Windows and aarch64 native
+targets reject them at compile time.
+
+---
+
+## 27. The standard library modules
+
+Beyond the prelude (`String`, `List`, `Map`, `Option`, `Iter`, ...), `import std.<name>` gives: `text`, `fmt`, `math`,
+`rand`, `sort`, `iter`, `collections`, `hash`, `hex`, `base64`, `regex`, `csv`, `toml`, `args`, `env`, `io`, `fs`, `path`,
+`process`, `time`, `net`, `http`, `log`, `kv`, `compress`, `unicode` and `sync`.
+
+```yx
+import std.text
+import std.hash
+
+fn main() {
+  print(text.split_ws("a  b c").len())   // 3
+  print(hash.crc32("123456789"))         // 3421780262
+}
+```
+
+Reference: docs/STDLIB.md; the tour by area is chapter 14 of the book.
 
 ---
 
 ## Next Steps
 
+- **book/README.md**: the progressive tutorial (17 chapters, every snippet is tested).
 - **STDLIB.md**: reference for `String`, `List`, `Map`, `Set`, `Option`, `Result`, `Box`, numbers and built-ins.
 - **GLOSSARY.md**: ownership terminology.
 - **SPEC.md**: the authoritative specification.
