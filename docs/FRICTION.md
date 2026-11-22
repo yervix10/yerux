@@ -306,13 +306,6 @@ the first one outside any nested literal (inside a nested literal braces still f
 
 ### Still open
 
-- **A variable cannot have the name of an imported module** (`path` with `import std.path`): the message
-  (`'path' is a module, not a value`) is clear, but common names (`path`, `text`, `time`, `hash`, `env`, `args`)
-  are exactly what programs want as variables; the workaround is `file`/`source`/`h`. An `import std.path as p` is
-  the other way out.
-- **Calls cannot be chained or nested into `view` arguments**: `args.help_line(..)` passed straight to
-  `push_str`, `d.len().show()`, `time.now().since(..)` all need a `let`. In report-style code this doubles the
-  line count (about 10 extra `let`s in sumtool).
 - **A pair out of an `Option<(A, B)>` pattern is not movable field by field** (`let want = pair.0` fails with "cannot
   move 'pair._0' out of its struct"); `let (want, name) = move pair` works but the error text names the internal
   field `_0` and does not suggest it.
@@ -322,8 +315,6 @@ the first one outside any nested literal (inside a nested literal braces still f
 - **Closures cannot be passed where a named function would do without a signature**: `each_file(files, sha_line)`
   needs `sha_line` declared with exactly `view String` parameters, and the nested-quote limitation made inline
   closures with interpolation impractical until the fix above.
-- **`io.exit` does not run destructors or flush**, so subcommand runners return a status up to `main` and exit
-  there (as done here); worth a sentence in the std.io docs next to `exit`.
 
 ## Fixed: calls nested into `view` arguments and chained on call results
 
@@ -340,10 +331,11 @@ variable like an Option/Result receiver was. Char and `Ptr` receivers keep their
 `let path = ..`, `fn f(path: String)` and `for path in ..` used to be rejected ("'path' is already the name of an
 imported module", or "module has no item called 'len'" for a parameter) when `std.path` was imported. The module
 loader now tracks such declarations by block: inside the scope the name is the variable, after it (and in the
-initializer of the declaring `let`) it is the module again. Closure parameters and tuple/match patterns that bind a
-module name are not tracked yet (rename them or import with `as`). Tests: `tests/mod_ok/shadow_module`,
-`tests/mod_err/shadow_hides_module` (the module is hidden inside the scope: the error is the ordinary "no method"). The
-self-hosted resolver (`selfhost/resolve.yx`) follows the same scoping (`tests/selfhost_resolve.sh`, 0 mismatches).
+initializer of the declaring `let`) it is the module again. Match-arm bindings (`Ok(path)`), closure parameters
+(`|path: view String| { .. }`) and unpack bindings (`let (path, n) = ..`) are tracked the same way. Tests:
+`tests/mod_ok/shadow_module`, `tests/mod_ok/shadow_pattern`, `tests/mod_err/shadow_hides_module` (the module is
+hidden inside the scope: the error is the ordinary "no method"). The self-hosted resolver (`selfhost/resolve.yx`)
+follows the same scoping (`tests/selfhost_resolve.sh`, 0 mismatches).
 
 ## Fixed: moving a tuple element named the internal field
 
@@ -379,30 +371,26 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 1. **No `if` or `match` expressions.** `let x = if ok { 1 } else { 2 }` fails with "unexpected keyword 'if' here".
    All three programs needed a `var` plus an `if` statement, or a one-line helper function. The biggest everyday
    papercut; the parser also reports it as a syntax error rather than explaining that `if` is a statement.
-2. **A pattern binding with the name of an imported module is an error.** `import std.text` followed by
-   `match r { Ok(text) => { .. } .. }` reports "'text' is a module, not a value" at both uses. Parameters, `let` and
-   `for` are scoped correctly; match-arm and closure bindings are not. A loader fix exists in outline (treat `Ok(x) => {`
-   like a parameter) but it must be mirrored in `selfhost/resolve.yx` or `selfhost_resolve` fails, so it was left.
-3. **A borrowed list element cannot be named.** `let line = lines.at(i)` is "cannot move 'lines.at(..)' out of its
+2. **A borrowed list element cannot be named.** `let line = lines.at(i)` is "cannot move 'lines.at(..)' out of its
    List"; the only ways are `String.from(lines.at(i))` (a copy) or passing `lines.at(i)` straight to a `view`
    parameter. Every loop over rows of a table copied each row or went through a helper taking `view Table`.
-4. **A dropped `JoinHandle` joins, silently.** `for w in 0..3 { let t = spawn move { worker(rx) } }` deadlocks: the
+3. **A dropped `JoinHandle` joins, silently.** `for w in 0..3 { let t = spawn move { worker(rx) } }` deadlocks: the
    handle is dropped at the end of the first iteration, which waits for a worker that waits for work. There is no
    diagnostic, and a `List<JoinHandle<T>>` is rejected ("a List cannot contain JoinHandle values"), so the usual
    "start N workers" loop has no direct form. The programs name each handle (`w1`, `w2`, `w3`) and report results
    through a channel.
-5. **No struct-literal shorthand and `move` on last use.** `Task { title: move title, tags: move tags }` is required
+4. **No struct-literal shorthand and `move` on last use.** `Task { title: move title, tags: move tags }` is required
    even though `title` is not used afterwards; `Task { title, tags }` is not accepted.
-6. **JSON in strings needs doubled braces.** `"{{\"id\":{t.id}}}"`: every literal `{` and `}` is doubled, and `\{` is
+5. **JSON in strings needs doubled braces.** `"{{\"id\":{t.id}}}"`: every literal `{` and `}` is doubled, and `\{` is
    an error with a good hint. A raw string literal would remove most of the noise.
-7. **`std.args` is thin.** Options only take the `--key=value` form (`--title TEXT` is a positional), the first
+6. **`std.args` is thin.** Options only take the `--key=value` form (`--title TEXT` is a positional), the first
    positional word lands in `subcommand`, and there is no typed accessor.
-8. **Methods versus functions are inconsistent.** `s.split(..)` and `s.trim()` are methods but `s.lines()`,
+7. **Methods versus functions are inconsistent.** `s.split(..)` and `s.trim()` are methods but `s.lines()`,
    `s.to_upper()` and `s.is_alnum` are `text.lines(s)`, `text.to_upper(s)`; the error ("String has no method 'lines'")
    does not mention `std.text`.
-9. **A removed list element must be used.** `list.remove(i)` as a statement is "a String is created and immediately
+8. **A removed list element must be used.** `list.remove(i)` as a statement is "a String is created and immediately
    discarded (memory leak)"; write `let gone = list.remove(i)`. Same for `list.pop()`, which also returns the element
    itself rather than an `Option` (an empty list panics).
-10. **The cascade after the `==` error.** The fixed message is followed by a second error about the right operand
+9. **The cascade after the `==` error.** The fixed message is followed by a second error about the right operand
     ("'word' is a String and is not copied") that is a consequence of the first.
 
