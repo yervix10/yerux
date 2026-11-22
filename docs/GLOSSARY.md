@@ -1,6 +1,6 @@
 # Yerux Ownership Glossary
 
-Short definitions of ownership terms as used in the Yerux language (v0.4). See the "Ownership model" section of SPEC.md for the authoritative rules.
+Short definitions of ownership terms as used in the Yerux language (v0.5). See the "Ownership model" section of SPEC.md for the authoritative rules.
 
 ---
 
