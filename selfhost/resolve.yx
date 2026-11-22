@@ -228,7 +228,11 @@ fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNo
     i = tree.at(i).end
   }
   if late_shadow.len() > 0 && alias_module(ctx, late_shadow) >= 0 { ctx.shadowed.push(move late_shadow) }
-  if tag == "Block" || tag == "Fn" || tag == "For" { ctx.shadowed.truncate(mark) }
+  if tag == "Block" || tag == "Fn" || tag == "For" {
+    while ctx.shadowed.len() > mark {
+      let dropped = ctx.shadowed.pop()
+    }
+  }
 }
 
 fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>) {
@@ -263,7 +267,7 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
         issue(resolver, ctx.module_id, String.from("public-test"))
       }
     } else {
-      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Impl" { break }
+      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Impl" && tag != "Derive" { break }
       collect_symbol(symbols, tree, scanned, decl)
     }
     scanned = tree.at(scanned).end

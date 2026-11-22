@@ -923,6 +923,18 @@ fn item(p: mut Parser) -> String {
     expect(p, "=")
     out = node2("Alias", n, parse_type(p))
     let semi = eat(p, ";")
+  } else if eat_kw(p, "derive") {
+    var traits = String.from("[")
+    let first = ident(p)
+    append(traits, first)
+    while eat(p, ",") {
+      let more = ident(p)
+      append(traits, more)
+    }
+    finish(traits)
+    if !eat_kw(p, "for") { p.failed = true }
+    let target = ident(p)
+    out = node2("Derive", traits, target)
   } else if eat_kw(p, "struct") {
     out = aggregate(p, true)
   } else if eat_kw(p, "enum") {
