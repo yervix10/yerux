@@ -1,0 +1,27 @@
+// Match-arm, closure and unpack bindings may reuse an imported module alias: inside that scope the
+// name is the binding; afterwards (and in an unpack initializer) it is the module again.
+import std.text
+
+fn main() {
+  let r = Result<String, Int>.Ok(String.from("hi"))
+  match r {
+    Ok(text) => { print(text.len()) }
+    Err(_) => { print(0) }
+  }
+  print(text.to_upper("ab"))
+  let pair = (String.from("xy"), 3)
+  if true {
+    let (text, n) = move pair
+    print(text.len())
+    print(n)
+  }
+  print(text.trim("  z  "))
+  let f = |text: view String| -> Int { return text.len() }
+  print(f("abcd"))
+  print(text.starts_with("hello", "he"))
+  match r {
+    Ok(text) => { print(text.len()) }
+    Err(_) => { print(0) }
+  }
+  print(text.contains("xy", "x"))
+}
