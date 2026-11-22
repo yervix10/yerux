@@ -1,0 +1,5 @@
+fn up(s: view String) -> String { return String.from(s) }
+fn main() {
+  let word = String.from("hey")
+  if up(word) == word { print("y") }
+}

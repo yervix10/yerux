@@ -1,0 +1,5 @@
+fn main() {
+  let s = String.from("a b")
+  let p = s.split_ws()
+  print(p.len())
+}

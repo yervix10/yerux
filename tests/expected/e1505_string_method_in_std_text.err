@@ -1,0 +1,10 @@
+error: String has no method 'split_ws'
+ --> tests/e1505_string_method_in_std_text.yx:3:11
+  |
+3 |   let p = s.split_ws()
+  |           ^^^^^^^^^^^^
+  = help: `split_ws` is a function of std.text: add `import std.text` and write `text.split_ws(s, ..)`
+  = methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)
+  = to visit the characters write `for c in s.chars() { .. }`
+
+1 error(s). Nothing was generated.

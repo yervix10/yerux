@@ -403,12 +403,12 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
    `selfhost/lexer.yx` and both formatters (tests `raw_string`, `e1413_raw_unterminated`).
 7. **Fixed: `std.args` is thin** (`parse_with` + typed accessors, see STDLIB; test `std_args_schema`). Was: Options only take the `--key=value` form (`--title TEXT` is a positional), the first
    positional word lands in `subcommand`, and there is no typed accessor.
-7. **Methods versus functions are inconsistent.** `s.split(..)` and `s.trim()` are methods but `s.lines()`,
+7. **Partly fixed: the "String has no method" error now points to the `std.text` function of that name** (test `e1505_string_method_in_std_text`; `lines`/`to_upper` are methods already). Was: Methods versus functions are inconsistent. `s.split(..)` and `s.trim()` are methods but `s.lines()`,
    `s.to_upper()` and `s.is_alnum` are `text.lines(s)`, `text.to_upper(s)`; the error ("String has no method 'lines'")
    does not mention `std.text`.
-8. **A removed list element must be used.** `list.remove(i)` as a statement is "a String is created and immediately
+8. **Fixed: `list.remove(i)` / `list.pop()` as a statement drop the element** (test `list_discard`). Was: A removed list element must be used. `list.remove(i)` as a statement is "a String is created and immediately
    discarded (memory leak)"; write `let gone = list.remove(i)`. Same for `list.pop()`, which also returns the element
    itself rather than an `Option` (an empty list panics).
-9. **The cascade after the `==` error.** The fixed message is followed by a second error about the right operand
+9. **Fixed: no cascade after the `==` error** (test `e1504_eq_no_cascade`). Was: The cascade after the `==` error. The fixed message is followed by a second error about the right operand
     ("'word' is a String and is not copied") that is a consequence of the first.
 
