@@ -7,6 +7,7 @@ struct Parser {
   tokens: List<Token>,
   structs: List<String>,
   imports: List<String>,
+  tuple_arities: List<Int>,
   i: Int,
   failed: Bool,
   error_line: Int,
@@ -186,15 +187,39 @@ fn type_args(p: mut Parser, name: view String) -> String {
 }
 
 fn types(p: mut Parser, close: Text) -> String {
+  var count = 0
+  return counted_types(p, close, count)
+}
+
+fn counted_types(p: mut Parser, close: Text, count: mut Int) -> String {
   var items = String.from("[")
   while !at_close(p, close) {
     let item = parse_type(p)
     append(items, item)
+    count = count + 1
     if !eat(p, ",") { break }
   }
   expect(p, close)
   finish(items)
   return items
+}
+
+fn tuple_name(p: mut Parser, count: Int) -> String {
+  if !p.build { return hex("Tuple{count}") }
+  if !p.tuple_arities.contains(count) { p.tuple_arities.push(count) }
+  return hex("$tuple{count}")
+}
+
+fn tuple_type(p: mut Parser) -> String {
+  var count = 0
+  let items = counted_types(p, ")", count)
+  if !p.build { return node1("TupleType", items) }
+  if count < 2 || count > 6 {
+    p.failed = true
+    return String.new()
+  }
+  let name = tuple_name(p, count)
+  return node2("Type", name, items)
 }
 
 fn return_type(p: mut Parser) -> String {
@@ -224,7 +249,7 @@ fn parse_type(p: mut Parser) -> String {
     expect(p, "]")
     return node2("BracketType", item, len)
   }
-  if eat(p, "(") { return node1("TupleType", types(p, ")")) }
+  if eat(p, "(") { return tuple_type(p) }
   let name = path(p)
   return node2("Type", name, type_args(p, name))
 }
@@ -332,8 +357,8 @@ fn tuple_or_group(p: mut Parser) -> String {
   expect(p, ")")
   if !p.failed && (n < 2 || n > 6) { p.failed = true; p.error_line = line }
   finish(out)
-  let tuple = "Tuple{n}"
-  return node3("StructLit", hex(tuple), missing(), out)
+  let name = tuple_name(p, n)
+  return node3("StructLit", name, missing(), out)
 }
 
 fn array(p: mut Parser) -> String {
@@ -952,6 +977,21 @@ fn item(p: mut Parser) -> String {
   return "Item({public},{attribute},{out})"
 }
 
+fn tuple_declaration(count: Int) -> String {
+  var generics = String.from("[")
+  var fields = String.from("[")
+  for i in 0..count {
+    let parameter = hex("T{i}")
+    let field = hex("_{i}")
+    append(generics, "Generic({parameter},[])")
+    append(fields, "FieldDef({field},Type({parameter},[]))")
+  }
+  finish(generics)
+  finish(fields)
+  let name = hex("$tuple{count}")
+  return "Item(false,_,Struct({name},{generics},{fields}))"
+}
+
 fn parse_file(p: mut Parser) -> String {
   var out = String.from("[")
   while !p.failed && !kind(p, "Eof") {
@@ -967,6 +1007,7 @@ fn parse_file(p: mut Parser) -> String {
       append(out, item(p))
     }
   }
+  for count in p.tuple_arities { append(out, tuple_declaration(count)) }
   finish(out)
   return node1("File", out)
 }
@@ -1025,7 +1066,7 @@ fn run(source: view String, build: Bool) {
     }
   }
   var p = Parser {
-    tokens: move tokens, structs: move structs, imports: List<String>.new(),
+    tokens: move tokens, structs: move structs, imports: List<String>.new(), tuple_arities: List<Int>.new(),
     i: 0, failed: false, error_line: 0, legacy: legacy, build: build,
   }
   var ast = String.new()

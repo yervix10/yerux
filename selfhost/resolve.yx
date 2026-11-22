@@ -12,7 +12,7 @@ struct Alias { name: String, module_id: Int }
 struct FileContext { module_id: Int, aliases: List<Alias>, shadowed: List<String> }
 struct Resolver {
   cache: String, root: String, modules: List<Module>, errors: Int,
-  link: Bool, output: String,
+  link: Bool, output: String, emitted_tuples: List<String>,
 }
 
 fn module_index(resolver: view Resolver, key: view String) -> Int {
@@ -300,7 +300,18 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
     i = start
     while i < end {
       let decl = ast.child(tree, i, 2)
-      if tree.at(decl).tag != "Test" && tree.at(decl).tag != "Import" {
+      let tag = String.from(tree.at(decl).tag)
+      if tag == "Struct" {
+        let name = ast.name_at(tree, decl, 0)
+        if name.starts_with("$tuple") {
+          if resolver.emitted_tuples.contains(name) {
+            i = tree.at(i).end
+            continue
+          }
+          resolver.emitted_tuples.push(move name)
+        }
+      }
+      if tag != "Test" && tag != "Import" {
         if resolver.output.len() != 0 { resolver.output.push_str(",") }
         resolver.output.push_str("Item(false,_,")
         linked_node(resolver, ctx, tree, bindings, decl, true)
@@ -341,6 +352,7 @@ fn encoded(name: view String) -> String {
 }
 
 fn linked_name(resolver: view Resolver, ctx: view FileContext, name: view String) -> String {
+  if name.starts_with("$tuple") { return String.from(name) }
   let pieces = name.split(".")
   if pieces.len() == 1 {
     if symbol_index(resolver.modules.at(ctx.module_id).symbols, name) >= 0 {
@@ -423,7 +435,7 @@ fn main() {
   let key = path.stem(entry)
   var resolver = Resolver {
     cache: move cache, root: path.parent(entry), modules: List<Module>.new(), errors: 0,
-    link: link, output: String.new(),
+    link: link, output: String.new(), emitted_tuples: List<String>.new(),
   }
   let id = load_module(resolver, key, String.from("@"), input)
   if resolver.errors > 0 { env.exit(1) }
