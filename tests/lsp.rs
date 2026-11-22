@@ -421,7 +421,11 @@ fn definition_and_hover_reach_the_standard_library_and_builtins() {
     let end = r[start..].find('"').unwrap() + start;
     let std_file = std::fs::read_to_string(&r[start..end]).unwrap();
     assert!(std_file.contains("pub fn exists(path: view String) -> Bool"), "std file content");
-    assert!(r.contains(r#""start":{"line":111,"character":7}"#), "{r}");
+    let exists_line = std_file
+        .lines()
+        .position(|l| l.contains("pub fn exists(path: view String) -> Bool"))
+        .unwrap();
+    assert!(r.contains(&format!(r#""start":{{"line":{exists_line},"character":7}}"#)), "{r}");
     let r = c.at("textDocument/hover", &uri, 44, 21);
     assert!(r.contains("pub fn exists(path: view String) -> Bool"), "{r}");
     // a method of a compiler builtin: the generated signature file
