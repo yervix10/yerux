@@ -96,8 +96,16 @@ impl Hash for String {
 }
 impl Hash for Text {
     fn hash(view self) -> Int {
-        let s = String.from(self)
-        return s.hash()
+        // Text is already a borrowed byte view: hashing it through String.from
+        // used to allocate and copy the complete key on every map probe.
+        var h = 5381
+        var i = 0
+        let n = self.len()
+        while i < n {
+            h = (h * 16777619 + self.byte(i) + 1) % 2147483647
+            i = i + 1
+        }
+        return h
     }
 }
 

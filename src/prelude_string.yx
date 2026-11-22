@@ -157,8 +157,9 @@ impl String {
     fn find_from(view self, p: view String, from: Int) -> Int {
         let n = self.len()
         let m = p.len()
+        let last = n - m
         var i = from
-        while i + m <= n {
+        while i <= last {
             var j = 0
             while j < m && self.byte(i + j) == p.byte(j) {
                 j = j + 1
@@ -205,13 +206,14 @@ impl String {
     }
 
     fn split(view self, sep: view String) -> List<String> {
-        if sep.len() == 0 { panic("String.split separator is empty") }
+        let sep_len = sep.len()
+        if sep_len == 0 { panic("String.split separator is empty") }
         var out = List<String>.new()
         var start = 0
         var i = self.find_from(sep, 0)
         while i >= 0 {
             out.push(self.slice(start, i))
-            start = i + sep.len()
+            start = i + sep_len
             i = self.find_from(sep, start)
         }
         out.push(self.slice(start, self.len()))
@@ -352,7 +354,8 @@ impl List<String> {
     fn join(view self, sep: view String) -> String {
         var r = String.new()
         var i = 0
-        while i < self.len() {
+        let n = self.len()
+        while i < n {
             if i > 0 {
                 r.push_str(sep)
             }

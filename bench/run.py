@@ -16,7 +16,7 @@ ROOT = os.path.dirname(HERE)
 SRC = os.path.join(HERE, "src")
 BUILD = os.path.join(HERE, "build")
 YERUX = os.path.join(ROOT, "target", "release", "yerux")
-BENCHES = ["fib", "nbody", "fannkuch", "hashmap", "sort", "strings", "json"]
+BENCHES = ["fib", "nbody", "fannkuch", "hashmap", "sort", "strings", "textops", "json"]
 SOURCE_ALIAS = {"strings": "strbuild"}
 DESC = {
     "arith": "100M-iteration checked arithmetic loop",
@@ -33,6 +33,7 @@ DESC = {
     "dot": "dot product of two 1M List<Float>, 200 rounds",
     "hashmap": "200k integer map inserts and lookups",
     "strings": "build 8M x (push_str + push_int) = 71 MB string, then byte scan",
+    "textops": "200k rounds of concat, integer formatting, find, split, join, and Text hashing",
     "json": "scan and sum the integer tokens of a generated valid JSON array (100k integers)",
 }
 # key -> (label, builder). builder(bench, out) -> argv list
