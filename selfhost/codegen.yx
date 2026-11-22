@@ -2052,8 +2052,19 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
   if struct_index(gen, ty) >= 0 { return }
   let id = gen.struct_layouts.len()
   var destructor = -1
+  var destructor_sub = type_terms.empty()
   for method in gen.methods {
-    if method.destructor && method.owner == ty { destructor = method.node }
+    if !method.destructor { continue }
+    if method.owner == ty { destructor = method.node }
+    else if method.params >= 0 {
+      var sub = type_terms.with_names(parameter_names(tree, method.params))
+      type_terms.bind(sub, method.owner, ty)
+      let concrete = type_terms.substitute(method.owner, sub)
+      if concrete == ty {
+        destructor = method.node
+        destructor_sub = move sub
+      }
+    }
   }
   gen.struct_layouts.push(StructLayout {
     ty: String.from(ty), owned: false, ready: false, destructor: destructor >= 0,
@@ -2088,7 +2099,7 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
     gen.struct_layouts.at(id).owned = true
     var method = -1
     if destructor >= 0 {
-      method = schedule(gen, destructor, ty, type_terms.empty())
+      method = schedule(gen, destructor, ty, move destructor_sub)
       global(gen, "static void F{method}(S{id} *value);")
     }
     global(gen, "static inline void sc_drop_S{id}(S{id} *value) {{")

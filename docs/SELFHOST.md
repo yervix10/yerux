@@ -207,8 +207,12 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with identical C. The current
-program comparison matches 149 of 351 candidates (42.5%), including 63
-runtime panics, with two expected rejections and zero discrepancies.
+program comparison matches 178 of 375 candidates (47.5%), including 71
+runtime panics, with two expected rejections and zero discrepancies (the
+corpus grew from 351 to 375 candidates; the same corpus measured 152, 40.5%, before the
+latest round: `defer`, labeled loops and range steps, user traits with static
+dispatch, `?` evaluation order, range types as `Int` with `Int<lo..hi>.from`, and
+type aliases).
 The corpus now includes module entry points. On the original 327 candidates,
 the count rose from 126 to 140 identical executions.
 
