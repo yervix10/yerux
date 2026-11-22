@@ -387,9 +387,8 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 
 ## Open in round 2 (minimal cases)
 
-1. **No `if` or `match` expressions.** `let x = if ok { 1 } else { 2 }` fails with "unexpected keyword 'if' here".
-   All three programs needed a `var` plus an `if` statement, or a one-line helper function. The biggest everyday
-   papercut; the parser also reports it as a syntax error rather than explaining that `if` is a statement.
+1. **Fixed: `if` and `match` expressions.** `let x = if ok { 1 } else { 2 }` and `match` with bare-expression arms are
+   values now (book chapter 4, SPEC; tests `if_expr`, `e1500_ifexpr_no_else`, `e1501_ifexpr_branch_no_value`).
 2. **A borrowed list element cannot be named.** `let line = lines.at(i)` is "cannot move 'lines.at(..)' out of its
    List"; the only ways are `String.from(lines.at(i))` (a copy) or passing `lines.at(i)` straight to a `view`
    parameter. Every loop over rows of a table copied each row or went through a helper taking `view Table`.

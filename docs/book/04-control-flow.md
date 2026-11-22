@@ -27,6 +27,53 @@ positive
 
 Conditions must be `Bool`: `if 1 { }` is an error, not a truthiness rule.
 
+## `if` and `match` as values
+
+An `if` or a `match` can be used where a value is expected. The last line of each branch is its value; every
+branch must have the same type, and an `if` used as a value needs an `else`.
+
+```yerux
+enum Shape { Circle(Int), Rect(Int, Int), Dot }
+
+fn area(s: Shape) -> Int {
+  return match s {
+    Circle(r) => 3 * r * r,
+    Rect(w, h) => w * h,
+    Dot => 0,
+  }
+}
+
+fn main() {
+  let n = 7
+  let kind = if n % 2 == 0 { String.from("even") } else { String.from("odd") }
+  print(kind)
+  let big = 1 + if n > 5 { 100 } else { 0 }
+  print(big)
+  print(area(Shape.Rect(3, 4)))
+  let m = match n {
+    7 => {
+      let twice = n * 2
+      twice + 1
+    }
+    _ => 0,
+  }
+  print(m)
+}
+```
+
+```output
+odd
+101
+12
+15
+```
+
+- A `match` arm may be a bare expression (`P => e,`) or a block whose last line is the value.
+- A branch that cannot finish (`return`, `panic`, `break`) needs no value. A branch that ends with something
+  without a result (such as `print(..)`) is an error, and so is an `if` value without `else`.
+- Owned values (`String`, `List`, ...) are moved out of the chosen branch; the type is fixed by the first
+  branch that has a value.
+
 ## `while`, `break`, `continue`
 
 ```yerux
