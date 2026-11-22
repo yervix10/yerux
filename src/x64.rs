@@ -822,7 +822,6 @@ struct Rt {
     panic_bytes: usize,
     push: usize,
     alloc: usize,
-    get: usize,
     free: usize,
     realloc: usize,
     memcpy: usize,
@@ -1694,8 +1693,16 @@ impl<'a> G<'a> {
             Inst::ListGet(d, l, i) => {
                 self.mov_to(RDI, *l);
                 self.mov_to(RSI, *i);
-                let t = self.rt.get;
-                self.a.call(t);
+                // Keep the checked list load in the caller. These accesses sit in
+                // tight loops (notably sorting and map probing); a runtime call
+                // per element prevents the native backend from matching C.
+                self.a.ld(RAX, RDI, 8);
+                self.a.alu(0x39, RSI, RAX);
+                self.a.jcc(CC_AE, self.rt.panic[P_INDEX]);
+                self.a.ld(RDX, RDI, 0);
+                self.a.shl(RSI, 3);
+                self.a.alu(0x01, RDX, RSI);
+                self.a.ld(RAX, RDX, 0);
                 let dr = self.dreg(*d, RAX);
                 self.a.mov_rr(dr, RAX);
                 self.fin(*d, dr);
@@ -3460,7 +3467,6 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         panic_bytes: l_panic_bytes,
         push: l_push,
         alloc: l_alloc,
-        get: l_get,
         free: l_free,
         realloc: l_realloc,
         memcpy: l_memcpy,

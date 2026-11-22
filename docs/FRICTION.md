@@ -49,6 +49,24 @@ Feed the executable with `printf 'a\r'`. It used to print `1`. It now prints
 
 ## Open
 
+### Selfhosted clone derivation fails on generic fields
+
+```yx
+struct Pair<A, B> { a: A, b: B }
+derive Clone for Pair
+fn main() {
+  let pair = Pair { a: 7, b: String.from("owned") }
+  let copy = pair.clone()
+  print(copy.a)
+}
+```
+
+`bash tests/selfhost_codegen.sh` reports a mismatch while compiling
+`tests/selfhost/codegen/derive_clone.yx`. The selfhosted generator disagrees
+with the bootstrap compiler on clone/inference errors for this generic derive.
+The failing fixture also exercises cloning a generic enum payload containing
+the cloned struct. This repro is recorded for the selfhost compiler work.
+
 ### Owned map lookups require an index and access to a storage field
 
 The map repro above also illustrates the API gap. A caller that needs to read
