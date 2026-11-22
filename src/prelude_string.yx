@@ -166,15 +166,14 @@ impl String {
         }
         let first = p.byte(0)
         while i <= last {
-            var j = 0
             if self.byte(i) == first {
-                j = 1
-            }
-            while j > 0 && j < m && self.byte(i + j) == p.byte(j) {
-                j = j + 1
-            }
-            if j == m {
-                return i
+                var j = 1
+                while j < m && self.byte(i + j) == p.byte(j) {
+                    j = j + 1
+                }
+                if j == m {
+                    return i
+                }
             }
             i = i + 1
         }
@@ -220,12 +219,17 @@ impl String {
         var out = List<String>.new()
         var start = 0
         var i = self.find_from(sep, 0)
+        // a match of a valid separator in a valid string starts and ends on character boundaries: no slice checks
         while i >= 0 {
-            out.push(self.slice(start, i))
+            var piece = String.new()
+            piece.push_slice(self, start, i)
+            out.push(move piece)
             start = i + sep_len
             i = self.find_from(sep, start)
         }
-        out.push(self.slice(start, self.len()))
+        var last = String.new()
+        last.push_slice(self, start, self.len())
+        out.push(move last)
         return out
     }
 

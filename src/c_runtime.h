@@ -160,7 +160,7 @@ static inline void nx_str_push_str(String *s, Str x) {
   if (x.n > INT64_MAX - s->len) nx_panic("string too long");
   int64_t need = s->len + x.n;
   if (need > s->cap) {
-    int64_t nc = s->cap ? s->cap : 16;
+    int64_t nc = s->cap ? s->cap : 24; /* the usable size of glibc's smallest chunk: no extra memory, and "item=123;value=45;tail" fits */
     while (nc < need) nc = nc > INT64_MAX / 2 ? need : nc * 2;
     if ((uint64_t)nc > SIZE_MAX) nx_panic("string too long");
     char *nd = (char *)realloc(s->d, (size_t)nc);
