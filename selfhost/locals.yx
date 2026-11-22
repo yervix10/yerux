@@ -10,7 +10,7 @@ pub struct Locals {
   active: List<Int>,
   stack: List<Int>,
   captures: List<Capture>,
-  next_closure: Int,
+  closure_nodes: List<Int>,
   rows: List<String>,
 }
 
@@ -27,10 +27,11 @@ fn bind(locals: mut Locals, n: view String, node: Int) {
 }
 
 fn capture(locals: mut Locals, closure: Int, id: Int, n: view String) {
+  let node = locals.closure_nodes.at(closure)
   for c in locals.captures {
-    if c.closure == closure && c.binding == id { return }
+    if c.closure == node && c.binding == id { return }
   }
-  locals.captures.push(Capture { closure: closure, binding: id })
+  locals.captures.push(Capture { closure: node, binding: id })
   locals.rows.push("capture:{closure}:{id}:{n}")
 }
 
@@ -99,8 +100,8 @@ fn walk(locals: mut Locals, tree: view List<ast.AstNode>, index: Int) {
   if tag == "Fn" {
     function(locals, tree, ast.child(tree, index, 2), ast.child(tree, index, 4))
   } else if tag == "Closure" {
-    let id = locals.next_closure
-    locals.next_closure = id + 1
+    let id = locals.closure_nodes.len()
+    locals.closure_nodes.push(index)
     locals.rows.push("closure:{id}")
     locals.stack.push(id)
     function(locals, tree, ast.child(tree, index, 4), ast.child(tree, index, 6))
@@ -146,9 +147,42 @@ fn walk(locals: mut Locals, tree: view List<ast.AstNode>, index: Int) {
 pub fn resolve(tree: view List<ast.AstNode>) -> Locals {
   var result = Locals {
     bindings: List<Binding>.new(), identities: List<Int>.new(), active: List<Int>.new(),
-    stack: List<Int>.new(), captures: List<Capture>.new(), next_closure: 0, rows: List<String>.new(),
+    stack: List<Int>.new(), captures: List<Capture>.new(), closure_nodes: List<Int>.new(), rows: List<String>.new(),
   }
   for i in 0..tree.len() { result.identities.push(-1) }
   walk(result, tree, 0)
   return move result
+}
+
+pub fn capture_ids(captures: view List<Capture>, node: Int) -> List<Int> {
+  var ids = List<Int>.new()
+  for capture in captures {
+    if capture.closure == node { ids.push(capture.binding) }
+  }
+  return move ids
+}
+
+// Environment destruction follows the Rust checker's order of first use.
+pub fn environment_captures(locals: view Locals, tree: view List<ast.AstNode>, node: Int) -> List<Int> {
+  let ids = capture_ids(locals.captures, node)
+  var ordered = List<Int>.new()
+  order_captures(locals, tree, node, ids, ordered)
+  return move ordered
+}
+
+fn order_captures(locals: view Locals, tree: view List<ast.AstNode>, node: Int,
+    ids: view List<Int>, ordered: mut List<Int>) {
+  if ordered.len() == ids.len() { return }
+  let id = locals.identities.at(node)
+  if ids.contains(id) && !ordered.contains(id) { ordered.push(id) }
+  if tree.at(node).tag == "Assign" {
+    order_captures(locals, tree, ast.child(tree, node, 1), ids, ordered)
+    order_captures(locals, tree, ast.child(tree, node, 0), ids, ordered)
+    return
+  }
+  var at = node + 1
+  while at < tree.at(node).end {
+    order_captures(locals, tree, at, ids, ordered)
+    at = tree.at(at).end
+  }
 }

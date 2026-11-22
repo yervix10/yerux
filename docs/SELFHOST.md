@@ -143,6 +143,12 @@ handles sized integer arithmetic and comparisons, string interpolation
 of scalar and text values, moves, `view` and `mut` parameters, field
 replacement, and scope cleanup.
 
+Function values use the same code and environment representation as the
+Rust C backend. Stored closures copy Copy captures and take ownership of
+moved captures. A closure passed directly to a `view fn` or `mut fn`
+parameter can borrow the caller's bindings for the call. The runtime drops
+captured closures through a worklist, including long chains of environments.
+
 `resolve --link AST_ROOT ENTRY.yx` combines cached source ASTs, validates
 imports and visibility, and gives declarations unique module names before
 type checking. The linked compiler builds `std.path` from source. Bootstrap
@@ -206,19 +212,15 @@ type parity suites. The harness also compares formatter output against
 the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
-The bootstrap rebuilds 7 of 7 executables with identical C. The program comparison
-(measured 2026-11-21 on 795 tracked `.yx` files) matches 240 of 375 candidates (64.0%), including 92
-runtime panics; 133 candidates are outside the supported subset, 2 are expected rejections, and none differ
-(the `tests/drop_generic.yx` discrepancy was fixed).
-The corpus now includes module entry points. On the original 327 candidates,
-the count rose from 126 to 140 identical executions.
+The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
+2026-11-21 run compared 376 candidates and matched 284 (75.5%), including
+93 runtime panics. The harness reported 91 candidates outside the supported
+subset, one expected type rejection, and zero mismatches.
 
-The harness groups the 200 remaining candidates by their first rejection.
-The largest groups are other lowering gaps (25), modules and standard
-library (24), generics and traits (22), type inference and method checking
-(21), range types and aliases (20), and numeric lowering (17). Set
+The largest rejection groups are other lowering gaps (39), generics and
+traits (13), heap types (8), and worker closure calls (6). Set
 `SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
-and category for every rejected file.
+and category for each unsupported file.
 
 ### Compile time
 
@@ -262,11 +264,11 @@ file. The dumps omit AST spans, and parser diagnostic messages and notes have
 yet to be ported.
 
 The self-hosted compiler covers the sources required to rebuild its
-stages. Unbounded inherent generic impls, structural `derive Clone`, captureless
-closures with concrete signatures, and iteration through a user type's
-`next(mut self) -> Option<T>` are supported. Full parity still requires
-general trait and bound resolution, other derives, closure captures and
-generic function values, lazy `Iter<T>` adapters, defer lifetimes, precise
+stages. Unbounded inherent generic impls, structural `derive Clone`, and
+iteration through a user type's `next(mut self) -> Option<T>` are supported.
+Full parity still requires general trait and bound resolution, other
+derives, worker closures, generic function items as values, lazy `Iter<T>`
+adapters, defer lifetimes, precise
 loans for nested calls and projections, owned arrays, recursive heap types,
 and richer pattern matching and range flow.
 Compile-time evaluation, full diagnostic spans and notes, and replacing

@@ -1,0 +1,18 @@
+struct Notice { id: Int, value: Int }
+impl Drop for Notice {
+  fn drop(mut self) { print(self.id) }
+}
+
+fn main() {
+  let offset = 1
+  let add = |value: Int| value + offset
+  print(add(2))
+
+  let first = Notice { id: 1, value: 0 }
+  let second = Notice { id: 2, value: 5 }
+  let set = move || {
+    first.value = second.value
+    print(first.value)
+  }
+  set()
+}
