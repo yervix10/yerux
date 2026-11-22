@@ -57,7 +57,7 @@ typedef struct { uint32_t file, line, col; } NxLoc;
 typedef struct { const NxLoc *locs; uint32_t nlocs; const char *const *files; } NxDebug;
 extern const NxDebug nx_dbg __attribute__((weak));
 static void nx_backtrace(void);
-__attribute__((noreturn, cold, noinline)) static void nx_panic_at(const char *m, uint32_t l) {
+__attribute__((noreturn, noinline)) static void nx_panic_at(const char *m, uint32_t l) {
   nx_try_worker_panic();
   fprintf(stderr, "panic: %s\n", m);
   if (&nx_dbg && l && l < nx_dbg.nlocs) fprintf(stderr, "  at %s:%u:%u\n", nx_dbg.files[nx_dbg.locs[l].file], nx_dbg.locs[l].line, nx_dbg.locs[l].col);
@@ -140,7 +140,7 @@ static inline void nx_parallel_call(int64_t address, int64_t index) {
   ((void (*)(void *, int64_t))body->code)(body->env, index);
 }
 static inline void nx_drop_dyn(NxDyn *object) { ((void (*)(void *))object->table[0])(object->data); }
-__attribute__((noreturn, cold, noinline)) static void nxl_panic_str(Str s, uint32_t l) {
+__attribute__((noreturn, noinline)) static void nxl_panic_str(Str s, uint32_t l) {
   nx_try_worker_panic();
   fputs("panic: ", stderr); if (s.n > 0) fwrite(s.p, 1, (size_t)s.n, stderr); fputc('\n', stderr);
   if (&nx_dbg && l && l < nx_dbg.nlocs) fprintf(stderr, "  at %s:%u:%u\n", nx_dbg.files[nx_dbg.locs[l].file], nx_dbg.locs[l].line, nx_dbg.locs[l].col);
@@ -325,7 +325,7 @@ static inline int64_t nx_wsub(int64_t a, int64_t b) { return (int64_t)((uint64_t
 static inline int64_t nx_wmul(int64_t a, int64_t b) { return (int64_t)((uint64_t)a * (uint64_t)b); }
 static inline int64_t nxl_to_i64(__int128 v, uint32_t l) { if (v < (__int128)INT64_MIN || v > (__int128)INT64_MAX) nx_panic_at("integer conversion out of range", l); return (int64_t)v; }
 static inline int64_t nx_to_i64(__int128 v) { return nxl_to_i64(v, 0); }
-__attribute__((noreturn, cold, noinline)) static void nx_range_panic(__int128 v, int64_t lo, int64_t hi, uint32_t l) {
+__attribute__((noreturn, noinline)) static void nx_range_panic(__int128 v, int64_t lo, int64_t hi, uint32_t l) {
   nx_try_worker_panic();
   if (v < (__int128)INT64_MIN || v > (__int128)INT64_MAX) fprintf(stderr, "panic: integer conversion out of range\n");
   else fprintf(stderr, "panic: integer conversion out of range: %lld not in %lld..%lld\n", (long long)v, (long long)lo, (long long)hi);
