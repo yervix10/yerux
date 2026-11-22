@@ -880,6 +880,9 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
   if receiver >= 0 && name == "show" && child_count(tree, args) == 0 {
     return String.from("String")
   }
+  if receiver >= 0 && name == "clone" && owner.starts_with("$tuple") && child_count(tree, args) == 0 {
+    return String.from(owner)
+  }
   let shape = shape_index(types, owner)
   if receiver >= 0 && (name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul") {
     let number = numeric_type(owner)
@@ -997,6 +1000,17 @@ fn zero_in_range(ty: view String) -> Bool {
   return (!has_lo || lo <= 0) && (!has_hi || hi >= 0)
 }
 
+// Does `ty` have an Equal impl (a generic impl `impl<T> Equal for Pair<T>` covers every instance)?
+fn equal_type(types: view Types, ty: view String) -> Bool {
+  if types.equal_types.contains(ty) { return true }
+  let base = type_terms.base(ty)
+  for known in types.equal_types {
+    let candidate = type_terms.base(known)
+    if candidate == base { return true }
+  }
+  return false
+}
+
 fn ordered_type(types: view Types, ty: view String) -> Bool {
   if types.ordered_types.contains(ty) || types.ordered_params.contains(ty) || integer(numeric_type(ty)) || floating(ty) ||
       ty == "Bool" || ty == "Char" || ty == "String" || ty == "Text" { return true }
@@ -1036,7 +1050,7 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
   if equal {
     if integer(a) || floating(a) || a == "Char" || a == "Bool" || a == "String" || a == "Text" {
       if !((a == "String" && b == "Text") || (a == "Text" && b == "String")) { expect_type(types, a, b) }
-    } else if types.equal_types.contains(a) || a.starts_with("Option<") { expect_type(types, a, b) }
+    } else if equal_type(types, a) || a.starts_with("Option<") { expect_type(types, a, b) }
     else if shape_index(types, a) >= 0 {
       issue(types, "cannot compare values of type {a}")
     }

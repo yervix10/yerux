@@ -1554,7 +1554,15 @@ fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Va
     line(gen, String.from("}}"))
     return move result
   }
-  if !gen.clone_types.contains(base) && base != "Option" && base != "Result" {
+  let user_clone = match_method(gen, tree, ty, String.from("clone"), true)
+  if user_clone >= 0 {
+    let sub = call_substitution(gen, tree, user_clone, ty)
+    let instance = schedule(gen, user_clone, ty, move sub)
+    var arg = String.from(source.code)
+    if drop_fn(gen, tree, ty).len() != 0 { arg = "&({arg})" }
+    return temp(gen, tree, ty, "F{instance}({arg})")
+  }
+  if !gen.clone_types.contains(base) && base != "Option" && base != "Result" && !base.starts_with("$tuple") {
     unsupported("Clone for {ty}")
   }
   let result = temp(gen, tree, ty, String.from("{{0}}"))
@@ -2968,6 +2976,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
       var trait_at = traits + 1
       while trait_at < tree.at(traits).end {
         let name = ast.decoded_name(tree, trait_at)
+        if name == "Equal" || name == "Show" { trait_at = tree.at(trait_at).end; continue }
         if name != "Clone" { unsupported("derive {name}") }
         if gen.clone_types.contains(target) { unsupported("duplicate Clone derive for {target}") }
         gen.clone_types.push(String.from(target))

@@ -1,0 +1,59 @@
+struct Person { name: String, tags: List<String>, age: Int }
+
+impl Clone for Person {
+  fn clone(view self) -> Person {
+    return Person { name: self.name.clone(), tags: self.tags.clone(), age: self.age }
+  }
+}
+
+fn dup<T: Clone>(x: view T) -> T {
+  return x.clone()
+}
+
+fn main() {
+  var a = List<String>.new()
+  a.push(String.from("x"))
+  a.push(String.from("yy"))
+  var b = a.clone()
+  b.push(String.from("z"))
+  a.set(0, String.from("changed"))
+  for s in a { print(s) }
+  for s in b { print(s) }
+
+  var nested = List<List<String>>.new()
+  nested.push(b.clone())
+  let n2 = nested.clone()
+  nested.clear()
+  print(n2.len())
+  print(n2.at(0).len())
+
+  var p = Person { name: String.from("Ana"), tags: a.clone(), age: 30 }
+  var q = p.clone()
+  q.name.push_str("!")
+  q.tags.push(String.from("new"))
+  print(p.name)
+  print(q.name)
+  print(p.tags.len())
+  print(q.tags.len())
+  var ps = List<Person>.new()
+  ps.push(p.clone())
+  let ps2 = ps.clone()
+  print(ps2.at(0).name)
+
+  var m = Map<String, List<Int>>.new()
+  var li = List<Int>.new()
+  li.push(1)
+  m.insert(String.from("k"), move li)
+  var m2 = m.clone()
+  print(m2.len())
+  var s = Set<String>.new()
+  s.insert(String.from("u"))
+  let s2 = s.clone()
+  print(s2.len())
+
+  let o: Option<String> = Some(String.from("opt"))
+  let o2 = o.clone()
+  print(o2.show())
+  print(dup(String.from("gen")))
+  print(dup(7))
+}

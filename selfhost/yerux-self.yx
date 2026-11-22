@@ -40,9 +40,172 @@ fn write(file: view String, contents: view String) -> Bool {
   }
 }
 
-fn cache_source(build: mut Build, source: view String, key: view String) -> Bool {
+// `derive Equal, Show for T` is expanded the way the production compiler does it: as Yerux source for the
+// impls, appended to the module. (`derive Clone` is lowered by the code generator itself.)
+fn derive_header(tree: view List<ast.AstNode>, def: Int, name: view String, kind: view String) -> List<String> {
+  // result: [impl header, type spelling]
+  var generics = List<String>.new()
+  let list = ast.child(tree, def, 1)
+  var at = list + 1
+  while at < tree.at(list).end {
+    generics.push(ast.name_at(tree, at, 0))
+    at = tree.at(at).end
+  }
+  var out = List<String>.new()
+  if generics.len() == 0 {
+    out.push("impl {kind}")
+    out.push(String.from(name))
+  } else {
+    var bounds = List<String>.new()
+    for g in generics { bounds.push("{g}: {kind}") }
+    out.push("impl<{bounds.join(", ")}> {kind}")
+    out.push("{name}<{generics.join(", ")}>")
+  }
+  return out
+}
+
+fn variant_pattern(name: view String, prefix: view String, count: Int) -> String {
+  if count == 0 { return String.from(name) }
+  var parts = List<String>.new()
+  for k in 0..count { parts.push("{prefix}{k}") }
+  return "{name}({parts.join(", ")})"
+}
+
+fn derive_one(tree: view List<ast.AstNode>, def: Int, name: view String, kind: view String) -> String {
+  let ob = String.from("{{")
+  let cb = String.from("}}")
+  let head = derive_header(tree, def, name, kind)
+  let ih = String.from(head.at(0))
+  let ty = String.from(head.at(1))
+  let items = ast.child(tree, def, 2)
+  var text = String.new()
+  if tree.at(def).tag == "Struct" {
+    var fields = List<String>.new()
+    var at = items + 1
+    while at < tree.at(items).end {
+      fields.push(ast.name_at(tree, at, 0))
+      at = tree.at(at).end
+    }
+    if kind == "Equal" {
+      var body = String.new()
+      for f in fields { body.push_str("if self.{f} != other.{f} {ob} return false {cb}\n") }
+      return "{ih} for {ty} {ob} fn eq(view self, other: view {ty}) -> Bool {ob}\n{body}return true {cb} {cb}\n"
+    }
+    var shown = List<String>.new()
+    for f in fields { shown.push("{f}: {ob}self.{f}{cb}") }
+    var label = String.from(name)
+    if shown.len() > 0 { label = "{name} {ob}{ob} {shown.join(", ")} {cb}{cb}" }
+    return "{ih} for {ty} {ob} fn show(view self) -> String {ob} return \"{label}\" {cb} {cb}\n"
+  }
+  var arms = String.new()
+  var at = items + 1
+  while at < tree.at(items).end {
+    let variant = ast.name_at(tree, at, 0)
+    let count = child_total(tree, ast.child(tree, at, 1))
+    let a = variant_pattern(variant, "a", count)
+    if kind == "Equal" {
+      let b = variant_pattern(variant, "b", count)
+      var tests = List<String>.new()
+      for k in 0..count { tests.push("a{k} == b{k}") }
+      var result = String.from("true")
+      if count > 0 { result = tests.join(" && ") }
+      arms.push_str("{a} => {ob} match other {ob} {b} => {ob} return {result} {cb} _ => {ob} return false {cb} {cb} {cb}\n")
+    } else {
+      var label = String.from(variant)
+      if count > 0 {
+        var parts = List<String>.new()
+        for k in 0..count { parts.push("{ob}a{k}{cb}") }
+        label = "{variant}({parts.join(", ")})"
+      }
+      arms.push_str("{a} => {ob} return \"{label}\" {cb}\n")
+    }
+    at = tree.at(at).end
+  }
+  if kind == "Equal" {
+    return "{ih} for {ty} {ob} fn eq(view self, other: view {ty}) -> Bool {ob} match self {ob}\n{arms}{cb} {cb} {cb}\n"
+  }
+  return "{ih} for {ty} {ob} fn show(view self) -> String {ob} match self {ob}\n{arms}{cb} {cb} {cb}\n"
+}
+
+fn child_total(tree: view List<ast.AstNode>, list: Int) -> Int {
+  var n = 0
+  var at = list + 1
+  while at < tree.at(list).end {
+    n = n + 1
+    at = tree.at(at).end
+  }
+  return n
+}
+
+fn derive_source(tree: view List<ast.AstNode>) -> String {
+  var out = String.new()
+  let items = ast.child(tree, 0, 0)
+  var at = items + 1
+  while at < tree.at(items).end {
+    let item = ast.child(tree, at, 2)
+    if tree.at(item).tag == "Derive" {
+      let target = ast.name_at(tree, item, 0)
+      var definition = -1
+      var scan = items + 1
+      while scan < tree.at(items).end {
+        let candidate = ast.child(tree, scan, 2)
+        let tag = String.from(tree.at(candidate).tag)
+        if tag == "Struct" || tag == "Enum" {
+          let declared = ast.name_at(tree, candidate, 0)
+          if declared == target { definition = candidate }
+        }
+        scan = tree.at(scan).end
+      }
+      let traits = ast.child(tree, item, 1)
+      var trait_at = traits + 1
+      while trait_at < tree.at(traits).end {
+        let kind = ast.decoded_name(tree, trait_at)
+        if definition >= 0 && (kind == "Equal" || kind == "Show") {
+          out.push_str(derive_one(tree, definition, target, kind))
+        }
+        trait_at = tree.at(trait_at).end
+      }
+    }
+    at = tree.at(at).end
+  }
+  return out
+}
+
+// Source text for `source` with the derived impls appended, or "" when it derives nothing here.
+fn derived_source(build: view Build, source: view String, key: view String) -> String {
+  let text = read_text(source)
+  if !uses(text, "derive ") || !(uses(text, "Equal") || uses(text, "Show")) { return String.new() }
+  let tokens_path = path.join(build.work, "derive-tokens")
+  var args = List<String>.new()
+  args.push(String.from(source))
+  args.push(String.from("--positioned"))
+  match invoke(path.join(build.stages, "lexer"), args, "lexing {source}") {
+    None => { return String.new() }
+    Some(tokens) => { if !write(tokens_path, tokens) { return String.new() } }
+  }
+  args.clear()
+  args.push(String.from(tokens_path))
+  args.push(String.from("--build"))
+  var generated = String.new()
+  match invoke(path.join(build.stages, "parser"), args, "parsing {source}") {
+    None => { return String.new() }
+    Some(contents) => {
+      let parsed = ast.decode(move contents)
+      generated = derive_source(parsed.nodes)
+    }
+  }
+  if generated.len() == 0 { return String.new() }
+  let combined = path.join(build.work, "derived-{key.replace("/", "_")}")
+  if !write(combined, "{text}\n{generated}") { return String.new() }
+  return combined
+}
+
+fn cache_source(build: mut Build, original: view String, key: view String) -> Bool {
   if build.seen.contains(key) { return true }
   build.seen.push(String.from(key))
+  var source = String.from(original)
+  let derived = derived_source(build, original, key)
+  if derived.len() > 0 { source = String.from(derived) }
   let tokens_path = path.join(build.work, "tokens")
   let lexer = path.join(build.stages, "lexer")
   var args = List<String>.new()
