@@ -88,10 +88,9 @@ Self-hosting parity, measured on every Git-tracked `.yx` file (795 files) by `te
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
 Self-hosted code generator, run against the Rust C backend on 375 candidate programs (`tests/selfhost_codegen.sh`):
-**239 produce identical output (92 of them runtime panics with the same message and exit code, 63.7% of candidates)**, 133 are outside the
+**240 produce identical output (92 of them runtime panics with the same message and exit code, 64.0% of candidates)**, 133 are outside the
 subset the self-hosted compiler supports (grouped by first diagnostic: other lowering 40, closures 19, checking 13, generics and
-traits 12, standard library 11, ...), 2 are expected rejections and **1 differs** (`tests/drop_generic.yx` loses a line of
-output when compiled by the self-hosted emitter; known open bug).
+traits 12, standard library 11, ...), 2 are expected rejections and **none differ** (the `tests/drop_generic.yx` discrepancy was fixed).
 The subset is the reason this milestone counts 0.5, not 1: the compiler does not yet compile the whole language, the whole
 standard library or closures in general.
 
