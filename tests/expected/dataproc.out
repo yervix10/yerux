@@ -1,1 +1,0 @@
-usage: dataproc <csv|csv-sum|csv-filter|json|pivot> [args...] <file>
