@@ -1,0 +1,66 @@
+fn main() {
+  let n = 10
+  var perm1 = List<Int>.new()
+  var perm = List<Int>.new()
+  var count = List<Int>.new()
+  var i = 0
+  while i < n {
+    perm1.push(i)
+    perm.push(i)
+    count.push(0)
+    i = i + 1
+  }
+  var r = n
+  var checksum = 0
+  var max_flips = 0
+  var parity = 0
+  while true {
+    while r != 1 {
+      count.set(r - 1, r)
+      r = r - 1
+    }
+    i = 0
+    while i < n {
+      perm.set(i, perm1.get(i))
+      i = i + 1
+    }
+    var flips = 0
+    if perm.get(0) != 0 {
+      while perm.get(0) != 0 {
+        var lo = 0
+        var hi = perm.get(0)
+        while lo < hi {
+          let a = perm.get(lo)
+          let b = perm.get(hi)
+          perm.set(lo, b)
+          perm.set(hi, a)
+          lo = lo + 1
+          hi = hi - 1
+        }
+        flips = flips + 1
+      }
+    }
+    if flips > max_flips { max_flips = flips }
+    if parity == 0 { checksum = checksum + flips }
+    else { checksum = checksum - flips }
+    parity = 1 - parity
+
+    while true {
+      if r == n {
+        print(checksum)
+        print(max_flips)
+        return
+      }
+      let first = perm1.get(0)
+      var j = 0
+      while j < r {
+        perm1.set(j, perm1.get(j + 1))
+        j = j + 1
+      }
+      perm1.set(r, first)
+      count.set(r, count.get(r) - 1)
+      if count.get(r) > 0 { break }
+      r = r + 1
+    }
+  }
+}
