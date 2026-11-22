@@ -53,6 +53,67 @@ Behind the scenes every top-level item of an imported module is renamed `geometr
 merged into one program before parsing; the checker and both backends know nothing about modules. Two modules
 may therefore both define `helper`.
 
+## Constants and type aliases in modules
+
+`pub const` and `pub type` are shared like functions. A `pub const` must write its type; the value is folded by the
+compiler (literals, earlier consts and arithmetic), so it also works as an array length.
+
+```yerux file=limits.yx
+pub const MAX: Int = 8
+pub const HALF: Int = MAX / 2
+pub const MARK: Char = '#'
+pub type Row = [Int; MAX]
+pub type Cell = (Int, Int)
+
+const SECRET: Int = 99
+
+pub fn blank() -> Row {
+  return [0; MAX]
+}
+
+pub fn center() -> Cell {
+  return (HALF, HALF)
+}
+```
+
+```yerux
+import limits
+
+const DOUBLE: Int = limits.MAX * 2
+
+fn main() {
+  let row: limits.Row = limits.blank()
+  let c: limits.Cell = limits.center()
+  print(row.len())
+  print(c.0 + c.1)
+  print(DOUBLE)
+  print(limits.MARK)
+}
+```
+
+```output
+8
+8
+16
+#
+```
+
+A const without `pub` is private to its file, and two modules may both have a `SECRET`. A const can only use consts
+written above it, so `const A: Int = B` followed by `const B: Int = A` is rejected ("const 'B' is used before its
+definition") and so is a call such as `const N: Int = f()` ("a const must be computed from literals, other consts and
+arithmetic"). Consts are `Int` (or `Int<lo..hi>`), `Bool` or `Char`; a type alias is just another name for the same
+type.
+
+```yerux error=explicit type
+import limits
+
+pub const NOT_ALLOWED = 3
+
+fn main() {
+  print(limits.MAX)
+}
+```
+
 ## Folders, aliases and shadowing
 
 `import utils.strings` loads `utils/strings.yx` and is used as `strings.up(s)`; `import utils.strings as s`
