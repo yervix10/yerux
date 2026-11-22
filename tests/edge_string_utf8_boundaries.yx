@@ -1,0 +1,71 @@
+// UTF-8 boundary walk: every byte index, character size, character decode and slice edge.
+fn main() {
+  var s = String.new()
+  s.push_char('A')
+  s.push_char('\u{00E9}')
+  s.push_char('\u{20AC}')
+  s.push_char('\u{1F600}')
+  print("{s.len()} {s.char_count()}")
+  var i = 0
+  var boundary = String.new()
+  while i <= s.len() {
+    if s.is_boundary(i) {
+      boundary.push_str("1")
+    } else {
+      boundary.push_str("0")
+    }
+    i = i + 1
+  }
+  print(boundary)
+  print("{s.char_size(0)} {s.char_size(1)} {s.char_size(3)} {s.char_size(6)}")
+  print("{s.char_at(0)} {s.char_at(1)} {s.char_at(3)} {s.char_at(6)}")
+  print("{s.byte(0)} {s.byte(1)} {s.byte(2)} {s.byte(3)} {s.byte(4)} {s.byte(5)} {s.byte(6)} {s.byte(7)} {s.byte(8)} {s.byte(9)}")
+  let a = s.slice(0, 1)
+  let e = s.slice(1, 3)
+  let euro = s.slice(3, 6)
+  let smile = s.slice(6, 10)
+  print("[{a}] [{e}] [{euro}] [{smile}]")
+  let all = s.slice(0, s.len())
+  let empty1 = s.slice(0, 0)
+  let empty2 = s.slice(s.len(), s.len())
+  let same = all.eq(s)
+  print("{all.len()} {empty1.len()} {empty2.len()} {same}")
+
+  // Each scalar written with push_char reports its encoded width.
+  var t = String.new()
+  t.push_char('\u{7F}')
+  t.push_char('\u{80}')
+  t.push_char('\u{7FF}')
+  t.push_char('\u{800}')
+  t.push_char('\u{FFFF}')
+  t.push_char('\u{10000}')
+  t.push_char('\u{10FFFF}')
+  print("{t.len()} {t.char_count()}")
+  print("{t.char_size(0)} {t.char_size(1)} {t.char_size(3)} {t.char_size(5)} {t.char_size(8)} {t.char_size(11)} {t.char_size(15)}")
+  let v0 = t.char_at(0)
+  let v1 = t.char_at(1)
+  let v2 = t.char_at(3)
+  let v3 = t.char_at(5)
+  let v4 = t.char_at(8)
+  let v5 = t.char_at(11)
+  let v6 = t.char_at(15)
+  print("{v0.to_int()} {v1.to_int()} {v2.to_int()} {v3.to_int()} {v4.to_int()} {v5.to_int()} {v6.to_int()}")
+  print("{t.is_boundary(1)} {t.is_boundary(2)} {t.is_boundary(3)} {t.is_boundary(5)} {t.is_boundary(8)} {t.is_boundary(11)} {t.is_boundary(15)} {t.is_boundary(19)}")
+  let c0 = t.slice(0, 1)
+  let c1 = t.slice(1, 3)
+  let c2 = t.slice(3, 5)
+  let c3 = t.slice(5, 8)
+  let c4 = t.slice(8, 11)
+  let c5 = t.slice(11, 15)
+  let c6 = t.slice(15, 19)
+  print("{c0.len()} {c1.len()} {c2.len()} {c3.len()} {c4.len()} {c5.len()} {c6.len()}")
+  print("{t.byte(18)} {t.byte(19 - 1)}")
+  let tail = t.slice(15, t.len())
+  print("{tail.len()} {tail.char_count()} {tail.char_size(0)}")
+
+  // A lone 4-byte character at the edges.
+  let only = s.slice(6, 10)
+  print("{only.len()} {only.char_count()} {only.char_size(0)} {only.char_at(0)}")
+  let last = only.byte(only.len() - 1)
+  print(last)
+}

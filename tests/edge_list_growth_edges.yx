@@ -1,0 +1,104 @@
+// List growth and shrink at the boundaries: repeated front removal/insertion, clear and reuse,
+// owned elements with empty and multi-byte strings, and nested lists.
+fn main() {
+  var l = List<Int>.new()
+  var i = 0
+  while i < 300 {
+    l.push(i)
+    i = i + 1
+  }
+  print("{l.len()} {l.at(0)} {l.at(299)}")
+  var removed = 0
+  i = 0
+  while i < 100 {
+    let x = l.remove(0)
+    removed = removed + x
+    i = i + 1
+  }
+  print("{removed} {l.len()} {l.at(0)} {l.at(l.len() - 1)}")
+  i = 0
+  while i < 100 {
+    l.insert(0, 1000 + i)
+    i = i + 1
+  }
+  print("{l.len()} {l.at(0)} {l.at(99)} {l.at(100)}")
+  l.clear()
+  print("{l.len()} {l.is_empty()}")
+  l.push(7)
+  l.push(8)
+  print("{l.len()} {l.at(0)} {l.at(1)}")
+  var total = 0
+  while l.len() > 0 {
+    let x = l.pop()
+    total = total + x
+  }
+  print("{total} {l.len()}")
+
+  // Extend a block onto another block, then truncate at its boundaries.
+  var a = List<Int>.new()
+  var b = List<Int>.new()
+  i = 0
+  while i < 50 {
+    a.push(i)
+    b.push(100 + i)
+    i = i + 1
+  }
+  a.extend(move b)
+  print("{a.len()} {a.at(0)} {a.at(49)} {a.at(50)} {a.at(99)}")
+  a.truncate(75)
+  print("{a.len()} {a.at(74)}")
+  a.truncate(75)
+  print(a.len())
+  a.truncate(0)
+  print("{a.len()} {a.is_empty()}")
+
+  // Many owned elements: empty, 2-byte and 4-byte strings, removed from the front and the back.
+  var words = List<String>.new()
+  i = 0
+  while i < 200 {
+    if i % 3 == 0 {
+      words.push(String.from(""))
+    } else if i % 3 == 1 {
+      words.push(String.from("é"))
+    } else {
+      words.push(String.from("😀"))
+    }
+    i = i + 1
+  }
+  print("{words.len()} {words.at(0).len()} {words.at(1).len()} {words.at(2).len()}")
+  var bytes = 0
+  i = 0
+  while i < words.len() {
+    bytes = bytes + words.at(i).len()
+    i = i + 1
+  }
+  print(bytes)
+  i = 0
+  while i < 50 {
+    let w = words.remove(0)
+    bytes = bytes - w.len()
+    i = i + 1
+  }
+  print("{words.len()} {bytes}")
+  let last = words.pop()
+  print("{last.len()} {words.len()}")
+
+  // Nested list growth, clear and reuse.
+  var nested = List<List<Int>>.new()
+  i = 0
+  while i < 10 {
+    var inner = List<Int>.new()
+    var j = 0
+    while j <= i {
+      inner.push(j)
+      j = j + 1
+    }
+    nested.push(move inner)
+    i = i + 1
+  }
+  print("{nested.len()} {nested.at(9).len()} {nested.at(0).len()}")
+  nested.at(0).push(99)
+  print(nested.at(0).len())
+  nested.clear()
+  print(nested.len())
+}

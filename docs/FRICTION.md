@@ -88,6 +88,25 @@ fn main() {
 before appending. User-defined `view` parameters can already borrow a
 temporary, so the closely related call forms have different rules.
 
+### A negative `from` in `String.find_from` panics or leaks the negative index
+
+```yx
+fn main() {
+  let s = String.from("abc")
+  print(s.find_from("", -5))   // prints -5
+  print(s.find_from("b", -1))  // panic: index out of range
+}
+```
+
+The documented result is a byte index or `-1`, but `find_from` does not
+validate `from`: with the empty pattern it returns the negative start
+unchanged, and with a non-empty pattern `byte(from)` panics. A negative
+`from` should be rejected (or clamped to `0`) consistently. The same
+out-of-range value then reaches `slice` as an index. `find` and `contains`
+pass `0`, so they are unaffected. Found by
+`tests/edge_string_empty_ops.yx` / `tests/edge_string_utf8_boundaries.yx`
+work; no regression test records the broken result on purpose.
+
 ### Integer operators do not offer a recoverable overflow result
 
 ```yx
