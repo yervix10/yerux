@@ -92,6 +92,9 @@ fn sockaddr(a: view SocketAddr, out: Int) -> Int {
         var v = 0
         var digits = 0
         while i < a.ip.len() && a.ip.byte(i) != 58 {
+          // IPv6 groups contain at most four hexadecimal digits. Reject before
+          // multiplying so arbitrarily long hostile groups cannot overflow Int.
+          if digits >= 4 { return -1 }
           let c = a.ip.byte(i)
           var d = c - 48
           if c >= 65 && c <= 70 { d = c - 55 }
