@@ -3066,12 +3066,6 @@ impl<'a> Checker<'a> {
             }
             return ret;
         }
-        if let Ty::List(i) = ty {
-            if self.types.contains_join_handle(self.types.lists[i]) {
-                self.err(diag("a List cannot contain JoinHandle values", pos));
-                return Ty::Err;
-            }
-        }
         let tn = self.tn(ty);
         let (nargs, known) = match (ty, f) {
             (Ty::List(_), "new") | (Ty::String, "new") => (0, true),
@@ -4061,6 +4055,23 @@ impl<'a> Checker<'a> {
                 let tf = self.facts_of(c, true);
                 self.apply_facts(&tf);
                 self.block(body);
+                if pos.line < PRELUDE_LINE && !self.st.dead {
+                    // a JoinHandle owned by the body is dropped at the end of every iteration, and dropping
+                    // one waits for its worker: the next worker never starts (or never gets its work)
+                    let stuck = (entry..self.vars.len()).find(|id| {
+                        self.vars[*id].mode == Mode::Own
+                            && self.types.contains_join_handle(self.vars[*id].ty)
+                            && !self.st.moved.contains_key(id)
+                    });
+                    if let Some(id) = stuck {
+                        let name = self.vars[id].name.clone();
+                        self.err(
+                            diag(format!("the JoinHandle '{}' is dropped at the end of every iteration, which waits for its worker", name), pos)
+                                .note("dropping a JoinHandle joins the thread, so a worker started in a loop and never joined runs one at a time (and deadlocks if it waits for work sent later)")
+                                .note("help: collect the handles with `handles.push(move {name})` into a `List<JoinHandle<T>>` and join them after the loop, or call `{name}.join()` inside the loop".replace("{name}", &name)),
+                        );
+                    }
+                }
                 if meta.freeze.is_some() {
                     self.frozen.pop();
                 }

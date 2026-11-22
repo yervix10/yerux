@@ -271,6 +271,7 @@ On native x86-64 Linux and the C backend, `scope { ... }` is a block in which
 value. A standalone `spawn` statement implicitly retains its handle until the
 enclosing block exits. Dropping a handle waits and discards its result.
 A handle cannot escape through a return, an assignment, or a closure capture.
+A `List<JoinHandle<T>>` is allowed (push with `move`, take out with `remove`/`pop`; handles left in it are joined when it is dropped), which is how to start N workers in a loop. A handle owned by a loop body and still unjoined at the end of the iteration is an error (`e1414`), since dropping it would wait for its worker.
 A worker can copy or take ownership of thread-transferable values, including
 ordinary data and explicit sharing handles. It cannot capture a borrow.
 `@thread_bound` on a struct or enum excludes it and containers that hold it

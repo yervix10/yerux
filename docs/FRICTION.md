@@ -393,11 +393,10 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 2. **A borrowed list element cannot be named.** `let line = lines.at(i)` is "cannot move 'lines.at(..)' out of its
    List"; the only ways are `String.from(lines.at(i))` (a copy) or passing `lines.at(i)` straight to a `view`
    parameter. Every loop over rows of a table copied each row or went through a helper taking `view Table`.
-3. **A dropped `JoinHandle` joins, silently.** `for w in 0..3 { let t = spawn move { worker(rx) } }` deadlocks: the
-   handle is dropped at the end of the first iteration, which waits for a worker that waits for work. There is no
-   diagnostic, and a `List<JoinHandle<T>>` is rejected ("a List cannot contain JoinHandle values"), so the usual
-   "start N workers" loop has no direct form. The programs name each handle (`w1`, `w2`, `w3`) and report results
-   through a channel.
+3. **Fixed: dropped `JoinHandle` in a loop.** A handle owned by a loop body and not joined or moved by the end of
+   the iteration is now a compile error that explains that dropping a handle joins its worker, and a
+   `List<JoinHandle<T>>` is allowed (start N workers in a loop, `push(move h)`, join after the loop; handles left in
+   the list are joined when it drops). Tests `thread_handles_list`, `e1414_joinhandle_dropped_in_loop`.
 5. **Fixed: struct-literal shorthand.** `Task { title, tags }` now means `Task { title: title, tags: tags }`, with the
    same move rules as the explicit form (tests `struct_shorthand`, `e1412_struct_shorthand_move`).
 6. **Fixed: raw string literals.** `r"..."` and `r#"..."#` (any number of `#`) are verbatim: no escapes, no
