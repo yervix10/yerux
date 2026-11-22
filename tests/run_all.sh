@@ -103,6 +103,7 @@ AUX=(
   "selfhost_resolve|bash tests/selfhost_resolve.sh"
   "selfhost_parser|bash tests/selfhost_parser.sh"
   "selfhost_lexer|bash tests/selfhost_lexer.sh"
+  "selfhost_stage2|bash tests/selfhost_stage2.sh"
   "http|bash tests/http.sh"
   "lsp_cargo|cargo test -q --test lsp"
   "modules|bash tests/modules.sh"

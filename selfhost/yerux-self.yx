@@ -12,6 +12,7 @@ struct Build {
   root: String,
   work: String,
   seen: List<String>,
+  keep_c: Bool,
 }
 
 fn report(step: view String, message: view String) {
@@ -163,6 +164,17 @@ fn compile(build: mut Build, source: view String, output: view String, emit_ast:
     Some(body) => { if !write(c_file, body) { return false } }
   }
 
+  if build.keep_c {
+    args.clear()
+    args.push(String.from("--"))
+    args.push(String.from(c_file))
+    args.push("{output}.c")
+    match invoke("cp", args, "keeping the generated C") {
+      None => { return false }
+      Some(ok) => {}
+    }
+  }
+
   let exe = path.join(build.work, "program")
   args = String.from("-std=gnu11,-O2,-w,-fno-math-errno,-ffp-contract=off,-pthread,-I").split(",")
   args.push(String.from(build.runtime))
@@ -237,7 +249,48 @@ fn package_name(manifest: view String) -> Option<String> {
 }
 
 fn usage() {
-  print("usage: yerux-self [build] [FILE.yx|PROJECT_DIR|yerux.toml] [-o OUTPUT] [--runtime DIRECTORY] [--emit-ast]")
+  print("usage: yerux-self [build] [FILE.yx|PROJECT_DIR|yerux.toml] [-o OUTPUT] [--runtime DIRECTORY] [--emit-ast] [--keep-c] | --stage2 [--sources DIR] [-o DIR]")
+}
+
+// Rebuild every compiler stage (and this driver) from `sources` with the stages installed next to this
+// executable. The result directory is a complete installation: running its yerux-self with --stage2 again
+// builds the next generation, and tests/selfhost_stage2.sh compares the generated C of both.
+fn build_stage2(stages: view String, runtime: view String, sources: view String, output: view String) {
+  var out = String.from(output)
+  if out.len() == 0 { out = String.from("target/stage2") }
+  let names = String.from("lexer,parser,resolve,types,codegen,fmt,yerux-self").split(",")
+  var args = List<String>.new()
+  args.push(String.from("-p"))
+  args.push(String.from("--"))
+  args.push(String.from(out))
+  match invoke("mkdir", args, "creating {out}") {
+    None => { env.exit(1); return }
+    Some(ok) => {}
+  }
+  let driver = path.join(stages, "yerux-self")
+  for name in names {
+    args.clear()
+    args.push(String.from("build"))
+    args.push(path.join(sources, "{name}.yx"))
+    args.push(String.from("-o"))
+    args.push(path.join(out, name))
+    args.push(String.from("--keep-c"))
+    args.push(String.from("--runtime"))
+    args.push(String.from(runtime))
+    match invoke(driver, args, "building stage {name}") {
+      None => { env.exit(1); return }
+      Some(ok) => { print("stage2: {name}") }
+    }
+  }
+  args.clear()
+  args.push(String.from("-R"))
+  args.push(String.from("--"))
+  args.push(String.from(runtime))
+  args.push(path.join(out, "runtime"))
+  match invoke("cp", args, "installing the runtime") {
+    None => { env.exit(1) }
+    Some(ok) => {}
+  }
 }
 
 fn main() {
@@ -246,16 +299,22 @@ fn main() {
   var output = String.new()
   var runtime = String.new()
   var emit_ast = false
+  var keep_c = false
+  var stage2 = false
+  var sources = String.from("selfhost")
   var i = 1
   if i < cli.len() && cli.at(i) == "build" { i = i + 1 }
   while i < cli.len() {
     let arg = String.from(cli.at(i))
     if arg == "--help" || arg == "-h" { usage(); return }
     if arg == "--emit-ast" { emit_ast = true }
-    else if arg == "-o" || arg == "--runtime" {
+    else if arg == "--keep-c" { keep_c = true }
+    else if arg == "--stage2" { stage2 = true }
+    else if arg == "-o" || arg == "--runtime" || arg == "--sources" {
       i = i + 1
       if i >= cli.len() { usage(); env.exit(2); return }
       if arg == "-o" { output = String.from(cli.at(i)) }
+      else if arg == "--sources" { sources = String.from(cli.at(i)) }
       else { runtime = String.from(cli.at(i)) }
     } else if arg.starts_with("-") || input.len() != 0 {
       usage()
@@ -274,6 +333,11 @@ fn main() {
   if !fs.is_file(path.join(runtime, "c_runtime.h")) {
     report(runtime, "runtime headers not found")
     env.exit(1)
+    return
+  }
+
+  if stage2 {
+    build_stage2(stages, runtime, sources, output)
     return
   }
 
@@ -321,7 +385,7 @@ fn main() {
     Some(created) => {
       var build = Build {
         runtime: move runtime, stages: move stages, root: path.parent(input),
-        work: created.slice(0, created.len() - 1), seen: List<String>.new(),
+        work: created.slice(0, created.len() - 1), seen: List<String>.new(), keep_c: keep_c,
       }
       let success = compile(build, input, output, emit_ast)
       args.clear()
