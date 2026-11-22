@@ -1,0 +1,7 @@
+// A truncated multibyte sequence at String capacity must be rejected before char_at reads past the buffer.
+fn main() {
+  var s = String.new()
+  for i in 0..15 { s.push_byte(65) }
+  s.push_byte(240)
+  print(s.char_at(15))
+}

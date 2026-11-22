@@ -1,0 +1,51 @@
+// Recursive deletion must reject roots and traverse directory entries by descriptor, without lossy-name aliases.
+import std.fs
+import std.io
+import std.env
+import std.path
+
+fn invalid_input(r: Result<Int, io.IoError>) -> Bool {
+  match r {
+    Ok(_) => { return false }
+    Err(e) => { return e.kind == io.IoErrorKind.InvalidInput }
+  }
+}
+
+fn main() {
+  assert(invalid_input(fs.remove_dir_all("/")))
+  assert(invalid_input(fs.remove_dir_all(".")))
+  let cwd = env.current_dir()
+  match cwd {
+    Ok(dir) => {
+      let alias = "/tmp/yerux_hostile_fs_parent_{io.process_id()}"
+      match fs.symlink(path.parent(dir), alias) {
+        Ok(_) => {
+          let alias_cwd = path.join(alias, path.file_name(dir))
+          assert(invalid_input(fs.remove_dir_all(alias_cwd)))
+          let removed_alias = fs.remove_file(alias)
+        }
+        Err(e) => { panic("could not make parent alias: {e}") }
+      }
+    }
+    Err(e) => { panic("could not read current directory: {e}") }
+  }
+
+  let dir = "/tmp/yerux_hostile_fs_{io.process_id()}"
+  let made = fs.create_dir(dir)
+  let sibling = "{dir}/?"
+  let wrote = fs.write(sibling, "keep")
+  var raw = String.from(dir)
+  raw.push_byte(47)
+  raw.push_byte(255)
+  raw.push_byte(0)
+  let fd = __syscall(2, raw.raw_addr(), 524481, 420, 0, 0, 0)
+  assert(fd >= 0)
+  let closed = __syscall(3, fd, 0, 0, 0, 0, 0)
+  assert(closed == 0)
+  match fs.remove_dir_all(dir) {
+    Ok(_) => {}
+    Err(e) => { panic("remove_dir_all failed: {e}") }
+  }
+  assert(!fs.exists(dir))
+  print("hostile fs paths: ok")
+}

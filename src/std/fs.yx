@@ -6,6 +6,8 @@
 // `io.IoError` value (the same error type as std.io), nothing aborts.
 import std.io
 import std.sort
+import std.env
+import std.path
 
 // ───────────────────────── metadata ─────────────────────────
 
@@ -438,21 +440,125 @@ pub fn read_dir(path: view String) -> Result<List<String>, io.IoError> {
 
 /// Remove a directory and everything in it. Symbolic links are removed, never followed. A path that is not
 /// a directory is `NotDirectory`.
-pub fn remove_dir_all(path: view String) -> Result<Int, io.IoError> {
-    let info = symlink_metadata(path)?
-    if info.kind != FileKind.Dir {
-        return Err(io.os_error("remove directory", path, 20))
-    }
-    let entries = read_dir_entries(path)?
-    for e in entries {
-        let full = join_name(path, e.name)
-        if e.kind == FileKind.Dir {
-            let r = remove_dir_all(full)?
-        } else {
-            let r = io.remove_file(full)?
+struct DirFd {
+    fd: Int,
+}
+
+impl Drop for DirFd {
+    fn drop(mut self) {
+        if self.fd >= 0 {
+            let r = __syscall(3, self.fd, 0, 0, 0, 0, 0)
+            self.fd = -1
         }
     }
-    return remove_dir(path)
+}
+
+fn same_directory(a: Int, b: Int) -> Result<Bool, io.IoError> {
+    let st = __alloc(288)
+    let ra = __syscall(5, a, st, 0, 0, 0, 0)
+    if ra < 0 {
+        __free(st)
+        return Err(io.os_error("stat directory", "", 0 - ra))
+    }
+    let rb = __syscall(5, b, st + 144, 0, 0, 0, 0)
+    if rb < 0 {
+        __free(st)
+        return Err(io.os_error("stat directory", "", 0 - rb))
+    }
+    let same = __load64(st) == __load64(st + 144) && __load64(st + 8) == __load64(st + 152)
+    __free(st)
+    return Ok(same)
+}
+
+fn remove_contents(fd: Int, display: view String, depth: Int) -> Result<Int, io.IoError> {
+    if depth > 128 {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "remove directory: nesting exceeds 128 levels"))
+    }
+    let buf = __alloc(32768)
+    defer __free(buf)
+    while true {
+        let n = __syscall(217, fd, buf, 32768, 0, 0, 0)
+        if n == -4 { continue }
+        if n < 0 { return Err(io.os_error("read directory", display, 0 - n)) }
+        if n == 0 { break }
+        var off = 0
+        while off < n {
+            let rec = buf + off
+            let reclen = __load8(rec + 16) + 256 * __load8(rec + 17)
+            if reclen < 20 || reclen > n - off {
+                return Err(io.custom_error(io.IoErrorKind.InvalidData, "remove directory: malformed directory entry"))
+            }
+            let name_ptr = rec + 19
+            let first = __load8(name_ptr)
+            let second = __load8(name_ptr + 1)
+            let dot = first == 46 && second == 0
+            let dotdot = first == 46 && second == 46 && __load8(name_ptr + 2) == 0
+            if !dot && !dotdot {
+                let name = io.cstr(name_ptr)
+                let full = join_name(display, name)
+                // O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW. Work relative to the open parent
+                // descriptor and pass the raw dirent name, so symlink swaps and non-UTF-8 names stay safe.
+                let child_fd = __syscall(257, fd, name_ptr, 720896, 0, 0, 0)
+                if child_fd >= 0 {
+                    let child = DirFd { fd: child_fd }
+                    let r = remove_contents(child.fd, full, depth + 1)?
+                    let deleted = __syscall(263, fd, name_ptr, 512, 0, 0, 0)
+                    if deleted < 0 && deleted != -2 {
+                        return Err(io.os_error("remove directory", full, 0 - deleted))
+                    }
+                } else if child_fd == -20 || child_fd == -40 {
+                    let deleted = __syscall(263, fd, name_ptr, 0, 0, 0, 0)
+                    if deleted < 0 && deleted != -2 {
+                        return Err(io.os_error("remove file", full, 0 - deleted))
+                    }
+                } else if child_fd != -2 {
+                    return Err(io.os_error("open directory", full, 0 - child_fd))
+                }
+            }
+            off = off + reclen
+        }
+    }
+    return Ok(0)
+}
+
+pub fn remove_dir_all(target: view String) -> Result<Int, io.IoError> {
+    let normalized = path.normalize(target)
+    let cwd = env.current_dir()?
+    let absolute = path.normalize(path.join(cwd, normalized))
+    if absolute.eq("/") || absolute.eq(cwd) {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "remove directory: refusing to remove the filesystem root or current directory"))
+    }
+    let base = path.file_name(target)
+    if base.len() == 0 || base.eq(".") || base.eq("..") {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "remove directory: empty, dot, or parent path"))
+    }
+    var parent = path.parent(target)
+    if parent.len() == 0 { parent = String.from(".") }
+    let cparent = io.cpath(parent)?
+    let cbase = io.cpath(base)?
+    // O_RDONLY | O_DIRECTORY | O_CLOEXEC. Once open, all traversal stays under this descriptor.
+    let parent_fd = __syscall(2, cparent.raw_addr(), 589824, 0, 0, 0, 0)
+    if parent_fd < 0 { return Err(io.os_error("open parent directory", parent, 0 - parent_fd)) }
+    let parent_dir = DirFd { fd: parent_fd }
+    // O_NOFOLLOW prevents a final-component symlink from redirecting recursive deletion.
+    let root_fd = __syscall(257, parent_dir.fd, cbase.raw_addr(), 720896, 0, 0, 0)
+    if root_fd < 0 { return Err(io.os_error("open directory", target, 0 - root_fd)) }
+    let root = DirFd { fd: root_fd }
+    let croot = io.cpath("/")?
+    let root_guard_fd = __syscall(2, croot.raw_addr(), 589824, 0, 0, 0, 0)
+    if root_guard_fd < 0 { return Err(io.os_error("open filesystem root", "/", 0 - root_guard_fd)) }
+    let root_guard = DirFd { fd: root_guard_fd }
+    let ccwd = io.cpath(cwd)?
+    let cwd_guard_fd = __syscall(2, ccwd.raw_addr(), 589824, 0, 0, 0, 0)
+    if cwd_guard_fd < 0 { return Err(io.os_error("open current directory", cwd, 0 - cwd_guard_fd)) }
+    let cwd_guard = DirFd { fd: cwd_guard_fd }
+    if same_directory(root.fd, root_guard.fd)? || same_directory(root.fd, cwd_guard.fd)? {
+        return Err(io.custom_error(io.IoErrorKind.InvalidInput, "remove directory: refusing to remove the filesystem root or current directory"))
+    }
+    let r = remove_contents(root.fd, normalized, 0)?
+    let deleted = __syscall(263, parent_dir.fd, cbase.raw_addr(), 512, 0, 0, 0)
+    if deleted < 0 { return Err(io.os_error("remove directory", target, 0 - deleted)) }
+    return Ok(0)
 }
 
 // ───────────────────────── binary files (List<UInt8> / [UInt8] slices) ─────────────────────────

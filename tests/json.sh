@@ -75,6 +75,9 @@ for backend in c native asan; do
   invalid unterminated '"abc' '1:5: unterminated string'
   invalid controls $'"abc\t"' '1:5: unescaped control character in string'
   invalid coordinates $'{\r\n  "é": [1,]\r\n}' '2:11: expected JSON value'
+  python3 -c 'import sys; sys.stdout.write(" " * (16 * 1024 * 1024 + 1) + "null")' >"$tmp/large"
+  printf '%s:1:1: JSON input exceeds 16 MiB limit\n' "$tmp/large" >"$tmp/expected"
+  run oversized 1 /dev/null /dev/null "$tmp/expected" --check "$tmp/large"
   printf -v nested '%*s' 128 ''
   printf '%snull%s' "${nested// /[}" "${nested// /]}" >"$tmp/nested"
   run maximum_depth 0 "$tmp/nested" /dev/null /dev/null --check

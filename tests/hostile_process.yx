@@ -1,0 +1,16 @@
+// Captured process output must stay bounded even when the child floods stdout.
+import std.process
+
+fn main() {
+  var args = List<String>.new()
+  args.push(String.from("-c"))
+  args.push(String.from("67108865"))
+  args.push(String.from("/dev/zero"))
+  match process.run("/usr/bin/head", args) {
+    Ok(out) => { panic("unbounded process output: {out.stdout.len()}") }
+    Err(e) => {
+      assert(e.message.contains("exceeds 64 MiB"))
+      print("process output bounded")
+    }
+  }
+}
