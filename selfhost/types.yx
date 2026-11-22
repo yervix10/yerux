@@ -875,6 +875,10 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     }
     return boolean
   }
+  if op == "+" && a == "String" && root_place(tree, left) >= 0 {
+    if b != "Text" { expect_type(types, a, b) }
+    return a
+  }
   if ordered && (a == "Char" || a == "String" || a == "Text") {
     if !((a == "String" && b == "Text") || (a == "Text" && b == "String")) { expect_type(types, a, b) }
     return boolean
