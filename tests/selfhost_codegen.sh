@@ -55,7 +55,7 @@ if "$driver" "$tmp/deferred-move.yx" 2>"$tmp/deferred-move.err"; then
   printf 'selfhost driver accepted use after move in a deferred statement\n' >&2
   exit 1
 fi
-rg -q 'this deferred statement uses' "$tmp/deferred-move.err"
+grep -q 'this deferred statement uses' "$tmp/deferred-move.err"
 
 source_ast() {
   : >"$tmp/source.err"
