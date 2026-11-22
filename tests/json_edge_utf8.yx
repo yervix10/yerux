@@ -1,0 +1,33 @@
+// std.json edge cases: UTF-8. Raw multi-byte characters, escaped BMP scalars, an
+// astral character written as a surrogate pair and as raw UTF-8, and byte-accurate
+// error columns after multi-byte characters.
+import json.codec
+
+fn show(src: view String) {
+  match codec.parse(src) {
+    Ok(v) => { print(codec.format(v, false)) }
+    Err(e) => {
+      let (line, col) = codec.location(src, e.offset)
+      print("ERR {line}:{col}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("\"héllo\"")
+  show("\"日本語\"")
+  show("\"😀\"")
+  show("{{\"ключ\": \"значение\"}}")
+  show("[\"αβγ\", \"δ\"]")
+  show("\"e\\u0301\"")
+  show("\"line1\\nline2\"")
+  show("\"\\u0000\"")
+  show("\"\\u001f\"")
+  show("\"\\u007f\"")
+  show("\"\\u0080\"")
+  show("\"\\uffff\"")
+  show("{{\"日本\": \"語\"}}")
+  show("\"mixed é 日 😀 end\"")
+  show("\"é")
+  show("[\"é\",]")
+}

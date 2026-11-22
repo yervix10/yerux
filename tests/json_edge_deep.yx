@@ -1,0 +1,65 @@
+// std.json edge cases: deep nesting. The parser accepts at most 128 nested
+// containers; 128 is fine, 129 fails and the error column points at the 129th opener.
+// Mixed arrays/objects at the boundary and a well-formed deep document round-trip.
+import json.codec
+
+fn nested_arrays(n: Int) -> String {
+  var s = String.new()
+  for i in 0..n { s.push_str("[") }
+  s.push_str("1")
+  for i in 0..n { s.push_str("]") }
+  return s
+}
+
+fn nested_objects(n: Int) -> String {
+  var s = String.new()
+  for i in 0..n { s.push_str("{{\"k\":") }
+  s.push_str("1")
+  for i in 0..n { s.push_str("}}") }
+  return s
+}
+
+fn mixed(n: Int) -> String {
+  var s = String.new()
+  for i in 0..n {
+    if i % 2 == 0 { s.push_str("[") } else { s.push_str("{{\"k\":") }
+  }
+  s.push_str("1")
+  for i in 0..n {
+    let j = n - 1 - i
+    if j % 2 == 0 { s.push_str("]") } else { s.push_str("}}") }
+  }
+  return s
+}
+
+fn show(src: view String) {
+  match codec.parse(src) {
+    Ok(v) => { print(codec.format(v, false)) }
+    Err(e) => {
+      let (line, col) = codec.location(src, e.offset)
+      print("ERR {line}:{col}: {e.message}")
+    }
+  }
+}
+
+fn show_len(src: view String) {
+  match codec.parse(src) {
+    Ok(v) => { print(codec.format(v, false).len()) }
+    Err(e) => {
+      let (line, col) = codec.location(src, e.offset)
+      print("ERR {line}:{col}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show_len(nested_arrays(127))
+  show_len(nested_arrays(128))
+  show(nested_arrays(129))
+  show(nested_arrays(200))
+  show_len(nested_objects(128))
+  show(nested_objects(129))
+  show_len(mixed(128))
+  show(mixed(129))
+  show("[[[[[[[[[[1]]]]]]]]]]")
+}
