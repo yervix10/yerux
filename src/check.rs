@@ -620,6 +620,18 @@ impl<'a> Checker<'a> {
         self.scopes.last_mut().unwrap().insert(name.to_string(), id);
         id
     }
+    /// The left operand of a comparison was reported as "not a variable": a "not copied" error that the right operand
+    /// (a plain variable) raised only because the comparison was not rewritten into a borrowing call is a consequence.
+    fn drop_cascade(&mut self, from: usize, at: Pos) {
+        let mut k = from;
+        while k < self.errs.len() {
+            if self.errs[k].pos == at && self.errs[k].msg.ends_with("and is not copied") {
+                self.errs.remove(k);
+            } else {
+                k += 1;
+            }
+        }
+    }
     fn expect(&mut self, got: Ty, want: Ty, pos: Pos) {
         if got == Ty::Err || want == Ty::Err || got == want {
             return;
@@ -1261,6 +1273,7 @@ impl<'a> Checker<'a> {
                             "clear",
                             "push_byte",
                             "push_slice",
+                            "reserve",
                             "raw_addr",
                             "push_raw",
                         ]
@@ -1515,6 +1528,7 @@ impl<'a> Checker<'a> {
             }
             EK::Bin(op, a, b) => {
                 let op = *op;
+                let errs_before = self.errs.len();
                 let (ta, tb) = if matches!(op, "&&" | "||") {
                     let ta = self.expr(a);
                     let before = self.st.clone();
@@ -1527,6 +1541,7 @@ impl<'a> Checker<'a> {
                 } else {
                     self.operands(a, b, hint)
                 };
+                let err_mark = errs_before;
                 match op {
                     "+" | "-" | "*" | "/" | "%" | "+%" | "-%" | "*%" => {
                         if ta == Ty::Char || tb == Ty::Char {
@@ -1572,6 +1587,7 @@ impl<'a> Checker<'a> {
                                 diag(format!("cannot use `{}` on values of type {}: it does not implement Ordered", op, n), a.pos)
                                     .note("help: `<`, `>`, `<=` and `>=` work on numbers, Char, and types that implement Ordered")
                             };
+                            self.drop_cascade(err_mark, b.pos);
                             self.err(d);
                         } else {
                             self.arith_ty("<", ta, tb, a.pos, b.pos);
@@ -1601,6 +1617,7 @@ impl<'a> Checker<'a> {
                                 diag(format!("cannot compare values of type {}", n), a.pos)
                                     .note("help: == and != work on numbers and Bool, and on variables whose type implements Equal (Text, String, your own types); use `match` for enums")
                             };
+                            self.drop_cascade(err_mark, b.pos);
                             self.err(d);
                         }
                         Ty::Bool
@@ -3005,11 +3022,20 @@ impl<'a> Checker<'a> {
             "clear" => (0, Ty::Unit, true),
             "push_byte" => (1, Ty::Unit, true),
             "push_slice" => (3, Ty::Unit, true),
+            "reserve" => (1, Ty::Unit, true),
             "raw_addr" => (0, Ty::Int, false),
             "push_raw" => (2, Ty::Unit, true),
             _ => {
-                self.err(diag(format!("String has no method '{}'", m), pos)
-                    .note("methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)")
+                let in_text = crate::stdlib::source("std.text").is_some_and(|src| {
+                    let head = format!("pub fn {}(", m);
+                    src.lines().any(|l| l.starts_with(&head) && l[head.len()..].contains(": view String") && l[head.len()..].starts_with(|c: char| c.is_alphabetic()))
+                });
+                let mut d = diag(format!("String has no method '{}'", m), pos);
+                if in_text {
+                    d = d.note(format!("help: `{m}` is a function of std.text: add `import std.text` and write `text.{m}(s, ..)`"));
+                }
+                self.err(d
+                    .note("methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)")
                     .note("to visit the characters write `for c in s.chars() { .. }`"));
                 return Ty::Err;
             }
@@ -4160,6 +4186,13 @@ impl<'a> Checker<'a> {
                     *id = i;
                     *ty = self.vars[i].ty;
                 }
+            }
+            SK::ExprS(e) if matches!(&e.k, EK::Method { m, .. } if matches!(m.as_str(), "remove" | "pop" | "swap_remove" | "pop_front" | "pop_back")) && pos.line < PRELUDE_LINE => {
+                // `list.remove(i)` / `list.pop()` as a statement: the element is dropped (explicit `let _ =`)
+                let e = std::mem::replace(e, sx(EK::Int(0), pos));
+                s.k = SK::Let("_".into(), false, e, 0);
+                self.stmt(s);
+                return;
             }
             SK::ExprS(e) => {
                 let t = self.expr(e);

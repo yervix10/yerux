@@ -2351,6 +2351,7 @@ fn declare_prelude(types: mut Types) {
   prelude_method(types, string, "push_slice", "Mut", "nothing", "String", "View")
   types.signatures.at(push_slice).args.push(Parameter { mode: String.from("Own"), ty: String.from("Int") })
   types.signatures.at(push_slice).args.push(Parameter { mode: String.from("Own"), ty: String.from("Int") })
+  prelude_method(types, string, "reserve", "Mut", "nothing", "Int", "Own")
   prelude_method(types, string, "push_int", "Mut", "nothing", "Int", "Own")
   prelude_method(types, string, "push_byte", "Mut", "nothing", "Int", "Own")
   prelude_method(types, string, "push_char", "Mut", "nothing", "Char", "Own")

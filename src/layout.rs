@@ -122,5 +122,119 @@ pub fn cold_to_end(f: &IrFunc, cold_fn: &[bool]) -> (IrFunc, Vec<bool>) {
     )
 }
 
+/// Chain layout: after a block, put the successor that stays in the same loops (then one that has only this
+/// predecessor), so the hot path of a loop is fall-through code and a conditional branch no longer needs a
+/// `jcc` plus a `jmp`. Cold blocks keep their place at the end; block 0 stays first. Returns the reordered
+/// function and the permuted cold flags.
+pub fn chain_layout(f: &IrFunc, cold: &[bool]) -> (IrFunc, Vec<bool>) {
+    let n = f.blocks.len();
+    let succs = |b: usize| -> Vec<usize> {
+        match &f.blocks[b].term {
+            Term::Jmp(t) => vec![*t],
+            Term::Br(_, a, b) => vec![*a, *b],
+            _ => vec![],
+        }
+    };
+    let mut preds = vec![0usize; n];
+    let mut radj: Vec<Vec<usize>> = vec![vec![]; n];
+    for b in 0..n {
+        for s in succs(b) {
+            preds[s] += 1;
+            radj[s].push(b);
+        }
+    }
+    // loop depth: a back edge p -> h (h <= p) makes everything that reaches p without crossing h part of the loop
+    let mut depth = vec![0u32; n];
+    for p in 0..n {
+        if cold[p] {
+            continue;
+        }
+        for h in succs(p) {
+            if h > p {
+                continue;
+            }
+            let mut inl = vec![false; n];
+            inl[h] = true;
+            let mut stack = vec![p];
+            while let Some(x) = stack.pop() {
+                if inl[x] {
+                    continue;
+                }
+                inl[x] = true;
+                for &q in &radj[x] {
+                    stack.push(q);
+                }
+            }
+            for b in 0..n {
+                if inl[b] {
+                    depth[b] += 1;
+                }
+            }
+        }
+    }
+    let mut placed = vec![false; n];
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    let mut start = 0usize;
+    loop {
+        let mut cur = start;
+        loop {
+            placed[cur] = true;
+            order.push(cur);
+            if depth[cur] == 0 {
+                break; // straight-line code outside loops keeps its order
+            }
+            let cand: Vec<usize> = succs(cur).into_iter().filter(|s| !placed[*s] && !cold[*s] && depth[*s] > 0).collect();
+            let next = match cand.len() {
+                0 => break,
+                1 => cand[0],
+                _ => {
+                    let (a, b) = (cand[0], cand[1]);
+                    if a == b {
+                        a
+                    } else if depth[a] != depth[b] {
+                        if depth[a] > depth[b] { a } else { b }
+                    } else if (preds[a] == 1) != (preds[b] == 1) {
+                        if preds[a] == 1 { a } else { b }
+                    } else {
+                        a.min(b)
+                    }
+                }
+            };
+            cur = next;
+        }
+        match (0..n).find(|b| !placed[*b] && !cold[*b]) {
+            Some(b) => start = b,
+            None => break,
+        }
+    }
+    order.extend((0..n).filter(|b| cold[*b] && !placed[*b]));
+    let mut new_id = vec![0usize; n];
+    for (k, o) in order.iter().enumerate() {
+        new_id[*o] = k;
+    }
+    let map = |t: &Term| match t {
+        Term::Jmp(x) => Term::Jmp(new_id[*x]),
+        Term::Br(c, a, b) => Term::Br(*c, new_id[*a], new_id[*b]),
+        o => o.clone(),
+    };
+    let blocks: Vec<Block> = order
+        .iter()
+        .map(|o| Block { insts: f.blocks[*o].insts.clone(), term: map(&f.blocks[*o].term) })
+        .collect();
+    let newcold: Vec<bool> = order.iter().map(|o| cold[*o]).collect();
+    (
+        IrFunc {
+            name: f.name.clone(),
+            lib: f.lib,
+            nparams: f.nparams,
+            vranges: f.vranges.clone(),
+            nvregs: f.nvregs,
+            slots: f.slots.clone(),
+            blocks,
+        },
+        newcold,
+    )
+}
+
 /// Number of 8-byte zero-initialised global cells reachable through the `__global(i)` intrinsic.
 pub const GLOBAL_CELLS: i64 = 64;

@@ -2111,7 +2111,7 @@ fn emit_string_method(gen: mut Generator, tree: view List<ast.AstNode>, recv: In
   } else if name != "len" && name != "byte" && name != "eq" && name != "clear" &&
       name != "push_int" && name != "push_str" && name != "push_byte" &&
       name != "push_char" && name != "char_at" && name != "char_size" &&
-      name != "raw_addr" && name != "push_raw" {
+      name != "raw_addr" && name != "push_raw" && name != "reserve" {
     unsupported("String.{name}")
   }
   var values = List<String>.new()

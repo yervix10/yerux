@@ -1,0 +1,10 @@
+fn main() {
+  var v = List<String>.new()
+  v.push(String.from("a"))
+  v.push(String.from("b"))
+  v.push(String.from("c"))
+  v.remove(0)
+  v.pop()
+  print(v.len())
+  print(v.at(0))
+}

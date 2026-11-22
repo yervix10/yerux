@@ -199,7 +199,7 @@ m.remove(k) -> Bool                          m.take(k) -> V   (moves the value o
 
 ### String API
 ```
-s.len() s.is_empty() s.char_count()    s.byte(i)  s.eq(x)  s.push_str(x)  s.push_int(n)  s.push_byte(b)  s.push_slice(x, from, to)
+s.len() s.is_empty() s.char_count()    s.byte(i)  s.eq(x)  s.push_str(x)  s.push_int(n)  s.push_byte(b)  s.push_slice(x, from, to)  s.reserve(n)
 s.starts_with(p)  s.ends_with(p)  s.contains(p)  s.find(p) -> byte index or -1  s.find_from(p, i)
 s.slice(from, to) -> String      (byte range; both ends must be character boundaries, else panic; s.is_boundary(i))
 s.split(sep) -> List<String>     (sep not empty)      parts.join(sep) -> String        s.replace(from, to)   s.repeat(n)

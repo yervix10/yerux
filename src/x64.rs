@@ -2110,6 +2110,15 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         (Some(l), c)
     };
     let f = laid.as_ref().unwrap_or(f);
+    let chained = if std::env::var_os("YERUX_NO_CHAIN").is_some() || f.blocks.len() > 4000 {
+        None
+    } else {
+        Some(crate::layout::chain_layout(f, &cold))
+    };
+    let (f, cold) = match &chained {
+        Some((g, c)) => (g, c.clone()),
+        None => (f, cold),
+    };
     let rotated = if std::env::var_os("YERUX_NO_ROTATE").is_some() {
         None
     } else {

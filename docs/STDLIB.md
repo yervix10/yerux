@@ -30,6 +30,7 @@ All APIs below are from `src/prelude*.yx` — ordinary Yerux code compiled only 
 | `push_byte` | `fn push_byte(mut self, b: Int)` 0..255 | `s.push_byte(65)` |
 | `push_char` | `fn push_char(mut self, c: Char)` | `s.push_char('é')` |
 | `push_slice` | `fn push_slice(mut self, x: view String, from: Int, to: Int)` | `s.push_slice(other, 0, 3)` |
+| `reserve` | `fn reserve(mut self, extra: Int)` | `s.reserve(1000)` makes room for `extra` more bytes in one allocation (no effect for `extra <= 0`) |
 | `clear` | `fn clear(mut self)` | `s.clear()` |
 
 ### Comparison & Access

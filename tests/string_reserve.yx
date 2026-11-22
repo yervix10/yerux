@@ -1,0 +1,25 @@
+fn main() {
+  var s = String.new()
+  s.reserve(100)
+  s.push_str("abc")
+  s.reserve(0)
+  s.reserve(-5)
+  s.push_int(42)
+  print(s)
+  var parts = List<String>.new()
+  var i = 0
+  while i < 50 {
+    var p = String.new()
+    p.push_int(i * 7)
+    parts.push(move p)
+    i = i + 1
+  }
+  let j = parts.join(", ")
+  print(j.len())
+  print(j)
+  let e = List<String>.new()
+  print(e.join("-").len())
+  var one = List<String>.new()
+  one.push(String.from("solo"))
+  print(one.join("--"))
+}

@@ -46,7 +46,7 @@ error: String has no method 'shout'
    |
 14 |   s.shout()
    |   ^^^^^^^^^
-   = methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)
+   = methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)
    = to visit the characters write `for c in s.chars() { .. }`
    = help: check the receiver type and method name, or define the method in an `impl` block
 
