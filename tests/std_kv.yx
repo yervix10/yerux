@@ -30,5 +30,17 @@ fn main() {
         Ok(value) => { match value { None => { print("absent") } Some(_) => { print("unexpected") } } }
         Err(_) => { print("unexpected") }
     }
+    // delete and keys
+    match kv.delete(store, "name") { Ok(removed) => { print(removed) } Err(_) => { print("delete error") } }
+    match kv.delete(store, "name") { Ok(removed) => { print(removed) } Err(_) => { print("delete error") } }
+    match kv.get(store, "name") {
+        Ok(value) => { match value { None => { print("deleted") } Some(_) => { print("still there") } } }
+        Err(_) => { print("unexpected") }
+    }
+    match kv.set(store, "name", "again") { Ok(_) => {} Err(_) => { print("write error") } }
+    match kv.keys(store) {
+        Ok(names) => { print(names.len()) for k in names { print(k) } }
+        Err(_) => { print("keys error") }
+    }
     match fs.remove_file(path) { Ok(_) => {} Err(_) => {} }
 }
