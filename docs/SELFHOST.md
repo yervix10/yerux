@@ -221,9 +221,10 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-22 run matched **395 of 418 candidates (94.5%)**, with 100 runtime
-panics reproduced exactly, 22 candidates outside the supported subset, one
-expected type rejection and zero mismatches. (82.1% on 2026-11-21 before the
+2026-11-22 run matched **402 of 430 candidates (93.5%)**, with 100 runtime
+panics reproduced exactly, 27 candidates outside the supported subset, one
+expected type rejection and zero mismatches. The corpus now includes five
+additional `json_edge_*` programs. (82.1% on 2026-11-21 before the
 codegen/front-end work of that day; the history is in `git log selfhost/`.)
 
 `bash tests/selfhost_stage2.sh` (part of `tests/run_all.sh`) checks the
@@ -234,16 +235,17 @@ seven stages and keeps their C with `--keep-c`), generation 1 builds it again
 (`cmp`), and generation 2 still compiles and runs a program. None of this
 uses the Rust compiler after the seed.
 
-The 31 remaining rejections, by group:
+The 27 current rejections, by group (first diagnostic from
+`SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`):
 
 | Group | Programs | What is missing |
 |---|---|---|
-| Concurrency | 13 (`conc_*`, `concurrency*`, `thread_pool`, `net_drop`, `std_sync`, channels) | `spawn`/`scope`/`JoinHandle`, `Mutex`/`RwLock`, channels, atomics: runtime pieces plus closures with captures that cross threads |
-| Slices | 5 (`slice_chunks*`, `slice_edge_*`, `slice_split_oob`) | `chunks`/`windows`/`split_at*`, a slice as a `for` variable or binding (`slice binding` is an explicit `unsupported`) |
-| `extern`/`link`/pointers | 3 (`ffi_*`, `ptr_construct`) | C prototypes for `extern` blocks, `Ptr<T>` |
-| Iterators and errors | 4 (`iter_basic`, `iter_more`, `err_context`, `arr_const`) | method syntax over `std__iter_<name>` free functions and `context`/`wrap` (the Rust checker rewrites them), const generics |
-| Compile-time | 2 (`comptime_*`) | `__comptime` evaluation |
-| Other | 4 (`own_deep_scc_drop`, `arr_eq_show`, `trait_default`, `mod_ok/consts_types`) | recursive by-value layouts through lists, `contains` over arrays of arrays, trait default methods and `pub const` forms in the source parser |
+| Concurrency and synchronization (13) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_runtime.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx`, `std_sync.yx` | Unresolved local bindings in concurrency lowering; generic `Sender.unbounded`/`Sender.bounded`; `__atomic_store`; unsupported `Atomic<Int>`. Runtime/threading features and closures crossing threads remain unsupported. |
+| Iterators and errors (4) | `tests/iter_basic.yx`, `iter_more.yx`, `err_context.yx`, `arr_const.yx` | Generic member `Iter.range`; cannot infer `Option.Some` type argument; `Result<Int, ParseErr>` has no `context` method; cannot infer type parameter `K` of `total`. |
+| Compile-time (1) | `tests/comptime_arrays.yx` | Codegen receives unresolved type `?`; compile-time array evaluation is unsupported. |
+| Arrays and ownership (2) | `tests/arr_eq_show.yx`, `own_deep_scc_drop.yx` | List search for `Array<Int, 2>`; recursive by-value struct `Dir`. |
+| JSON (5) | `tests/json_edge_deep.yx`, `json_edge_empty.yx`, `json_edge_escapes.yx`, `json_edge_numbers.yx`, `json_edge_utf8.yx` | Codegen does not support `Map<String, Int>`, used by these `std.json` tests. |
+| Source syntax (2) | `tests/trait_default.yx`, `tests/mod_ok/consts_types/main.yx` | Parser reports `SyntaxError:3` and `SyntaxError:16`, respectively; trait default methods and `pub const` forms are not accepted. |
 
 Set `SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
 and category for each unsupported file.
@@ -253,9 +255,9 @@ and category for each unsupported file.
 Measured on 2026-11-22: the driver compiles all seven `selfhost/*.yx` stages
 and itself without the Rust compiler (`--stage2`), and reproduces itself
 byte for byte. It builds `examples/project` and every program of the corpus
-except the 31 above. What stops it from replacing `yerux build`:
+except the 27 above. What stops it from replacing `yerux build`:
 
-1. the 31 programs above (concurrency is the biggest block), plus native
+1. the 27 programs above (concurrency is the biggest block), plus native
    x86-64/aarch64/PE backends, `--check-ranges`, `yerux fmt/lsp/doctor` and
    the package manager, which exist only in the Rust binary;
 2. diagnostics: the self-hosted stages print their own messages and no spans;
