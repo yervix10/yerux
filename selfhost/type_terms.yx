@@ -144,21 +144,27 @@ pub fn mentions(ty: view String, names: view List<String>) -> Bool {
 }
 
 pub fn compatible(expected: view String, actual: view String) -> Bool {
+  return compatible_type(expected, actual, false)
+}
+
+fn compatible_type(expected: view String, actual: view String, exact_ranges: Bool) -> Bool {
   if expected == actual || expected == "?" || actual == "?" { return true }
   let mode = parameter_prefix(expected)
   if mode != 0 || parameter_prefix(actual) != 0 {
     return mode == parameter_prefix(actual) &&
-      compatible(expected.slice(mode, expected.len()), actual.slice(mode, actual.len()))
+      compatible_type(expected.slice(mode, expected.len()), actual.slice(mode, actual.len()), exact_ranges)
   }
   var a = List<String>.new()
   var b = List<String>.new()
+  var strict = exact_ranges
   if expected.starts_with("fn(") && actual.starts_with("fn(") {
+    strict = true
     a = function_parts(expected)
     b = function_parts(actual)
   } else {
     let name = base(expected)
     if name != base(actual) { return false }
-    if name == "Int" { return true }
+    if name == "Int" { return !strict }
     a = arguments(expected)
     b = arguments(actual)
     if name == "List" {
@@ -168,7 +174,7 @@ pub fn compatible(expected: view String, actual: view String) -> Bool {
   }
   if a.len() != b.len() || a.len() == 0 { return false }
   for i in 0..a.len() {
-    if !compatible(a.at(i), b.at(i)) { return false }
+    if !compatible_type(a.at(i), b.at(i), strict) { return false }
   }
   return true
 }
