@@ -1,9 +1,11 @@
 // RFC 4180 CSV. Records are lists of fields; a final CRLF is optional.
 pub fn parse(input: view String) -> List<List<String>> {
   var rows = List<List<String>>.new()
+  if input.len() > 16777216 { return rows }
   var row = List<String>.new()
   var field = String.new()
   var quoted = false
+  var cells = 0
   var i = 0
   while i < input.len() {
     // CSV syntax bytes are ASCII. Work byte-wise so UTF-8 continuation bytes
@@ -24,9 +26,13 @@ pub fn parse(input: view String) -> List<List<String>> {
       quoted = true
     } else if c == 44 {
       row.push(move field)
+      cells = cells + 1
+      if cells > 100000 { return List<List<String>>.new() }
       field = String.new()
     } else if c == 10 || c == 13 {
       row.push(move field)
+      cells = cells + 1
+      if cells > 100000 { return List<List<String>>.new() }
       field = String.new()
       rows.push(move row)
       row = List<String>.new()
@@ -38,6 +44,8 @@ pub fn parse(input: view String) -> List<List<String>> {
   }
   if field.len() > 0 || row.len() > 0 {
     row.push(move field)
+    cells = cells + 1
+    if cells > 100000 { return List<List<String>>.new() }
     rows.push(move row)
   }
   return rows
