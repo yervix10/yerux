@@ -6,31 +6,33 @@ pub fn parse(input: view String) -> List<List<String>> {
   var quoted = false
   var i = 0
   while i < input.len() {
-    let c = input.char_at(i)
+    // CSV syntax bytes are ASCII. Work byte-wise so UTF-8 continuation bytes
+    // are copied as data instead of decoded as independent characters.
+    let c = input.byte(i)
     if quoted {
-      if c.to_int() == 34 {
-        if i + 1 < input.len() && input.char_at(i + 1).to_int() == 34 {
-          field.push_char(c)
+      if c == 34 {
+        if i + 1 < input.len() && input.byte(i + 1) == 34 {
+          field.push_byte(c)
           i = i + 1
         } else {
           quoted = false
         }
       } else {
-        field.push_char(c)
+        field.push_byte(c)
       }
-    } else if c.to_int() == 34 && field.len() == 0 {
+    } else if c == 34 && field.len() == 0 {
       quoted = true
-    } else if c.to_int() == 44 {
+    } else if c == 44 {
       row.push(move field)
       field = String.new()
-    } else if c.to_int() == 10 || c.to_int() == 13 {
+    } else if c == 10 || c == 13 {
       row.push(move field)
       field = String.new()
       rows.push(move row)
       row = List<String>.new()
-      if c.to_int() == 13 && i + 1 < input.len() && input.char_at(i + 1).to_int() == 10 { i = i + 1 }
+      if c == 13 && i + 1 < input.len() && input.byte(i + 1) == 10 { i = i + 1 }
     } else {
-      field.push_char(c)
+      field.push_byte(c)
     }
     i = i + 1
   }
