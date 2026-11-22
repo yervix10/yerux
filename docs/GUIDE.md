@@ -1219,6 +1219,9 @@ yerux new app                        # a project: app/yerux.toml + app/src/main.
 yerux build | run | test             # (no file) the same, from a project root
 yerux fmt [--check|--stdout] file.yx # format
 yerux test [file.yx|dir]             # run `test "name" { .. }` blocks
+yerux add NAME --path DIR            # dependency in yerux.toml (--git URL --version "^1.2"); yerux remove NAME
+yerux doc [--html]                   # API pages from /// comments (docs/TOOLS.md)
+yerux bench [file.yx|dir]            # run `bench "name" { .. }` blocks
 yerux lsp                            # language server on stdin/stdout (editors/vscode)
 ```
 

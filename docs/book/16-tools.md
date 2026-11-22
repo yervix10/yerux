@@ -11,9 +11,14 @@ Everything below is part of the one `yerux` binary.
 | `yerux new NAME` / `yerux build` / `yerux run` / `yerux test` | project commands (chapter 13) |
 | `yerux test [file.yx\|dir] [--native] [--filter text]` | run `test "name" { .. }` blocks |
 | `yerux fmt [--check\|--stdout] file.yx\|dir` | the formatter |
+| `yerux add NAME --path DIR\|--git URL [--version REQ]` / `yerux remove NAME` | edit the dependencies of `yerux.toml`, resolve versions, update `yerux.lock` |
+| `yerux doc [--html] [-o DIR] [dir]` | API pages from the `///` comments of public items |
+| `yerux bench [file.yx\|dir] [--runs N]` | run the `bench "name" { .. }` blocks and report min/median/mean |
 | `yerux lsp` | the language server |
 | `yerux --version` / `yerux doctor` | the version / a self-diagnosis of the installation (C compiler, wine, both backends) |
 | `yerux tokens`, `ast-file`, `resolve-file`, `types-file`, `locals-file` | dumps used by the self-hosting comparison tests |
+
+The four tools added last (`add`/`remove`, `doc`, `bench`, and `fmt --check` for CI) are described in [TOOLS.md](../TOOLS.md).
 
 ## Tests: `yerux test`
 
