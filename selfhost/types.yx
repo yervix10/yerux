@@ -868,6 +868,18 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
       if range.starts_with("Int<") { return check_range_member(types, tree, range, name, args) }
     }
   }
+  if receiver >= 0 && (name == "split_at" || name == "split_at_mut") && child_count(tree, args) == 2 &&
+      (owner.starts_with("Array<") || owner.starts_with("Slice<") || owner.starts_with("List<") || owner == "List") {
+    let size = String.from("Int")
+    expect_type(types, size, infer(types, tree, args + 1, size))
+    let half = type_terms.bracket(type_terms.element(owner), String.from("_"))
+    var halves = List<Parameter>.new()
+    halves.push(Parameter { mode: String.from("Own"), ty: String.from(half) })
+    halves.push(Parameter { mode: String.from("Own"), ty: String.from(half) })
+    let hint = add_signature(types, String.new(), move halves, unit())
+    let found = infer(types, tree, tree.at(args + 1).end, hint)
+    return unit()
+  }
   if receiver >= 0 && (name == "chunks" || name == "windows") && child_count(tree, args) == 1 &&
       (owner.starts_with("Array<") || owner.starts_with("Slice<") || owner.starts_with("List<") || owner == "List") {
     // an iterable of slices of the receiver; only `for` consumes it

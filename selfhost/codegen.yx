@@ -715,7 +715,7 @@ fn append_show(gen: mut Generator, tree: view List<ast.AstNode>, dst: view Value
     } else { line(gen, "nx_str_push_str(&{dst.code}, nx_str_text(\"{second}\"));") }
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
-  } else if base == "List" || base == "Array" {
+  } else if base == "List" || base == "Array" || base == "Slice" {
     let id = gen.temp
     gen.temp = id + 1
     line(gen, "nx_str_push_byte(&{dst.code}, '[');")
@@ -1290,6 +1290,48 @@ fn comparison_call(gen: mut Generator, tree: view List<ast.AstNode>, method: Int
     return "F{instance}(&({left.code}), &({right.code}))"
   }
   return "F{instance}({left.code}, {right.code})"
+}
+
+// `xs.split_at(k, |left, right| body)` with a closure literal: the halves become slice locals and the
+// body runs in place (it must not `return`).
+fn emit_split_at(gen: mut Generator, tree: view List<ast.AstNode>, recv: Int, args: Int) -> Value {
+  let source = expression(gen, tree, recv)
+  let cut = expression(gen, tree, args + 1)
+  let split = temp(gen, tree, String.from("Int"), cut.code)
+  let node = tree.at(args + 1).end
+  let params = ast.child(tree, node, 4)
+  let block = ast.child(tree, node, 6)
+  if tree.at(ast.child(tree, node, 1)).tag != "true" {
+    for at in block..tree.at(block).end {
+      if tree.at(at).tag == "Return" { unsupported("return inside a split_at closure") }
+    }
+  }
+  let first_param = params + 1
+  if first_param >= tree.at(params).end || tree.at(first_param).end >= tree.at(params).end ||
+      tree.at(tree.at(first_param).end).end != tree.at(params).end { unsupported("split_at closure parameters") }
+  let second_param = tree.at(first_param).end
+  let element = type_terms.element(source.ty)
+  let slice_type = type_terms.bracket(element, String.from("_"))
+  prepare_type(gen, tree, source.ty)
+  prepare_type(gen, tree, slice_type)
+  let c = c_type(gen, tree, slice_type)
+  let length = temp(gen, tree, String.from("Int"), sequence_length(source))
+  line(gen, "if ({split.code} < 0 || {split.code} > {length.code}) nx_panic(\"index out of range\");")
+  line(gen, "{{")
+  gen.indent = gen.indent + 1
+  let left = id_at(gen, first_param)
+  let right = id_at(gen, second_param)
+  gen.references.set(left, false)
+  gen.references.set(right, false)
+  line(gen, "{c} v{left} = sc_slice_{c}(({source.code}).d, {length.code}, 0, {split.code});")
+  line(gen, "{c} v{right} = sc_slice_{c}(({source.code}).d, {length.code}, {split.code}, {length.code});")
+  if tree.at(ast.child(tree, node, 1)).tag == "true" {
+    let first = ast.child(tree, block, 0) + 1
+    let value = expression(gen, tree, ast.child(tree, first, 0))
+  } else { statement(gen, tree, block) }
+  gen.indent = gen.indent - 1
+  line(gen, String.from("}}"))
+  return Value { ty: String.from("nothing"), code: String.new() }
 }
 
 fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: view String,
@@ -1911,6 +1953,10 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
     if receiver_type == "Char" && name == "to_int" {
       let value = expression(gen, tree, recv)
       return Value { ty: String.from(ty), code: String.from(value.code) }
+    }
+    if (name == "split_at" || name == "split_at_mut") && tree.at(args).end > args + 1 &&
+        tree.at(tree.at(args + 1).end).tag == "Closure" {
+      return emit_split_at(gen, tree, recv, args)
     }
     let integer = integer_c(receiver_type)
     let float = floating_c(receiver_type)
