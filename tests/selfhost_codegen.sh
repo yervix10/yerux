@@ -70,7 +70,7 @@ if "$driver" --runtime "$tmp/custom-runtime" --emit-ast "$tmp/std-private.yx" 2>
   printf 'selfhost resolver accepted a private standard-library function\n' >&2
   exit 1
 fi
-rg -q 'private-item:terminal:std.io:source_private' "$tmp/std-private.err"
+grep -q 'private-item:terminal:std.io:source_private' "$tmp/std-private.err"
 
 cat >"$tmp/deferred-move.yx" <<'SOURCE'
 fn consume(s: String) {}
