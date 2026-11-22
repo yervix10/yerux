@@ -209,6 +209,8 @@ const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]
+       yerux add NAME --path DIR | --git URL [--tag T | --version REQ]   (dependency in yerux.toml; updates yerux.lock)
+       yerux remove NAME
        yerux doc [--html] [-o DIR] [dir|file.yx ...]
        yerux bench [file.yx|dir ...] [--native] [--no-opt] [--filter text] [--runs N]";
 
@@ -469,6 +471,17 @@ fn real_main() {
                 exit(1);
             }
         }
+    }
+    if args.len() >= 2 && matches!(args[1].as_str(), "add" | "remove") {
+        let r = if args[1] == "add" { project::add(&args[2..]) } else { project::remove(&args[2..]) };
+        match r {
+            Ok(msg) => println!("{msg}"),
+            Err(e) => {
+                eprintln!("{e}");
+                exit(if e.starts_with("usage") { 2 } else { 1 });
+            }
+        }
+        return;
     }
     if args.len() >= 2 && args[1] == "doc" {
         exit(doc::run_cli(&args[2..]));

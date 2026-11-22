@@ -3,6 +3,28 @@
 `yerux` is also the project tool. Commands that take no file work from a project root (the directory with
 `yerux.toml`); see [PACKAGES.md](PACKAGES.md). Each section below is covered by a script in `tests/tool_*.sh`.
 
+## `yerux add` / `yerux remove`
+
+```
+yerux add NAME --path DIR [--version REQ]
+yerux add NAME --git URL [--tag TAG | --version REQ]
+yerux remove NAME
+```
+
+Edit the `[dependencies]` table of `yerux.toml` (run in the project root), resolve, and rewrite `yerux.lock`.
+Adding a name that already exists replaces its entry. Everything else in the manifest is left as written.
+
+- `--path DIR` checks that `DIR/yerux.toml` is a package called `NAME`.
+- `--git URL --version REQ` lists the remote tags (`git ls-remote`), keeps those that are versions (`v1.2.3` or
+  `1.2.3`; pre-release tags are ignored), and pins the **highest** one that satisfies `REQ`. With neither `--tag` nor
+  `--version` the highest version tag is used; `--tag` pins exactly that tag.
+- `REQ` is `*`, `=1.2.3`, `>=1.2`, `^1.2.3` (compatible: `^1.2` is `>=1.2.0 <2.0.0`, `^0.2.3` is `<0.3.0`),
+  `~1.2.3` (patch changes only: `<1.3.0`) or a bare `1.2` (same as `^1.2`). It is stored in the manifest as
+  `version = "REQ"` and is checked against the dependency's own `[package].version` every time the project resolves.
+- `yerux.lock` records name, resolved version and source of every dependency.
+- If the dependency cannot be resolved (missing path, no tag satisfies, version mismatch) the manifest is restored and
+  the exit code is 1; bad arguments exit 2. `remove` also deletes the cached git checkout.
+
 ## `yerux fmt`
 
 ```

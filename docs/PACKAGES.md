@@ -12,3 +12,11 @@ desde el manifiesto; Git se fija a la etiqueta indicada. La resolución escribe
 los bloques de prueba de `tests/*.yx`. Dependencias se resuelven y fijan en
 cada comando; módulos dependientes se importan por el mecanismo de módulos del
 compilador.
+
+## Dependencias desde la línea de órdenes
+
+`yerux add NAME --path DIR` y `yerux add NAME --git URL --version "^1.2"` editan `[dependencies]`, resuelven la versión
+(para Git, la etiqueta `vX.Y.Z` más alta que cumple el requisito) y actualizan `yerux.lock`, que ahora registra también
+la versión resuelta de cada paquete. `yerux remove NAME` quita la dependencia. Un `version = "REQ"` en el manifiesto se
+comprueba contra la versión del paquete dependiente en cada resolución. Detalle y sintaxis de requisitos
+(`*`, `=`, `>=`, `^`, `~`): [TOOLS.md](TOOLS.md).
