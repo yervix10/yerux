@@ -20,7 +20,30 @@ const REC_ROUNDS: usize = 3; // ... this many times (each round inlines the prev
 const REC_ROUND_MAX: usize = 70; // ... while the body stays below this size
 
 fn size(f: &IrFunc) -> usize {
-    f.blocks.iter().map(|b| b.insts.len() + 1).sum()
+    f.blocks
+        .iter()
+        .map(|b| b.insts.iter().filter(|i| !matches!(i, Inst::Loc(_))).count() + 1)
+        .sum()
+}
+
+/// Make every instruction that can panic or call in `insts` belong to a location marker of its own block: the ones
+/// that follow no marker (library code has none) get `site`, the position of the call they were inlined at.
+fn ensure_loc(insts: Vec<Inst>, site: u32) -> Vec<Inst> {
+    if site == 0 {
+        return insts;
+    }
+    let mut out = Vec::with_capacity(insts.len() + 1);
+    let mut marked = false;
+    for i in insts {
+        if matches!(i, Inst::Loc(_)) {
+            marked = true;
+        } else if !marked && needs_loc(&i) {
+            out.push(Inst::Loc(site));
+            marked = true;
+        }
+        out.push(i);
+    }
+    out
 }
 
 fn calls_of(f: &IrFunc) -> Vec<usize> {
@@ -119,6 +142,7 @@ fn order(p: &IrProgram) -> Vec<usize> {
 fn clone_func(f: &IrFunc) -> IrFunc {
     IrFunc {
         name: f.name.clone(),
+        lib: f.lib,
         nparams: f.nparams,
         vranges: f.vranges.clone(),
         nvregs: f.nvregs,
@@ -157,8 +181,17 @@ fn inline_at(f: &mut IrFunc, bi: usize, ci: usize, callee: &IrFunc) {
         }
     }
     f.slots.extend(callee.slots.iter().copied());
+    // the source location of the call: the last marker before it in its block
+    let site = f.blocks[bi].insts[..ci]
+        .iter()
+        .rev()
+        .find_map(|i| if let Inst::Loc(l) = i { Some(*l) } else { None })
+        .unwrap_or(0);
     // split the call block: continuation gets the tail and the original terminator
-    let tail: Vec<Inst> = f.blocks[bi].insts.split_off(ci + 1);
+    let mut tail: Vec<Inst> = f.blocks[bi].insts.split_off(ci + 1);
+    if site != 0 {
+        tail.insert(0, Inst::Loc(site)); // the tail's checks keep the position they had before the split
+    }
     f.blocks[bi].insts.pop(); // the call itself
     let old_term = std::mem::replace(&mut f.blocks[bi].term, Term::Jmp(bbase));
     for (k, a) in args.iter().enumerate() {
@@ -217,6 +250,7 @@ fn inline_at(f: &mut IrFunc, bi: usize, ci: usize, callee: &IrFunc) {
             Term::Jmp(t) => Term::Jmp(*t + bbase),
             Term::Unreachable => Term::Unreachable,
         };
+        let insts = ensure_loc(insts, site);
         f.blocks.push(Block { insts, term });
     }
     // layout: callee blocks and the continuation go right after the call block (not at the end), so the

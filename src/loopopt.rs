@@ -295,13 +295,18 @@ fn remap_blocks(t: &mut Term, m: &dyn Fn(usize) -> usize) {
 const VERSION_MAX_BODY: usize = 150;
 const VERSION_MAX_FUNC: usize = 6000;
 
+/// Instructions of a block without the location markers (they take no code, so they are not part of any size limit).
+fn unmarked(insts: &[Inst]) -> usize {
+    insts.iter().filter(|i| !matches!(i, Inst::Loc(_))).count()
+}
+
 /// Bounds-check elimination by loop versioning. For an innermost loop whose `Check(idx, len)` has a loop-invariant
 /// `len` and an index range [0, hi] known from the range analysis, the loop is duplicated: a guard in front of
 /// the loop tests `hi < len` for every such check, and when it holds the check-free copy runs, otherwise the
 /// original loop with all its checks (so a panic still fires at exactly the same point, after the same side
 /// effects). The guard is a pure comparison on loop-invariant values, evaluated before the first iteration.
 pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
-    if cands.is_empty() || f.blocks.iter().map(|b| b.insts.len()).sum::<usize>() > VERSION_MAX_FUNC
+    if cands.is_empty() || f.blocks.iter().map(|b| unmarked(&b.insts)).sum::<usize>() > VERSION_MAX_FUNC
     {
         return false;
     }
@@ -318,7 +323,7 @@ pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
         }
         let size: usize = (0..nb0)
             .filter(|&b| l.body[b])
-            .map(|b| f.blocks[b].insts.len() + 1)
+            .map(|b| unmarked(&f.blocks[b].insts) + 1)
             .sum();
         if size > VERSION_MAX_BODY {
             continue;

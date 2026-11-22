@@ -23,6 +23,7 @@ pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
         | Inst::Slot(..)
         | Inst::FnAddr(..)
         | Inst::VTableAddr(..)
+        | Inst::Loc(_)
         | Inst::Global(..) => {}
         Inst::Thread(_, _, args) | Inst::Atomic(_, _, args) | Inst::Syscall(_, args) => {
             args.iter_mut().for_each(f)

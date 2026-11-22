@@ -253,6 +253,92 @@ pub enum Inst {
     LoadX(V, V, V, u8), // vreg = [base + idx*scale]; scale 0 = packed byte element: zero-extended [base + idx]
     StoreX(V, V, u8, V), // [base + idx*scale] = vreg; scale 0 = low byte to [base + idx]
     LeaX(V, V, V, u8),  // vreg = base + idx*scale
+    /// Source-location marker (an index into `IrProgram::locs`): the checked instructions and calls that follow
+    /// in the same block belong to that `.yx` position. No effect; the backends turn it into the panic site table
+    /// (`strip_locs` removes it first, so register allocation and code generation never see it).
+    Loc(u32),
+}
+
+/// Instructions that can panic (or call something that can) and so need a location marker in front of them.
+pub(crate) fn needs_loc(i: &Inst) -> bool {
+    match i {
+        Inst::Bin(_, op, ..) => matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod),
+        Inst::Neg(..) => true,
+        Inst::N(op, ..) => !op.pure(),
+        Inst::Check(..)
+        | Inst::CheckNonEmpty(_)
+        | Inst::Assert(_)
+        | Inst::Panic(..)
+        | Inst::Call(..)
+        | Inst::CallInd(..)
+        | Inst::ListGet(..) => true,
+        _ => false,
+    }
+}
+
+/// Take the location markers out of a function: the same instructions without them, and for every instruction
+/// the location it belongs to (0 = unknown; markers apply to the rest of their block).
+pub fn strip_locs(f: &IrFunc) -> (IrFunc, Vec<Vec<u32>>) {
+    let mut locs = Vec::with_capacity(f.blocks.len());
+    let blocks = f
+        .blocks
+        .iter()
+        .map(|b| {
+            let mut cur = 0;
+            let mut ls = Vec::with_capacity(b.insts.len());
+            let mut insts = Vec::with_capacity(b.insts.len());
+            for i in &b.insts {
+                if let Inst::Loc(l) = i {
+                    cur = *l;
+                } else {
+                    insts.push(i.clone());
+                    ls.push(cur);
+                }
+            }
+            locs.push(ls);
+            Block {
+                insts,
+                term: b.term.clone(),
+            }
+        })
+        .collect();
+    (
+        IrFunc {
+            name: f.name.clone(),
+            lib: f.lib,
+            nparams: f.nparams,
+            vranges: f.vranges.clone(),
+            nvregs: f.nvregs,
+            slots: f.slots.clone(),
+            blocks,
+        },
+        locs,
+    )
+}
+
+/// Interned source positions of the IR program: (file, line, column), index 0 = unknown.
+pub struct LocTab {
+    pub rows: Vec<(u32, u32, u32)>,
+    ix: HashMap<(u32, u32, u32), u32>,
+}
+
+impl LocTab {
+    fn new() -> LocTab {
+        LocTab {
+            rows: vec![(0, 0, 0)],
+            ix: HashMap::new(),
+        }
+    }
+    fn intern(&mut self, pos: Pos) -> u32 {
+        let key = ((pos.line >> 20) as u32, (pos.line & 0xFFFFF) as u32, pos.col as u32);
+        if let Some(i) = self.ix.get(&key) {
+            return *i;
+        }
+        let i = self.rows.len() as u32;
+        self.rows.push(key);
+        self.ix.insert(key, i);
+        i
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -271,6 +357,8 @@ pub struct Block {
 
 pub struct IrFunc {
     pub name: String,
+    /// a function of the built-in library: its panics are reported at the user's call (see `Inst::Loc`)
+    pub lib: bool,
     pub nparams: usize,
     /// Declared integer intervals (`Int<lo..hi>` types), indexed by vreg and possibly shorter than `nvregs`:
     /// every definition of such a vreg produces a value inside the interval (parameters, variables of a range
@@ -288,6 +376,9 @@ pub struct IrProgram {
     pub vtables: Vec<Vec<usize>>, // drop glue first, then methods in declaration order
     pub externs: Vec<String>,
     pub links: Vec<String>,
+    /// source positions the `Loc` markers refer to, and the names of the source files (set by the driver)
+    pub locs: Vec<(u32, u32, u32)>,
+    pub files: Vec<String>,
 }
 
 // ───────────────────────── Lowering: AST -> IR ─────────────────────────
@@ -402,6 +493,13 @@ struct L<'a> {
     texts: &'a mut Vec<Vec<u8>>,
     helpers: &'a mut Helpers,
     extern_ids: &'a HashMap<String, usize>,
+    locs: &'a mut LocTab,
+    /// per function id: is it a library function (calls to those are the ones that need a location)
+    lib_fn: &'a [bool],
+    /// source position of the expression being lowered (line 0 = none: library code), and per block the
+    /// location id its last marker set
+    loc: Pos,
+    bloc: Vec<u32>,
 }
 
 type LR<T> = Result<T, String>;
@@ -588,10 +686,31 @@ impl<'a> L<'a> {
     }
     fn block(&mut self) -> usize {
         self.blocks.push((vec![], None));
+        self.bloc.push(0);
         self.blocks.len() - 1
     }
     fn emit(&mut self, i: Inst) {
+        let wants = match &i {
+            Inst::Call(_, id, _) => self.lib_fn.get(*id).copied().unwrap_or(false),
+            Inst::CallInd(..) => false,
+            other => needs_loc(other),
+        };
+        if wants && self.loc.line != 0 {
+            let id = self.locs.intern(self.loc);
+            if self.bloc[self.cur] != id {
+                self.blocks[self.cur].0.push(Inst::Loc(id));
+                self.bloc[self.cur] = id;
+            }
+        }
         self.blocks[self.cur].0.push(i);
+    }
+    /// Make `pos` the current source location (library code has none); returns the previous one.
+    fn at_pos(&mut self, pos: Pos) -> Pos {
+        let old = self.loc;
+        if pos.line != 0 && pos.line < PRELUDE_LINE {
+            self.loc = pos;
+        }
+        old
     }
     fn term(&mut self, t: Term) {
         if self.blocks[self.cur].1.is_none() {
@@ -714,6 +833,13 @@ impl<'a> L<'a> {
     /// computed in phase 2 (`place_at`), after all arguments of the enclosing call are evaluated, so
     /// a borrowed element can never dangle because an argument grew the list.
     fn prep(&mut self, e: &Expr) -> LR<Vec<V>> {
+        let saved = self.at_pos(e.pos);
+        let r = self.prep_at(e);
+        self.loc = saved;
+        r
+    }
+
+    fn prep_at(&mut self, e: &Expr) -> LR<Vec<V>> {
         Ok(match &e.k {
             EK::Var(..) | EK::Move(..) => vec![],
             EK::Field(b, _) => self.prep(b)?,
@@ -744,6 +870,13 @@ impl<'a> L<'a> {
 
     /// Phase 2 of a place: the address, consuming the values `prep` produced (bounds checks happen here).
     fn place_at(&mut self, e: &Expr, it: &mut std::vec::IntoIter<V>) -> LR<(V, i32)> {
+        let saved = self.at_pos(e.pos);
+        let r = self.place_in(e, it);
+        self.loc = saved;
+        r
+    }
+
+    fn place_in(&mut self, e: &Expr, it: &mut std::vec::IntoIter<V>) -> LR<(V, i32)> {
         match &e.k {
             EK::Var(_, id) | EK::Move(_, id) => match self.vars[id] {
                 Loc::Mem(a) => Ok((a, 0)),
@@ -1334,6 +1467,13 @@ impl<'a> L<'a> {
     }
 
     fn stmt(&mut self, s: &Stmt) -> LR<()> {
+        let saved = self.at_pos(s.pos);
+        let r = self.stmt_at(s);
+        self.loc = saved;
+        r
+    }
+
+    fn stmt_at(&mut self, s: &Stmt) -> LR<()> {
         match &s.k {
             SK::Let(_, _, init, id) => self.declare(*id, init)?,
             SK::Assign(target, val) => {
@@ -1950,6 +2090,13 @@ impl<'a> L<'a> {
     }
 
     fn expr(&mut self, e: &Expr) -> LR<V> {
+        let saved = self.at_pos(e.pos);
+        let r = self.expr_at(e);
+        self.loc = saved;
+        r
+    }
+
+    fn expr_at(&mut self, e: &Expr) -> LR<V> {
         let v = self.expr_inner(e)?;
         // --check-ranges also verifies the flow facts the checker used: a read of a variable that has a range type
         // narrower than the variable's own
@@ -3599,6 +3746,8 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         .collect();
     let mut texts = vec![];
     let mut funcs = vec![];
+    let mut loc_tab = LocTab::new();
+    let lib_fn: Vec<bool> = prog.funcs.iter().map(|f| f.pos.line >= PRELUDE_LINE).collect();
     let mut helpers = Helpers {
         base: prog.funcs.len(),
         all: vec![],
@@ -3635,6 +3784,10 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             texts: &mut texts,
             helpers: &mut helpers,
             extern_ids: &extern_ids,
+            locs: &mut loc_tab,
+            lib_fn: &lib_fn,
+            loc: Pos::default(),
+            bloc: vec![0],
         };
         // parameter vregs: [hidden return pointer], then one per declared parameter
         let hidden = is_agg(f.ret) as usize;
@@ -3697,6 +3850,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         }
         funcs.push(IrFunc {
             name: f.name.clone(),
+            lib: f.pos.line >= PRELUDE_LINE,
             nparams,
             vranges,
             nvregs: l.nv,
@@ -3770,6 +3924,10 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             texts: &mut texts,
             helpers: &mut helpers,
             extern_ids: &extern_ids,
+            locs: &mut loc_tab,
+            lib_fn: &lib_fn,
+            loc: Pos::default(),
+            bloc: vec![0],
         };
         let r = match kind {
             H_DROP_DYN_DATA => {
@@ -3803,6 +3961,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             .collect();
         funcs.push(IrFunc {
             name,
+            lib: false,
             nparams,
             vranges: vec![None; nparams],
             nvregs: l.nv,
@@ -3819,11 +3978,14 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         vtables,
         externs: prog.externs.iter().map(|f| f.name.clone()).collect(),
         links: prog.links.clone(),
+        locs: loc_tab.rows,
+        files: vec![],
     })
 }
 
 fn fmt_inst(i: &Inst) -> String {
     match i {
+        Inst::Loc(l) => format!("loc#{}", l),
         Inst::Const(d, n) => format!("v{} = {}", d, n),
         Inst::Text(d, n) => format!("v{} = text#{}", d, n),
         Inst::VTableAddr(d, n) => format!("v{} = vtable#{}", d, n),
@@ -3913,7 +4075,7 @@ pub fn dump(p: &IrProgram) -> String {
         }
         for (i, b) in f.blocks.iter().enumerate() {
             s += &format!("  b{}:\n", i);
-            for ins in &b.insts {
+            for ins in b.insts.iter().filter(|i| !matches!(i, Inst::Loc(_))) {
                 s += &format!("    {}\n", fmt_inst(ins));
             }
             s += &format!("    {:?}\n", b.term);
