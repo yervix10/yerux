@@ -1261,6 +1261,7 @@ impl<'a> Checker<'a> {
                             "clear",
                             "push_byte",
                             "push_slice",
+                            "reserve",
                             "raw_addr",
                             "push_raw",
                         ]
@@ -3005,11 +3006,12 @@ impl<'a> Checker<'a> {
             "clear" => (0, Ty::Unit, true),
             "push_byte" => (1, Ty::Unit, true),
             "push_slice" => (3, Ty::Unit, true),
+            "reserve" => (1, Ty::Unit, true),
             "raw_addr" => (0, Ty::Int, false),
             "push_raw" => (2, Ty::Unit, true),
             _ => {
                 self.err(diag(format!("String has no method '{}'", m), pos)
-                    .note("methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)")
+                    .note("methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)")
                     .note("to visit the characters write `for c in s.chars() { .. }`"));
                 return Ty::Err;
             }

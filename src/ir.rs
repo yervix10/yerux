@@ -436,6 +436,7 @@ const H_DROP_ENUM: u8 = 10; // key: enum index; fn(enum): drop the owned payload
 const H_DROP_DYN_DATA: u8 = 12;
 const H_DYN_ADAPTER: u8 = 13;
 const H_PANIC_DROP: u8 = 14;
+const H_STR_RESERVE: u8 = 15; // fn(string, extra): room for `extra` more bytes
 const H_DROP_BOX: u8 = 11; // key: box type index; fn(box): drop the pointee, free the cell
 
 impl Helpers {
@@ -1759,6 +1760,38 @@ impl<'a> L<'a> {
         })
     }
 
+    /// Reallocate the string in v0 (len, cap) to hold `need` bytes when `big` (need > cap): capacities are
+    /// 2^k - 8 (first 56), the block is a power of two.
+    fn str_grow(&mut self, len: V, cap: V, need: V, big: V) -> LR<()> {
+        let l = self;
+        l.if_then(big, |l| {
+                        // capacities are 2^k - 8 (first 56): the block is a power of two
+                        let nc = l.v();
+                        l.emit(Inst::Mov(nc, cap));
+                        let z = l.konst(0);
+                        let isz = l.bin(Op::Eq, nc, z);
+                        l.if_then(isz, |l| {
+                            l.emit(Inst::Const(nc, 56));
+                            Ok(())
+                        })?;
+                        l.while_do(
+                            |l| Ok(l.bin(Op::Lt, nc, need)),
+                            |l| {
+                                let d = l.bink(Op::Mul, nc, 2);
+                                let d = l.bink(Op::Add, d, 8);
+                                l.emit(Inst::Mov(nc, d));
+                                Ok(())
+                            },
+                        )?;
+                        let old = l.hload(0, 0);
+                        let nb = l.v();
+                        l.emit(Inst::Realloc(nb, old, nc, len));
+                        l.emit(Inst::Store(0, 0, nb));
+                        l.emit(Inst::Store(0, 16, nc));
+                        Ok(())
+                    })
+    }
+
     fn string_method(&mut self, recv: &Expr, m: &str, args: &[Expr]) -> LR<V> {
         // by-value arguments are evaluated before the receiver place (SPEC: borrow exception)
         let mut pre_apre = None;
@@ -1766,7 +1799,7 @@ impl<'a> L<'a> {
         let mut pre_xs: Vec<V> = vec![];
         match m {
             "push_str" | "eq" => pre_apre = Some(self.str_prep(&args[0])?),
-            "push_int" | "byte" | "push_byte" | "push_char" | "char_at" | "char_size" => {
+            "push_int" | "byte" | "push_byte" | "push_char" | "char_at" | "char_size" | "reserve" => {
                 pre_x = Some(self.expr(&args[0])?)
             }
             "push_slice" => {
@@ -1816,6 +1849,14 @@ impl<'a> L<'a> {
                     self.emit(Inst::Call(Some(d), h, vec![la, p, n]));
                     Ok(d)
                 }
+            }
+            "reserve" => {
+                let x = pre_x.unwrap();
+                let (b, o) = self.place_at(recv, &mut rpre.into_iter())?;
+                let la = self.at(b, o);
+                let h = self.helpers.get(H_STR_RESERVE, 0);
+                self.emit(Inst::Call(None, h, vec![la, x]));
+                Ok(self.v())
             }
             "push_int" => {
                 let x = pre_x.unwrap();
@@ -3403,38 +3444,25 @@ impl<'a> L<'a> {
                     let (len, cap) = (l.hload(0, 8), l.hload(0, 16));
                     let need = l.bin(Op::Add, len, 2);
                     let big = l.bin(Op::Gt, need, cap);
-                    l.if_then(big, |l| {
-                        // capacities are 2^k - 8 (first 56): the block is a power of two
-                        let nc = l.v();
-                        l.emit(Inst::Mov(nc, cap));
-                        let z = l.konst(0);
-                        let isz = l.bin(Op::Eq, nc, z);
-                        l.if_then(isz, |l| {
-                            l.emit(Inst::Const(nc, 56));
-                            Ok(())
-                        })?;
-                        l.while_do(
-                            |l| Ok(l.bin(Op::Lt, nc, need)),
-                            |l| {
-                                let d = l.bink(Op::Mul, nc, 2);
-                                let d = l.bink(Op::Add, d, 8);
-                                l.emit(Inst::Mov(nc, d));
-                                Ok(())
-                            },
-                        )?;
-                        let old = l.hload(0, 0);
-                        let nb = l.v();
-                        l.emit(Inst::Realloc(nb, old, nc, len));
-                        l.emit(Inst::Store(0, 0, nb));
-                        l.emit(Inst::Store(0, 16, nc));
-                        Ok(())
-                    })?;
+                    l.str_grow(len, cap, need, big)?;
                     let buf = l.hload(0, 0);
                     let dst = l.v();
                     l.emit(Inst::LeaX(dst, buf, len, 1));
                     l.emit(Inst::MemCpy(dst, 1, 2));
                     l.emit(Inst::Store(0, 8, need));
                     Ok(())
+                })?;
+                Ok(None)
+            }
+            H_STR_RESERVE => {
+                // v0 = string, v1 = extra bytes
+                let zero = self.konst(0);
+                let pos = self.bin(Op::Gt, 1, zero);
+                self.if_then(pos, |l| {
+                    let (len, cap) = (l.hload(0, 8), l.hload(0, 16));
+                    let need = l.bin(Op::Add, len, 1);
+                    let big = l.bin(Op::Gt, need, cap);
+                    l.str_grow(len, cap, need, big)
                 })?;
                 Ok(None)
             }
@@ -3918,6 +3946,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             H_GROW => ("__list_grow".to_string(), 2),
             H_STR_PUSH => ("__str_push".to_string(), 3),
             H_STR_PUSH_INT => ("__str_push_int".to_string(), 2),
+            H_STR_RESERVE => ("__str_reserve".to_string(), 2),
             H_STR_PUSH_CHAR => ("__str_push_char".to_string(), 2),
             H_STR_CHAR_SIZE => ("__str_char_size".to_string(), 2),
             H_STR_CHAR_AT => ("__str_char_at".to_string(), 2),

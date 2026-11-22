@@ -389,6 +389,16 @@ impl List<String> {
         var r = String.new()
         var i = 0
         let n = self.len()
+        // many parts: one allocation for the whole result (a few short parts fit the first block anyway)
+        if n >= 8 {
+            var total = 0
+            while i < n {
+                total = total + self.at(i).len()
+                i = i + 1
+            }
+            r.reserve(total + sep.len() * (n - 1))
+        }
+        i = 0
         while i < n {
             if i > 0 {
                 r.push_str(sep)

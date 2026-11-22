@@ -170,6 +170,18 @@ static inline void nx_str_push_str(String *s, Str x) {
   memcpy(s->d + s->len, x.p, (size_t)x.n);
   s->len += x.n;
 }
+static inline void nx_str_reserve(String *s, int64_t extra) {
+  if (extra <= 0) return;
+  if (extra > INT64_MAX - s->len) nx_panic("string too long");
+  int64_t need = s->len + extra;
+  if (need > s->cap) {
+    int64_t nc = need < 24 ? 24 : need;
+    if ((uint64_t)nc > SIZE_MAX) nx_panic("string too long");
+    char *nd = (char *)realloc(s->d, (size_t)nc);
+    if (!nd) nx_panic("out of memory");
+    s->d = nd; s->cap = nc;
+  }
+}
 static inline int64_t nx_str_raw_addr(String *s) { return (int64_t)(intptr_t)s->d; }
 static inline void nx_str_push_raw(String *s, int64_t p, int64_t n) { Str x = { (const char *)(intptr_t)p, n }; nx_str_push_str(s, x); }
 static inline String nx_str_from(Str x) { String s = {0, 0, 0}; nx_str_push_str(&s, x); return s; }
