@@ -3,6 +3,18 @@
 `yerux` is also the project tool. Commands that take no file work from a project root (the directory with
 `yerux.toml`); see [PACKAGES.md](PACKAGES.md). Each section below is covered by a script in `tests/tool_*.sh`.
 
+## `yerux fmt`
+
+```
+yerux fmt [--check|--stdout] [file.yx|dir ...]
+```
+
+Formats files in place with the canonical style (2-space indent). With no argument it formats the current directory
+recursively, skipping `target/`, `node_modules/` and hidden directories. `--check` changes nothing: it prints the path
+of every file that would change and exits 1 (use it in CI); `--stdout` prints the formatted source. A file with a
+syntax error is reported as `path: line N: message` and makes the exit code 1; a missing path or unknown option exits 2.
+Formatting is idempotent and never changes the generated program (`tests/fmt.sh` checks this on every example).
+
 ## `yerux bench`
 
 ```

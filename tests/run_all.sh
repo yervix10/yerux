@@ -116,6 +116,7 @@ AUX=(
   "win_smoke|bash tests/win_smoke.sh"
   "dist|bash tests/dist.sh"
   "tool_bench|bash tests/tool_bench.sh"
+  "tool_fmt|bash tests/tool_fmt.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
 )
