@@ -83,8 +83,9 @@ fn decode_status(st: Int) -> ExitStatus {
     return ExitStatus { code: -1, signal: low }
 }
 
-/// What `run` / `communicate` collect. Output is converted lossily: every non-ASCII byte of an invalid
-/// UTF-8 stream becomes `?` (use `read_stdout_bytes` for exact bytes).
+/// What `run` / `communicate` collect. Output is limited to 64 MiB total; exceeding the limit kills the child
+/// and returns an I/O error. Output is converted lossily: every non-ASCII byte of invalid UTF-8 becomes `?`.
+/// Use `read_stdout_bytes` for exact bytes (also limited to 64 MiB per stream).
 pub struct Output {
     status: ExitStatus,
     stdout: String,
@@ -238,6 +239,10 @@ fn has_nul(s: view String) -> Bool {
 
 fn bad(msg: Text) -> io.IoError {
     return io.custom_error(io.IoErrorKind.InvalidInput, msg)
+}
+
+fn output_limit_error(msg: Text) -> io.IoError {
+    return io.custom_error(io.IoErrorKind.InvalidData, msg)
 }
 
 // Pack NUL-terminated copies of `l` into one block: a table of n pointers + a 0, then the bytes.
@@ -711,9 +716,19 @@ fn pump(ch: mut Child, input: view String, so: mut String, se: mut String) -> In
                     }
                 } else if r > 0 {
                     if which == 1 {
-                        so.push_raw(tmp, r)
+                        if r > 67108864 - so.len() - se.len() {
+                            let killed = __syscall(62, ch.pid, 9, 0, 0, 0, 0)
+                            rc = 27
+                        } else {
+                            so.push_raw(tmp, r)
+                        }
                     } else {
-                        se.push_raw(tmp, r)
+                        if r > 67108864 - so.len() - se.len() {
+                            let killed = __syscall(62, ch.pid, 9, 0, 0, 0, 0)
+                            rc = 27
+                        } else {
+                            se.push_raw(tmp, r)
+                        }
                     }
                 } else if r != -11 && r != -4 {
                     rc = 0 - r
@@ -728,7 +743,7 @@ fn pump(ch: mut Child, input: view String, so: mut String, se: mut String) -> In
 }
 
 // Read a descriptor to the end (blocking) into `out`; closes it. 0 or a positive errno.
-fn drain(fd: mut Int, out: mut String) -> Int {
+fn drain(pid: Int, can_kill: Bool, fd: mut Int, out: mut String) -> Int {
     let tmp = __alloc(65536)
     var rc = 0
     while true {
@@ -741,6 +756,11 @@ fn drain(fd: mut Int, out: mut String) -> Int {
             break
         }
         if r == 0 {
+            break
+        }
+        if r > 67108864 - out.len() {
+            if can_kill { let killed = __syscall(62, pid, 9, 0, 0, 0, 0) }
+            rc = 27
             break
         }
         out.push_raw(tmp, r)
@@ -813,8 +833,9 @@ impl Child {
             return Err(bad("read stdout: the child's stdout is not piped or already read"))
         }
         var s = String.new()
-        let e = drain(self.stdout.fd, s)
+        let e = drain(self.pid, !self.waited, self.stdout.fd, s)
         if e != 0 {
+            if e == 27 { return Err(output_limit_error("read stdout: child output exceeds 64 MiB")) }
             return Err(io.os_error("read stdout", "", e))
         }
         return io.checked_text(move s)
@@ -825,8 +846,9 @@ impl Child {
             return Err(bad("read stderr: the child's stderr is not piped or already read"))
         }
         var s = String.new()
-        let e = drain(self.stderr.fd, s)
+        let e = drain(self.pid, !self.waited, self.stderr.fd, s)
         if e != 0 {
+            if e == 27 { return Err(output_limit_error("read stderr: child output exceeds 64 MiB")) }
             return Err(io.os_error("read stderr", "", e))
         }
         return io.checked_text(move s)
@@ -838,8 +860,9 @@ impl Child {
             return Err(bad("read stdout: the child's stdout is not piped or already read"))
         }
         var s = String.new()
-        let e = drain(self.stdout.fd, s)
+        let e = drain(self.pid, !self.waited, self.stdout.fd, s)
         if e != 0 {
+            if e == 27 { return Err(output_limit_error("read stdout: child output exceeds 64 MiB")) }
             return Err(io.os_error("read stdout", "", e))
         }
         var out = List<UInt8>.new()
@@ -907,6 +930,7 @@ impl Child {
         retire(self.stdout.fd)
         retire(self.stderr.fd)
         if e != 0 {
+            if e == 27 { return Err(output_limit_error("communicate: child output exceeds 64 MiB")) }
             return Err(io.os_error("communicate", "", e))
         }
         let st = wait_child(self)?

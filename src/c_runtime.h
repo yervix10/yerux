@@ -59,7 +59,13 @@ typedef struct { void *data; const NxDynSlot *table; } NxDyn;
 typedef struct { void **d; size_t n, cap; } NxEnvWL;
 static inline void nx_envpush(NxEnvWL *w, void *e) {
   if (!e) return;
-  if (w->n == w->cap) { w->cap = w->cap ? w->cap * 2 : 8; w->d = (void **)realloc(w->d, w->cap * sizeof(void *)); if (!w->d) nx_panic("out of memory"); }
+  if (w->n == w->cap) {
+    if (w->cap > SIZE_MAX / 2 / sizeof(void *)) nx_panic("too many captured closures");
+    size_t nc = w->cap ? w->cap * 2 : 8;
+    void **nd = (void **)realloc(w->d, nc * sizeof(void *));
+    if (!nd) nx_panic("out of memory");
+    w->d = nd; w->cap = nc;
+  }
   w->d[w->n++] = e;
 }
 static inline void nx_drop_fn(NxFn *f) {
@@ -124,12 +130,14 @@ static inline Str nx_str_text(const char *s) { Str r = { s, (int64_t)strlen(s) }
 static inline Str nx_str_view(const String *s) { Str r = { s->d, s->len }; return r; }
 static inline String nx_str_new(void) { String s = {0, 0, 0}; return s; }
 static inline void nx_str_push_str(String *s, Str x) {
+  if (x.n < 0) nx_panic("negative string length");
   if (x.n == 0) return;
   if (x.n > INT64_MAX - s->len) nx_panic("string too long");
   int64_t need = s->len + x.n;
   if (need > s->cap) {
     int64_t nc = s->cap ? s->cap : 16;
     while (nc < need) nc = nc > INT64_MAX / 2 ? need : nc * 2;
+    if ((uint64_t)nc > SIZE_MAX) nx_panic("string too long");
     char *nd = (char *)realloc(s->d, (size_t)nc);
     if (!nd) nx_panic("out of memory");
     s->d = nd; s->cap = nc;
@@ -171,6 +179,7 @@ static inline void nx_str_push_byte(String *s, int64_t b) {
 }
 static inline void nx_str_push_slice(String *s, Str x, int64_t a, int64_t b) {
   if (b < 0 || b > x.n || a < 0 || a > b) nx_panic("index out of range");
+  if (a == b) return;
   Str y = { x.p + a, b - a }; nx_str_push_str(s, y);
 }
 static inline bool nx_char_valid(int64_t i) { return i >= 0 && i <= 0x10FFFF && !(i >= 0xD800 && i <= 0xDFFF); }
@@ -186,10 +195,23 @@ static inline void nx_str_push_char(String *s, int64_t c) { char b[4]; Str x = {
 static inline int64_t nx_str_char_size(String *s, int64_t i) {
   int64_t b = nx_str_byte(s, i);
   if (b < 0x80) return 1;
-  if (b >= 0xC0 && b < 0xE0) return 2;
-  if (b >= 0xE0 && b < 0xF0) return 3;
-  if (b >= 0xF0 && b < 0xF8) return 4;
-  nx_panic("invalid UTF-8 leading byte");
+  int64_t n = b >= 0xC2 && b <= 0xDF ? 2 : b >= 0xE0 && b <= 0xEF ? 3 : b >= 0xF0 && b <= 0xF4 ? 4 : 0;
+  if (!n || n > s->len - i) nx_panic("invalid UTF-8 sequence");
+  int64_t c1 = (unsigned char)s->d[i + 1];
+  if (c1 < 0x80 || c1 > 0xBF) nx_panic("invalid UTF-8 sequence");
+  if (n == 3) {
+    int64_t c2 = (unsigned char)s->d[i + 2];
+    if (c2 < 0x80 || c2 > 0xBF || (b == 0xE0 && c1 < 0xA0) || (b == 0xED && c1 > 0x9F))
+      nx_panic("invalid UTF-8 sequence");
+  }
+  if (n == 4) {
+    int64_t c2 = (unsigned char)s->d[i + 2];
+    int64_t c3 = (unsigned char)s->d[i + 3];
+    if (c2 < 0x80 || c2 > 0xBF || c3 < 0x80 || c3 > 0xBF ||
+        (b == 0xF0 && c1 < 0x90) || (b == 0xF4 && c1 > 0x8F))
+      nx_panic("invalid UTF-8 sequence");
+  }
+  return n;
 }
 static inline int64_t nx_str_char_at(String *s, int64_t i) {
   int64_t n = nx_str_char_size(s, i);
