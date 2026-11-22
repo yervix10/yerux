@@ -309,8 +309,8 @@ impl Area for Square { fn area(view self) -> Int { return self.side * self.side 
 let a = sq.area()               // method call syntax: sq.area()  ==  Area::area(sq)
 fn total<T: Area>(items: view List<T>) -> Int { ... items.at(i).area() ... }
 ```
-- A trait lists signatures only (no bodies, no default methods). Every method's first parameter is `self`: `view self` (read), `mut self` (modify), or `self` (consumes the receiver; the call site just writes `x.m()` and `x` is moved). `Self` names the implementing type: `fn cmp(view self, other: view Self) -> Int`.
-- `impl Trait for Type { .. }` must define every method with exactly the trait's signature (modes, types, return); the compiler lists what is missing or different. One impl per trait and type.
+- A trait method may list a signature or provide a default body. Every method's first parameter is `self`: `view self` (read), `mut self` (modify), or `self` (consumes the receiver; the call site just writes `x.m()` and `x` is moved). `Self` names the implementing type: `fn cmp(view self, other: view Self) -> Int`.
+- `impl Trait for Type { .. }` may omit methods with defaults; an omitted default is compiled for that implementation, including generic implementations, and is available through trait objects. Methods without defaults must be implemented with exactly the trait's signature (modes, types, return); the compiler lists what is missing or different. One impl per trait and type.
 - `impl Type { .. }` (without a trait) adds plain methods to your own struct or enum (also usable on `Int`, `Bool`, `Text`). Methods are ordinary functions whose first argument is the receiver; the receiver must be a variable, a field or `l.at(i)`. A method call is checked exactly like the call of the function it stands for (borrow, `mut` and `move` rules included).
 - You cannot add methods to `String` or `List<T>` yourself yet (the library does, see Standard collections).
 
