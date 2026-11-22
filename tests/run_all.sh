@@ -81,6 +81,7 @@ for f in "${all[@]}"; do
   name="$(basename "$f" .yx)"
   i=$((i + 1))
   matches "$name" || continue
+  grep -qx "$name" tests/run_all.skip 2>/dev/null && continue
   if [ "$FAST" = 1 ] && [ ${#PATS[@]} -eq 0 ]; then
     # representative subset: every example, every 7th test, plus the hand-picked list
     if [[ "$f" != examples/* ]] && [ $((i % 7)) -ne 0 ] && ! grep -qx "$name" tests/fast.list 2>/dev/null; then
