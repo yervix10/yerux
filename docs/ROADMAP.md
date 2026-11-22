@@ -87,7 +87,7 @@ Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `te
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-The self-hosted code generator matches the Rust C backend on **378 of 410
+The self-hosted code generator matches the Rust C backend on **395 of 418
 candidate programs (92.2%)** (2026-11-22; 82.1% the day before), with 98 runtime
 panics reproduced exactly, 31 candidates outside the supported subset, one
 expected rejection and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
