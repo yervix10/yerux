@@ -260,7 +260,11 @@ impl Loader {
             trace.owners.push(if entry { "@".into() } else { key.into() });
         }
         self.trace(file, "module", &[]);
-        let toks = match lex(&src) {
+        let lex_start = std::time::Instant::now();
+        let lexed = lex(&src);
+        crate::profile_stage("lexer", lex_start);
+        crate::profile_result("lexer", lexed.is_ok());
+        let toks = match lexed {
             Ok(t) => crate::syntax::expand_derives(t),
             Err(d) => {
                 self.trace(file, "error", &["lex"]);
@@ -270,7 +274,10 @@ impl Loader {
         };
         self.by_key.insert(key.to_string(), None);
         self.stack.push(key.to_string());
+        let resolve_start = std::time::Instant::now();
         let ok = self.module_body(key, file, toks, entry);
+        crate::profile_stage("module resolution", resolve_start);
+        crate::profile_result("module resolution", ok);
         self.stack.pop();
         self.by_key
             .insert(key.to_string(), if ok { Some(file) } else { None });

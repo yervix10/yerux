@@ -30,11 +30,20 @@ use std::time::Instant;
 use std::{env, fs};
 use syntax::Parser;
 
-fn profile_stage(stage: &str, start: Instant) {
+pub(crate) fn profile_stage(stage: &str, start: Instant) {
     if env::var_os("YERUX_PROFILE").is_some() {
         eprintln!(
             "yerux profile: {stage}: {:.3} ms",
             start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+}
+
+pub(crate) fn profile_result(stage: &str, accepted: bool) {
+    if env::var_os("YERUX_PROFILE").is_some() {
+        eprintln!(
+            "yerux profile: {stage} result: {}",
+            if accepted { "accepted" } else { "rejected" }
         );
     }
 }
@@ -44,17 +53,21 @@ fn checked_frontend(
     mode: modules::Mode,
 ) -> Result<(syntax::Program, check::Sigs, modules::Loaded), Vec<String>> {
     let start = Instant::now();
-    let loaded = modules::load(file, mode)?;
+    let loaded_result = modules::load(file, mode);
     profile_stage("module load", start);
+    profile_result("module load", loaded_result.is_ok());
+    let mut loaded = loaded_result?;
     let start = Instant::now();
-    let mut loaded = loaded;
     let mut ps = Parser::new(std::mem::take(&mut loaded.toks));
-    let mut prog = ps.program().map_err(|d| vec![loaded.render(&d)])?;
+    let parse_result = ps.program();
     profile_stage("parse", start);
+    profile_result("parse", parse_result.is_ok());
+    let mut prog = parse_result.map_err(|d| vec![loaded.render(&d)])?;
     let start = Instant::now();
-    let sigs = check::check_program(&mut prog, &mut ps)
-        .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
+    let checked = check::check_program(&mut prog, &mut ps);
     profile_stage("type and ownership check", start);
+    profile_result("type and ownership check", checked.is_ok());
+    let sigs = checked.map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
     Ok((prog, sigs, loaded))
 }
 
