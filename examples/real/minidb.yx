@@ -1,0 +1,586 @@
+// minidb: a small in-memory database over CSV files with a SQL-like language read from stdin; tables are saved
+// in a std.kv store.
+//
+//   LOAD t file.csv                    read a CSV (header row; all-integer columns become INT)
+//   SELECT cols FROM t [WHERE c op v [AND ..]] [GROUP BY c] [ORDER BY c [DESC]] [LIMIT n]
+//       cols: * | names | COUNT(*) SUM(c) AVG(c) MIN(c) MAX(c);   op: = != < <= > >=
+//   INSERT INTO t VALUES a,b,c         UPDATE t SET c = v [WHERE ..]      DELETE FROM t [WHERE ..]
+//   TABLES | SAVE t | RESTORE t | DROP t | PURGE     (PURGE deletes the saved tables and the store file)
+// Values may be 'quoted'. Errors print `error: ...` and the script goes on. The store is --store=PATH
+// (default /tmp/minidb-<pid>.kv).
+import std.args
+import std.csv
+import std.fmt
+import std.fs
+import std.io
+import std.kv
+import std.sort
+import std.text
+
+struct Table { name: String, cols: List<String>, ints: List<Bool>, rows: List<List<String>> }
+struct Cond { col: Int, op: String, value: String }
+struct Item { agg: String, col: Int }
+struct Db { tables: List<Table>, store: kv.Store }
+
+// ---------- tokens ----------
+
+fn flush(out: mut List<String>, cur: mut String) {
+  if cur.len() > 0 {
+    out.push(String.from(cur))
+    cur.clear()
+  }
+}
+
+fn tokenize(line: view String) -> List<String> {
+  var out = List<String>.new()
+  var cur = String.new()
+  var i = 0
+  while i < line.len() {
+    let b = line.byte(i)
+    if b == 39 {
+      // a 'quoted value' keeps its quotes so it cannot be taken for a keyword
+      flush(out, cur)
+      var j = i + 1
+      while j < line.len() && line.byte(j) != 39 {
+        j = j + 1
+      }
+      out.push(line.slice(i, j + 1))
+      i = j
+    } else if b == 32 || b == 9 || b == 44 {
+      flush(out, cur)
+    } else if b == 40 || b == 41 || b == 60 || b == 62 || b == 33 || b == 61 {
+      flush(out, cur)
+      var op = line.slice(i, i + 1)
+      if i + 1 < line.len() && line.byte(i + 1) == 61 && b != 61 && b != 40 && b != 41 {
+        op.push_str("=")
+        i = i + 1
+      }
+      out.push(move op)
+    } else {
+      cur.push_byte(b)
+    }
+    i = i + 1
+  }
+  flush(out, cur)
+  return out
+}
+
+fn unquote(t: view String) -> String {
+  if t.len() >= 2 && t.starts_with("'") && t.ends_with("'") {
+    return t.slice(1, t.len() - 1)
+  }
+  return String.from(t)
+}
+
+fn is_kw(t: view String, word: view String) -> Bool {
+  return !t.starts_with("'") && text.to_upper(t).eq(word)
+}
+
+// ---------- tables ----------
+
+fn find_table(db: view Db, name: view String) -> Int {
+  for i in 0..db.tables.len() {
+    if db.tables.at(i).name == name {
+      return i
+    }
+  }
+  return -1
+}
+
+fn col_index(t: view Table, name: view String) -> Int {
+  for i in 0..t.cols.len() {
+    if t.cols.at(i) == name {
+      return i
+    }
+  }
+  return -1
+}
+
+fn is_int(s: view String) -> Bool {
+  return s.len() > 0 && text.parse_int(s).is_ok()
+}
+
+fn make_table(name: view String, rows: mut List<List<String>>) -> Table {
+  let header = rows.remove(0)
+  var t = Table { name: String.from(name), cols: move header, ints: List<Bool>.new(), rows: List<List<String>>.new() }
+  for row in rows {
+    if row.len() == t.cols.len() {
+      t.rows.push(row.clone())
+    }
+  }
+  for c in 0..t.cols.len() {
+    var all = t.rows.len() > 0
+    for r in t.rows {
+      if !is_int(r.at(c)) {
+        all = false
+      }
+    }
+    t.ints.push(all)
+  }
+  return t
+}
+
+fn put_table(db: mut Db, t: Table) -> Int {
+  let n = t.rows.len()
+  let old = find_table(db, t.name)
+  if old >= 0 {
+    db.tables.set(old, move t)
+  } else {
+    db.tables.push(move t)
+  }
+  return n
+}
+
+// ---------- WHERE ----------
+
+fn compare(a: view String, b: view String, numeric: Bool) -> Int {
+  if numeric {
+    let x = text.parse_int(a).unwrap_or(0)
+    let y = text.parse_int(b).unwrap_or(0)
+    if x < y {
+      return -1
+    }
+    if x > y {
+      return 1
+    }
+    return 0
+  }
+  if a == b {
+    return 0
+  }
+  if a < b {
+    return -1
+  }
+  return 1
+}
+
+// `col op value [AND col op value]*` in toks[from..to]
+fn parse_conds(t: view Table, toks: view List<String>, from: Int, to: Int) -> Result<List<Cond>, String> {
+  var conds = List<Cond>.new()
+  var i = from
+  while i < to {
+    if i + 2 >= to {
+      return Err(String.from("incomplete condition"))
+    }
+    let col = col_index(t, toks.at(i))
+    if col < 0 {
+      return Err("unknown column {toks.at(i)}")
+    }
+    conds.push(Cond { col: col, op: String.from(toks.at(i + 1)), value: unquote(toks.at(i + 2)) })
+    i = i + 3
+    if i < to && !is_kw(toks.at(i), "AND") {
+      return Err("expected AND, found {toks.at(i)}")
+    }
+    i = i + 1
+  }
+  return Ok(move conds)
+}
+
+fn matches(t: view Table, row: view List<String>, conds: view List<Cond>) -> Bool {
+  for c in conds {
+    let k = compare(row.at(c.col), c.value, t.ints.at(c.col))
+    let ok = (c.op == "=" && k == 0) || (c.op == "!=" && k != 0) || (c.op == "<" && k < 0) ||
+      (c.op == "<=" && k <= 0) || (c.op == ">" && k > 0) || (c.op == ">=" && k >= 0)
+    if !ok {
+      return false
+    }
+  }
+  return true
+}
+
+// optional `WHERE ...` at toks[at..]
+fn where_clause(t: view Table, toks: view List<String>, at: Int) -> Result<List<Cond>, String> {
+  if at < toks.len() && is_kw(toks.at(at), "WHERE") {
+    return parse_conds(t, toks, at + 1, toks.len())
+  }
+  return Ok(List<Cond>.new())
+}
+
+// ---------- SELECT ----------
+
+fn print_table(header: view List<String>, rows: view List<List<String>>) {
+  var widths = List<Int>.new()
+  for h in header {
+    widths.push(h.char_count())
+  }
+  for r in rows {
+    for c in 0..r.len() {
+      widths.set(c, widths.at(c).max(r.at(c).char_count()))
+    }
+  }
+  var head = String.new()
+  var rule = String.new()
+  for c in 0..header.len() {
+    head.push_str(fmt.pad_right(header.at(c), widths.at(c) + 2, ' '))
+    rule.push_str(String.from("-").repeat(widths.at(c)))
+    rule.push_str("  ")
+  }
+  print(head.trim_end())
+  print(rule.trim_end())
+  for r in rows {
+    var out = String.new()
+    for c in 0..r.len() {
+      out.push_str(fmt.pad_right(r.at(c), widths.at(c) + 2, ' '))
+    }
+    print(out.trim_end())
+  }
+  print("({rows.len()} rows)")
+}
+
+fn aggregate(rows: view List<List<String>>, it: view Item) -> String {
+  if it.agg == "COUNT" {
+    return "{rows.len()}"
+  }
+  var total = 0
+  var lo = 0
+  var hi = 0
+  for i in 0..rows.len() {
+    let v = text.parse_int(rows.at(i).at(it.col)).unwrap_or(0)
+    total = total + v
+    lo = if_first(i == 0, v, lo.min(v))
+    hi = if_first(i == 0, v, hi.max(v))
+  }
+  if it.agg == "SUM" {
+    return "{total}"
+  }
+  if it.agg == "MIN" {
+    return "{lo}"
+  }
+  if it.agg == "MAX" {
+    return "{hi}"
+  }
+  if rows.len() == 0 {
+    return String.from("0")
+  }
+  return fmt.fixed(total.to_float() / rows.len().to_float(), 1)
+}
+
+fn if_first(first: Bool, a: Int, b: Int) -> Int {
+  if first {
+    return a
+  }
+  return b
+}
+
+fn is_clause(t: view String) -> Bool {
+  return is_kw(t, "WHERE") || is_kw(t, "GROUP") || is_kw(t, "ORDER") || is_kw(t, "LIMIT")
+}
+
+fn select_items(t: view Table, toks: view List<String>, from: Int) -> Result<List<Item>, String> {
+  var items = List<Item>.new()
+  var i = 1
+  while i < from {
+    var word = text.to_upper(toks.at(i))
+    if word == "*" {
+      for c in 0..t.cols.len() {
+        items.push(Item { agg: String.new(), col: c })
+      }
+    } else if i + 3 < from + 1 && toks.at(i + 1) == "(" {
+      var col = -1
+      if toks.at(i + 2) != "*" {
+        col = col_index(t, toks.at(i + 2))
+        if col < 0 {
+          return Err("unknown column {toks.at(i + 2)}")
+        }
+      }
+      items.push(Item { agg: move word, col: col })
+      i = i + 3
+    } else if col_index(t, toks.at(i)) >= 0 {
+      items.push(Item { agg: String.new(), col: col_index(t, toks.at(i)) })
+    } else {
+      return Err("unknown column {toks.at(i)}")
+    }
+    i = i + 1
+  }
+  return Ok(move items)
+}
+
+fn select(db: view Db, toks: view List<String>) -> Result<Int, String> {
+  var from = 1
+  while from < toks.len() && !is_kw(toks.at(from), "FROM") {
+    from = from + 1
+  }
+  if from + 1 >= toks.len() || find_table(db, toks.at(from + 1)) < 0 {
+    return Err(String.from("usage: SELECT cols FROM <existing table> ..."))
+  }
+  return select_from(db.tables.at(find_table(db, toks.at(from + 1))), toks, from)
+}
+
+fn select_from(t: view Table, toks: view List<String>, from: Int) -> Result<Int, String> {
+  let items = select_items(t, toks, from)?
+  var conds = List<Cond>.new()
+  var group = -1
+  var order = -1
+  var desc = false
+  var limit = -1
+  var i = from + 2
+  while i < toks.len() {
+    var e = i + 1
+    while e < toks.len() && !is_clause(toks.at(e)) {
+      e = e + 1
+    }
+    let kw = text.to_upper(toks.at(i))
+    if kw == "WHERE" {
+      conds = parse_conds(t, toks, i + 1, e)?
+    } else if (kw == "GROUP" || kw == "ORDER") && i + 2 < e {
+      let col = col_index(t, toks.at(i + 2))
+      if col < 0 {
+        return Err("unknown column {toks.at(i + 2)}")
+      }
+      if kw == "GROUP" {
+        group = col
+      } else {
+        order = col
+        desc = i + 3 < e && is_kw(toks.at(i + 3), "DESC")
+      }
+    } else if kw == "LIMIT" && i + 1 < e {
+      limit = text.parse_int(toks.at(i + 1)).unwrap_or(-1)
+    } else {
+      return Err("bad clause {toks.at(i)}")
+    }
+    i = e
+  }
+  var rows = List<List<String>>.new()
+  for r in t.rows {
+    if matches(t, r, conds) {
+      rows.push(r.clone())
+    }
+  }
+  var header = List<String>.new()
+  var has_agg = false
+  for it in items {
+    has_agg = has_agg || it.agg.len() > 0
+    if it.agg.len() == 0 {
+      header.push(String.from(t.cols.at(it.col)))
+    } else if it.col < 0 {
+      header.push("{it.agg}(*)")
+    } else {
+      header.push("{it.agg}({t.cols.at(it.col)})")
+    }
+  }
+  var result = List<List<String>>.new()
+  if has_agg {
+    var keys = List<String>.new()
+    for r in rows {
+      if group >= 0 && !keys.contains(r.at(group)) {
+        keys.push(String.from(r.at(group)))
+      }
+    }
+    if group < 0 {
+      keys.push(String.new())
+    }
+    sort.stable(keys)
+    for k in keys {
+      var members = List<List<String>>.new()
+      for r in rows {
+        if group < 0 || r.at(group) == k {
+          members.push(r.clone())
+        }
+      }
+      var out = List<String>.new()
+      for it in items {
+        if it.agg.len() == 0 {
+          out.push(String.from(k))
+        } else {
+          out.push(aggregate(members, it))
+        }
+      }
+      result.push(move out)
+    }
+  } else {
+    let numeric = order >= 0 && t.ints.at(order)
+    if order >= 0 {
+      sort.stable_by(rows, |a: view List<String>, b: view List<String>| -> Int {
+        let k = compare(a.at(order), b.at(order), numeric)
+        if desc {
+          return 0 - k
+        }
+        return k
+      })
+    }
+    for r in rows {
+      var out = List<String>.new()
+      for it in items {
+        out.push(String.from(r.at(it.col)))
+      }
+      result.push(move out)
+    }
+  }
+  while limit >= 0 && result.len() > limit {
+    let dropped = result.pop()
+  }
+  print_table(header, result)
+  return Ok(result.len())
+}
+
+// ---------- modifying commands ----------
+
+fn insert(db: mut Db, toks: view List<String>) -> Result<Int, String> {
+  let ti = find_table(db, toks.at(2))
+  if toks.len() < 5 || !is_kw(toks.at(3), "VALUES") || ti < 0 {
+    return Err(String.from("usage: INSERT INTO <existing table> VALUES a,b,c"))
+  }
+  var row = List<String>.new()
+  for i in 4..toks.len() {
+    row.push(unquote(toks.at(i)))
+  }
+  check_row(db.tables.at(ti), row)?
+  db.tables.at(ti).rows.push(move row)
+  return Ok(1)
+}
+
+fn check_row(t: view Table, row: view List<String>) -> Result<Int, String> {
+  if row.len() != t.cols.len() {
+    return Err("{t.name} has {t.cols.len()} columns, got {row.len()} values")
+  }
+  for c in 0..row.len() {
+    if t.ints.at(c) && !is_int(row.at(c)) {
+      return Err("column {t.cols.at(c)} is INT, got {row.at(c)}")
+    }
+  }
+  return Ok(1)
+}
+
+fn delete_rows(db: mut Db, toks: view List<String>) -> Result<Int, String> {
+  let ti = find_table(db, toks.at(2))
+  if ti < 0 {
+    return Err(String.from("usage: DELETE FROM <existing table> [WHERE ..]"))
+  }
+  let conds = where_clause(db.tables.at(ti), toks, 3)?
+  var kept = List<List<String>>.new()
+  for r in db.tables.at(ti).rows {
+    if !matches(db.tables.at(ti), r, conds) {
+      kept.push(r.clone())
+    }
+  }
+  let removed = db.tables.at(ti).rows.len() - kept.len()
+  db.tables.at(ti).rows = move kept
+  return Ok(removed)
+}
+
+fn update_rows(db: mut Db, toks: view List<String>) -> Result<Int, String> {
+  let ti = find_table(db, toks.at(1))
+  if toks.len() < 6 || ti < 0 || !is_kw(toks.at(2), "SET") || toks.at(4) != "=" {
+    return Err(String.from("usage: UPDATE <existing table> SET col = value [WHERE ..]"))
+  }
+  let col = col_index(db.tables.at(ti), toks.at(3))
+  let value = unquote(toks.at(5))
+  if col < 0 || (db.tables.at(ti).ints.at(col) && !is_int(value)) {
+    return Err("bad column or value for {toks.at(3)}")
+  }
+  let conds = where_clause(db.tables.at(ti), toks, 6)?
+  var changed = 0
+  for r in 0..db.tables.at(ti).rows.len() {
+    if matches(db.tables.at(ti), db.tables.at(ti).rows.at(r), conds) {
+      db.tables.at(ti).rows.at(r).set(col, String.from(value))
+      changed = changed + 1
+    }
+  }
+  return Ok(changed)
+}
+
+// ---------- persistence ----------
+
+fn save(db: view Db, name: view String) -> Result<Int, String> {
+  let ti = find_table(db, name)
+  if ti < 0 {
+    return Err("no table {name}")
+  }
+  kv.set(db.store, "table.{name}", table_csv(db.tables.at(ti)))?
+  kv.set_int(db.store, "tables", kv.keys(db.store)?.len())?
+  return Ok(db.tables.at(ti).rows.len())
+}
+
+fn table_csv(t: view Table) -> String {
+  var rows = List<List<String>>.new()
+  rows.push(t.cols.clone())
+  for r in t.rows {
+    rows.push(r.clone())
+  }
+  return csv.write(rows)
+}
+
+fn restore(db: mut Db, name: view String) -> Result<Int, String> {
+  match kv.get(db.store, "table.{name}")? {
+    None => { return Err("{name} is not in the store") }
+    Some(data) => {
+      var rows = csv.parse(data)
+      return Ok(put_table(db, make_table(name, rows)))
+    }
+  }
+}
+
+fn purge(db: view Db) -> Result<Int, String> {
+  let keys = kv.keys(db.store)?
+  for k in keys {
+    kv.delete(db.store, k)?
+  }
+  let gone = fs.remove_file(db.store.path)
+  return Ok(keys.len())
+}
+
+fn run_line(db: mut Db, line: view String) {
+  let toks = tokenize(line)
+  if toks.len() == 0 {
+    return
+  }
+  print("> {line.trim()}")
+  let cmd = text.to_upper(toks.at(0))
+  let n = toks.len()
+  var result: Result<Int, String> = Err("unknown command {toks.at(0)}")
+  if cmd == "LOAD" && n == 3 {
+    match io.read_file(toks.at(2)) {
+      Ok(data) => {
+        var rows = csv.parse(data)
+        result = Ok(put_table(db, make_table(toks.at(1), rows)))
+      }
+      Err(e) => { result = Err("{toks.at(2)}: {e.message}") }
+    }
+  } else if cmd == "SELECT" {
+    result = select(db, toks)
+  } else if cmd == "INSERT" && n > 2 {
+    result = insert(db, toks)
+  } else if cmd == "UPDATE" && n > 1 {
+    result = update_rows(db, toks)
+  } else if cmd == "DELETE" && n > 2 {
+    result = delete_rows(db, toks)
+  } else if cmd == "SAVE" && n == 2 {
+    result = save(db, toks.at(1))
+  } else if cmd == "RESTORE" && n == 2 {
+    result = restore(db, toks.at(1))
+  } else if cmd == "DROP" && n == 2 && find_table(db, toks.at(1)) >= 0 {
+    let gone = db.tables.remove(find_table(db, toks.at(1)))
+    result = Ok(1)
+  } else if cmd == "TABLES" {
+    for t in db.tables {
+      print("  {t.name} ({t.rows.len()} rows)")
+    }
+    result = Ok(db.tables.len())
+  } else if cmd == "PURGE" {
+    result = purge(db)
+  }
+  match result {
+    Ok(count) => { print("ok ({count})") }
+    Err(e) => { print("error: {e}") }
+  }
+}
+
+fn main() {
+  let argv = args.parse_process()
+  var path = String.from("/tmp/minidb-{io.process_id()}.kv")
+  match args.option(argv, "store") {
+    Some(p) => { path = move p }
+    None => {}
+  }
+  var db = Db { tables: List<Table>.new(), store: kv.Store { path: move path } }
+  match io.read_all() {
+    Ok(script) => {
+      for line in text.lines(script) {
+        if !line.trim().starts_with("#") {
+          run_line(db, line)
+        }
+      }
+    }
+    Err(e) => { io.eprintln("minidb: {e.message}") }
+  }
+}

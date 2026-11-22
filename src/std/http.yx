@@ -28,6 +28,25 @@ pub fn post_json(addr: view net.SocketAddr, host: view String, path: view String
   return request(addr, host, "POST", path, all, json)
 }
 
+/// PUT a JSON document (same headers as `post_json`).
+pub fn put_json(addr: view net.SocketAddr, host: view String, path: view String, headers: view List<(String, String)>, json: view String) -> Result<Response, io.IoError> {
+  var all = List<(String, String)>.new()
+  var has_type = false
+  var i = 0
+  while i < headers.len() {
+    if text.to_lower(headers.at(i).0).eq("content-type") { has_type = true }
+    all.push((String.from(headers.at(i).0), String.from(headers.at(i).1)))
+    i = i + 1
+  }
+  if !has_type { all.push((String.from("Content-Type"), String.from("application/json"))) }
+  return request(addr, host, "PUT", path, all, json)
+}
+
+/// DELETE a path.
+pub fn delete(addr: view net.SocketAddr, host: view String, path: view String, headers: view List<(String, String)>) -> Result<Response, io.IoError> {
+  return request(addr, host, "DELETE", path, headers, "")
+}
+
 fn has_control(s: view String) -> Bool {
   var i = 0
   while i < s.len() {
@@ -85,7 +104,7 @@ fn request(addr: view net.SocketAddr, host: view String, method: Text, path: vie
     req.push_str("\r\n")
     i = i + 1
   }
-  if method == "POST" {
+  if method == "POST" || method == "PUT" {
     req.push_str("Content-Length: ")
     req.push_int(body.len())
     req.push_str("\r\n")
