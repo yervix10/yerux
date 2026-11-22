@@ -89,7 +89,7 @@ Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `te
 
 The self-hosted code generator matches the Rust C backend on **395 of 418
 candidate programs (94.5%)** (2026-11-22; 82.1% the day before), with 100 runtime
-panics reproduced exactly, 31 candidates outside the supported subset, one
+panics reproduced exactly, 22 candidates outside the supported subset, one
 expected rejection and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
 fixpoint: the stages built by the driver rebuild themselves and generation 1
 and 2 emit byte-identical C. What is left before it can be called
