@@ -26,6 +26,14 @@ fn internal_helper() -> Int {
   return 0
 }
 
+/// Largest allowed value.
+pub const LIMIT: Int = 3
+
+/// A pair of coordinates.
+pub type Pair = (Int, Int)
+
+const HIDDEN_LIMIT: Int = 9
+
 /// Primary colors.
 pub enum Color {
   Red,

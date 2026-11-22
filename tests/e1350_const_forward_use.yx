@@ -1,0 +1,6 @@
+const A: Int = B + 1
+const B: Int = 2
+
+fn main() {
+  print(A)
+}

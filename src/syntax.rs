@@ -2370,6 +2370,15 @@ impl Parser {
             EK::Var(n, _) => match self.types.consts.get(n) {
                 Some((v, t)) => (*v, if matches!(t, Ty::Range(..)) { Ty::Int } else { *t }),
                 None => {
+                    // defined further down (or in a cycle): say so instead of "unknown"
+                    let later = self.t.windows(2).any(|w| {
+                        matches!(&w[0].t, Tok::Id(k) if k == "const") && matches!(&w[1].t, Tok::Id(m) if m == n)
+                    });
+                    if later {
+                        return Err(diag(format!("const '{}' is used before its definition", n), e.pos)
+                            .note("consts are evaluated in order, so a const can only use consts defined above it (this also rules out cycles such as A -> B -> A)")
+                            .note(format!("help: move `const {}` above this one", n.rsplit('.').next().unwrap_or(n))));
+                    }
                     return Err(diag(format!("unknown const '{}'", n), e.pos)
                         .note("a const is computed from literals and consts defined above it"))
                 }
@@ -2463,6 +2472,14 @@ impl Parser {
                 && matches!(self.peek_at(1), Tok::Id(_))
             {
                 self.const_item(true)?;
+                continue;
+            }
+            // `type Name = T` has no body: skip its line (skip_item would swallow the next item)
+            if matches!(self.peek(), Tok::Id(k) if k == "type") && matches!(self.peek_at(1), Tok::Id(_)) {
+                let line = self.pos().line;
+                while !matches!(self.peek(), Tok::Eof) && self.pos().line == line {
+                    self.bump();
+                }
                 continue;
             }
             if self.eat_sym("@") {

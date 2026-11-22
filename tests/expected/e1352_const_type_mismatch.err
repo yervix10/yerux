@@ -1,0 +1,8 @@
+error: expected Bool but this is Int
+ --> tests/e1352_const_type_mismatch.yx:1:17
+  |
+1 | const A: Bool = 3
+  |                 ^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+1 error(s). Nothing was generated.
