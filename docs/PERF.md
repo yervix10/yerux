@@ -137,6 +137,21 @@ The three largest median slowdowns among Yerux backends in this run are below. C
 2. **sort (Yerux native 1.40x median vs C).** merge-sort's indexed list access adds bounds checks and creates register pressure in the inner copy/merge loops.
 3. **fannkuch (Yerux native 1.31x median vs C).** the benchmark's hot loop is a candidate for profiling.
 
+### Hashmap integer-key follow-up
+
+`bench/src/hashmap.yx` inserts and finds nonnegative `Int` keys. The old
+`Hash for Int` path multiplied and reduced every key even though the table
+already reduces hashes by its capacity. Nonnegative integers are valid hashes
+directly, so the fast path now returns the key unchanged; negative keys keep
+the normalized fallback. This preserves equal-key hash consistency and gives
+sequential integer keys a well-distributed probe pattern.
+
+The previous recorded reference was 33 ms native / 21 ms C. After the change,
+five interleaved runs measured native at 22 ms median and the Yerux C backend
+at 23 ms; C's median was 39 ms in that run (highly noisy, 68% spread; best
+17 ms). The native best was 21 ms. The shared host was busy, so compare the
+backend best times and rerun on an idle host for tighter medians.
+
 
 ## Binary size and compile time (mean over benchmarks)
 
