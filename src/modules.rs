@@ -31,6 +31,8 @@ pub enum Mode {
     Normal,
     /// Build the program whose `main` is the n-th `test` block of the entry file.
     Test(usize),
+    /// Build the program whose `main` is the n-th `bench` block of the entry file.
+    Bench(usize),
 }
 
 pub struct Loaded {
@@ -43,6 +45,8 @@ pub struct Loaded {
     exports: HashMap<String, Vec<(String, Kind)>>,
     /// names of the `test` blocks of the entry file, in source order
     pub tests: Vec<String>,
+    /// names of the `bench` blocks of the entry file, in source order
+    pub benches: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -66,6 +70,7 @@ struct Span {
     name: Option<String>,
     kind: Kind,
     test: Option<String>,
+    bench: bool,
 }
 
 struct Module {
@@ -84,6 +89,7 @@ struct Loader {
     imports: Vec<Vec<(String, String)>>,
     exports: HashMap<String, Vec<(String, Kind)>>,
     tests: Vec<String>,
+    benches: Vec<String>,
     items_by_key: HashMap<String, HashMap<String, Item>>,
     trace: Option<ResolutionTrace>,
 }
@@ -179,6 +185,7 @@ fn load_with(
         imports: vec![],
         exports: HashMap::new(),
         tests: vec![],
+        benches: vec![],
         items_by_key: HashMap::new(),
         trace: trace.then(ResolutionTrace::default),
     };
@@ -214,6 +221,7 @@ fn load_with(
             imports: l.imports,
             exports: l.exports,
             tests: l.tests,
+            benches: l.benches,
         }),
         trace,
     )
@@ -257,7 +265,9 @@ impl Loader {
         });
         self.imports.push(vec![]);
         if let Some(trace) = &mut self.trace {
-            trace.owners.push(if entry { "@".into() } else { key.into() });
+            trace
+                .owners
+                .push(if entry { "@".into() } else { key.into() });
         }
         self.trace(file, "module", &[]);
         let toks = match lex(&src) {
@@ -459,6 +469,7 @@ impl Loader {
         }
         let mut out: Vec<Token> = vec![];
         let mut test_no = 0usize;
+        let mut bench_no = 0usize;
         let mut cursor = i;
         for sp in &spans {
             // tokens between items that scan_items could not classify are passed through (the parser reports them)
@@ -468,8 +479,20 @@ impl Loader {
             cursor = sp.end;
             if let Some(tname) = &sp.test {
                 if entry {
-                    self.tests.push(tname.clone());
-                    if self.mode == Mode::Test(test_no) {
+                    let own = if sp.bench { bench_no } else { test_no };
+                    if sp.bench {
+                        self.benches.push(tname.clone());
+                        bench_no += 1;
+                    } else {
+                        self.tests.push(tname.clone());
+                        test_no += 1;
+                    }
+                    let wanted = if sp.bench {
+                        self.mode == Mode::Bench(own)
+                    } else {
+                        self.mode == Mode::Test(own)
+                    };
+                    if wanted {
                         // `test "name" { body }`  ->  `fn main() { body }`
                         let tp = toks[sp.start].pos;
                         let body = &toks[sp.start + 2..sp.end];
@@ -484,12 +507,11 @@ impl Loader {
                         let r = self.rewrite(file, &ekey, &items, &aliases, &imported, &v);
                         out.extend(r);
                     }
-                    test_no += 1;
                 }
                 continue;
             }
             if entry
-                && matches!(self.mode, Mode::Test(_))
+                && matches!(self.mode, Mode::Test(_) | Mode::Bench(_))
                 && sp.name.as_deref() == Some("main")
                 && sp.kind == Kind::Func
             {
@@ -551,7 +573,13 @@ impl Loader {
         while j < toks.len() {
             let t = &toks[j];
             let l = lvl[j];
-            shadows.retain(|s| if s.active { l >= s.level } else { l >= s.level - 1 });
+            shadows.retain(|s| {
+                if s.active {
+                    l >= s.level
+                } else {
+                    l >= s.level - 1
+                }
+            });
             for s in shadows.iter_mut() {
                 if !s.active && l >= s.level && t.pos.line > s.line {
                     s.active = true;
@@ -652,7 +680,11 @@ impl Loader {
                             } else {
                                 "type"
                             };
-                            let declaration = if it.kind == Kind::Func { "fn" } else { "struct" };
+                            let declaration = if it.kind == Kind::Func {
+                                "fn"
+                            } else {
+                                "struct"
+                            };
                             self.trace(file, "error", &["private-item", &x, &dep, &y]);
                             self.report(
                                 file,
@@ -724,10 +756,7 @@ impl Loader {
             // (`File =>`, `File | Dir =>`) keep the name
             let variant_here = {
                 let prev = if j > 0 { Some(&toks[j - 1]) } else { None };
-                let in_enum = toks
-                    .iter()
-                    .take(2)
-                    .any(|f| is_id(f, "enum"));
+                let in_enum = toks.iter().take(2).any(|f| is_id(f, "enum"));
                 // the paren depth is only needed inside an enum declaration (scanning it for every identifier
                 // of a long function body made module loading quadratic)
                 let depth = if in_enum {
@@ -805,6 +834,7 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
             i += 2;
         }
         let Some(item) = toks.get(i) else { break };
+        let mut bench = false;
         let (kind, name, test) = match &item.t {
             Tok::Id(w) if w == "fn" || w == "struct" || w == "enum" || w == "trait" => {
                 match toks.get(i + 1).and_then(id_of) {
@@ -817,8 +847,10 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
                 }
             }
             Tok::Id(w)
-                if w == "test" && matches!(toks.get(i + 1).map(|t| &t.t), Some(Tok::Str(_))) =>
+                if (w == "test" || w == "bench")
+                    && matches!(toks.get(i + 1).map(|t| &t.t), Some(Tok::Str(_))) =>
             {
+                bench = w == "bench";
                 let n = match &toks[i + 1].t {
                     Tok::Str(n) => n.clone(),
                     _ => unreachable!(),
@@ -860,6 +892,7 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
             name,
             kind,
             test,
+            bench,
         });
         i = end;
     }
