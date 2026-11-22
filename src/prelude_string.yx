@@ -159,9 +159,18 @@ impl String {
         let m = p.len()
         let last = n - m
         var i = from
+        if m == 0 {
+            if from < 0 { return from }
+            if from <= n { return from }
+            return -1
+        }
+        let first = p.byte(0)
         while i <= last {
             var j = 0
-            while j < m && self.byte(i + j) == p.byte(j) {
+            if self.byte(i) == first {
+                j = 1
+            }
+            while j > 0 && j < m && self.byte(i + j) == p.byte(j) {
                 j = j + 1
             }
             if j == m {
