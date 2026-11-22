@@ -2270,7 +2270,33 @@ fn emit_for(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     return
   }
   var binding = String.new()
-  if tree.at(iter).tag == "IterRange" {
+  let pieces = type_terms.substitute(gen.checked.expressions.at(iter), gen.sub)
+  let pieces_base = type_terms.base(pieces)
+  if tree.at(iter).tag == "Method" && pieces_base == "Pieces" {
+    let name = ast.decoded_name(tree, ast.child(tree, iter, 1))
+    let source = expression(gen, tree, ast.child(tree, iter, 0))
+    let args = ast.child(tree, iter, 2)
+    let width = expression(gen, tree, args + 1)
+    let k = temp(gen, tree, String.from("Int"), width.code)
+    let piece_args = type_terms.arguments(pieces)
+    let element = String.from(piece_args.at(0))
+    let slice_type = type_terms.bracket(element, String.from("_"))
+    prepare_type(gen, tree, slice_type)
+    prepare_type(gen, tree, source.ty)
+    let c = c_type(gen, tree, slice_type)
+    let length = temp(gen, tree, String.from("Int"), sequence_length(source))
+    var noun = String.from("chunk")
+    if name == "windows" { noun = String.from("window") }
+    line(gen, "if ({k.code} <= 0) nx_panic(\"{noun} size must be positive\");")
+    gen.references.set(id, false)
+    if name == "chunks" {
+      line(gen, "for (int64_t i{id} = 0; i{id} < {length.code}; i{id} += {k.code}) {{")
+      binding = "{c} v{id} = sc_slice_{c}(({source.code}).d, {length.code}, i{id}, i{id} + {k.code} < {length.code} ? i{id} + {k.code} : {length.code});"
+    } else {
+      line(gen, "for (int64_t i{id} = 0; i{id} + {k.code} <= {length.code}; ++i{id}) {{")
+      binding = "{c} v{id} = sc_slice_{c}(({source.code}).d, {length.code}, i{id}, i{id} + {k.code});"
+    }
+  } else if tree.at(iter).tag == "IterRange" {
     let lower = expression(gen, tree, ast.child(tree, iter, 0))
     let lo = temp(gen, tree, lower.ty, lower.code)
     let upper = expression(gen, tree, ast.child(tree, iter, 1))

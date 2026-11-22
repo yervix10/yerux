@@ -1,0 +1,20 @@
+fn total(xs: view [Int]) -> Int {
+  var s = 0
+  for x in xs { s = s + x }
+  return s
+}
+
+fn main() {
+  let a = [1, 2, 3, 4]
+  print(total(a[0..0]))
+  print(total(a[4..4]))
+  print(total(a[..0]))
+  print(total(a[4..]))
+  let e: List<Int> = List.new()
+  print(total(e))
+  var n = 0
+  for c in a.chunks(1) { n = n + c.len() }
+  print(n)
+  for w in a.windows(4) { print(total(w)) }
+  for w in a.windows(1) { print(w[0]) }
+}

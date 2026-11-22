@@ -868,6 +868,13 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
       if range.starts_with("Int<") { return check_range_member(types, tree, range, name, args) }
     }
   }
+  if receiver >= 0 && (name == "chunks" || name == "windows") && child_count(tree, args) == 1 &&
+      (owner.starts_with("Array<") || owner.starts_with("Slice<") || owner.starts_with("List<") || owner == "List") {
+    // an iterable of slices of the receiver; only `for` consumes it
+    let size = String.from("Int")
+    expect_type(types, size, infer(types, tree, args + 1, size))
+    return "Pieces<{type_terms.element(owner)}>"
+  }
   if receiver >= 0 && (owner.starts_with("Array<") || owner.starts_with("Slice<")) {
     return sequence_member(types, tree, owner, name, args, receiver)
   }
@@ -1978,6 +1985,11 @@ fn check_loop(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
       let iterable = infer(types, tree, iter, unknown())
       element = type_terms.element(iterable)
       if iterable == "Chars" { element = String.from("Char") }
+      let iterable_base = type_terms.base(iterable)
+      if iterable_base == "Pieces" {
+        let piece_args = type_terms.arguments(iterable)
+        element = type_terms.bracket(piece_args.at(0), String.from("_"))
+      }
       if element == "?" {
         let base = type_terms.base(iterable)
         for signature in types.signatures {
