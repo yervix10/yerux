@@ -157,9 +157,7 @@ backend best times and rerun on an idle host for tighter medians.
 Added `bench/src/textops.yx`, a 200k-iteration workload covering string
 building/formatting, `find`, `split`, and `join` (about one million std
 operations). The C reference performs equivalent work and verifies the same
-checksum. `find_from` now computes the final candidate index once instead of
-checking `i + needle_len` on every candidate; `split` and `join` cache
-loop-invariant lengths.
+checksum. `find_from` computes the final candidate index once and checks the first needle byte before comparing the remaining bytes; `split` and `join` cache loop-invariant lengths.
 
 Five interleaved runs before -> after on the shared host (median seconds):
 
@@ -170,9 +168,15 @@ Five interleaved runs before -> after on the shared host (median seconds):
 | Yerux C backend | 0.066 | 0.070 |
 
 The checksum matched C in both runs. There was no measurable speedup; the
-small differences fit within shared-host noise. The remaining gap appears to
-come from allocation/copy overhead in split/join and needs a capacity-aware
-string builder to address safely.
+small differences fit within shared-host noise. A seven-run rerun after the
+`find_from` first-byte guard measured C 41 ms, Yerux native 81 ms, and the C
+backend 67 ms (medians); outputs still matched. The aggregate benchmark does
+not isolate operation time, so it cannot establish that `find` or `split` is
+the dominant cost. `split` creates a fresh copied string per field, and `join`
+then copies each field again; these remain likely allocation/copy contributors.
+A trustworthy per-operation profile is still needed before an allocation strategy
+change. Strings already use a geometric capacity growth policy in the runtime,
+so repeated append reallocations are not currently linear-growth reallocations.
 
 
 ## Binary size and compile time (mean over benchmarks)
