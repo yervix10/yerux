@@ -1,0 +1,8 @@
+error: 'title' is a String and is not copied
+ --> tests/e1412_struct_shorthand_move.yx:6:18
+  |
+6 |   let t = Task { title, n }
+  |                  ^^^^^
+  = help: use `move title` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+1 error(s). Nothing was generated.

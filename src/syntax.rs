@@ -4279,9 +4279,14 @@ impl Parser {
         self.expect_sym("{")?;
         let mut fields = vec![];
         while !self.is_sym("}") {
-            let (f, _) = self.ident()?;
-            self.expect_sym(":")?;
-            let v = self.expr()?;
+            let (f, fp) = self.ident()?;
+            // `Point { x, y }` is `Point { x: x, y: y }`: a field without `:` takes the variable of its name.
+            let v = if self.is_sym(",") || self.is_sym("}") {
+                mk(EK::Var(f.clone(), 0), fp)
+            } else {
+                self.expect_sym(":")?;
+                self.expr()?
+            };
             fields.push((f, v));
             if !self.eat_sym(",") {
                 break;

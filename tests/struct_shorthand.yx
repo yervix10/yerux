@@ -1,0 +1,25 @@
+// `Point { x, y }` means `Point { x: x, y: y }`, also for generic structs and mixed with `name: value`.
+struct Point { x: Int, y: Int }
+struct Pair<A, B> { a: A, b: B }
+struct Task { title: String, n: Int }
+
+fn make(x: Int, y: Int) -> Point {
+  return Point { x, y }
+}
+
+fn main() {
+  let x = 1
+  let y = 2
+  let p = Point { x, y }
+  let a = 3
+  let q = Pair { a, b: 4 }
+  print(p.x + p.y + q.a + q.b)
+  print(make(5, 6).y)
+  let title = String.from("write")
+  let n = 7
+  let t = Task { title: move title, n }
+  print("{t.title} {t.n}")
+  if x < y {
+    print("block")
+  }
+}

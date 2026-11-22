@@ -1,0 +1,8 @@
+struct Task { title: String, n: Int }
+
+fn main() {
+  let title = String.from("write")
+  let n = 7
+  let t = Task { title, n }
+  print(t.title)
+}

@@ -124,6 +124,73 @@ fn id_of(t: &Token) -> Option<&str> {
     }
 }
 
+/// `|` opens a closure parameter list when a closing `|` appears before `=>` (match arms use `|` for alternatives).
+fn closure_pipe_opens(toks: &[Token], j: usize) -> bool {
+    let mut paren = 0i32;
+    let mut i = j + 1;
+    while i < toks.len() {
+        let t = &toks[i];
+        if paren == 0 && is_sym(t, "|") {
+            return true;
+        }
+        if paren == 0 && (is_sym(t, "=>") || is_sym(t, "{") || is_sym(t, ";") || is_sym(t, "}")) {
+            return false;
+        }
+        if is_sym(t, "(") {
+            paren += 1;
+        } else if is_sym(t, ")") {
+            paren -= 1;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// True when `=>` follows this pattern name before the next statement/block boundary.
+fn arm_arrow_ahead(toks: &[Token], j: usize) -> bool {
+    let mut depth = 0i32;
+    let mut i = j + 1;
+    while i < toks.len() {
+        let t = &toks[i];
+        if depth == 0 && is_sym(t, "=>") {
+            return true;
+        }
+        if depth == 0 && (is_sym(t, "{") || is_sym(t, ";") || is_sym(t, "}")) {
+            return false;
+        }
+        if is_sym(t, "(") || is_sym(t, "[") {
+            depth += 1;
+        } else if is_sym(t, ")") || is_sym(t, "]") {
+            if depth > 0 {
+                depth -= 1;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// `let (a, b) = ..` / `var (a, b) = ..`: a name inside the unpack tuple.
+fn unpack_bind_ahead(toks: &[Token], j: usize) -> bool {
+    let mut depth = 0i32;
+    let mut i = j + 1;
+    while i < toks.len() {
+        let t = &toks[i];
+        if is_sym(t, "(") {
+            depth += 1;
+        } else if is_sym(t, ")") {
+            if depth == 0 {
+                return toks.get(i + 1).is_some_and(|n| is_sym(n, "="));
+            }
+            depth -= 1;
+        } else if depth == 0 && (is_sym(t, "=>") || is_sym(t, "{") || is_sym(t, ";")) {
+            return false;
+        }
+        i += 1;
+    }
+    false
+}
+
 fn mangle(key: &str, name: &str) -> String {
     if key.is_empty() {
         name.to_string()
@@ -563,9 +630,10 @@ impl Loader {
         imported: &HashMap<String, (String, Kind)>,
         toks: &[Token],
     ) -> Vec<Token> {
-        // Local names that hide an imported module alias: `let path = ..`, `for path in ..`, a parameter `path: ..`.
-        // A shadow is active from the next line (let/var: its own initializer may still name the module) or from
-        // the body block (parameters, loop variables) until the block that declared it closes.
+        // Local names that hide an imported module alias: `let path = ..`, `for path in ..`, a parameter
+        // `path: ..`, a match/unpack binding `Ok(path)` / `let (path, n) = ..`, a closure `|path: ..| { .. }`.
+        // A shadow is active from the next line (let/var/unpack: its own initializer may still name the module)
+        // or from the body block (parameters, loop variables, match/closure binds) until that block closes.
         struct Shadow {
             name: String,
             level: i32,
@@ -588,6 +656,7 @@ impl Loader {
         }
         let mut fn_header = false;
         let mut paren = 0i32;
+        let mut closure_params = false;
         let mut out: Vec<Token> = Vec::with_capacity(toks.len());
         let mut j = 0;
         while j < toks.len() {
@@ -609,12 +678,19 @@ impl Loader {
                 shadows.retain(|s| s.active);
                 fn_header = true;
                 paren = 0;
+                closure_params = false;
             } else if fn_header && is_sym(t, "(") {
                 paren += 1;
             } else if fn_header && is_sym(t, ")") {
                 paren -= 1;
                 if paren == 0 {
                     fn_header = false;
+                }
+            } else if is_sym(t, "|") {
+                if closure_params {
+                    closure_params = false;
+                } else if closure_pipe_opens(toks, j) {
+                    closure_params = true;
                 }
             }
             let after_dot = j > 0 && is_sym(&toks[j - 1], ".");
@@ -639,11 +715,27 @@ impl Loader {
                     && paren == 1
                     && matches!(next, Some(n) if is_sym(n, ":"))
                     && matches!(prev, Some(p) if is_sym(p, "(") || is_sym(p, ",") || is_id(p, "view") || is_id(p, "mut"));
-                if is_let || is_for || is_param {
+                let is_closure_param = closure_params
+                    && matches!(prev, Some(p) if is_sym(p, "|") || is_sym(p, ","))
+                    && matches!(next, Some(n) if is_sym(n, ":") || is_sym(n, ",") || is_sym(n, "|"));
+                // match arm / or-pattern / `name @ pat`, and `let (name, ..) = ..`
+                let is_pattern_bind = {
+                    let name_at = matches!(next, Some(n) if is_sym(n, "@"));
+                    let bare_arm = matches!(next, Some(n) if is_sym(n, "=>") || is_id(n, "if"));
+                    let or_arm = matches!(next, Some(n) if is_sym(n, "|")) && arm_arrow_ahead(toks, j);
+                    let in_payload = matches!(prev, Some(p) if is_sym(p, "(") || is_sym(p, ","))
+                        && matches!(next, Some(n) if is_sym(n, ")") || is_sym(n, ",") || is_sym(n, "@"));
+                    name_at && arm_arrow_ahead(toks, j)
+                        || bare_arm
+                        || or_arm
+                        || (in_payload && (arm_arrow_ahead(toks, j) || unpack_bind_ahead(toks, j)))
+                };
+                if is_let || is_for || is_param || is_closure_param || is_pattern_bind {
+                    let like_let = is_let || (is_pattern_bind && unpack_bind_ahead(toks, j) && !arm_arrow_ahead(toks, j));
                     shadows.push(Shadow {
                         name: x.clone(),
-                        level: if is_let { l } else { l + 1 },
-                        line: if is_let { t.pos.line } else { 0 },
+                        level: if like_let { l } else { l + 1 },
+                        line: if like_let { t.pos.line } else { 0 },
                         active: false,
                     });
                     out.push(t.clone());
