@@ -246,8 +246,23 @@ fn nominal_sub(tree: view List<ast.AstNode>, decl: Int, ty: view String) -> type
   return type_terms.Substitution { names: move names, values: move args }
 }
 
+// A range type `Int<lo..hi>` is an Int at run time: the bounds only matter to the checker and to `from`.
+fn plain(ty: view String) -> String {
+  let args = type_terms.arguments(ty)
+  if args.len() == 0 { return String.from(ty) }
+  let base = type_terms.base(ty)
+  if base == "Int" && args.len() == 1 && args.at(0).contains("..") { return String.from("Int") }
+  var values = List<String>.new()
+  for arg in args { values.push(plain(arg)) }
+  return type_terms.apply(base, values)
+}
+
+fn resolved(ty: view String, sub: view type_terms.Substitution) -> String {
+  return plain(type_terms.substitute(ty, sub))
+}
+
 fn declared_for(tree: view List<ast.AstNode>, at: Int, sub: view type_terms.Substitution) -> String {
-  return type_terms.substitute(declared_type(tree, at), sub)
+  return resolved(declared_type(tree, at), sub)
 }
 
 fn c_type(gen: view Generator, tree: view List<ast.AstNode>, ty: view String) -> String {
@@ -313,14 +328,28 @@ fn declared_type(tree: view List<ast.AstNode>, node: Int) -> String {
   }
   if tree.at(node).tag != "Type" { unsupported("type {tree.at(node).tag}") }
   let args = ast.child(tree, node, 1)
+  let name = ast.name_at(tree, node, 0)
+  if name == "Int" && args + 1 < tree.at(args).end && tree.at(args + 1).tag == "Range" { return String.from("Int") }
   var parameters = List<String>.new()
   var at = args + 1
   while at < tree.at(args).end {
     parameters.push(declared_type(tree, at))
     at = tree.at(at).end
   }
-  let name = ast.name_at(tree, node, 0)
   if name == "Int64" { return String.from("Int") }
+  if parameters.len() == 0 {
+    // `type Byte = Int<0..255>`
+    let items = ast.child(tree, 0, 0)
+    var it = items + 1
+    while it < tree.at(items).end {
+      let item = ast.child(tree, it, 2)
+      if tree.at(item).tag == "Alias" {
+        let alias = ast.name_at(tree, item, 0)
+        if alias == name { return declared_type(tree, ast.child(tree, item, 1)) }
+      }
+      it = tree.at(it).end
+    }
+  }
   return type_terms.apply(name, parameters)
 }
 
@@ -332,7 +361,7 @@ fn id_at(gen: view Generator, node: Int) -> Int {
 
 fn local_place(gen: view Generator, node: Int) -> Value {
   let id = id_at(gen, node)
-  let ty = type_terms.substitute(gen.checked.bindings.at(id), gen.sub)
+  let ty = resolved(gen.checked.bindings.at(id), gen.sub)
   if gen.references.at(id) { return Value { ty: move ty, code: "(*v{id})" } }
   return Value { ty: move ty, code: "v{id}" }
 }
@@ -869,7 +898,7 @@ fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: 
   var actual = args + 1
   while actual < tree.at(args).end && formal < tree.at(params).end {
     let expected = declared_type(tree, ast.child(tree, formal, 2))
-    var inferred = type_terms.substitute(gen.checked.expressions.at(actual), gen.sub)
+    var inferred = resolved(gen.checked.expressions.at(actual), gen.sub)
     if expected.starts_with("Slice<") {
       inferred = type_terms.bracket(type_terms.element(inferred), String.from("_"))
     }
@@ -1114,7 +1143,7 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
   var values = List<String>.new()
   var helper = String.new()
   let is_static = owner != "" && gen.locals.identities.at(recv) < 0
-  var receiver_type = type_terms.substitute(gen.checked.expressions.at(recv), gen.sub)
+  var receiver_type = resolved(gen.checked.expressions.at(recv), gen.sub)
   if is_static { receiver_type = String.from(owner) }
   let method = match_method(gen, tree, receiver_type, name, !is_static)
   if method >= 0 {
@@ -1196,7 +1225,7 @@ fn emit_string_method(gen: mut Generator, tree: view List<ast.AstNode>, recv: In
   var at = args + 1
   while at < tree.at(args).end {
     let index = values.len()
-    let argument_type = type_terms.substitute(gen.checked.expressions.at(at), gen.sub)
+    let argument_type = resolved(gen.checked.expressions.at(at), gen.sub)
     let text_arg = text || (name == "push_slice" && index == 1)
     if (text_arg && argument_type == "String" && is_place(tree, at)) || name == "parse_int" {
       values.push(String.new())
@@ -1268,7 +1297,7 @@ fn declared_member_owner(tree: view List<ast.AstNode>, node: Int, sub: view type
 
 fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Value {
   let tag = String.from(tree.at(node).tag)
-  let ty = type_terms.substitute(gen.checked.expressions.at(node), gen.sub)
+  let ty = resolved(gen.checked.expressions.at(node), gen.sub)
   if tag == "Var" {
     if gen.locals.identities.at(node) < 0 {
       let name = ast.name_at(tree, node, 0)
@@ -1331,6 +1360,21 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
     let owner = ast.name_at(tree, node, 0)
     let member = ast.name_at(tree, node, 2)
     if owner == "List" && member == "new" { return temp(gen, tree, ty, String.from("{{0}}")) }
+    let range_args = ast.child(tree, node, 1)
+    if owner == "Int" && member == "from" && range_args + 1 < tree.at(range_args).end && tree.at(range_args + 1).tag == "Range" {
+      let call_args = ast.child(tree, node, 3)
+      if call_args + 1 >= tree.at(call_args).end { unsupported("Int.from arity") }
+      let source = expression(gen, tree, call_args + 1)
+      let source_c = integer_c(source.ty)
+      if source_c == "" || source.ty == "Char" { unsupported("Int.from on {source.ty}") }
+      var lo = String.from("INT64_MIN")
+      var hi = String.from("INT64_MAX")
+      let low = ast.child(tree, range_args + 1, 0)
+      let high = ast.child(tree, range_args + 1, 1)
+      if tree.at(low).tag != "_" { lo = "INT64_C({tree.at(low).tag})" }
+      if tree.at(high).tag != "_" { hi = "INT64_C({tree.at(high).tag})" }
+      return temp(gen, tree, String.from("Int"), "nx_to_range((__int128)({source.code}), {lo}, {hi})")
+    }
     if owner == "Option" || owner == "Result" || find_named(tree, gen.enums, owner) >= 0 {
       return construct_variant(gen, tree, ty, member, ast.child(tree, node, 3))
     }
@@ -1953,7 +1997,7 @@ fn emit_function(gen: mut Generator, tree: view List<ast.AstNode>, instance: Int
   gen.indent = gen.indent + 1
   gen.result = String.from(result)
   for id in owned {
-    let ty = type_terms.substitute(gen.checked.bindings.at(id), gen.sub)
+    let ty = resolved(gen.checked.bindings.at(id), gen.sub)
     line(gen, "{c_type(gen, tree, ty)} v{id} __attribute__((cleanup({drop_fn(gen, tree, ty)}))) = p{id};")
   }
   if expression_body >= 0 && result != "nothing" {
@@ -2040,7 +2084,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
         m = tree.at(m).end
       }
     }
-    else if tag != "Trait" { unsupported("declaration {tag}") }
+    else if tag != "Trait" && tag != "Alias" { unsupported("declaration {tag}") }
     at = tree.at(at).end
   }
   for target in gen.clone_types {
