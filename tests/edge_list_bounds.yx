@@ -1,0 +1,119 @@
+// List boundary indices: 0, len-1, len, and zero-length slices, with Copy and owned elements.
+fn show(l: view List<Int>) {
+  var i = 0
+  var out = String.from("[")
+  while i < l.len() {
+    if i > 0 {
+      out.push_str(",")
+    }
+    out.push_int(l.get(i))
+    i = i + 1
+  }
+  out.push_str("]")
+  print(out)
+}
+
+fn main() {
+  var l = List<Int>.new()
+  l.insert(0, 10)
+  print("{l.len()} {l.get(0)}")
+  l.insert(1, 20)
+  l.insert(0, 5)
+  show(l)
+  let first = l.remove(0)
+  let last = l.remove(l.len() - 1)
+  print("{first} {last} {l.len()} {l.get(0)}")
+  l.set(0, 99)
+  print(l.get(0))
+
+  var base = List<Int>.new()
+  var i = 0
+  while i < 5 {
+    base.push(i * 10)
+    i = i + 1
+  }
+  let s00 = base.slice(0, 0)
+  let s0n = base.slice(0, 5)
+  let snn = base.slice(5, 5)
+  let s45 = base.slice(4, 5)
+  print("{s00.len()} {s0n.len()} {snn.len()} {s45.len()} {s45.get(0)}")
+  print("{base.get(0)} {base.get(4)} {base.at(0)} {base.at(4)}")
+  base.set(0, -1)
+  base.set(4, -5)
+  show(base)
+  base.swap(0, 4)
+  show(base)
+  base.reverse()
+  show(base)
+  var one = List<Int>.new()
+  one.push(7)
+  one.reverse()
+  print(one.at(0))
+  var two = List<Int>.new()
+  two.push(1)
+  two.push(2)
+  two.reverse()
+  show(two)
+
+  var t = List<Int>.new()
+  i = 0
+  while i < 6 {
+    t.push(i)
+    i = i + 1
+  }
+  t.truncate(6)
+  print(t.len())
+  t.truncate(7)
+  print(t.len())
+  t.truncate(1)
+  print("{t.len()} {t.at(0)}")
+  t.truncate(0)
+  print("{t.len()} {t.is_empty()}")
+
+  var sw = List<Int>.new()
+  sw.push(1)
+  sw.push(2)
+  sw.push(3)
+  let a = sw.swap_remove(0)
+  show(sw)
+  print(a)
+  let b = sw.swap_remove(sw.len() - 1)
+  show(sw)
+  print(b)
+
+  var ix = List<Int>.new()
+  ix.push(4)
+  ix.push(5)
+  ix.push(4)
+  print("{ix.index_of(4)} {ix.index_of(5)} {ix.index_of(9)}")
+  print("{ix.contains(4)} {ix.contains(9)}")
+
+  var sorted = List<Int>.new()
+  sorted.push(1)
+  sorted.push(2)
+  sorted.push(3)
+  print(sorted.is_sorted())
+  sorted.sort()
+  print("{sorted.is_sorted()} {sorted}")
+  var dup = List<Int>.new()
+  dup.push(2)
+  dup.push(1)
+  dup.push(2)
+  dup.push(1)
+  dup.sort()
+  print("{dup.is_sorted()} {dup}")
+
+  // Owned String elements at the first and last slots.
+  var names = List<String>.new()
+  names.push(String.from(""))
+  names.push(String.from("b"))
+  names.at(0).push_str("a")
+  names.at(names.len() - 1).push_str("!")
+  print("[{names.at(0)}] [{names.at(1)}] {names.len()}")
+  let gone = names.remove(names.len() - 1)
+  print("[{gone}] {names.len()}")
+  names.set(0, String.from("z"))
+  print(names.at(0))
+  let tail = names.pop()
+  print("{tail} {names.len()}")
+}
