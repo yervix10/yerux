@@ -4,8 +4,11 @@
 // and multipliers that keep every product below 2^62: multiplicative hashing modulo the prime 2^31 - 1.
 
 fn std__hash_int(x: Int) -> Int {
-    if x >= 0 && x < 2147483647 {
-        return (x + 1) * 1103515245 % 2147483647
+    // The table applies its capacity mask/modulo during probing, so a stable
+    // nonnegative key is already a useful hash. This common path avoids the
+    // multiply and remainder work for integer keys; equal keys still hash alike.
+    if x >= 0 {
+        return x
     }
     var r = x % 2147483647
     if r < 0 {

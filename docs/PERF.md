@@ -137,6 +137,43 @@ The three largest median slowdowns among Yerux backends in this run are below. C
 2. **sort (Yerux native 1.40x median vs C).** merge-sort's indexed list access adds bounds checks and creates register pressure in the inner copy/merge loops.
 3. **fannkuch (Yerux native 1.31x median vs C).** the benchmark's hot loop is a candidate for profiling.
 
+### Hashmap integer-key follow-up
+
+`bench/src/hashmap.yx` inserts and finds nonnegative `Int` keys. The old
+`Hash for Int` path multiplied and reduced every key even though the table
+already reduces hashes by its capacity. Nonnegative integers are valid hashes
+directly, so the fast path now returns the key unchanged; negative keys keep
+the normalized fallback. This preserves equal-key hash consistency and gives
+sequential integer keys a well-distributed probe pattern.
+
+The previous recorded reference was 33 ms native / 21 ms C. After the change,
+five interleaved runs measured native at 22 ms median and the Yerux C backend
+at 23 ms; C's median was 39 ms in that run (highly noisy, 68% spread; best
+17 ms). The native best was 21 ms. The shared host was busy, so compare the
+backend best times and rerun on an idle host for tighter medians.
+
+### String and Text follow-up
+
+Added `bench/src/textops.yx`, a 200k-iteration workload covering string
+building/formatting, `find`, `split`, and `join` (about one million std
+operations). The C reference performs equivalent work and verifies the same
+checksum. `find_from` now computes the final candidate index once instead of
+checking `i + needle_len` on every candidate; `split` and `join` cache
+loop-invariant lengths.
+
+Five interleaved runs before -> after on the shared host (median seconds):
+
+| Backend | Before | After |
+|---|---:|---:|
+| C gcc -O2 | 0.041 | 0.042 |
+| Yerux native | 0.081 | 0.083 |
+| Yerux C backend | 0.066 | 0.070 |
+
+The checksum matched C in both runs. There was no measurable speedup; the
+small differences fit within shared-host noise. The remaining gap appears to
+come from allocation/copy overhead in split/join and needs a capacity-aware
+string builder to address safely.
+
 
 ## Binary size and compile time (mean over benchmarks)
 

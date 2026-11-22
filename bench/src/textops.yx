@@ -1,0 +1,18 @@
+fn main() {
+  var checksum = 0
+  var i = 0
+  while i < 200000 {
+    var line = String.new()
+    line.push_str("item=")
+    line.push_int(i)
+    line.push_str(";value=")
+    line.push_int(i % 97)
+    line.push_str(";tail")
+    let found = line.find(";value=")
+    let parts = line.split(";")
+    let joined = parts.join("|")
+    checksum = checksum + found + joined.len()
+    i = i + 1
+  }
+  print(checksum)
+}
