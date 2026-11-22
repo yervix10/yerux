@@ -213,3 +213,25 @@ pub fn last_name(name: view String) -> String {
   let components = name.split(".")
   return String.from(components.at(components.len() - 1))
 }
+
+// The same spelling the production checker uses for `<target>_from_<source>` error conversions.
+pub fn snake(name: view String) -> String {
+  var out = String.new()
+  var prev_lower = false
+  for i in 0..name.len() {
+    let b = name.byte(i)
+    if b >= 65 && b <= 90 {
+      if prev_lower { out.push_byte(95) }
+      out.push_byte(b + 32)
+      prev_lower = false
+    } else if (b >= 97 && b <= 122) || (b >= 48 && b <= 57) {
+      out.push_byte(b)
+      prev_lower = b >= 97 || b <= 57
+    } else if out.len() > 0 && out.byte(out.len() - 1) != 95 {
+      out.push_byte(95)
+      prev_lower = false
+    }
+  }
+  while out.len() > 0 && out.byte(out.len() - 1) == 95 { out = out.slice(0, out.len() - 1) }
+  return out
+}

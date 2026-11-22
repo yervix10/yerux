@@ -797,7 +797,21 @@ fn propagate_result(gen: mut Generator, tree: view List<ast.AstNode>, operand: v
     emit_return(gen, tree, result, "({dest}){{ .tag = 2 }}")
   } else if base == "Result" {
     let error = enum_payload(gen, owned, 2, 0)
-    emit_return(gen, tree, result, "({dest}){{ .tag = 2, .v2.p0 = {transfer(gen, tree, error)} }}")
+    let wanted = type_terms.arguments(result)
+    var converted = transfer(gen, tree, error)
+    if wanted.len() == 2 && wanted.at(1) != error.ty {
+      let name = "{type_terms.snake(wanted.at(1))}_from_{type_terms.snake(error.ty)}"
+      let fun = find_named(tree, gen.functions, name)
+      if fun >= 0 {
+        let instance = schedule(gen, fun, String.new(), type_terms.empty())
+        converted = "F{instance}({transfer(gen, tree, error)})"
+      } else if wanted.at(1) == "String" {
+        let shown = temp(gen, tree, String.from("String"), "nx_str_new()")
+        append_show(gen, tree, shown, error)
+        converted = transfer(gen, tree, shown)
+      } else { unsupported("error conversion to {wanted.at(1)}") }
+    }
+    emit_return(gen, tree, result, "({dest}){{ .tag = 2, .v2.p0 = {converted} }}")
   } else { unsupported("try operator on {base}") }
   gen.indent = gen.indent - 1
   line(gen, String.from("}}"))

@@ -34,6 +34,7 @@ struct Types {
   ordered_params: List<String>,
   modes: List<String>,
   equal_types: List<String>,
+  shown_types: List<String>,
   ordered_types: List<String>,
   aliases: List<String>,
   moved: List<Bool>,
@@ -1134,9 +1135,17 @@ fn propagate(types: mut Types, tree: view List<ast.AstNode>, node: Int) -> Strin
   if family == "Result" && args.len() == 2 && returned.len() == 2 && args.at(1) != returned.at(1) {
     let from_type = String.from(args.at(1))
     let to_type = String.from(returned.at(1))
-    // A user-defined error conversion is resolved by the production checker.
-    issue(types, "`?` cannot turn the error {from_type} into the {to_type} this function returns")
-    return unknown()
+    let conversion = "{type_terms.snake(to_type)}_from_{type_terms.snake(from_type)}"
+    var found = false
+    for i in 0..types.signatures.len() {
+      if types.signatures.at(i).name == conversion && types.signatures.at(i).owner == "" { found = true }
+    }
+    let displayable = integer(numeric_type(from_type)) || floating(from_type) || from_type == "Bool" ||
+      from_type == "Char" || from_type == "Text" || types.shown_types.contains(from_type)
+    if !found && !(to_type == "String" && displayable) {
+      issue(types, "`?` cannot turn the error {from_type} into the {to_type} this function returns")
+      return unknown()
+    }
   }
   return String.from(args.at(0))
 }
@@ -2411,7 +2420,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(),
-    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(),
+    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),
   }
@@ -2447,6 +2456,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
           if shape >= 0 { types.shapes.at(shape).user_drop = true }
         } else if name == "Equal" { types.equal_types.push(String.from(owner)) }
         else if name == "Ordered" { types.ordered_types.push(String.from(owner)) }
+        else if name == "Show" { types.shown_types.push(String.from(owner)) }
       }
     }
     decl = tree.at(decl).end
