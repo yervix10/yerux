@@ -663,7 +663,7 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
   return unknown()
 }
 
-fn struct_literal(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> String {
+fn struct_literal(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let n = ast.name_at(tree, index, 0)
   let shape = shape_index(types, n)
   var sub = type_terms.empty()
@@ -672,6 +672,11 @@ fn struct_literal(types: mut Types, tree: view List<ast.AstNode>, index: Int) ->
     let args = source_types(types, tree, ast.child(tree, index, 1))
     for i in 0..min(args.len(), sub.names.len()) {
       sub.values.set(i, String.from(args.at(i)))
+    }
+    // `Iter { .. }` where the context expects `Iter<U>`: the expected type fixes the type arguments
+    let hinted = type_terms.base(hint)
+    if args.len() == 0 && sub.names.len() > 0 && hinted == n {
+      type_terms.bind(sub, type_terms.apply(n, sub.names), hint)
     }
   }
   let fields = ast.child(tree, index, 2)
@@ -1520,7 +1525,7 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     return call_args(types, tree, ast.child(tree, index, 1), String.from("function value"), sig, unknown(), -1)
   }
   if tag == "Closure" { return closure_type(types, tree, index, hint, false) }
-  if tag == "StructLit" { return struct_literal(types, tree, index) }
+  if tag == "StructLit" { return struct_literal(types, tree, index, hint) }
   if tag == "Array" || tag == "ArrayFill" {
     var expected = type_terms.element(hint)
     if tag == "ArrayFill" {

@@ -281,6 +281,9 @@ fn with_prelude(build: view Build, source: view String) -> String {
   if uses(text, "Map<") || uses(text, "Set<") || uses(text, "Map.") || uses(text, "Set.") {
     head.push_str(read_text(path.join(build.runtime, "prelude_map.yx")))
   }
+  if uses(text, "Iter<") || uses(text, "Iter.") || uses(text, ".into_iter(") {
+    head.push_str(read_text(path.join(build.runtime, "prelude_iter.yx")))
+  }
   if uses(text, "Arena") {
     head.push_str(read_text(path.join(build.runtime, "prelude_arena.yx")))
   }
