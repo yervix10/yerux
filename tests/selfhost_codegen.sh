@@ -110,7 +110,11 @@ required() {
     tests/io_basic.yx|tests/io_exit_drop.yx|tests/fs_buffered.yx|tests/net_errors.yx|\
     tests/process_basic.yx|tests/process_timeout.yx|tests/time_duration.yx|tests/drop_generic.yx|\
     tests/clos_borrow.yx|tests/clos_generic.yx|tests/hard2_closure_call_order.yx|\
-    tests/hard2_closure_early_return.yx|tests/own_deep_closure_drop.yx|tests/t906_closures_owned.yx) return 0 ;;
+    tests/hard2_closure_early_return.yx|tests/own_deep_closure_drop.yx|tests/t906_closures_owned.yx|\
+    tests/gen_types.yx|tests/own_deep_box_drop.yx|tests/t912_box_tree.yx|tests/dyn_call_order.yx|tests/dyn_handlers.yx|\
+    tests/hard2_dyn_generic_impls.yx|tests/hard2_dyn_holders.yx|tests/hard2_dyn_nested_drop.yx|\
+    tests/conc_print.yx|tests/drop_worker.yx|tests/drop_double_panic.yx|tests/drop_panic.yx|\
+    tests/net_loopback.yx|tests/std_http_client.yx) return 0 ;;
     *) return 1 ;;
   esac
 }

@@ -43,6 +43,16 @@ pub fn arguments(ty: view String) -> List<String> {
   return split_types(ty, name.len() + 1, ty.len() - 1)
 }
 
+pub fn box_payload(ty: view String) -> String {
+  if !ty.starts_with("Box<") { return String.from("?") }
+  return ty.slice(4, ty.len() - 1)
+}
+
+pub fn dyn_trait(ty: view String) -> String {
+  if !ty.starts_with("$dyn<") { return String.new() }
+  return ty.slice(5, ty.len() - 1)
+}
+
 // The last component is the result. The other components preserve parameter modes.
 pub fn function_parts(ty: view String) -> List<String> {
   var depth = 1
