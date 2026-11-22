@@ -96,6 +96,18 @@ static inline C sc_split_##C(String *s, Str sep) { \
   sc_push_##C(&out, sc_str_slice(s, start, s->len)); \
   return out; \
 } \
+static inline C sc_lines_##C(String *s) { \
+  C out = {0}; \
+  int64_t start = 0; \
+  for (int64_t i = 0; i < s->len; ++i) { \
+    if (s->d[i] != '\n') continue; \
+    int64_t end = i - (i > start && s->d[i - 1] == '\r'); \
+    sc_push_##C(&out, sc_str_slice(s, start, end)); \
+    start = i + 1; \
+  } \
+  if (start < s->len) sc_push_##C(&out, sc_str_slice(s, start, s->len)); \
+  return out; \
+} \
 static inline String sc_join_##C(C *values, Str sep) { \
   String out = nx_str_new(); \
   for (int64_t i = 0; i < values->len; ++i) { \

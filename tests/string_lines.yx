@@ -1,0 +1,17 @@
+fn main() {
+  let mixed = String.from("é\r\n\nlast\rpart\n")
+  let lines = mixed.lines()
+  print(lines.len())
+  print(lines.at(0))
+  print(lines.at(1).is_empty())
+  print(lines.at(2).byte(4))
+  let empty = String.new()
+  print(empty.lines().len())
+  let newline = String.from("\n")
+  let blanks = newline.lines()
+  print(blanks.len())
+  print(blanks.at(0).is_empty())
+  let unfinished = String.from("end\r")
+  let tail = unfinished.lines()
+  print(tail.at(0).byte(3))
+}
