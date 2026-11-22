@@ -11,7 +11,7 @@ fn main() {
     let found = line.find(";value=")
     let parts = line.split(";")
     let joined = parts.join("|")
-    checksum = checksum + found + joined.len() + "needle".hash()
+    checksum = checksum + found + joined.len()
     i = i + 1
   }
   print(checksum)

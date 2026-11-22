@@ -33,7 +33,7 @@ DESC = {
     "dot": "dot product of two 1M List<Float>, 200 rounds",
     "hashmap": "200k integer map inserts and lookups",
     "strings": "build 8M x (push_str + push_int) = 71 MB string, then byte scan",
-    "textops": "200k rounds of concat, integer formatting, find, split, join, and Text hashing",
+    "textops": "200k rounds of concat, integer formatting, find, split, and join",
     "json": "scan and sum the integer tokens of a generated valid JSON array (100k integers)",
 }
 # key -> (label, builder). builder(bench, out) -> argv list

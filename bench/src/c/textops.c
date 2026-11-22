@@ -16,11 +16,6 @@ static i64 find(const char *s, i64 n, const char *p, i64 m) {
   for (i64 i = 0; i + m <= n; ++i) if (!memcmp(s + i, p, (size_t)m)) return i;
   return -1;
 }
-static i64 hash_text(const char *s) {
-  i64 h = 5381;
-  for (i64 i = 0; s[i]; ++i) h = (h * 16777619 + (unsigned char)s[i] + 1) % 2147483647;
-  return h;
-}
 int main(void) {
   i64 checksum = 0;
   for (i64 i = 0; i < 200000; ++i) {
@@ -37,7 +32,7 @@ int main(void) {
         a = k + 1;
       }
     }
-    checksum += found + joined.n + hash_text("needle");
+    checksum += found + joined.n;
     free(line.p); free(joined.p);
   }
   printf("%lld\n", checksum);

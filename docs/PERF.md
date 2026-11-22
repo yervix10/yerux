@@ -155,25 +155,24 @@ backend best times and rerun on an idle host for tighter medians.
 ### String and Text follow-up
 
 Added `bench/src/textops.yx`, a 200k-iteration workload covering string
-building/formatting, `find`, `split`, `join`, and hashing a borrowed `Text`
-key (about one million std operations). The C reference performs the same
-work and verifies the same checksum. `Hash for Text` used to build an owned
-`String` copy for every hash; it now hashes the existing byte view directly.
-`find_from` also computes the final candidate index once instead of checking
-`i + needle_len` on every candidate, and `split`/`join` cache loop-invariant
-lengths.
+building/formatting, `find`, `split`, and `join` (about one million std
+operations). The C reference performs equivalent work and verifies the same
+checksum. `find_from` now computes the final candidate index once instead of
+checking `i + needle_len` on every candidate; `split` and `join` cache
+loop-invariant lengths.
 
 Five interleaved runs before -> after on the shared host (median seconds):
 
 | Backend | Before | After |
 |---|---:|---:|
-| C gcc -O2 | 0.048 | 0.044 |
-| Yerux native | 0.099 | 0.089 |
-| Yerux C backend | 0.080 | 0.071 |
+| C gcc -O2 | 0.041 | 0.042 |
+| Yerux native | 0.081 | 0.083 |
+| Yerux C backend | 0.066 | 0.070 |
 
-The checksum matched C in both runs. The host load was elevated and varied,
-so treat the roughly 10% improvement as directional; the measured spread was
-23% for the post-change C backend and 10% for native.
+The checksum matched C in both runs. There was no measurable speedup; the
+small differences fit within shared-host noise. The remaining gap appears to
+come from allocation/copy overhead in split/join and needs a capacity-aware
+string builder to address safely.
 
 
 ## Binary size and compile time (mean over benchmarks)
