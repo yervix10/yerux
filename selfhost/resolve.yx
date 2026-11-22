@@ -127,7 +127,7 @@ fn import_module(resolver: mut Resolver, ctx: mut FileContext, tree: view List<a
 
 fn collect_symbol(symbols: mut List<Symbol>, tree: view List<ast.AstNode>, item: Int, decl: Int) {
   let tag = String.from(tree.at(decl).tag)
-  if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" { return }
+  if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Alias" { return }
   let name = ast.name_at(tree, decl, 0)
   let old = symbol_index(symbols, name)
   let public = tree.at(ast.child(tree, item, 0)).tag == "true"
@@ -271,7 +271,7 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
         issue(resolver, ctx.module_id, String.from("public-test"))
       }
     } else {
-      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && tag != "Impl" { break }
+      if tag != "Fn" && tag != "Struct" && tag != "Enum" && tag != "Trait" && !(resolver.link && tag == "Alias") && tag != "Impl" { break }
       collect_symbol(symbols, tree, scanned, decl)
     }
     scanned = tree.at(scanned).end
@@ -386,7 +386,7 @@ fn linked_node(resolver: mut Resolver, ctx: view FileContext, tree: view List<as
   }
   if tag != "[" { resolver.output.push_str("(") }
   var at = node + 1
-  let symbol_decl = declaration && (tag == "Fn" || tag == "Struct" || tag == "Enum" || tag == "Trait")
+  let symbol_decl = declaration && (tag == "Fn" || tag == "Struct" || tag == "Enum" || tag == "Trait" || tag == "Alias")
   let identifier = tag == "Type" || tag == "StructLit" || tag == "GenericMember" || tag == "DynType" || tag == "Derive"
   let global_use = (tag == "Call" || tag == "Var") && bindings.identities.at(node) < 0
   if symbol_decl || identifier || global_use {

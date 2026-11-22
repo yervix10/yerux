@@ -31,6 +31,151 @@ static inline String sc_str_trim(String *s) {
   return sc_str_slice(s, lo, hi);
 }
 
+static inline bool sc_str_is_boundary(String *s, int64_t i) {
+  return i >= 0 && i <= s->len && sc_boundary(s, i);
+}
+
+static inline int64_t sc_str_char_count(String *s) {
+  int64_t count = 0;
+  for (int64_t i = 0; i < s->len; ++i) count += ((uint8_t)s->d[i] & 0xc0) != 0x80;
+  return count;
+}
+
+static inline bool sc_str_is_empty(String *s) { return s->len == 0; }
+
+static inline String sc_str_trim_start(String *s) {
+  int64_t lo = 0;
+  while (lo < s->len && sc_space(s->d[lo])) ++lo;
+  return sc_str_slice(s, lo, s->len);
+}
+
+static inline String sc_str_trim_end(String *s) {
+  int64_t hi = s->len;
+  while (hi > 0 && sc_space(s->d[hi - 1])) --hi;
+  return sc_str_slice(s, 0, hi);
+}
+
+static inline String sc_str_repeat(String *s, int64_t n) {
+  if (n < 0) nx_panic("String.repeat count is negative");
+  String out = nx_str_new();
+  while (n-- > 0) nx_str_push_str(&out, nx_str_view(s));
+  return out;
+}
+
+/* Use the same simple case mappings as prelude_string.yx. */
+static inline int sc_case_cp(int cp, bool up) {
+  if (up) {
+      if (cp >= 97 && cp <= 122) {
+          return cp - 32;
+      }
+      if (cp >= 224 && cp <= 254 && cp != 247) {
+          return cp - 32;
+      }
+      if (cp == 255) {
+          return 376;
+      }
+      if (cp == 305) {
+          return 73; // dotless i -> I
+      }
+      if (cp == 383) {
+          return 83; // long s -> S
+      }
+      if ((cp >= 257 && cp <= 303 && cp % 2 == 1) || (cp >= 307 && cp <= 311 && cp % 2 == 1) || (cp >= 331 && cp <= 375 && cp % 2 == 1)) {
+          return cp - 1;
+      }
+      if ((cp >= 314 && cp <= 328 && cp % 2 == 0) || (cp >= 378 && cp <= 382 && cp % 2 == 0)) {
+          return cp - 1;
+      }
+      if (cp >= 945 && cp <= 969 && cp != 962) {
+          return cp - 32;
+      }
+      if (cp == 962) {
+          return 931;
+      }
+      if (cp == 181) {
+          return 924; // micro sign -> Greek capital mu
+      }
+      if (cp == 970 || cp == 971) {
+          return cp - 32; // dialytika: ϊ ϋ -> Ϊ Ϋ
+      }
+      if (cp == 940) {
+          return 902; // ά -> Ά
+      }
+      if (cp >= 941 && cp <= 943) {
+          return cp - 37; // έ ή ί -> Έ Ή Ί
+      }
+      if (cp == 972) {
+          return 908; // ό -> Ό
+      }
+      if (cp == 973 || cp == 974) {
+          return cp - 63; // ύ ώ -> Ύ Ώ
+      }
+      if (cp >= 1072 && cp <= 1103) {
+          return cp - 32;
+      }
+      if (cp >= 1104 && cp <= 1119) {
+          return cp - 80;
+      }
+      return cp;
+  }
+  if (cp >= 65 && cp <= 90) {
+      return cp + 32;
+  }
+  if (cp >= 192 && cp <= 222 && cp != 215) {
+      return cp + 32;
+  }
+  if (cp == 304) {
+      return 105; // I with dot above -> i
+  }
+  if ((cp >= 256 && cp <= 302 && cp % 2 == 0) || (cp >= 306 && cp <= 310 && cp % 2 == 0) || (cp >= 330 && cp <= 374 && cp % 2 == 0)) {
+      return cp + 1;
+  }
+  if ((cp >= 313 && cp <= 327 && cp % 2 == 1) || (cp >= 377 && cp <= 381 && cp % 2 == 1)) {
+      return cp + 1;
+  }
+  if (cp == 376) {
+      return 255;
+  }
+  if (cp >= 913 && cp <= 939 && cp != 930) {
+      return cp + 32;
+  }
+  if (cp == 902) {
+      return 940; // Ά -> ά
+  }
+  if (cp >= 904 && cp <= 906) {
+      return cp + 37; // Έ Ή Ί -> έ ή ί
+  }
+  if (cp == 908) {
+      return 972; // Ό -> ό
+  }
+  if (cp == 910 || cp == 911) {
+      return cp + 63; // Ύ Ώ -> ύ ώ
+  }
+  if (cp >= 1040 && cp <= 1071) {
+      return cp + 32;
+  }
+  if (cp >= 1024 && cp <= 1039) {
+      return cp + 80;
+  }
+  return cp;
+}
+
+static inline String sc_str_change_case(String *s, bool upper) {
+  String out = nx_str_new();
+  for (int64_t i = 0; i < s->len; ++i) {
+    unsigned char lead = s->d[i];
+    if (lead < 128) nx_str_push_byte(&out, sc_case_cp(lead, upper));
+    else if (lead >= 194 && lead < 224 && i + 1 < s->len) {
+      int cp = (lead - 192) * 64 + ((unsigned char)s->d[++i] - 128);
+      nx_str_push_char(&out, sc_case_cp(cp, upper));
+    } else nx_str_push_byte(&out, lead);
+  }
+  return out;
+}
+
+static inline String sc_str_to_upper(String *s) { return sc_str_change_case(s, true); }
+static inline String sc_str_to_lower(String *s) { return sc_str_change_case(s, false); }
+
 static inline int64_t sc_find(Str src, Str part, int64_t start) {
   if (part.n == 0) return start <= src.n ? start : -1;
   for (int64_t i = start; i <= src.n - part.n; ++i)
@@ -44,6 +189,11 @@ static inline bool sc_str_starts_with(String *s, Str part) {
 
 static inline bool sc_str_ends_with(String *s, Str part) {
   return part.n <= s->len && (!part.n || !memcmp(s->d + s->len - part.n, part.p, (size_t)part.n));
+}
+
+static inline int64_t sc_str_find_from(String *s, Str part, int64_t start) {
+  if (start < 0 && part.n) nx_panic("index out of range");
+  return sc_find(nx_str_view(s), part, start);
 }
 
 static inline int64_t sc_str_find(String *s, Str part) { return sc_find(nx_str_view(s), part, 0); }
