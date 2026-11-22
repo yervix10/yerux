@@ -34,6 +34,8 @@ struct Types {
   ordered_params: List<String>,
   modes: List<String>,
   equal_types: List<String>,
+  lead: Int,
+  lead_type: String,
   shown_types: List<String>,
   ordered_types: List<String>,
   aliases: List<String>,
@@ -557,7 +559,10 @@ fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<o
 }
 
 fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: view String, sig: Int, owner: view String, receiver: Int) -> String {
-  let count = child_count(tree, args)
+  let lead = types.lead
+  types.lead = -1
+  var count = child_count(tree, args)
+  if lead >= 0 { count = count + 1 }
   if sig >= 0 {
     let expected = types.signatures.at(sig).args.len()
     if count != expected {
@@ -582,6 +587,11 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
   }
   var nodes = List<Int>.new()
   var order = List<Int>.new()
+  if lead >= 0 {
+    // `it.map(f)` calls the free function `std__iter_map(it, f)`: the receiver is its first argument
+    order.push(0)
+    nodes.push(lead)
+  }
   var i = args + 1
   while i < tree.at(args).end {
     if sub.names.len() == 0 || tree.at(i).tag != "Closure" { order.push(nodes.len()) }
@@ -618,8 +628,9 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     }
     if tree.at(i).tag == "Closure" && mode != "Own" && expected.starts_with("fn(") {
       actual = closure_type(types, tree, i, hint, true)
-    } else if !rejected_move { actual = infer(types, tree, i, hint) }
-    if sig >= 0 { record_loan(types, tree, loans, i, mode, actual, false) }
+    } else if i == lead { actual = String.from(types.lead_type) }
+    else if !rejected_move { actual = infer(types, tree, i, hint) }
+    if sig >= 0 && i != lead { record_loan(types, tree, loans, i, mode, actual, false) }
     type_terms.bind(sub, formal, actual)
     let resolved = type_terms.substitute(formal, sub)
     let text_argument = mode == "View" && resolved == "String" && actual == "Text"
@@ -967,6 +978,14 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     var loans = List<ownership.Loan>.new()
     record_loan(types, tree, loans, receiver, String.from("Mut"), owner, true)
     return unit()
+  }
+  if receiver >= 0 {
+    let free = signature_index(types, "std__iter_{name}", false)
+    if free >= 0 {
+      types.lead = receiver
+      types.lead_type = String.from(owner)
+      return call_args(types, tree, args, name, free, "?", -1)
+    }
   }
   if receiver >= 0 && (shape >= 0 || owner == "Bool" || owner == "Text") {
     issue(types, "type {owner} has no method '{name}'")
@@ -2489,7 +2508,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(),
-    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), shown_types: List<String>.new(),
+    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),
   }

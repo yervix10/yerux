@@ -1342,10 +1342,19 @@ fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: 
   var forms = List<String>.new()
   var modes = List<String>.new()
   var formal = params + 1
-  if receiver >= 0 {
+  if receiver >= 0 && tree.at(formal).tag == "Self" {
     nodes.push(receiver)
     forms.push(String.from(owner))
     modes.push(String.from(tree.at(ast.child(tree, formal, 0)).tag))
+    formal = tree.at(formal).end
+  } else if receiver >= 0 {
+    // a free function called with method syntax: the receiver is its first argument
+    let expected = declared_type(tree, ast.child(tree, formal, 2))
+    let inferred = type_terms.substitute(gen.checked.expressions.at(receiver), gen.sub)
+    type_terms.bind(sub, expected, inferred)
+    forms.push(move expected)
+    modes.push(String.from(tree.at(ast.child(tree, formal, 1)).tag))
+    nodes.push(receiver)
     formal = tree.at(formal).end
   }
   var actual = args + 1
@@ -1901,7 +1910,11 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
       if range.starts_with("Int<") { return range_conversion(gen, tree, actual, range, ty, -1) }
     }
   }
-  let method = match_method(gen, tree, receiver_type, name, !is_static)
+  var method = match_method(gen, tree, receiver_type, name, !is_static)
+  if method < 0 && !is_static {
+    let free = find_named(tree, gen.functions, "std__iter_{name}")
+    if free >= 0 { return emit_call(gen, tree, free, String.new(), args, recv, ty) }
+  }
   if method >= 0 {
     var actual_receiver = recv
     if is_static { actual_receiver = -1 }
