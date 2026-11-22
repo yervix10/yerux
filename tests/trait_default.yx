@@ -1,0 +1,36 @@
+trait Describer {
+    fn value(view self) -> Int
+    fn doubled(view self) -> Int { return self.value() * 2 }
+}
+
+struct Number { n: Int }
+impl Describer for Number {
+    fn value(view self) -> Int { return self.n }
+}
+
+struct Later { n: Int }
+impl LaterTrait for Later {
+    fn value(view self) -> Int { return self.n }
+}
+trait LaterTrait {
+    fn value(view self) -> Int
+    fn tripled(view self) -> Int { return self.value() * 3 }
+}
+
+struct Generic<T> { item: T }
+impl<T: Describer> Describer for Generic<T> {
+    fn value(view self) -> Int { return self.item.value() }
+}
+
+fn generic_value<T: Describer>(item: view T) -> Int { return item.doubled() }
+
+fn main() {
+    let n = Number { n: 21 }
+    print(n.doubled())
+    print(generic_value(n))
+    let boxed: Box<dyn Describer> = Box<dyn Describer>.new(n)
+    print(boxed.doubled())
+    let generic = Generic { item: Number { n: 4 } }
+    print(generic.doubled())
+    print(Later { n: 7 }.tripled())
+}
