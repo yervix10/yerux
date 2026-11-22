@@ -172,9 +172,10 @@ fn resolve_path(resolver: mut Resolver, ctx: view FileContext, name: view String
 fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>, index: Int) {
   let tag = String.from(tree.at(index).tag)
   var first = index + 1
-  // locals that hide a module alias (parameters, loop variables, `let`s) end with their block, function or loop
+  // locals that hide a module alias (parameters, loop/match/closure binds, `let`s) end with their scope
   let mark = ctx.shadowed.len()
   var late_shadow = String.new()
+  var skip_children = false
   if tag == "Field" || tag == "Method" {
     let recv = ast.child(tree, index, 0)
     if tree.at(recv).tag == "Var" {
@@ -200,21 +201,33 @@ fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNo
   } else if tag == "Let" {
     // the initializer still sees the module: the name is hidden only after it
     late_shadow = ast.name_at(tree, index, 0)
+  } else if tag == "Unpack" {
+    // RHS still sees the module; pattern names hide it afterwards (like `let`)
+    visit(resolver, ctx, tree, ast.child(tree, index, 1))
+    visit(resolver, ctx, tree, ast.child(tree, index, 0))
+    skip_children = true
   } else if tag == "Param" {
     let name = ast.name_at(tree, index, 0)
     if alias_module(ctx, name) >= 0 { ctx.shadowed.push(move name) }
+  } else if tag == "Bind" || tag == "UnpackBind" {
+    let name = ast.name_at(tree, index, 0)
+    if name != "_" && alias_module(ctx, name) >= 0 { ctx.shadowed.push(move name) }
   } else if tag == "For" {
     let name = ast.name_at(tree, index, 1)
     if alias_module(ctx, name) >= 0 { ctx.shadowed.push(move name) }
   }
 
-  var i = first
-  while i < tree.at(index).end {
-    visit(resolver, ctx, tree, i)
-    i = tree.at(i).end
+  if !skip_children {
+    var i = first
+    while i < tree.at(index).end {
+      visit(resolver, ctx, tree, i)
+      i = tree.at(i).end
+    }
   }
   if late_shadow.len() > 0 && alias_module(ctx, late_shadow) >= 0 { ctx.shadowed.push(move late_shadow) }
-  if tag == "Block" || tag == "Fn" || tag == "For" { ctx.shadowed.truncate(mark) }
+  if tag == "Block" || tag == "Fn" || tag == "For" || tag == "Arm" || tag == "Closure" {
+    ctx.shadowed.truncate(mark)
+  }
 }
 
 fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNode>, interface_only: Bool) {
