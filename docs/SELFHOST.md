@@ -221,15 +221,47 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-21 run matched 311 of 379 candidates (82.1%), up from 287 of 379
-(75.7%) on the same corpus. The new run includes 95 runtime panics with
-identical messages and exit statuses, 67 candidates outside the supported
-subset, one expected type rejection, and zero mismatches.
+2026-11-22 run matched **378 of 410 candidates (92.2%)**, with 98 runtime
+panics reproduced exactly, 31 candidates outside the supported subset, one
+expected type rejection and zero mismatches. (82.1% on 2026-11-21 before the
+codegen/front-end work of that day; the history is in `git log selfhost/`.)
 
-The largest rejection groups are other lowering gaps (31), generics and
-traits (14), sequences and iteration (5), and numeric lowering (4). Set
-`SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
+`bash tests/selfhost_stage2.sh` (part of `tests/run_all.sh`) checks the
+fixpoint of the driver itself: the bootstrap stages build the compiler with
+`yerux-self --stage2` (generation 1, `--stage2 [--sources DIR] [-o DIR]` rebuilds all
+seven stages and keeps their C with `--keep-c`), generation 1 builds it again
+(generation 2), and the generated C of the two generations is byte-identical
+(`cmp`), and generation 2 still compiles and runs a program. None of this
+uses the Rust compiler after the seed.
+
+The 31 remaining rejections, by group:
+
+| Group | Programs | What is missing |
+|---|---|---|
+| Concurrency | 13 (`conc_*`, `concurrency*`, `thread_pool`, `net_drop`, `std_sync`, channels) | `spawn`/`scope`/`JoinHandle`, `Mutex`/`RwLock`, channels, atomics: runtime pieces plus closures with captures that cross threads |
+| Slices | 5 (`slice_chunks*`, `slice_edge_*`, `slice_split_oob`) | `chunks`/`windows`/`split_at*`, a slice as a `for` variable or binding (`slice binding` is an explicit `unsupported`) |
+| `extern`/`link`/pointers | 3 (`ffi_*`, `ptr_construct`) | C prototypes for `extern` blocks, `Ptr<T>` |
+| Iterators and errors | 4 (`iter_basic`, `iter_more`, `err_context`, `arr_const`) | method syntax over `std__iter_<name>` free functions and `context`/`wrap` (the Rust checker rewrites them), const generics |
+| Compile-time | 2 (`comptime_*`) | `__comptime` evaluation |
+| Other | 4 (`own_deep_scc_drop`, `arr_eq_show`, `trait_default`, `mod_ok/consts_types`) | recursive by-value layouts through lists, `contains` over arrays of arrays, trait default methods and `pub const` forms in the source parser |
+
+Set `SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
 and category for each unsupported file.
+
+### Is `yerux-self` ready to be the default compiler?
+
+Measured on 2026-11-22: the driver compiles all seven `selfhost/*.yx` stages
+and itself without the Rust compiler (`--stage2`), and reproduces itself
+byte for byte. It builds `examples/project` and every program of the corpus
+except the 31 above. What stops it from replacing `yerux build`:
+
+1. the 31 programs above (concurrency is the biggest block), plus native
+   x86-64/aarch64/PE backends, `--check-ranges`, `yerux fmt/lsp/doctor` and
+   the package manager, which exist only in the Rust binary;
+2. diagnostics: the self-hosted stages print their own messages and no spans;
+3. the stages still need `cc` and the C headers in `runtime/`;
+4. the seed: a fresh checkout needs the Rust compiler once to build the
+   first generation.
 
 ### Compile time
 
@@ -275,14 +307,16 @@ yet to be ported.
 The self-hosted compiler covers the sources required to rebuild its
 stages. Unbounded inherent generic impls, structural `derive Clone`, and
 iteration through a user type's `next(mut self) -> Option<T>` are supported.
-Full parity still requires general trait and bound resolution, other
-derives, parallel loops, generic function items as values, lazy `Iter<T>`
-adapters, defer lifetimes, precise
-loans for nested calls and projections, owned arrays, recursive list layouts,
-and richer pattern matching and range flow.
-Compile-time evaluation, full diagnostic spans and notes, and replacing
-the bootstrap C bindings with compiled standard-library implementations
-also remain open.
+Full parity still requires threads and channels, slices as bindings, `extern`
+declarations, generic function items as values, method-syntax iterator
+adapters, `__comptime`, precise loans for nested calls and projections,
+recursive list layouts, full diagnostic spans and notes, and replacing the
+bootstrap C bindings with compiled standard-library implementations.
+Done since the last revision: `Map`/`Set`/`Arena` (the Yerux preludes, injected
+by the driver), `derive Equal`/`Show` (expanded to source by the driver, like
+the Rust compiler), tuple patterns and tuple assignment, owned arrays,
+`const` items, `unsafe`/`unchecked`, `?` error conversion, `cmp` on numbers
+and strings, comparison of lists and arrays, `defer`, labeled loops and `step`.
 
 These constraints do not prevent writing the parser and checker as runtime
 Yerux programs, but they make a feature-for-feature port a separate milestone.

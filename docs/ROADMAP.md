@@ -87,12 +87,17 @@ Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `te
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-The self-hosted code generator matches the Rust C backend on **311 of 379
-candidate programs (82.1%)**, up from 287 of 379 (75.7%) on the same corpus.
-The `tests/selfhost_codegen.sh` run matched 95 runtime panics and reported 67
-candidates outside the supported subset, one expected rejection, and **zero
-mismatches**. The largest rejection groups were other lowering gaps (31),
-generics and traits (14), sequences and iteration (5), and numeric lowering (4).
+The self-hosted code generator matches the Rust C backend on **378 of 410
+candidate programs (92.2%)** (2026-11-22; 82.1% the day before), with 98 runtime
+panics reproduced exactly, 31 candidates outside the supported subset, one
+expected rejection and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
+fixpoint: the stages built by the driver rebuild themselves and generation 1
+and 2 emit byte-identical C. What is left before it can be called
+self-hosted (details and the list of the 31 programs in
+[SELFHOST.md](SELFHOST.md)): concurrency (13 programs), slices as bindings (5),
+`extern`/pointers (3), method-syntax iterator adapters and `context` (4),
+`__comptime` (2), a few layout/parser corners (4), the native backends and
+tools that exist only in the Rust binary, and diagnostics with spans.
 The milestone remains at 0.5 while the self-hosted compiler covers a subset
 of the language and standard library.
 
