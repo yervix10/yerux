@@ -910,6 +910,40 @@ fn item_signature(doc: &Doc, name_tok: usize) -> Option<String> {
 }
 
 impl Server {
+    fn code_actions(&self, uri: &str, params: &Json) -> Json {
+        let Some(doc) = self.docs.get(uri) else { return Json::Arr(vec![]) };
+        let diagnostics = params.get("context").and_then(|c| c.get("diagnostics")).and_then(Json::arr).unwrap_or(&[]);
+        let mut actions = Vec::new();
+        for diagnostic in diagnostics {
+            let message = diagnostic.get("message").and_then(Json::str).unwrap_or("");
+            if let Some((ty, trait_name)) = message.split_once(" does not implement ") {
+                let ty = ty.rsplit(' ').next().unwrap_or(ty).trim_matches('`');
+                let trait_name = trait_name.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("");
+                if ["Clone", "Equal", "Show"].contains(&trait_name) && doc.syms.iter().any(|sym| sym.name == ty && matches!(sym.kind, SymKind::Struct | SymKind::Enum)) && !doc.text.contains(&format!("derive {} for {}", trait_name, ty)) {
+                    let line = doc.lines.len().saturating_sub(1);
+                    let column = doc.lines.last().map_or(0, |chars| chars.iter().map(|c| c.len_utf16()).sum());
+                    let edit = obj(vec![("changes", obj(vec![(uri, Json::Arr(vec![obj(vec![
+                        ("range", obj(vec![("start", obj(vec![("line", n(line)), ("character", n(column))])), ("end", obj(vec![("line", n(line)), ("character", n(column))]))])),
+                        ("newText", s(format!("\nderive {} for {}\n", trait_name, ty))),
+                    ])]))]))]);
+                    actions.push(obj(vec![("title", s(format!("Derive {} for {}", trait_name, ty))), ("kind", s("quickfix")), ("edit", edit)]));
+                }
+            }
+            let Some(name) = message.strip_prefix("variable '").and_then(|m| m.split_once("' does not exist").map(|x| x.0)) else { continue };
+            for module in crate::stdlib::MODULES {
+                let Some(source) = crate::stdlib::source(module) else { continue };
+                if !source.lines().any(|line| line.trim_start().starts_with(&format!("pub fn {}(", name))) { continue; }
+                if doc.text.lines().any(|line| line.trim() == format!("import {}", module)) { continue; }
+                let edit = obj(vec![("changes", obj(vec![(uri, Json::Arr(vec![obj(vec![
+                    ("range", obj(vec![("start", obj(vec![("line", n(0)), ("character", n(0))])), ("end", obj(vec![("line", n(0)), ("character", n(0))]))])),
+                    ("newText", s(format!("import {}\n", module))),
+                ])]))]))]);
+                actions.push(obj(vec![("title", s(format!("Import {} from {}", name, module))), ("kind", s("quickfix")), ("edit", edit)]));
+            }
+        }
+        Json::Arr(actions)
+    }
+
     fn publish(&mut self, uri: &str) {
         let path = match self.paths.get(uri) {
             Some(p) => p.clone(),
@@ -1001,6 +1035,7 @@ impl Server {
                             ]),
                         ),
                         ("documentSymbolProvider", Json::Bool(true)),
+                        ("codeActionProvider", Json::Bool(true)),
                         ("definitionProvider", Json::Bool(true)),
                         ("hoverProvider", Json::Bool(true)),
                         ("documentFormattingProvider", Json::Bool(true)),
@@ -1087,6 +1122,7 @@ impl Server {
                 None => Json::Null,
             }),
             "textDocument/hover" => Some(self.hover(&uri, &params)),
+            "textDocument/codeAction" => Some(self.code_actions(&uri, &params)),
             "textDocument/formatting" => {
                 let Some(d) = self.docs.get(&uri) else {
                     return true;
