@@ -909,7 +909,7 @@ pub fn loc_json(ctx: &Ctx, l: &Loc) -> Json {
 pub fn describe(ctx: &Ctx, l: &Loc) -> Option<String> {
     let doc = ctx.doc(l.doc);
     let name = id_name(&doc.toks[l.tok])?;
-    match decl_at(doc, l.tok) {
+    let signature = match decl_at(doc, l.tok) {
         Some(Decl::Let) => {
             let kw = if is_id(&doc.toks[l.tok - 1], "var") { "var" } else { "let" };
             Some(match var_type(ctx, l.doc, l.tok) {
@@ -929,7 +929,24 @@ pub fn describe(ctx: &Ctx, l: &Loc) -> Option<String> {
         Some(Decl::Closure) => Some(format!("(closure parameter) {}", name)),
         Some(Decl::Arm) => Some(format!("(pattern binding) {}", name)),
         None => item_signature(doc, l.tok),
+    }?;
+    let line = doc.toks[l.tok].pos.line;
+    let source: Vec<&str> = doc.text.lines().collect();
+    let mut comments = Vec::new();
+    let mut i = line.saturating_sub(2);
+    while let Some(raw) = source.get(i) {
+        let trimmed = raw.trim_start();
+        if let Some(text) = trimmed.strip_prefix("///") {
+            comments.push(text.strip_prefix(' ').unwrap_or(text));
+            if i == 0 { break; }
+            i -= 1;
+        } else if trimmed.is_empty() && comments.is_empty() {
+            if i == 0 { break; }
+            i -= 1;
+        } else { break; }
     }
+    comments.reverse();
+    if comments.is_empty() { Some(signature) } else { Some(format!("{}\n\n{}", signature, comments.join("\n"))) }
 }
 
 // ───────────────────────── completion ─────────────────────────

@@ -36,7 +36,7 @@ tuple literals and parallel loops, and are reflected in both dumps.
 Run `bash tests/selfhost_parser.sh`. It compares positioned token streams and
 ASTs for every Git-tracked `.yx` file, including benchmarks, the prelude, the
 standard library, and the self-hosted sources themselves. At this milestone it
-matches **642 ASTs across 657 files**, with 6 lexical rejections and 9 syntax
+matches **642 ASTs across 657 files** (now 779 ASTs across 795 files, 0 mismatches), with 6 lexical rejections and 9 syntax
 rejections. Lexical rejections compare the complete diagnostic rows. Syntax
 rejections compare exit status and source line. The script also compares the
 10 expression and statement fragments. `tests/run_all.sh` runs this test and
@@ -69,7 +69,7 @@ Each cached file contains the output of `parser` on the positioned token
 stream. Exit status is 0 for a resolved module graph, 1 for module errors,
 and 2 for an unreadable or malformed AST artifact.
 
-At this milestone the test covers **657 files** with 624 matching resolution
+At this milestone the test covered **657 files** with 624 matching resolution
 snapshots, 18 matching module rejections, and 15 source rejections that
 cannot reach resolution. Some module fixtures require a specific entry
 directory when compiling, so invoking each dependency directly can produce
@@ -206,9 +206,10 @@ type parity suites. The harness also compares formatter output against
 the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
-The bootstrap rebuilds 7 of 7 executables with identical C. The current
-program comparison matches 149 of 351 candidates (42.5%), including 63
-runtime panics, with two expected rejections and zero discrepancies.
+The bootstrap rebuilds 7 of 7 executables with identical C. The program comparison
+(measured 2026-11-21 on 795 tracked `.yx` files) matches 240 of 375 candidates (64.0%), including 92
+runtime panics; 133 candidates are outside the supported subset, 2 are expected rejections, and none differ
+(the `tests/drop_generic.yx` discrepancy was fixed).
 The corpus now includes module entry points. On the original 327 candidates,
 the count rose from 126 to 140 identical executions.
 
@@ -280,7 +281,7 @@ Yerux programs, but they make a feature-for-feature port a separate milestone.
 `selfhost/fmt.yx` currently reads and writes source unchanged. This is a byte-preserving
 bootstrap, not yet the token-layout algorithm in `src/fmt.rs`. `tests/selfhost_fmt.sh`
 compares it against `yerux fmt --stdout` across the `.yx` corpus and reports the exact
-identical-file percentage; it intentionally fails until parity reaches 100%.
+identical-file percentage and fails below 100%. (Parity has been reached: see the last status line of the formatter sections.)
 
 The formatter port needs token source line/newline metadata and comment tokens. The current
 selfhost lexer emits canonical token rows but discards comments and whitespace positions, so
@@ -319,3 +320,6 @@ Current corpus run after semicolon handling, exponent tokenization, and UTF-8-sa
 slicing: 237/243 dirty files (97%) are byte-identical, and 243/243 are idempotent.
 The six mismatches are limited to nested generic/range forms and a few multiline close-brace
 and closure-type spacing cases.
+
+Current formatter status (2026-11-21): 308/308 files of the Rust dirty set are byte-identical (100%) and 308/308 are idempotent;
+`tests/selfhost_fmt.sh` passes.

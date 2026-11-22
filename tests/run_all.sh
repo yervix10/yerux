@@ -92,6 +92,7 @@ done
 
 # ---- auxiliary scripts: name|command (slowest first so the pool stays busy) ----
 AUX=(
+  "fuzz_compile|python3 tests/fuzz/fuzz_compile.py --cases 600 --timeout 1.5"
   "fuzz_parse|python3 tests/fuzz_parse.py --edge-only -j 2"
   "selfhost_fmt|bash tests/selfhost_fmt.sh"
   "selfhost_types|bash tests/selfhost_types.sh"
@@ -110,13 +111,14 @@ AUX=(
   "io_targets|bash tests/io_targets.sh"
   "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
   "lsp_vscode|bash tests/lsp_vscode.sh"
+  "doctests|bash tests/doctests.sh"
   "tokens_dump|bash tests/tokens_dump.sh"
   "win_smoke|bash tests/win_smoke.sh"
   "dist|bash tests/dist.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
 )
-FAST_AUX=" win_smoke dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
+FAST_AUX=" fuzz_compile win_smoke dist range_ir inline_ir modules fmt tokens_dump sumtool minimake_errors noopt_shortcircuit "
 aux=()
 if [ "$BLESS" = 0 ]; then
   for a in "${AUX[@]}"; do

@@ -123,6 +123,20 @@ fn initialize_advertises_the_capabilities() {
 }
 
 #[test]
+fn lsp_hover_docs_and_code_actions_work_over_json_rpc() {
+    let mut c = Client::start();
+    let uri = "file:///tmp/yerux_lsp_features.yx";
+    c.open(uri, "/// Adds two values.\nfn add(a: Int, b: Int) -> Int { return a + b }\nstruct Pair { a: Int }\nfn main() { print(add(1, 2)) }\n");
+    let r = c.at("textDocument/hover", uri, 1, 4);
+    assert!(r.contains("Adds two values."), "{r}");
+    let p = format!(r#"{{"textDocument":{{"uri":"{}"}},"range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":1}}}},"context":{{"diagnostics":[{{"message":"variable 'read_to_string' does not exist"}},{{"message":"Pair does not implement Clone"}}]}}}}"#, uri);
+    let r = c.request("textDocument/codeAction", &p);
+    assert!(r.contains("Import read_to_string from std.fs") && r.contains("Derive Clone for Pair"), "{r}");
+    assert!(r.contains("import std.fs\\n") && r.contains("derive Clone for Pair"), "{r}");
+    c.finish();
+}
+
+#[test]
 fn unknown_request_gets_an_error_not_a_hang() {
     let mut c = Client::start();
     c.request("initialize", "{}");
