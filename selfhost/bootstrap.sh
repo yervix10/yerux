@@ -22,7 +22,7 @@ compile_selfhost() {
   done
   for stage in "${selfhost_stages[@]}"; do
     source=selfhost/$stage.yx
-    "$compiler/resolve" --link "$output/cache" "$source" >"$output/$stage.ast"
+    "$compiler/resolve" --bootstrap-link "$output/cache" "$source" >"$output/$stage.ast"
     if ! "$compiler/codegen" "$output/$stage.ast" >"$output/$stage.c"; then
       printf 'selfhost bootstrap: lowering failed for %s\n' "$source" >&2
       return 1

@@ -204,10 +204,15 @@ fn main() {
       while !done && tries < 2000 {
         match ch.try_wait() {
           Ok(Some(st)) => { done = true print("try_wait: {st.show()}") }
-          Ok(None) => { tries = tries + 1 }
+          Ok(None) => {
+            // Let the child run even when the test suite is busy.
+            io.sleep_ms(1)
+            tries = tries + 1
+          }
           Err(e) => { done = true print("unexpected: {e}") }
         }
       }
+      assert(done)
     }
     Err(e) => { print("unexpected: {e}") }
   }

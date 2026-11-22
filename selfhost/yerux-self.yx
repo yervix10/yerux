@@ -39,7 +39,7 @@ fn write(file: view String, contents: view String) -> Bool {
   }
 }
 
-fn cache_source(build: mut Build, source: view String, key: view String, interface_only: Bool) -> Bool {
+fn cache_source(build: mut Build, source: view String, key: view String) -> Bool {
   if build.seen.contains(key) { return true }
   build.seen.push(String.from(key))
   let tokens_path = path.join(build.work, "tokens")
@@ -67,7 +67,6 @@ fn cache_source(build: mut Build, source: view String, key: view String, interfa
         None => { return false }
         Some(ok) => { if !write(cache_path, contents) { return false } }
       }
-      if interface_only { return true }
 
       let parsed = ast.decode(move contents)
       let items = ast.child(parsed.nodes, 0, 0)
@@ -90,17 +89,17 @@ fn cache_import(build: mut Build, name: view String) -> Bool {
   let file = "{parts}.yx"
   if name.starts_with("std.") {
     let source = path.join(build.runtime, file)
-    if fs.is_file(source) { return cache_source(build, source, "src/{file}", ast.bootstrap_module(name)) }
+    if fs.is_file(source) { return cache_source(build, source, "src/{file}") }
   }
   let source = path.join(build.root, file)
-  if fs.is_file(source) { return cache_source(build, source, file, ast.bootstrap_module(name)) }
+  if fs.is_file(source) { return cache_source(build, source, file) }
   report("resolving {name}", "source file not found: {source}")
   return false
 }
 
 fn compile(build: mut Build, source: view String, output: view String, emit_ast: Bool) -> Bool {
   let entry = path.file_name(source)
-  if !cache_source(build, source, entry, false) { return false }
+  if !cache_source(build, source, entry) { return false }
   let resolver = path.join(build.stages, "resolve")
   let linked_path = path.join(build.work, "linked.ast")
   var args = List<String>.new()

@@ -106,7 +106,9 @@ required() {
     tests/slice_edge_oob_range.yx|tests/drop_basic.yx|tests/selfhost/types/methods_generics.yx|\
     tests/selfhost/types/enums_result_option.yx|tests/defer_owned.yx|tests/flow_for_range.yx|\
     tests/own_try_order.yx|tests/range_as_else.yx|tests/range_panic_uint64.yx|tests/num_math.yx|\
-    tests/num_float_basic.yx|tests/agg_flow_list.yx|tests/slice_for.yx|tests/edge_option_result.yx) return 0 ;;
+    tests/num_float_basic.yx|tests/agg_flow_list.yx|tests/slice_for.yx|tests/edge_option_result.yx|\
+    tests/io_basic.yx|tests/io_exit_drop.yx|tests/fs_buffered.yx|tests/net_errors.yx|\
+    tests/process_basic.yx|tests/process_timeout.yx|tests/time_duration.yx|tests/drop_generic.yx) return 0 ;;
     *) return 1 ;;
   esac
 }

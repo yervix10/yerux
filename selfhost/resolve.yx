@@ -12,7 +12,7 @@ struct Alias { name: String, module_id: Int }
 struct FileContext { module_id: Int, aliases: List<Alias>, shadowed: List<String> }
 struct Resolver {
   cache: String, root: String, modules: List<Module>, errors: Int,
-  link: Bool, output: String, emitted_tuples: List<String>,
+  link: Bool, bootstrap: Bool, output: String, emitted_tuples: List<String>,
 }
 
 fn module_index(resolver: view Resolver, key: view String) -> Int {
@@ -314,7 +314,7 @@ fn load_module(resolver: mut Resolver, key: view String, owner: view String, fil
       var ctx = FileContext { module_id: module_id, aliases: List<Alias>.new(), shadowed: List<String>.new() }
       // These modules have bootstrap C shims. Resolve their namespaces from
       // source, while leaving implementation bodies to the bootstrap backend.
-      let interface_only = resolver.link && ast.bootstrap_module(owner)
+      let interface_only = resolver.bootstrap && ast.bootstrap_module(owner)
       module_items(resolver, ctx, tree.nodes, interface_only)
     }
   }
@@ -412,9 +412,10 @@ fn linked_node(resolver: mut Resolver, ctx: view FileContext, tree: view List<as
 
 fn main() {
   let args = env.args()
-  let link = args.len() == 4 && args.at(1) == "--link"
+  let bootstrap = args.len() == 4 && args.at(1) == "--bootstrap-link"
+  let link = bootstrap || (args.len() == 4 && args.at(1) == "--link")
   if args.len() != 3 && !link {
-    ast.artifact_error("usage: resolve [--link] AST_ROOT ENTRY.yx")
+    ast.artifact_error("usage: resolve [--link|--bootstrap-link] AST_ROOT ENTRY.yx")
     return
   }
   var index = 1
@@ -429,21 +430,21 @@ fn main() {
   let key = path.stem(entry)
   var resolver = Resolver {
     cache: move cache, root: path.parent(entry), modules: List<Module>.new(), errors: 0,
-    link: link, output: String.new(), emitted_tuples: List<String>.new(),
+    link: link, bootstrap: bootstrap, output: String.new(), emitted_tuples: List<String>.new(),
   }
   let id = load_module(resolver, key, String.from("@"), input)
   if resolver.errors > 0 { env.exit(1) }
   else if link {
     // Layouts used by the bootstrap C shims.
-    if module_index(resolver, String.from("std.fs")) >= 0 || module_index(resolver, String.from("std.io")) >= 0 ||
+    if bootstrap && (module_index(resolver, String.from("std.fs")) >= 0 || module_index(resolver, String.from("std.io")) >= 0 ||
         module_index(resolver, String.from("std.process")) >= 0 ||
-        module_index(resolver, String.from("std.env")) >= 0 {
+        module_index(resolver, String.from("std.env")) >= 0) {
       let ty = encoded(String.from("std__io__IoError"))
       if resolver.output.len() != 0 { resolver.output.push_str(",") }
       let decl = "Item(false,_,Struct({ty},[],[FieldDef(6d657373616765,Type(537472696e67,[]))]))"
       resolver.output.push_str(decl)
     }
-    if module_index(resolver, String.from("std.process")) >= 0 {
+    if bootstrap && module_index(resolver, String.from("std.process")) >= 0 {
       let status = encoded(String.from("std__process__ExitStatus"))
       let output = encoded(String.from("std__process__Output"))
       let int = encoded(String.from("Int"))

@@ -808,6 +808,14 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     if signature < 0 { signature = bound_method(types, tree, types.impl_params, owner, name) }
     if signature >= 0 { return call_args(types, tree, args, name, signature, owner, receiver) }
   }
+  if receiver >= 0 && owner.starts_with("List<") && name == "sort" {
+    let element = type_terms.element(owner)
+    if child_count(tree, args) != 0 { issue(types, String.from("'sort' takes no arguments")) }
+    if !ordered_type(types, element) { issue(types, "{element} does not implement Ordered") }
+    var loans = List<ownership.Loan>.new()
+    record_loan(types, tree, loans, receiver, String.from("Mut"), owner, true)
+    return unit()
+  }
   if receiver >= 0 && (shape >= 0 || owner == "Bool" || owner == "Text") {
     issue(types, "type {owner} has no method '{name}'")
     return unknown()
@@ -1060,9 +1068,42 @@ fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view 
   return ty
 }
 
+pub fn raw_arity(name: view String) -> Int {
+  if name == "__syscall" { return 7 }
+  if name == "__store8" || name == "__store64" { return 2 }
+  if name == "__alloc" || name == "__free" || name == "__global" ||
+      name == "__load8" || name == "__load64" { return 1 }
+  return 0
+}
+
 fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view String, args: Int) -> String {
   var result = unknown()
   let int_type = String.from("Int")
+  let arity = raw_arity(name)
+  if arity > 0 {
+    if child_count(tree, args) != arity {
+      issue(types, "'{name}' expects {arity} argument(s)")
+      return unknown()
+    }
+    if name == "__global" {
+      let arg = args + 1
+      var index = -1
+      if tree.at(arg).tag == "Int" {
+        let parsed = tree.at(ast.child(tree, arg, 0)).tag.parse_int(index)
+        if !parsed { index = -1 }
+      }
+      if index < 0 || index >= 64 {
+        issue(types, String.from("__global needs an integer literal between 0 and 63"))
+      }
+    }
+    var at = args + 1
+    while at < tree.at(args).end {
+      expect_type(types, int_type, infer(types, tree, at, int_type))
+      at = tree.at(at).end
+    }
+    if name == "__free" || name.starts_with("__store") { return unit() }
+    return int_type
+  }
   if name == "ok_or" && child_count(tree, args) == 2 {
     let lhs = infer(types, tree, args + 1, unknown())
     let values = type_terms.arguments(lhs)
@@ -1849,6 +1890,15 @@ fn prelude_enum(name: Text, parameters: Text, first: Text, second: Text, second_
 fn declare_prelude(types: mut Types) {
   types.shapes.push(prelude_enum("Option", "T", "Some", "None", ""))
   types.shapes.push(prelude_enum("Result", "T, E", "Ok", "Err", "E"))
+  let self_type = String.from("Self")
+  let equal = types.signatures.len()
+  prelude_method(types, self_type, "eq", "View", "Bool", "Self", "View")
+  types.signatures.at(equal).required_trait = String.from("Equal")
+  types.signatures.at(equal).generics.push(String.from(self_type))
+  let ordered = types.signatures.len()
+  prelude_method(types, self_type, "cmp", "View", "Int", "Self", "View")
+  types.signatures.at(ordered).required_trait = String.from("Ordered")
+  types.signatures.at(ordered).generics.push(move self_type)
   let string = String.from("String")
   prelude_method(types, string, "new", "", "String", "", "Own")
   prelude_method(types, string, "from", "", "String", "String", "View")
@@ -1868,6 +1918,10 @@ fn declare_prelude(types: mut Types) {
   prelude_method(types, string, "push_int", "Mut", "nothing", "Int", "Own")
   prelude_method(types, string, "push_byte", "Mut", "nothing", "Int", "Own")
   prelude_method(types, string, "push_char", "Mut", "nothing", "Char", "Own")
+  prelude_method(types, string, "raw_addr", "View", "Int", "", "Own")
+  let raw = types.signatures.len()
+  prelude_method(types, string, "push_raw", "Mut", "nothing", "Int", "Own")
+  types.signatures.at(raw).args.push(Parameter { mode: String.from("Own"), ty: String.from("Int") })
   prelude_method(types, string, "char_size", "View", "Int", "Int", "Own")
   prelude_method(types, string, "is_empty", "View", "Bool", "", "Own")
   prelude_method(types, string, "is_boundary", "View", "Bool", "Int", "Own")

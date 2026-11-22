@@ -11,7 +11,7 @@ struct Value { ty: String, code: String }
 struct Variant { name: String, payload: List<String> }
 struct EnumLayout { ty: String, variants: List<Variant>, owned: Bool }
 struct StructLayout { ty: String, owned: Bool, ready: Bool, destructor: Bool }
-struct Method { owner: String, node: Int, params: Int, destructor: Bool, equality: Bool }
+struct Method { owner: String, node: Int, params: Int, trait_name: String }
 struct Instance { node: Int, owner: String, sub: type_terms.Substitution, key: String }
 struct Loop { label: String, id: Int, deferred: Int }
 struct Generator {
@@ -28,6 +28,7 @@ struct Generator {
   prototypes: String,
   functions: List<Int>,
   collections: List<String>,
+  sorted_elements: List<String>,
   globals: String,
   references: List<Bool>,
   out: String,
@@ -458,12 +459,9 @@ fn equals(gen: mut Generator, tree: view List<ast.AstNode>, left: view Value, ri
     let same = equals(gen, tree, a, b)
     return "(({left.code}).tag == ({right.code}).tag && (({left.code}).tag != 1 || ({same})))"
   }
-  let method = equality_method(gen, left.ty)
+  let method = trait_method(gen, tree, left.ty, String.from("Equal"), String.from("eq"))
   if method >= 0 {
-    let sub = call_substitution(gen, tree, method, left.ty)
-    let instance = schedule(gen, method, left.ty, move sub)
-    if drop_fn(gen, tree, left.ty).len() != 0 { return "F{instance}(&({left.code}), &({right.code}))" }
-    return "F{instance}({left.code}, {right.code})"
+    return comparison_call(gen, tree, method, left, right)
   }
   if integer_c(left.ty).len() != 0 || floating_c(left.ty).len() != 0 || left.ty == "Bool" {
     return "({left.code}) == ({right.code})"
@@ -489,19 +487,19 @@ fn binary(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view 
       if op == "!=" { return temp(gen, tree, ty, "!({test})") }
       return temp(gen, tree, ty, test)
     }
-    let method = equality_method(gen, left.ty)
+    let method = trait_method(gen, tree, left.ty, String.from("Equal"), String.from("eq"))
     if method >= 0 {
       let right = expression(gen, tree, ast.child(tree, node, 2))
-      let instance = schedule(gen, method, left.ty, type_terms.empty())
-      var l = String.from(left.code)
-      var r = String.from(right.code)
-      if drop_fn(gen, tree, left.ty).len() != 0 {
-        l = "&({l})"
-        r = "&({r})"
-      }
-      var invert = String.new()
-      if op == "!=" { invert = String.from("!") }
-      return temp(gen, tree, ty, "{invert}F{instance}({l}, {r})")
+      let call = comparison_call(gen, tree, method, left, right)
+      if op == "!=" { return temp(gen, tree, ty, "!({call})") }
+      return temp(gen, tree, ty, call)
+    }
+  } else if op == "<" || op == "<=" || op == ">" || op == ">=" {
+    let method = trait_method(gen, tree, left.ty, String.from("Ordered"), String.from("cmp"))
+    if method >= 0 {
+      let right = expression(gen, tree, ast.child(tree, node, 2))
+      let call = comparison_call(gen, tree, method, left, right)
+      return temp(gen, tree, ty, "({call} {op} 0)")
     }
   }
   if drop_fn(gen, tree, left.ty).len() != 0 { unsupported("operator {op} on {left.ty}") }
@@ -868,6 +866,20 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
   }
   let fun = find_named(tree, gen.functions, name)
   if fun < 0 {
+    if types.raw_arity(name) > 0 {
+      var values = List<String>.new()
+      var at = args + 1
+      while at < tree.at(args).end {
+        let arg = expression(gen, tree, at)
+        let saved = temp(gen, tree, arg.ty, arg.code)
+        values.push(String.from(saved.code))
+        at = tree.at(at).end
+      }
+      let operands = values.join(", ")
+      if name == "__global" { return temp(gen, tree, ty, "((int64_t)(intptr_t)&nx_globals[{operands}])") }
+      let helper = name.slice(2, name.len())
+      return temp(gen, tree, ty, "nx_{helper}({operands})")
+    }
     if name == "Some" || name == "Ok" || name == "Err" {
       return construct_variant(gen, tree, ty, name, args)
     }
@@ -1028,9 +1040,23 @@ fn schedule(gen: mut Generator, node: Int, owner: view String, sub: type_terms.S
   return id
 }
 
-fn equality_method(gen: view Generator, ty: view String) -> Int {
+fn method_matches(tree: view List<ast.AstNode>, method: view Method, owner: view String) -> Bool {
+  if method.owner == owner { return true }
+  if method.params < 0 { return false }
+  let names = parameter_names(tree, method.params)
+  var sub = type_terms.with_names(names)
+  type_terms.bind(sub, method.owner, owner)
+  let concrete = type_terms.substitute(method.owner, sub)
+  return concrete == owner
+}
+
+fn trait_method(gen: view Generator, tree: view List<ast.AstNode>, owner: view String,
+    trait_name: view String, name: view String) -> Int {
   for method in gen.methods {
-    if method.equality && method.owner == ty { return method.node }
+    if method.trait_name == trait_name && method_matches(tree, method, owner) {
+      let candidate = ast.name_at(tree, method.node, 0)
+      if candidate == name { return method.node }
+    }
   }
   return -1
 }
@@ -1038,19 +1064,11 @@ fn equality_method(gen: view Generator, ty: view String) -> Int {
 fn match_method(gen: view Generator, tree: view List<ast.AstNode>, owner: view String,
     name: view String, has_receiver: Bool) -> Int {
   for method in gen.methods {
-    var matches = method.owner == owner
-    if !matches && method.params >= 0 {
-      let names = parameter_names(tree, method.params)
-      var sub = type_terms.with_names(names)
-      type_terms.bind(sub, method.owner, owner)
-      let concrete = type_terms.substitute(method.owner, sub)
-      matches = concrete == owner
-    }
-    if matches {
+    if method.trait_name != "Drop" && method.trait_name != "Equal" && method_matches(tree, method, owner) {
       let candidate = ast.name_at(tree, method.node, 0)
       let params = ast.child(tree, method.node, 2)
       let has_self = tree.at(params).end > params + 1 && tree.at(params + 1).tag == "Self"
-      if !method.destructor && !method.equality && candidate == name && has_self == has_receiver { return method.node }
+      if candidate == name && has_self == has_receiver { return method.node }
     }
   }
   return -1
@@ -1073,6 +1091,16 @@ fn call_substitution(gen: view Generator, tree: view List<ast.AstNode>, fun: Int
   var sub = type_terms.with_names(names)
   if pattern != "" { type_terms.bind(sub, pattern, owner) }
   return move sub
+}
+
+fn comparison_call(gen: mut Generator, tree: view List<ast.AstNode>, method: Int,
+    left: view Value, right: view Value) -> String {
+  let sub = call_substitution(gen, tree, method, left.ty)
+  let instance = schedule(gen, method, left.ty, move sub)
+  if by_reference(gen, tree, left.ty, String.from("View")) {
+    return "F{instance}(&({left.code}), &({right.code}))"
+  }
+  return "F{instance}({left.code}, {right.code})"
 }
 
 fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: view String,
@@ -1169,6 +1197,38 @@ fn slice_value(gen: mut Generator, tree: view List<ast.AstNode>, seq: view Value
   return temp(gen, tree, ty, "sc_slice_{c}(({seq.code}).d, {length}, {lo}, {hi})")
 }
 
+fn sort_comparator(gen: mut Generator, tree: view List<ast.AstNode>, elem: view String) -> Int {
+  let existing = gen.sorted_elements.index_of(elem)
+  if existing >= 0 { return existing }
+  let id = gen.sorted_elements.len()
+  gen.sorted_elements.push(String.from(elem))
+  let c = c_type(gen, tree, elem)
+  let method = trait_method(gen, tree, elem, String.from("Ordered"), String.from("cmp"))
+  var comparison = String.new()
+  if method >= 0 {
+    let instance = schedule(gen, method, elem, call_substitution(gen, tree, method, elem))
+    var param = String.from(c)
+    if by_reference(gen, tree, elem, String.from("View")) {
+      param = "{c} *"
+      comparison = "F{instance}(a, b)"
+    } else { comparison = "F{instance}(*a, *b)" }
+    global(gen, "static int64_t F{instance}({param}, {param});")
+  } else if elem == "String" {
+    comparison = String.from("sc_compare(nx_str_view(a), nx_str_view(b))")
+  } else if elem == "Text" {
+    comparison = String.from("sc_compare(nx_str_text(*a), nx_str_text(*b))")
+  } else if floating_c(elem).len() != 0 {
+    comparison = String.from("isnan(*a) || isnan(*b) ? (isnan(*a) != 0) - (isnan(*b) != 0) : (*a > *b) - (*a < *b)")
+  } else if integer_c(elem).len() != 0 || elem == "Bool" {
+    comparison = String.from("(*a > *b) - (*a < *b)")
+  } else { unsupported("Ordered for {elem}") }
+  global(gen, "static int sc_compare_sort_{id}(const void *left, const void *right) {{")
+  global(gen, "  {c} *a = ({c} *)left;")
+  global(gen, "  {c} *b = ({c} *)right;")
+  global(gen, "  int64_t order = {comparison}; return (order > 0) - (order < 0); }}")
+  return id
+}
+
 fn sequence_method(gen: mut Generator, tree: view List<ast.AstNode>, receiver: view Value,
     name: view String, args: Int, ty: view String) -> Value {
   prepare_type(gen, tree, receiver.ty)
@@ -1181,6 +1241,12 @@ fn sequence_method(gen: mut Generator, tree: view List<ast.AstNode>, receiver: v
   if first == end {
     if name == "len" { return temp(gen, tree, ty, sequence_length(receiver)) }
     if name == "is_empty" { return temp(gen, tree, ty, "{sequence_length(receiver)} == 0") }
+    if list && name == "sort" {
+      let comparator = sort_comparator(gen, tree, elem)
+      let data = "({receiver.code}).d"
+      let length = sequence_length(receiver)
+      return temp(gen, tree, ty, "if ({length} > 1) qsort({data}, {length}, sizeof(*{data}), sc_compare_sort_{comparator})")
+    }
     if list && name == "reverse" { return temp(gen, tree, ty, "sc_reverse_{c}({addr})") }
     if list && name == "copy" && drop_fn(gen, tree, elem).len() == 0 {
       return temp(gen, tree, ty, "sc_copy_range_{c}({addr}, 0, ({receiver.code}).len)")
@@ -1460,7 +1526,8 @@ fn emit_string_method(gen: mut Generator, tree: view List<ast.AstNode>, recv: In
     helper = "sc_str_{name}"
   } else if name != "len" && name != "byte" && name != "eq" && name != "clear" &&
       name != "push_int" && name != "push_str" && name != "push_byte" &&
-      name != "push_char" && name != "char_at" && name != "char_size" {
+      name != "push_char" && name != "char_at" && name != "char_size" &&
+      name != "raw_addr" && name != "push_raw" {
     unsupported("String.{name}")
   }
   var values = List<String>.new()
@@ -2051,10 +2118,7 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
 fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) {
   if struct_index(gen, ty) >= 0 { return }
   let id = gen.struct_layouts.len()
-  var destructor = -1
-  for method in gen.methods {
-    if method.destructor && method.owner == ty { destructor = method.node }
-  }
+  let destructor = trait_method(gen, tree, ty, String.from("Drop"), String.from("drop"))
   gen.struct_layouts.push(StructLayout {
     ty: String.from(ty), owned: false, ready: false, destructor: destructor >= 0,
   })
@@ -2088,7 +2152,7 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
     gen.struct_layouts.at(id).owned = true
     var method = -1
     if destructor >= 0 {
-      method = schedule(gen, destructor, ty, type_terms.empty())
+      method = schedule(gen, destructor, ty, call_substitution(gen, tree, destructor, ty))
       global(gen, "static void F{method}(S{id} *value);")
     }
     global(gen, "static inline void sc_drop_S{id}(S{id} *value) {{")
@@ -2258,18 +2322,15 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
         }
       }
       let trait_node = ast.child(tree, item, 1)
-      var destructor = false
-      var equality = false
+      var trait_name = String.new()
       if tree.at(trait_node).tag != "_" {
-        let name = declared_type(tree, trait_node)
-        if name == "Drop" { destructor = true }
-        else if name == "Equal" { equality = true }
+        trait_name = declared_type(tree, trait_node)
       }
       let owner = declared_type(tree, ast.child(tree, item, 2))
       let methods = ast.child(tree, item, 3)
       var m = methods + 1
       while m < tree.at(methods).end {
-        if destructor {
+        if trait_name == "Drop" {
           let params = ast.child(tree, m, 2)
           if tree.at(params).end == params + 1 || tree.at(params + 1).tag != "Self" ||
               tree.at(ast.child(tree, params + 1, 0)).tag != "Mut" ||
@@ -2277,7 +2338,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
             unsupported("Drop method signature")
           }
         }
-        gen.methods.push(Method { owner: String.from(owner), node: m, params: params, destructor: destructor, equality: equality })
+        gen.methods.push(Method { owner: String.from(owner), node: m, params: params, trait_name: String.from(trait_name) })
         m = tree.at(m).end
       }
     }
@@ -2310,7 +2371,17 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
     emit_function(gen, tree, instance)
     instance = instance + 1
   }
-  line(gen, "int main(int argc, char **argv) {{ sc_argc = argc; sc_argv = argv; F{start}(); return 0; }}")
+  line(gen, "int main(int argc, char **argv) {{")
+  line(gen, "  sc_argc = argc; sc_argv = argv;")
+  line(gen, "  int ne = 0; while (environ && environ[ne]) ne++;")
+  line(gen, "  int64_t stack[argc + ne + 3]; int k = 0;")
+  line(gen, "  stack[k++] = argc;")
+  line(gen, "  for (int i = 0; i < argc; i++) stack[k++] = (int64_t)(intptr_t)argv[i];")
+  line(gen, "  stack[k++] = 0;")
+  line(gen, "  for (int i = 0; i < ne; i++) stack[k++] = (int64_t)(intptr_t)environ[i];")
+  line(gen, "  stack[k] = 0; nx_globals[0] = (int64_t)(intptr_t)stack;")
+  line(gen, "  F{start}(); return 0;")
+  line(gen, "}}")
 }
 
 fn main() {
@@ -2333,7 +2404,7 @@ fn main() {
       }
       var gen = Generator {
         checked: move checked, locals: move bindings, structs: List<Int>.new(), functions: List<Int>.new(),
-        collections: List<String>.new(), globals: String.new(),
+        collections: List<String>.new(), sorted_elements: List<String>.new(), globals: String.new(),
         enums: List<Int>.new(), enum_layouts: List<EnumLayout>.new(),
         struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(),
         instances: List<Instance>.new(), sub: type_terms.empty(), prototypes: String.new(),
