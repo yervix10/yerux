@@ -3889,7 +3889,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         let off_funcs = off_files + 8 * file_rows.len() as u32;
         let off_names = off_funcs + 12 * fn_rows.len() as u32;
         let mut blob: Vec<u8> = vec![];
-        let mut put = |blob: &mut Vec<u8>, w: u32| blob.extend_from_slice(&w.to_le_bytes());
+        let put = |blob: &mut Vec<u8>, w: u32| blob.extend_from_slice(&w.to_le_bytes());
         for w in [sites.len() as u32, fn_rows.len() as u32, off_sites, off_locs, off_files, off_funcs, off_names, 0] {
             put(&mut blob, w);
         }
