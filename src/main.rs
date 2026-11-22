@@ -594,6 +594,8 @@ fn real_main() {
     let start = Instant::now();
     let c = if native {
         String::new()
+    } else if cmd == "c" {
+        cgen::generate(&prog, sigs)
     } else {
         cgen::generate_with_files(&prog, sigs, &source_files)
     };
