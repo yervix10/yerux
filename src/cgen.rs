@@ -1308,6 +1308,22 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
         format!("({{ {}{}({}); }})", pre, f, names.join(", "))
     }
 
+    /// A call that records the caller's position in `nx_cur_loc` AFTER its arguments are evaluated (they may
+    /// call library functions that record their own).
+    fn call_c_at(&self, f: &str, args: Vec<Arg>, loc: &str) -> String {
+        let mut pre = String::new();
+        let mut names = vec![String::new(); args.len()];
+        for pass in [true, false] {
+            for (k, a) in args.iter().enumerate() {
+                if a.val == pass {
+                    pre += &format!("__auto_type a{}_ = {}; ", k, a.code);
+                    names[k] = format!("a{}_", k);
+                }
+            }
+        }
+        format!("({{ {}nx_cur_loc = {}; {}({}); }})", pre, loc, f, names.join(", "))
+    }
+
     fn cmp_c(&self, op: &str, args: Vec<Arg>) -> String {
         let impure = args.iter().any(|a| a.impure);
         let nonlit = args.iter().filter(|a| !a.lit).count();
@@ -1856,12 +1872,14 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     } else {
                         format!("nx_f_{}", name)
                     };
-                    let call = self.call_c(&target, a);
-                    if self.tfuncs.contains(name) && !self.in_t.get() && (FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || unwrap_like(name)) {
+                    if self.tfuncs.contains(name)
+                        && !self.in_t.get()
+                        && (FULL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || unwrap_like(name))
+                    {
                         // the callee reports a failure at its caller's position (read only on the failure path)
-                        format!("(nx_cur_loc = {}, {})", self.loc(e.pos), call)
+                        self.call_c_at(&target, a, &self.loc(e.pos))
                     } else {
-                        call
+                        self.call_c(&target, a)
                     }
                 }
             },
