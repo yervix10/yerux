@@ -1,0 +1,7 @@
+fn main() {
+  for k in 0..10 step 3 { print(k) }
+  var total = 0
+  for i in 1..=9 step 4 { total = total + i }
+  print(total)
+  for j in 5..5 step 2 { print(j) }
+}
