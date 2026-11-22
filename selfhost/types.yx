@@ -16,6 +16,7 @@ struct Signature {
   required_trait: String,
 }
 struct Function { node: Int, signature: Int, impl_params: Int }
+struct Frozen { binding: Int, place: String, exclusive: Bool }
 struct Types {
   identities: List<Int>,
   declarations: List<Int>,
@@ -39,10 +40,11 @@ struct Types {
   loops: List<LoopFlow>,
   deferred: List<Int>,
   defer_floor: Int,
-  frozen: List<ownership.Loan>,
+  frozen: List<Frozen>,
   trace: Bool,
   expressions: List<String>,
   borrowed_closures: List<Bool>,
+  box_places: List<Bool>,
   messages: List<String>,
 }
 pub struct Checked {
@@ -216,6 +218,10 @@ pub fn function_parameter(part: view String) -> Parameter {
 
 fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> String {
   if tree.at(index).tag == "_" { return unknown() }
+  if tree.at(index).tag == "DynType" {
+    let name = ast.name_at(tree, index, 0)
+    return "$dyn<{name}>"
+  }
   if tree.at(index).tag == "BracketType" {
     let item = source_type(types, tree, ast.child(tree, index, 0))
     let size = ast.child(tree, index, 1)
@@ -231,7 +237,8 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
     if name == "Float64" { return String.from("Float") }
     if integer(name) || floating(name) || name == "Bool" || name == "Char" ||
         name == "Text" || name == "String" || shape_index(types, name) >= 0 ||
-        types.generics.contains(name) || name == "List" || name == "Box" || name == "Ptr" {
+        types.generics.contains(name) || name == "List" || name == "Box" || name == "Ptr" ||
+        name == "JoinHandle" || name == "ThreadPanic" || name == "ThreadDone" {
       return type_terms.apply(name, source_types(types, tree, ast.child(tree, index, 1)))
     }
     let target = ast.alias_target(tree, name)
@@ -379,7 +386,7 @@ fn is_owned(types: view Types, ty: view String, visiting: mut List<String>) -> B
   if base == "String" || base == "List" || ty.starts_with("fn(") { return true }
   if types.generics.contains(ty) { return !types.copy_params.contains(ty) }
   let shape = shape_index(types, ty)
-  if shape < 0 { return base == "Box" }
+  if shape < 0 { return base == "Box" || base == "$dyn" || base == "JoinHandle" }
   if visiting.contains(ty) { return false }
   if types.shapes.at(shape).user_drop { return true }
   visiting.push(String.from(ty))
@@ -407,12 +414,14 @@ fn owns_value(types: view Types, ty: view String) -> Bool {
   return is_owned(types, ty, visiting)
 }
 
-fn root_place(tree: view List<ast.AstNode>, node: Int) -> Int {
+fn root_place(types: view Types, tree: view List<ast.AstNode>, node: Int) -> Int {
   if tree.at(node).tag == "Var" { return node }
-  if tree.at(node).tag == "Field" { return root_place(tree, ast.child(tree, node, 0)) }
-  if tree.at(node).tag == "Slice" { return root_place(tree, ast.child(tree, node, 0)) }
-  if tree.at(node).tag == "Method" && tree.at(ast.child(tree, node, 1)).tag == "6174" {
-    return root_place(tree, ast.child(tree, node, 0))
+  if tree.at(node).tag == "Field" || tree.at(node).tag == "Slice" {
+    return root_place(types, tree, ast.child(tree, node, 0))
+  }
+  if tree.at(node).tag == "Method" &&
+      (tree.at(ast.child(tree, node, 1)).tag == "6174" || types.box_places.at(node)) {
+    return root_place(types, tree, ast.child(tree, node, 0))
   }
   return -1
 }
@@ -424,6 +433,8 @@ fn place_name(tree: view List<ast.AstNode>, node: Int) -> String {
   }
   if tree.at(node).tag == "Method" {
     let base = place_name(tree, ast.child(tree, node, 0))
+    let name = ast.name_at(tree, node, 1)
+    if name == "get" { return "{base}.get()" }
     return "{base}.at(..)"
   }
   if tree.at(node).tag == "Field" {
@@ -437,6 +448,9 @@ fn place_name(tree: view List<ast.AstNode>, node: Int) -> String {
 fn check_frozen(types: mut Types, id: Int, name: view String, write: Bool) {
   for i in 0..types.frozen.len() {
     if types.frozen.at(i).binding == id {
+      let place = String.from(types.frozen.at(i).place)
+      if name != place && !name.starts_with("{place}.") && !name.starts_with("{place}[") &&
+          !place.starts_with("{name}.") && !place.starts_with("{name}[") { continue }
       if types.frozen.at(i).exclusive {
         issue(types, "cannot use '{name}' inside the `match mut` arm that borrows it")
         return
@@ -450,8 +464,12 @@ fn check_frozen(types: mut Types, id: Int, name: view String, write: Bool) {
 }
 
 fn read_binding(types: mut Types, id: Int, name: view String) {
+  read_place(types, id, name, name)
+}
+
+fn read_place(types: mut Types, id: Int, name: view String, place: view String) {
   if !types.verify_ownership || id < 0 { return }
-  check_frozen(types, id, name, false)
+  check_frozen(types, id, place, false)
   if types.moved.at(id) {
     issue(types, "cannot use '{name}': it was already moved")
     types.moved.set(id, false)
@@ -473,7 +491,7 @@ fn require_value(types: mut Types, tree: view List<ast.AstNode>, node: Int, ty: 
     require_value(types, tree, ast.child(tree, node, 1), ty)
     return
   }
-  let root = root_place(tree, node)
+  let root = root_place(types, tree, node)
   if root >= 0 && types.identities.at(root) >= 0 {
     let name = place_name(tree, node)
     if root == node { issue(types, "'{name}' is a {ty} and is not copied") }
@@ -485,7 +503,8 @@ fn immutable_reason(types: view Types, tree: view List<ast.AstNode>, id: Int) ->
   if types.modes.at(id) == "View" { return String.from("it is only borrowed for reading (`view`)") }
   if types.modes.at(id) == "Capture" { return String.new() }
   let decl = types.declarations.at(id)
-  if tree.at(decl).tag == "Let" && tree.at(ast.child(tree, decl, 1)).tag == "false" {
+  if (tree.at(decl).tag == "Let" || tree.at(decl).tag == "UnpackBind") &&
+      tree.at(ast.child(tree, decl, 1)).tag == "false" {
     return String.from("it was declared with `let` (immutable)")
   }
   return String.new()
@@ -506,7 +525,7 @@ fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<o
     require_value(types, tree, node, ty)
     return
   }
-  var root = root_place(tree, node)
+  var root = root_place(types, tree, node)
   if explicit { root = node }
   if root < 0 {
     if mode == "Mut" && !(ty.starts_with("fn(") && tree.at(node).tag == "Closure") {
@@ -779,6 +798,62 @@ fn bound_method(types: view Types, tree: view List<ast.AstNode>, params: Int,
 
 fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     name: view String, args: Int, receiver: Int, hint: view String) -> String {
+  var payload = unknown()
+  let builtin_box = shape_index(types, String.from("Box")) < 0
+  if builtin_box { payload = type_terms.box_payload(owner) }
+  if receiver >= 0 && owner.starts_with("JoinHandle<") && name == "join" {
+    if child_count(tree, args) != 0 || tree.at(receiver).tag != "Var" {
+      issue(types, String.from("'join' expects an owning handle and no arguments"))
+      return unknown()
+    }
+    var loans = List<ownership.Loan>.new()
+    record_loan(types, tree, loans, receiver, String.from("Own"), owner, true)
+    let result = owner.slice(11, owner.len() - 1)
+    return "Result<{result}, ThreadPanic>"
+  }
+  if builtin_box && receiver < 0 && (owner == "Box" || payload != "?") && name == "new" {
+    if child_count(tree, args) != 1 {
+      issue(types, String.from("'Box.new' expects 1 argument"))
+      return unknown()
+    }
+    var expected = String.from(owner)
+    if expected == "Box" { expected = String.from(hint) }
+    let inner = type_terms.box_payload(expected)
+    let erased = type_terms.dyn_trait(inner)
+    var value_hint = String.from(inner)
+    if erased != "" { value_hint = unknown() }
+    let actual = infer(types, tree, args + 1, value_hint)
+    require_value(types, tree, args + 1, actual)
+    if erased != "" { return expected }
+    expect_type(types, inner, actual)
+    if inner != "?" { return expected }
+    return "Box<{actual}>"
+  }
+  if receiver >= 0 && payload != "?" && (name == "get" || name == "take") {
+    if child_count(tree, args) != 0 { issue(types, "'{name}' takes no arguments") }
+    if name == "take" {
+      if payload.starts_with("$dyn<") {
+        issue(types, String.from("cannot take an erased value out of a Box"))
+      } else if tree.at(receiver).tag != "Var" {
+        issue(types, String.from("'take' needs an owning Box variable"))
+      } else {
+        var loans = List<ownership.Loan>.new()
+        record_loan(types, tree, loans, receiver, String.from("Own"), owner, true)
+      }
+    }
+    return payload
+  }
+  var trait_name = type_terms.dyn_trait(owner)
+  if payload != "?" { trait_name = type_terms.dyn_trait(payload) }
+  if receiver >= 0 && trait_name != "" {
+    for i in 0..types.signatures.len() {
+      if types.signatures.at(i).required_trait == trait_name && types.signatures.at(i).name == name {
+        return call_args(types, tree, args, name, i, owner, receiver)
+      }
+    }
+    issue(types, "trait {trait_name} has no method '{name}'")
+    return unknown()
+  }
   if receiver < 0 && (name == "from" || name == "try_from") {
     let target = ast.alias_target(tree, owner)
     if target >= 0 {
@@ -955,7 +1030,7 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     }
     return boolean
   }
-  if op == "+" && a == "String" && root_place(tree, left) >= 0 {
+  if op == "+" && a == "String" && root_place(types, tree, left) >= 0 {
     if b != "Text" { expect_type(types, a, b) }
     return a
   }
@@ -971,7 +1046,7 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     if ordered {
       if !ordered_type(types, a) {
         issue(types, "cannot use `{op}` on values of type {a}: it does not implement Ordered")
-      } else if root_place(tree, left) < 0 && (a == "Bool" || types.generics.contains(a) || types.ordered_types.contains(a)) {
+      } else if root_place(types, tree, left) < 0 && (a == "Bool" || types.generics.contains(a) || types.ordered_types.contains(a)) {
         issue(types, "cannot use `{op}` here: the left side is a {a} value that is not a variable")
       } else { expect_type(types, a, b) }
       return boolean
@@ -1074,14 +1149,24 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   let worker = tree.at(ast.child(tree, index, 3)).tag == "true"
   var captures = List<Int>.new()
   var modes = List<String>.new()
-  if types.verify_ownership && !borrowing && !worker {
+  if types.verify_ownership && !borrowing {
     captures = locals.capture_ids(types.captures, index)
     for id in captures {
       modes.push(String.from(types.modes.at(id)))
       let ty = String.from(types.bindings.at(id))
       let name = binding_name(types, tree, id)
       read_binding(types, id, name)
-      if moving { types.modes.set(id, String.from("Capture")) }
+      if worker {
+        if modes.at(modes.len() - 1) != "Own" {
+          issue(types, "spawn cannot capture borrowed binding '{name}'")
+        }
+        var visited = List<String>.new()
+        if !transferable(types, ty, visited) {
+          issue(types, "spawn cannot transfer '{name}' of type {ty}")
+        }
+        types.modes.set(id, String.from("Own"))
+      }
+      else if moving { types.modes.set(id, String.from("Capture")) }
       else {
         if owns_value(types, ty) { issue(types, "closure must move its owned capture '{name}'") }
         types.modes.set(id, String.from("View"))
@@ -1113,6 +1198,10 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   types.defer_floor = floor
   var result = String.from(state.expected)
   if result == "?" { result = String.from(state.inferred) }
+  if worker && types.verify_ownership {
+    var visited = List<String>.new()
+    if !transferable(types, result, visited) { issue(types, "spawn cannot return a value of type {result}") }
+  }
   let spelling = add_signature(types, String.new(), move args, result)
   if !types.trace {
     types.expressions.set(index, String.from(spelling))
@@ -1128,10 +1217,70 @@ fn binding_name(types: view Types, tree: view List<ast.AstNode>, id: Int) -> Str
   return ast.name_at(tree, declaration, 0)
 }
 
+fn transferable(types: view Types, ty: view String, visited: mut List<String>) -> Bool {
+  let base = type_terms.base(ty)
+  if base == "$dyn" || base == "Slice" || base == "JoinHandle" || base == "Ptr" ||
+      ty.starts_with("fn(") { return false }
+  if visited.contains(ty) { return true }
+  visited.push(String.from(ty))
+  for part in type_terms.arguments(ty) {
+    if !transferable(types, part, visited) { return false }
+  }
+  let shape = shape_index(types, ty)
+  if shape >= 0 {
+    for field in types.shapes.at(shape).fields {
+      if !transferable(types, instantiate(field.ty, types.shapes.at(shape).generics, ty), visited) {
+        return false
+      }
+    }
+    for variant in types.shapes.at(shape).variants {
+      for part in variant.payload {
+        if !transferable(types, instantiate(part, types.shapes.at(shape).generics, ty), visited) {
+          return false
+        }
+      }
+    }
+  }
+  return true
+}
+
 fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let ty = infer_expr(types, tree, index, hint)
   if !types.trace { types.expressions.set(index, String.from(ty)) }
   return ty
+}
+
+fn infer_field(types: mut Types, tree: view List<ast.AstNode>, index: Int, access: Int,
+    hint: view String) -> String {
+  let node = ast.child(tree, index, 0)
+  let name = ast.name_at(tree, index, 1)
+  let owner = static_owner(types, tree, node)
+  if owner != "?" {
+    let shape = shape_index(types, owner)
+    if shape >= 0 && types.shapes.at(shape).is_enum {
+      return nominal_constructor(types, tree, owner, name, -1, hint)
+    }
+  }
+  var receiver = unknown()
+  let binding = types.identities.at(node)
+  if tree.at(node).tag == "Var" && binding >= 0 {
+    receiver = String.from(types.bindings.at(binding))
+    let place = place_name(tree, access)
+    let root = ast.name_at(tree, node, 0)
+    read_place(types, binding, root, place)
+  } else if tree.at(node).tag == "Field" {
+    receiver = infer_field(types, tree, node, access, unknown())
+  } else { receiver = infer(types, tree, node, unknown()) }
+  if !types.trace { types.expressions.set(node, String.from(receiver)) }
+  let shape = shape_index(types, receiver)
+  if shape >= 0 && !types.shapes.at(shape).is_enum {
+    let field = field_index(types.shapes.at(shape), name)
+    if field >= 0 {
+      return instantiate(types.shapes.at(shape).fields.at(field).ty, types.shapes.at(shape).generics, receiver)
+    }
+    issue(types, "struct {receiver} has no field '{name}'")
+  }
+  return unknown()
 }
 
 pub fn raw_arity(name: view String) -> Int {
@@ -1143,6 +1292,18 @@ pub fn raw_arity(name: view String) -> Int {
 }
 
 fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view String, args: Int) -> String {
+  if name == "__spawn_owned" && child_count(tree, args) == 1 && tree.at(args + 1).tag == "Closure" &&
+      tree.at(ast.child(tree, args + 1, 3)).tag == "true" {
+    let entry = infer(types, tree, args + 1, unknown())
+    var parts = type_terms.function_parts(entry)
+    if parts.len() != 1 {
+      issue(types, String.from("spawn closure must take no arguments"))
+      return unknown()
+    }
+    let result = parts.pop()
+    if result == "nothing" { return String.from("JoinHandle<ThreadDone>") }
+    return "JoinHandle<{result}>"
+  }
   var result = unknown()
   let int_type = String.from("Int")
   let arity = raw_arity(name)
@@ -1353,41 +1514,27 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     }
     return type_terms.bracket(type_terms.element(value), String.from("_"))
   }
-  if tag == "Method" || tag == "Field" {
+  if tag == "Field" { return infer_field(types, tree, index, index, hint) }
+  if tag == "Method" {
     let node = ast.child(tree, index, 0)
     let name = ast.name_at(tree, index, 1)
     let owner = static_owner(types, tree, node)
-    if tag == "Method" {
-      let args = ast.child(tree, index, 2)
-      if owner != "?" { return member(types, tree, owner, name, args, -1, hint) }
-      let receiver = infer(types, tree, node, unknown())
-      let shape = shape_index(types, receiver)
-      if shape >= 0 && !types.shapes.at(shape).is_enum && name != "at" && root_place(tree, node) >= 0 {
-        let field = field_index(types.shapes.at(shape), name)
-        if field >= 0 {
-          let ty = instantiate(types.shapes.at(shape).fields.at(field).ty, types.shapes.at(shape).generics, receiver)
-          let signature = value_signature(types, ty)
-          if signature >= 0 { return call_args(types, tree, args, name, signature, unknown(), -1) }
-        }
-      }
-      return member(types, tree, receiver, name, args, node, hint)
-    }
-    if owner != "?" {
-      let shape = shape_index(types, owner)
-      if shape >= 0 && types.shapes.at(shape).is_enum {
-        return nominal_constructor(types, tree, owner, name, -1, hint)
-      }
-    }
+    let args = ast.child(tree, index, 2)
+    if owner != "?" { return member(types, tree, owner, name, args, -1, hint) }
     let receiver = infer(types, tree, node, unknown())
+    if name == "get" && receiver.starts_with("Box<") && shape_index(types, receiver) < 0 {
+      types.box_places.set(index, true)
+    }
     let shape = shape_index(types, receiver)
-    if shape >= 0 && !types.shapes.at(shape).is_enum {
+    if shape >= 0 && !types.shapes.at(shape).is_enum && name != "at" && root_place(types, tree, node) >= 0 {
       let field = field_index(types.shapes.at(shape), name)
       if field >= 0 {
-        return instantiate(types.shapes.at(shape).fields.at(field).ty, types.shapes.at(shape).generics, receiver)
+        let ty = instantiate(types.shapes.at(shape).fields.at(field).ty, types.shapes.at(shape).generics, receiver)
+        let signature = value_signature(types, ty)
+        if signature >= 0 { return call_args(types, tree, args, name, signature, unknown(), -1) }
       }
-      issue(types, "struct {receiver} has no field '{name}'")
     }
-    return unknown()
+    return member(types, tree, receiver, name, args, node, hint)
   }
   if tag == "GenericMember" {
     let base = ast.name_at(tree, index, 0)
@@ -1429,12 +1576,13 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
 
 fn check_assignment(types: mut Types, tree: view List<ast.AstNode>, index: Int) {
   let target = ast.child(tree, index, 0)
-  let root = root_place(tree, target)
+  var left = unknown()
+  let binding = types.identities.at(target)
+  if binding >= 0 && tree.at(target).tag == "Var" { left = String.from(types.bindings.at(binding)) }
+  else { left = infer(types, tree, target, unknown()) }
+  let root = root_place(types, tree, target)
   var id = -1
   if root >= 0 { id = types.identities.at(root) }
-  var left = unknown()
-  if id >= 0 && root == target { left = String.from(types.bindings.at(id)) }
-  else { left = infer(types, tree, target, unknown()) }
   let value = ast.child(tree, index, 1)
   let right = infer(types, tree, value, left)
   require_value(types, tree, value, right)
@@ -1624,7 +1772,7 @@ fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNo
     scrutinee = ast.child(tree, scrutinee, 1)
   }
   let subject = infer(types, tree, scrutinee, unknown())
-  let root = root_place(tree, scrutinee)
+  let root = root_place(types, tree, scrutinee)
   var mode = String.from("Own")
   var id = -1
   if root >= 0 && types.verify_ownership {
@@ -1663,7 +1811,7 @@ fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNo
     var borrows = false
     check_pattern(types, tree, pat, subject, mode, borrows)
     if borrows {
-      types.frozen.push(ownership.Loan { binding: id, exclusive: mutable })
+      types.frozen.push(Frozen { binding: id, place: place_name(tree, scrutinee), exclusive: mutable })
     }
     if tree.at(guard).tag == "_" {
       var row = List<Int>.new()
@@ -1758,7 +1906,7 @@ fn check_loop(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
           }
         }
         if element != "?" {
-          if root_place(tree, iter) >= 0 && tree.at(iter).tag != "Move" {
+          if root_place(types, tree, iter) >= 0 && tree.at(iter).tag != "Move" {
             var loans = List<ownership.Loan>.new()
             record_loan(types, tree, loans, iter, String.from("Mut"), iterable, true)
           }
@@ -1766,7 +1914,7 @@ fn check_loop(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
             issue(types, String.from("mut iteration is only supported for sequences"))
           }
         }
-      } else if owns_value(types, element) && tree.at(iter).tag != "Move" && root_place(tree, iter) >= 0 {
+      } else if owns_value(types, element) && tree.at(iter).tag != "Move" && root_place(types, tree, iter) >= 0 {
         let id = types.identities.at(index)
         types.modes.set(id, String.from("View"))
       }
@@ -1831,6 +1979,31 @@ fn loop_exit(types: mut Types, tree: view List<ast.AstNode>, index: Int, stop: B
   }
 }
 
+fn check_unpack(types: mut Types, tree: view List<ast.AstNode>, pattern: Int, ty: view String) {
+  if tree.at(pattern).tag == "UnpackBind" {
+    let id = types.identities.at(pattern)
+    if id >= 0 {
+      types.bindings.set(id, String.from(ty))
+      if types.trace && ty != "?" {
+        let name = ast.name_at(tree, pattern, 0)
+        types.messages.push("type:{name}:{numeric_type(ty)}")
+      }
+    }
+    return
+  }
+  let fields = ast.child(tree, pattern, 0)
+  let args = type_terms.arguments(ty)
+  if !ty.starts_with("$tuple") || child_count(tree, fields) != args.len() {
+    if ty != "?" { issue(types, "tuple pattern does not match {ty}") }
+    return
+  }
+  var at = fields + 1
+  for arg in args {
+    check_unpack(types, tree, at, arg)
+    at = tree.at(at).end
+  }
+}
+
 fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
   let tag = String.from(tree.at(index).tag)
   if tag == "Let" {
@@ -1848,6 +2021,11 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
       let display = numeric_type(ty)
       types.messages.push("type:{name}:{display}")
     }
+  } else if tag == "Unpack" {
+    let initializer = ast.child(tree, index, 1)
+    let ty = infer(types, tree, initializer, unknown())
+    require_value(types, tree, initializer, ty)
+    check_unpack(types, tree, ast.child(tree, index, 0), ty)
   } else if tag == "Return" {
     let value = ast.child(tree, index, 0)
     var ty = unit()
@@ -2193,11 +2371,12 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     function_params: -1, impl_params: -1, return_type: unknown(),
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
-    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<ownership.Loan>.new(),
+    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(),
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
-    borrowed_closures: List<Bool>.new(),
+    borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),
   }
+  for i in 0..tree.len() { types.box_places.push(false) }
   if !trace {
     for i in 0..tree.len() {
       types.expressions.push(unknown())

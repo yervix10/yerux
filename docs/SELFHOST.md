@@ -35,9 +35,10 @@ tuple literals and parallel loops, and are reflected in both dumps.
 
 Run `bash tests/selfhost_parser.sh`. It compares positioned token streams and
 ASTs for every Git-tracked `.yx` file, including benchmarks, the prelude, the
-standard library, and the self-hosted sources themselves. At this milestone it
-matches **642 ASTs across 657 files** (now 779 ASTs across 795 files, 0 mismatches), with 6 lexical rejections and 9 syntax
-rejections. Lexical rejections compare the complete diagnostic rows. Syntax
+standard library, and the self-hosted sources themselves. The current run
+matches 783 ASTs across 801 files with zero mismatches, 7 lexical
+rejections, and 11 syntax rejections. Lexical rejections compare the
+complete diagnostic rows. Syntax
 rejections compare exit status and source line. The script also compares the
 10 expression and statement fragments. `tests/run_all.sh` runs this test and
 the original lexer and token-format tests.
@@ -120,7 +121,7 @@ using positioned tokens. `yerux types-file file.yx` exposes the production
 Rust checker's binding types before compile-time evaluation.
 `tests/selfhost_types.sh` compares sorted binding rows on 5 accepted type
 fixtures and 3 accepted ownership fixtures, and principal diagnostic
-messages on 20 type rejections and 12 ownership rejections.
+messages on 21 type rejections and 12 ownership rejections.
 `tests/run_all.sh` includes the harness.
 
 ## C code generation
@@ -148,6 +149,13 @@ Rust C backend. Stored closures copy Copy captures and take ownership of
 moved captures. A closure passed directly to a `view fn` or `mut fn`
 parameter can borrow the caller's bindings for the call. The runtime drops
 captured closures through a worklist, including long chains of environments.
+
+`Box<T>` supports borrowed access through `get()` and `*box`, ownership
+transfer through `take()`, and iterative drop for recursive boxes.
+`Box<dyn Trait>` dispatches through a table for each concrete type and
+trait. Worker closures move their captures and return results through
+`join()`. Recoverable worker panics drop live owned values before
+`join()` reports the failure.
 
 `resolve --link AST_ROOT ENTRY.yx` combines cached source ASTs, validates
 imports and visibility, and gives declarations unique module names before
@@ -213,12 +221,13 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-21 run compared 376 candidates and matched 284 (75.5%), including
-93 runtime panics. The harness reported 91 candidates outside the supported
+2026-11-21 run matched 311 of 379 candidates (82.1%), up from 287 of 379
+(75.7%) on the same corpus. The new run includes 95 runtime panics with
+identical messages and exit statuses, 67 candidates outside the supported
 subset, one expected type rejection, and zero mismatches.
 
-The largest rejection groups are other lowering gaps (39), generics and
-traits (13), heap types (8), and worker closure calls (6). Set
+The largest rejection groups are other lowering gaps (31), generics and
+traits (14), sequences and iteration (5), and numeric lowering (4). Set
 `SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
 and category for each unsupported file.
 
@@ -267,9 +276,9 @@ The self-hosted compiler covers the sources required to rebuild its
 stages. Unbounded inherent generic impls, structural `derive Clone`, and
 iteration through a user type's `next(mut self) -> Option<T>` are supported.
 Full parity still requires general trait and bound resolution, other
-derives, worker closures, generic function items as values, lazy `Iter<T>`
+derives, parallel loops, generic function items as values, lazy `Iter<T>`
 adapters, defer lifetimes, precise
-loans for nested calls and projections, owned arrays, recursive heap types,
+loans for nested calls and projections, owned arrays, recursive list layouts,
 and richer pattern matching and range flow.
 Compile-time evaluation, full diagnostic spans and notes, and replacing
 the bootstrap C bindings with compiled standard-library implementations
