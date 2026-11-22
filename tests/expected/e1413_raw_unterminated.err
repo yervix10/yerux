@@ -1,0 +1,8 @@
+error: unterminated raw string
+ --> tests/e1413_raw_unterminated.yx:2:11
+  |
+2 |   let s = r#"{"a": 1}"
+  |           ^
+  = a raw string ends with a quote followed by as many `#` as it started with: r#"{"a": 1}"#; it must fit on one line
+
+1 error(s). Nothing was generated.

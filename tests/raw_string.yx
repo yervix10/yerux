@@ -1,0 +1,14 @@
+// raw string literals: no escapes, no interpolation, no doubled braces
+fn main() {
+  let json = r#"{"id": 7, "tags": ["a", "b"]}"#
+  print(json)
+  let hashed = r#"say "hi" \n {x}"#
+  print(hashed)
+  let path = r"C:\dir\new"
+  print(path)
+  let r = 3
+  print("r = {r}")
+  print(String.from(json).len())
+  print(r##"a "# b"##)
+  print(r"")
+}

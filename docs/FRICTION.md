@@ -400,8 +400,9 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
    through a channel.
 5. **Fixed: struct-literal shorthand.** `Task { title, tags }` now means `Task { title: title, tags: tags }`, with the
    same move rules as the explicit form (tests `struct_shorthand`, `e1412_struct_shorthand_move`).
-6. **JSON in strings needs doubled braces.** `"{{\"id\":{t.id}}}"`: every literal `{` and `}` is doubled, and `\{` is
-   an error with a good hint. A raw string literal would remove most of the noise.
+6. **Fixed: raw string literals.** `r"..."` and `r#"..."#` (any number of `#`) are verbatim: no escapes, no
+   interpolation, no doubled braces, so JSON and regexes read as written. One line only. Lexer in Rust and mirrored in
+   `selfhost/lexer.yx` and both formatters (tests `raw_string`, `e1413_raw_unterminated`).
 7. **`std.args` is thin.** Options only take the `--key=value` form (`--title TEXT` is a positional), the first
    positional word lands in `subcommand`, and there is no typed accessor.
 7. **Methods versus functions are inconsistent.** `s.split(..)` and `s.trim()` are methods but `s.lines()`,

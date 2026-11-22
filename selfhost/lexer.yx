@@ -143,6 +143,22 @@ fn main() {
   }
 }
 
+fn raw_start(src: view String, at: Int) -> Bool {
+  var j = at + 1
+  while j < src.len() && src.byte(j) == 35 { j = j + 1 }
+  return j < src.len() && src.byte(j) == 34
+}
+
+fn raw_closes(src: view String, at: Int, hashes: Int) -> Bool {
+  if src.byte(at) != 34 { return false }
+  var h = 1
+  while h <= hashes {
+    if at + h >= src.len() || src.byte(at + h) != 35 { return false }
+    h = h + 1
+  }
+  return true
+}
+
 fn lex(src: view String, eof: Bool, first_line: Int) {
   var line = first_line
   let n = src.len()
@@ -155,6 +171,17 @@ fn lex(src: view String, eof: Bool, first_line: Int) {
     }
     else if b == 47 && i + 1 < n && src.byte(i + 1) == 47 {
       while i < n && src.byte(i) != 10 { i = i + 1 }
+    }
+    else if b == 114 && raw_start(src, i) {
+      var hashes = 0
+      i = i + 1
+      while src.byte(i) == 35 { hashes = hashes + 1; i = i + 1 }
+      i = i + 1
+      let body = i
+      while i < n && src.byte(i) != 10 && !raw_closes(src, i, hashes) { i = i + 1 }
+      if i >= n || src.byte(i) == 10 { report_error(src, "unterminated raw string", body - hashes - 2, 1, "a raw string ends with a quote followed by as many `#` as it started with: r#\"{{\"a\": 1}}\"#; it must fit on one line", "") }
+      emit(line, "Str:", src.slice(body, i))
+      i = i + 1 + hashes
     }
     else if is_alpha(b) {
       let start = i
