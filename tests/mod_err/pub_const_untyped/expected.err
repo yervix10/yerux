@@ -1,0 +1,8 @@
+error: a `pub const` needs an explicit type: `pub const A: Int = ...`
+ --> tests/mod_err/pub_const_untyped/lib.yx:1:11
+  |
+1 | pub const A = 3
+  |           ^
+  = the type of a public constant is part of the module's interface, so it is written out
+
+1 error(s). Nothing was generated.

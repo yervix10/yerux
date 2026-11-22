@@ -1,0 +1,9 @@
+fn four() -> Int {
+  return 4
+}
+
+const A: Int = four()
+
+fn main() {
+  print(A)
+}

@@ -1,0 +1,9 @@
+error: const 'B' is used before its definition
+ --> tests/e1350_const_forward_use.yx:1:16
+  |
+1 | const A: Int = B + 1
+  |                ^
+  = consts are evaluated in order, so a const can only use consts defined above it (this also rules out cycles such as A -> B -> A)
+  = help: move `const B` above this one
+
+1 error(s). Nothing was generated.

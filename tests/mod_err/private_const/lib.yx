@@ -1,0 +1,2 @@
+const HIDDEN: Int = 3
+pub const SHOWN: Int = 4

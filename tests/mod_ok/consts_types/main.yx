@@ -1,0 +1,20 @@
+import geo
+const TWICE: Int = geo.SIDES * 2
+const SECRET: Int = 99
+type Pt = geo.Point
+fn main() {
+  print(geo.SIDES)
+  print(geo.HALF)
+  print(TWICE)
+  print(SECRET)
+  print(geo.NAME)
+  if geo.ON { print("on") }
+  let r: geo.Box2 = geo.Rect { w: 3, h: 5 }
+  print(geo.area(r))
+  let p: Pt = geo.origin()
+  print(p.0 + p.1)
+  let g: [Int; geo.SIDES] = geo.grid()
+  print(g[3])
+  let a: [Int; TWICE] = [0; TWICE]
+  print(a.len())
+}
