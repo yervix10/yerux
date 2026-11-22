@@ -282,8 +282,12 @@ fn fields(p: mut Parser) -> String {
   var out = String.from("[")
   while !at_close(p, "}}") {
     let field = ident(p)
-    expect(p, ":")
-    append(out, node2("FieldInit", field, parse_expr(p)))
+    if sym(p, ",") || sym(p, "}}") {
+      append(out, node2("FieldInit", field, node1("Var", field)))
+    } else {
+      expect(p, ":")
+      append(out, node2("FieldInit", field, parse_expr(p)))
+    }
     if !eat(p, ",") { break }
   }
   expect(p, "}}")
@@ -321,7 +325,8 @@ fn after_name(p: mut Parser, name: view String) -> String {
   }
   let has_fields = is_name(p, 1) && sym_at(p, 2, ":") && !kw_at(p, 3, "while") && !kw_at(p, 3, "for")
   let empty_literal = sym_at(p, 1, "}}") && (generic != "_" || constructor_name(p, start, angle))
-  if sym(p, "{{") && (has_fields || empty_literal) {
+  let shorthand = is_name(p, 1) && (sym_at(p, 2, ",") || sym_at(p, 2, "}}")) && constructor_name(p, start, angle)
+  if sym(p, "{{") && (has_fields || empty_literal || shorthand) {
     return node3("StructLit", full_path, generic, fields(p))
   }
   if generic != "_" {
