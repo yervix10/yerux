@@ -267,6 +267,33 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
             )?;
             tok = t;
             i = ni;
+        } else if c == 'r' && {
+            let mut j = i + 1;
+            while cs.get(j) == Some(&'#') {
+                j += 1;
+            }
+            cs.get(j) == Some(&'"')
+        } {
+            // raw string: r"..." or r#"..."# (any number of #): no escapes, no interpolation,
+            // one line; it ends at a quote followed by as many # as it opened with
+            let mut hashes = 0;
+            i += 1;
+            while cs[i] == '#' {
+                hashes += 1;
+                i += 1;
+            }
+            i += 1;
+            let body = i;
+            let closes = |k: usize| cs[k] == '"' && (1..=hashes).all(|h| cs.get(k + h) == Some(&'#'));
+            while i < cs.len() && cs[i] != '\n' && !closes(i) {
+                i += 1;
+            }
+            if i >= cs.len() || cs[i] == '\n' {
+                return Err(diag("unterminated raw string", Pos { line, col: scol, len: 1 })
+                    .note("a raw string ends with a quote followed by as many `#` as it started with: r#\"{\"a\": 1}\"#; it must fit on one line"));
+            }
+            tok = Tok::Str(cs[body..i].iter().collect());
+            i += 1 + hashes;
         } else if c.is_ascii_alphabetic() || c == '_' {
             while i < cs.len() && (cs[i].is_ascii_alphanumeric() || cs[i] == '_') {
                 i += 1;

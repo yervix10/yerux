@@ -120,6 +120,10 @@ hello world, 4 times, {braces}
 ```
 
 Inside a string literal `{expr}` inserts any value that can be shown, and `{{` / `}}` are literal braces.
+For JSON, paths or regexes, a **raw string** needs no escapes and no doubled braces: `r"C:\dir\new"` is the text
+as written, and `r#"{"id": 7}"#` may contain quotes (add more `#`s if the text holds `"#`). A raw string is a
+`Text` on a single line and never interpolates.
+
 More methods (`find`, `trim`, `split`, `to_upper`, ...) are listed in [STDLIB.md](../STDLIB.md) and in
 chapter 14.
 

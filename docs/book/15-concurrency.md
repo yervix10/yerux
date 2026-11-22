@@ -34,6 +34,37 @@ fn main() {
 from the worker
 ```
 
+To start N workers in a loop, keep their handles in a `List<JoinHandle<T>>` and join them after the loop. A handle
+dropped at the end of its iteration waits for its worker (dropping a `JoinHandle` joins), so a loop that only
+declares `let t = spawn move { .. }` runs the workers one at a time and deadlocks when a worker waits for work sent
+later: the compiler rejects it and says so.
+
+```yerux
+fn square(n: Int) -> Int { return n * n }
+
+fn main() {
+  scope {
+    var handles = List<JoinHandle<Int>>.new()
+    for i in 1..5 {
+      let h = spawn move { return square(i) }
+      handles.push(move h)
+    }
+    var total = 0
+    while handles.len() > 0 {
+      let h = handles.remove(0)
+      total = total + h.join().unwrap()
+    }
+    print(total)
+  }
+}
+```
+
+```output
+30
+```
+
+Handles still in the list when it is dropped are joined at that point.
+
 Using `spawn` outside a `scope`, or capturing a borrowed variable, is a compile error:
 
 ```yerux error=scope

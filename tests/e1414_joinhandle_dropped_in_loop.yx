@@ -1,0 +1,7 @@
+fn main() {
+  scope {
+    for w in 0..3 {
+      let t = spawn move { return 1 }
+    }
+  }
+}

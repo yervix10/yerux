@@ -37,6 +37,9 @@ diagnostic. The current structured API uses `scope { ... }`, `spawn move` and
 `JoinHandle<T>.join() -> Result<T, ThreadPanic>`. Owned captures are moved,
 and scalar captures are copied. Borrow captures into spawned workers are
 rejected, including borrowed scalar parameters. Handles join when dropped.
+A `List<JoinHandle<T>>` collects the workers of a loop (`handles.push(move h)`, then `remove`/`pop` + `join`);
+a handle declared in a loop body and still owned at the end of the iteration is a compile error, because
+dropping it waits for its worker.
 The checker rejects structural transfers of `@thread_bound` data, handles,
 function values and erased trait objects. `ThreadDone` represents successful
 completion of a worker without a return value.
