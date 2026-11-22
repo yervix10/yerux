@@ -108,7 +108,9 @@ required() {
     tests/own_try_order.yx|tests/range_as_else.yx|tests/range_panic_uint64.yx|tests/num_math.yx|\
     tests/num_float_basic.yx|tests/agg_flow_list.yx|tests/slice_for.yx|tests/edge_option_result.yx|\
     tests/io_basic.yx|tests/io_exit_drop.yx|tests/fs_buffered.yx|tests/net_errors.yx|\
-    tests/process_basic.yx|tests/process_timeout.yx|tests/time_duration.yx|tests/drop_generic.yx) return 0 ;;
+    tests/process_basic.yx|tests/process_timeout.yx|tests/time_duration.yx|tests/drop_generic.yx|\
+    tests/clos_borrow.yx|tests/clos_generic.yx|tests/hard2_closure_call_order.yx|\
+    tests/hard2_closure_early_return.yx|tests/own_deep_closure_drop.yx|tests/t906_closures_owned.yx) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -180,13 +182,11 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
     continue
   fi
   case "${file##*/}" in
-    rejected_types.yx|unsupported_closure.yx)
-      expected=1
-      if [[ ${file##*/} == unsupported_closure.yx ]]; then expected=3; fi
-      if [[ $status == "$expected" && ! -s "$tmp/self.c" && -s "$tmp/codegen.err" ]]; then
+    rejected_types.yx)
+      if [[ $status == 1 && ! -s "$tmp/self.c" && -s "$tmp/codegen.err" ]]; then
         rejections=$((rejections + 1))
       else
-        fail "expected rejection $expected, got $status"
+        fail "expected type rejection (1), got $status"
       fi
       continue
       ;;
@@ -237,4 +237,4 @@ if ((skipped > 0)); then
     printf '%4d  %s\n' "${reasons[$category]}" "$category"
   done | sort -k1,1nr -k2
 fi
-[[ $identical -ge 223 && $panics -ge 2 && $rejections == 2 && $failures == 0 ]]
+[[ $identical -ge 223 && $panics -ge 2 && $rejections == 1 && $failures == 0 ]]
