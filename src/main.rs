@@ -76,13 +76,14 @@ fn checked_frontend(
 fn frontend(
     file: &str,
     mode: modules::Mode,
-) -> Result<(syntax::Program, check::Sigs), Vec<String>> {
+) -> Result<(syntax::Program, check::Sigs, Vec<String>), Vec<String>> {
     let (mut prog, sigs, loaded) = checked_frontend(file, mode)?;
     let start = Instant::now();
     comptime::run(&mut prog)
         .map_err(|ds| ds.iter().map(|d| loaded.render(d)).collect::<Vec<_>>())?;
     profile_stage("compile-time evaluation", start);
-    Ok((prog, sigs))
+    let files = loaded.files.iter().map(|f| f.path.clone()).collect();
+    Ok((prog, sigs, files))
 }
 
 fn report_errors(msgs: &[String]) -> ! {
@@ -132,13 +133,14 @@ fn find_c_compiler() -> Option<String> {
 const NO_CC: &str = "no C compiler found (looked for $YERUX_CC, cc, gcc, clang). Install gcc/clang (on Windows: MinGW-w64 or LLVM), set YERUX_CC, or use the native backend: `yerux build prog.yx --native`";
 
 /// Compile generated C with the system C compiler.
-fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
+fn c_compile_mode(c: &str, out: &str, links: &[String], debug: bool) -> Result<(), String> {
     let cc = find_c_compiler().ok_or_else(|| NO_CC.to_string())?;
     let cfile = tmp_path("c");
     fs::write(&cfile, c).map_err(|_| "could not write the temporary C file".to_string())?;
     let mut cmd = Command::new(&cc);
     cmd.args([
-        "-O2",
+        if debug { "-O0" } else { "-O2" },
+        if debug { "-g" } else { "-DNDEBUG" },
         "-w",
         "-fno-math-errno",
         "-ffp-contract=off",
@@ -167,6 +169,10 @@ fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
     } else {
         Err("the C compiler failed".into())
     }
+}
+
+fn c_compile(c: &str, out: &str, links: &[String]) -> Result<(), String> {
+    c_compile_mode(c, out, links, false)
 }
 
 fn native_build(
@@ -217,7 +223,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--no-opt] [--native-debug-alloc]
        yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
@@ -514,13 +520,19 @@ fn real_main() {
         eprintln!("could not read {}: {}", file, e);
         exit(2);
     }
-    let (prog, sigs) = match frontend(file, modules::Mode::Normal) {
+    let (prog, sigs, source_files) = match frontend(file, modules::Mode::Normal) {
         Ok(x) => x,
         Err(msgs) => report_errors(&msgs),
     };
     // --native-debug-alloc: native build that reports allocations / frees / live blocks on stderr at exit
     let debug_alloc = args.iter().any(|a| a == "--native-debug-alloc");
-    let no_opt = args.iter().any(|a| a == "--no-opt");
+    let debug = args.iter().any(|a| a == "--debug");
+    let release = args.iter().any(|a| a == "--release");
+    if debug && release {
+        eprintln!("error: choose either --debug or --release");
+        exit(2);
+    }
+    let no_opt = args.iter().any(|a| a == "--no-opt") || debug;
     if args.iter().any(|a| a == "--check-ranges") {
         ir::CHECK_RANGES.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -583,14 +595,14 @@ fn real_main() {
     let c = if native {
         String::new()
     } else {
-        cgen::generate(&prog, sigs)
+        cgen::generate_with_files(&prog, sigs, &source_files)
     };
     if !native {
         profile_stage("C generation", start);
     }
     let build = |out: &str| {
         let start = Instant::now();
-        if let Err(e) = c_compile(&c, out, &prog.links) {
+        if let Err(e) = c_compile_mode(&c, out, &prog.links, debug) {
             eprintln!("{}", e);
             exit(1);
         }
@@ -686,7 +698,7 @@ fn build_block_exe(
     native: bool,
     optimize: bool,
 ) -> Result<String, Vec<String>> {
-    let (prog, sigs) = frontend(file, mode)?;
+    let (prog, sigs, _) = frontend(file, mode)?;
     let exe = tmp_path("bin").to_string_lossy().to_string();
     if native {
         let mut ir = ir::lower(&prog).map_err(|e| vec![format!("error: {}", e)])?;

@@ -5,7 +5,7 @@ Everything below is part of the one `yerux` binary.
 | Command | What it does |
 |---|---|
 | `yerux check file.yx` | type- and ownership-check, print every error, generate nothing |
-| `yerux build file.yx [-o out] [--native] [--target linux\|aarch64\|windows]` | compile to an executable |
+| `yerux build file.yx [-o out] [--debug\|--release] [--native] [--target linux\|aarch64\|windows]` | compile to an executable |
 | `yerux run file.yx [--native]` | build to a temporary file and run it |
 | `yerux c file.yx` / `yerux ir file.yx` | print the generated C / the optimised IR |
 | `yerux new NAME` / `yerux build` / `yerux run` / `yerux test` | project commands (chapter 13) |
@@ -19,6 +19,14 @@ Everything below is part of the one `yerux` binary.
 | `yerux tokens`, `ast-file`, `resolve-file`, `types-file`, `locals-file` | dumps used by the self-hosting comparison tests |
 
 The four tools added last (`add`/`remove`, `doc`, `bench`, and `fmt --check` for CI) are described in [TOOLS.md](../TOOLS.md).
+
+### Build profiles
+
+`yerux build` defaults to the release profile: the C backend uses `-O2`, and the native backend runs its
+optimizer. `--release` selects that behavior explicitly. `--debug` keeps native runtime checks enabled and
+disables native optimization; with the C backend it uses `-O0 -g` so C debuggers can read generated code and
+symbols. Choose only one profile. `--no-opt` remains available as a low-level alias for disabling native
+optimization.
 
 ## Tests: `yerux test`
 

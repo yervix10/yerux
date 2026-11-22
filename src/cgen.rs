@@ -31,6 +31,10 @@ struct CLoop {
 }
 
 pub fn generate(prog: &Program, sigs: Sigs) -> String {
+    generate_with_files(prog, sigs, &["<yerux>".to_string()])
+}
+
+pub fn generate_with_files(prog: &Program, sigs: Sigs, source_files: &[String]) -> String {
     let mut g = Gen {
         out: String::from(C_HEADER),
         ind: 0,
@@ -195,6 +199,11 @@ pub fn generate(prog: &Program, sigs: Sigs) -> String {
     g.line("");
     g.emit_dyn_tables(&prog.funcs);
     for f in &prog.funcs {
+        let module = f.pos.line >> 20;
+        let line = f.pos.line & ((1 << 20) - 1);
+        let source_file = source_files.get(module).map(String::as_str).unwrap_or("<yerux>");
+        let escaped = source_file.replace('\\', "\\\\").replace('"', "\\\"");
+        g.line(&format!("#line {} \"{}\"", line.max(1), escaped));
         g.func(f);
     }
     // global cell 0 holds the address of an image of the initial process stack (argc, argv.., 0, envp.., 0), as
