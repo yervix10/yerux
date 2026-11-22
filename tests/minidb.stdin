@@ -1,0 +1,26 @@
+# employees: load, inspect, query
+LOAD emp tests/minidb_employees.csv
+TABLES
+SELECT * FROM emp LIMIT 3
+SELECT name, salary FROM emp WHERE dept = eng AND salary >= 4800 ORDER BY salary DESC
+SELECT name, city FROM emp WHERE name = 'Fox, Mulder'
+SELECT dept, COUNT(*), SUM(salary), AVG(salary), MIN(salary), MAX(salary) FROM emp GROUP BY dept
+SELECT COUNT(*), AVG(salary) FROM emp WHERE city != Lima
+SELECT name FROM emp ORDER BY name LIMIT 4
+# modify, persist, lose, restore
+INSERT INTO emp VALUES 9, 'Irene Mora', eng, 5000, Lima
+INSERT INTO emp VALUES 10, Jon, ops
+INSERT INTO emp VALUES x, Jon, ops, 1, Lima
+UPDATE emp SET salary = 3300 WHERE name = 'Hugo Vega'
+DELETE FROM emp WHERE dept = sales
+SELECT dept, COUNT(*) FROM emp GROUP BY dept
+SAVE emp
+DROP emp
+TABLES
+SELECT * FROM emp
+RESTORE emp
+SELECT id, name, salary FROM emp WHERE salary < 4000 ORDER BY id
+SELECT bogus FROM emp
+FROB x
+PURGE
+RESTORE emp
