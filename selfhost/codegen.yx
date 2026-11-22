@@ -1812,6 +1812,18 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
         return conversion(gen, tree, value, target, name.starts_with("truncate_"))
       }
       if types.math_arity(name) != 0 { return emit_math(gen, tree, name, args, recv, ty) }
+      if name == "cmp" {
+        let left = expression(gen, tree, recv)
+        let saved = temp(gen, tree, left.ty, left.code)
+        let right = expression(gen, tree, actual)
+        let other = temp(gen, tree, right.ty, right.code)
+        let a = String.from(saved.code)
+        let b = String.from(other.code)
+        if float != "" {
+          return temp(gen, tree, ty, "({a} < {b} ? -1 : {a} > {b} ? 1 : {a} == {b} ? 0 : ({a} != {a} ? ({b} != {b} ? 0 : 1) : -1))")
+        }
+        return temp(gen, tree, ty, "({a} < {b} ? -1 : {a} > {b} ? 1 : 0)")
+      }
       if name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" {
         let left = expression(gen, tree, recv)
         let saved = temp(gen, tree, left.ty, left.code)

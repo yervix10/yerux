@@ -1,0 +1,21 @@
+import std.net
+import std.time
+
+fn hold(listener: net.TcpListener) -> Int {
+  let peer = net.accept(listener).unwrap()
+  time.sleep_ms(6000)
+  return 0
+}
+
+fn main() {
+  let addr = net.address("127.0.0.1", 43995).unwrap()
+  let listener = net.listen(addr).unwrap()
+  scope {
+    let worker = spawn move || hold(move listener)
+    let stream = net.connect(addr).unwrap()
+    assert(net.read(stream, 1).is_err())
+    let closed = net.close_stream(move stream)
+    assert(worker.join().is_ok())
+  }
+  print("stalled socket read timed out")
+}

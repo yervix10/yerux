@@ -1,0 +1,7 @@
+import std.net
+
+fn main() {
+  let addr = net.address("ffffffffffffffffffffffffffffffff:0:0:0:0:0:0:1", 80).unwrap()
+  assert(net.connect(addr).is_err())
+  print("invalid IPv6 rejected")
+}

@@ -42,6 +42,19 @@ fn close_result(fd: mut Int) -> Result<Int, io.IoError> {
   return Ok(0)
 }
 
+// Bound blocking socket reads and writes so a peer cannot hold a worker
+// forever with a stalled connection. The runtime currently targets Linux.
+fn set_io_timeouts(fd: Int) -> Int {
+  let tv = __alloc(16)
+  __store64(tv, 5)
+  __store64(tv + 8, 0)
+  let read_result = __syscall(54, fd, 1, 20, tv, 16, 0) // SO_RCVTIMEO
+  var result = read_result
+  if result >= 0 { result = __syscall(54, fd, 1, 21, tv, 16, 0) } // SO_SNDTIMEO
+  __free(tv)
+  return result
+}
+
 pub fn address(ip: Text, port: Int) -> Result<SocketAddr, io.IoError> {
   if port < 0 || port > 65535 {
     return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: port out of range"))
@@ -92,6 +105,9 @@ fn sockaddr(a: view SocketAddr, out: Int) -> Int {
         var v = 0
         var digits = 0
         while i < a.ip.len() && a.ip.byte(i) != 58 {
+          // IPv6 groups contain at most four hexadecimal digits. Reject before
+          // multiplying so arbitrarily long hostile groups cannot overflow Int.
+          if digits >= 4 { return -1 }
           let c = a.ip.byte(i)
           var d = c - 48
           if c >= 65 && c <= 70 { d = c - 55 }
@@ -152,6 +168,8 @@ pub fn connect(a: view SocketAddr) -> Result<TcpStream, io.IoError> {
   let fd = __syscall(41, family, 1, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
   let stream = TcpStream { fd: fd }
+  let timeout = set_io_timeouts(fd)
+  if timeout < 0 { return Err(io.os_error("setsockopt", a.ip, 0 - timeout)) }
   let sa = __alloc(32)
   let n = sockaddr(a, sa)
   if n < 0 {
@@ -171,6 +189,8 @@ pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
   let fd = __syscall(41, family, 1, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
   let listener = TcpListener { fd: fd }
+  let timeout = set_io_timeouts(fd)
+  if timeout < 0 { return Err(io.os_error("setsockopt", a.ip, 0 - timeout)) }
   let yes = __alloc(4)
   __store8(yes, 1)
   let so = __syscall(54, fd, 1, 2, yes, 4, 0)
@@ -197,6 +217,12 @@ pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
 pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
   let fd = __syscall(43, l.fd, 0, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("accept", "", 0 - fd)) }
+  let timeout = set_io_timeouts(fd)
+  if timeout < 0 {
+    var fd_to_close = fd
+    drop_fd(fd_to_close)
+    return Err(io.os_error("setsockopt", "accepted socket", 0 - timeout))
+  }
   return Ok(TcpStream { fd: fd })
 }
 

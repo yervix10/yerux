@@ -1,0 +1,12 @@
+fn main() {
+  let a: UInt8 = 255
+  print(a.wrapping_add(3))
+  let b: Int32 = 2147483647
+  print(b.wrapping_add(1))
+  print(a.to_int() * 1000)
+  let c: UInt32 = 5
+  print(c.to_float() / 2.0)
+  print(7 % 3)
+  print(-7 % 3)
+  print(-7 / 2)
+}

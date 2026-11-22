@@ -1,0 +1,14 @@
+import std.fs
+import std.kv
+
+fn main() {
+  let path = "/tmp/yerux-kv-hostile-limit"
+  var content = String.new()
+  for i in 0..16777217 { content.push_char('x') }
+  let written = fs.write(path, content).unwrap()
+  let store = kv.open(path).unwrap()
+  assert(kv.get(store, "key").is_err())
+  assert(kv.set(store, "key", "value").is_err())
+  let removed = fs.remove_file(path).unwrap()
+  print("oversized kv rejected")
+}

@@ -1,0 +1,12 @@
+fn main() {
+  let a: UInt64 = 18446744073709551615
+  print(a / 3)
+  print(a % 10)
+  print(a.to_float())
+  let n = 5
+  print(n.to_uint64() * 2)
+  let big = 9007199254740993
+  print(big.to_float())
+  print((0.0 - 5.7).to_int())
+  print(1e300 * 1e300)
+}
