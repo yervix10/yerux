@@ -1,40 +1,59 @@
 # Yerux
 
-Yerux is an experimental compiled language with explicit ownership, second-class
-borrows, checked arithmetic, and a compiler written in Rust. The language and
-current implementation are documented in [SPEC.md](SPEC.md) and
-[BACKEND.md](BACKEND.md).
+Yerux is an experimental compiled language with explicit ownership, second-class borrows (no lifetimes), checked
+arithmetic, traits and generics (monomorphised), closures, iterators, `Drop`, OS threads, and a standard library
+written in Yerux itself. The compiler is written in Rust (`src/`) and is being rewritten in Yerux piece by piece
+(`selfhost/`). Current version: **0.5.0** ([CHANGELOG.md](CHANGELOG.md)).
 
-## Build and run
+Two backends share one front end: a C backend (the default, through `cc`; it is the test oracle) and a native
+backend that writes x86-64 Linux ELF files by itself, plus Linux AArch64 and Windows x86-64 (PE) targets.
 
-```sh
-cargo build --release
-cargo run -- run examples/01_lists.yx --native
-```
-
-The default `run` and `build` backend compiles through C and requires `cc`.
-Pass `--native` to use the native backend. Native Linux x86-64 is the default;
-`--target aarch64` and `--target windows` select the documented cross targets.
-`yerux check file.yx` checks a program without building it.
+## Install and run
 
 ```sh
-cargo run -- check examples/01_lists.yx
-cargo run -- build examples/01_lists.yx --native -o lists
+cargo build --release                 # target/release/yerux
+export PATH="$PWD/target/release:$PATH"
+yerux doctor                          # what this installation can do (C compiler, wine, both backends)
 ```
+
+A release tarball (`scripts/release.sh`) contains `install.sh`, which copies `yerux` to `~/.local/bin`; the standard
+library is built into the binary.
+
+```sh
+yerux run examples/01_lists.yx            # through C (needs cc)
+yerux run examples/01_lists.yx --native   # native backend, no C compiler
+yerux check examples/01_lists.yx          # type and ownership check only
+yerux build examples/01_lists.yx --native -o lists
+yerux new app && cd app && yerux run      # a project: yerux.toml + src/main.yx
+yerux test                                # run `test "name" { .. }` blocks
+yerux fmt --check .                       # formatter
+yerux lsp                                 # language server (VS Code extension in editors/vscode)
+```
+
+`--target aarch64` and `--target windows` select the cross targets (native backend, console programs; see
+[docs/WINDOWS.md](docs/WINDOWS.md) for what is verified and what is rejected).
 
 ## Documentation
 
-- [Guide](docs/GUIDE.md): language tour and runnable examples.
-- [Standard library](docs/STDLIB.md): built-in types and APIs.
-- [FFI](docs/FFI.md): current C interoperability support and limits.
-- [Concurrency](docs/CONCURRENCY.md): concurrency support and target limits.
-- [Ranges](docs/RANGES.md): range types, narrowing, and conversions.
-- [Windows](docs/WINDOWS.md): Windows target usage and verification status.
-- [Backend status](BACKEND.md): implemented backend features and constraints.
-- [Roadmap](docs/ROADMAP.md): project direction and remaining work.
+- **[The Yerux Book](docs/book/README.md)**: a 17-chapter tutorial; every code block is compiled and run by
+  `tests/doctests.sh`, so it cannot drift from the compiler.
+- [Guide](docs/GUIDE.md): the one-page tour (also doc-tested).
+- [Language specification](SPEC.md) and [backend status](BACKEND.md).
+- [Standard library](docs/STDLIB.md) (prelude and the 22 `std.*` modules) and the area references:
+  [I/O](docs/STDLIB_IO.md), [system](docs/STDLIB_SYSTEM.md), [processes](docs/STDLIB_PROCESS.md),
+  [network](docs/NET.md), [HTTP](docs/HTTP.md), [regex/csv/toml](docs/REGEX_CSV_TOML.md), [kv](docs/STDLIB_KV.md),
+  [compress](docs/STDLIB_COMPRESS.md), [sync](docs/STDLIB_SYNC.md), [Unicode](docs/UNICODE.md).
+- Language topics: [Drop](docs/DROP.md), [Clone and derive](docs/CLONE.md), [generics](docs/GENERICS.md),
+  [iterators](docs/ITERATORS.md), [errors](docs/ERRORS.md), [concurrency](docs/CONCURRENCY.md),
+  [arrays and slices](docs/ARRAYS.md), [ranges](docs/RANGES.md), [compile-time evaluation](docs/COMPTIME.md),
+  [FFI](docs/FFI.md), [packages](docs/PACKAGES.md).
+- Tools: [language server](docs/LSP.md) and [VS Code extension](editors/vscode/README.md), [self-hosting](docs/SELFHOST.md),
+  [running the test suite](docs/TESTING.md), [performance](docs/PERF.md).
+- [Roadmap](docs/ROADMAP.md): milestones with measured progress. [Glossary](docs/GLOSSARY.md), [friction log](docs/FRICTION.md).
 
-## Examples
+## Examples and tests
 
-Positive examples are numbered in `examples/`. The module example starts at
-`examples/12_modules/main.yx`. Files prefixed with `e` demonstrate programs
-that are expected to fail, such as ownership and type errors.
+`examples/` has numbered positive programs (the module example starts at `examples/12_modules/main.yx`), files
+prefixed with `e` that must fail to compile, and `examples/real/` with larger programs (calculator, key-value CLI,
+HTTP server and client, JSON, a mini-make, a small interpreter). `tests/` holds the golden-tested programs and the
+scripts that `tests/run_all.sh` runs; see [docs/TESTING.md](docs/TESTING.md).
