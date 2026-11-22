@@ -391,8 +391,8 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
    diagnostic, and a `List<JoinHandle<T>>` is rejected ("a List cannot contain JoinHandle values"), so the usual
    "start N workers" loop has no direct form. The programs name each handle (`w1`, `w2`, `w3`) and report results
    through a channel.
-5. **No struct-literal shorthand and `move` on last use.** `Task { title: move title, tags: move tags }` is required
-   even though `title` is not used afterwards; `Task { title, tags }` is not accepted.
+5. **Fixed: struct-literal shorthand.** `Task { title, tags }` now means `Task { title: title, tags: tags }`, with the
+   same move rules as the explicit form (tests `struct_shorthand`, `e1412_struct_shorthand_move`).
 6. **JSON in strings needs doubled braces.** `"{{\"id\":{t.id}}}"`: every literal `{` and `}` is doubled, and `\{` is
    an error with a good hint. A raw string literal would remove most of the noise.
 7. **`std.args` is thin.** Options only take the `--key=value` form (`--title TEXT` is a positional), the first
