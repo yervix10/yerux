@@ -2400,8 +2400,76 @@ fn bind_pattern(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, val
       at = tree.at(at).end
     }
   } else if tag == "Or" {
+    var binds = false
     for at in node + 1..tree.at(node).end {
-      if tree.at(at).tag == "Bind" { unsupported("bindings in alternative patterns") }
+      if tree.at(at).tag == "Bind" { binds = true }
+    }
+    if !binds { return }
+    // Every alternative binds the same names; the body sees the first alternative's bindings, so declare
+    // those and assign them from whichever alternative matched.
+    let items = ast.child(tree, node, 0)
+    var first_nodes = List<Int>.new()
+    var first_values = List<Value>.new()
+    collect_binds(gen, tree, items + 1, value, first_nodes, first_values)
+    for i in 0..first_nodes.len() {
+      let id = id_at(gen, first_nodes.at(i))
+      let ty = String.from(first_values.at(i).ty)
+      if drop_fn(gen, tree, ty).len() != 0 || mode != "Own" && mode != "View" { unsupported("owned or borrowed bindings in alternative patterns") }
+      gen.references.set(id, false)
+      line(gen, "{c_type(gen, tree, ty)} v{id};")
+    }
+    var at = items + 1
+    var keyword = String.from("if")
+    while at < tree.at(items).end {
+      var nodes = List<Int>.new()
+      var values = List<Value>.new()
+      collect_binds(gen, tree, at, value, nodes, values)
+      let test = pattern_test(gen, tree, at, value)
+      line(gen, "{keyword} ({test}) {{")
+      for i in 0..nodes.len() {
+        let name = ast.name_at(tree, nodes.at(i), 0)
+        for j in 0..first_nodes.len() {
+          let other = ast.name_at(tree, first_nodes.at(j), 0)
+          if other == name {
+            line(gen, "v{id_at(gen, first_nodes.at(j))} = {values.at(i).code};")
+          }
+        }
+      }
+      line(gen, String.from("}}"))
+      keyword = String.from("else if")
+      at = tree.at(at).end
+    }
+  }
+}
+
+fn collect_binds(gen: view Generator, tree: view List<ast.AstNode>, node: Int, value: view Value,
+    nodes: mut List<Int>, values: mut List<Value>) {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Bind" {
+    nodes.push(node)
+    values.push(Value { ty: String.from(value.ty), code: String.from(value.code) })
+    collect_binds(gen, tree, ast.child(tree, node, 1), value, nodes, values)
+  } else if tag == "Variant" {
+    let layout = enum_index(gen, value.ty)
+    let name = type_terms.last_name(ast.name_at(tree, node, 0))
+    let slot = variant_index(gen.enum_layouts.at(layout), name)
+    let fields = ast.child(tree, node, 1)
+    var at = fields + 1
+    var i = 0
+    while at < tree.at(fields).end {
+      collect_binds(gen, tree, at, enum_payload(gen, value, slot, i), nodes, values)
+      i = i + 1
+      at = tree.at(at).end
+    }
+  } else if tag == "TuplePat" {
+    let parts = tuple_parts(gen, tree, value)
+    let items = ast.child(tree, node, 0)
+    var at = items + 1
+    var i = 0
+    while at < tree.at(items).end {
+      collect_binds(gen, tree, at, parts.at(i), nodes, values)
+      i = i + 1
+      at = tree.at(at).end
     }
   }
 }

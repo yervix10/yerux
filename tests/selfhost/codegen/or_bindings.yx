@@ -1,0 +1,26 @@
+enum Shape { Rect(Int, Int), Square(Int), Dot }
+
+fn area(s: Shape) -> Int {
+  match s {
+    Shape.Rect(w, h) | Shape.Rect(h, w) => { return w * h }
+    Shape.Square(w) => { return w * w }
+    Shape.Dot => { return 0 }
+  }
+  return -1
+}
+
+fn size(s: Shape) -> Int {
+  match s {
+    Shape.Square(n) | Shape.Rect(n, _) => { return n }
+    Shape.Dot => { return 0 }
+  }
+  return -1
+}
+
+fn main() {
+  print(area(Shape.Rect(3, 4)))
+  print(area(Shape.Square(5)))
+  print(area(Shape.Dot))
+  print(size(Shape.Rect(7, 1)))
+  print(size(Shape.Square(2)))
+}
