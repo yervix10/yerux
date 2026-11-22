@@ -19,6 +19,7 @@ struct Function { node: Int, signature: Int, impl_params: Int }
 struct Types {
   identities: List<Int>,
   declarations: List<Int>,
+  captures: List<locals.Capture>,
   bindings: List<String>,
   shapes: List<Shape>,
   signatures: List<Signature>,
@@ -41,11 +42,11 @@ struct Types {
   frozen: List<ownership.Loan>,
   trace: Bool,
   expressions: List<String>,
+  borrowed_closures: List<Bool>,
   messages: List<String>,
 }
-pub struct FunctionType { spelling: String, args: List<Parameter>, result: String }
 pub struct Checked {
-  bindings: List<String>, expressions: List<String>, messages: List<String>, signatures: List<FunctionType>, errors: Int,
+  bindings: List<String>, expressions: List<String>, messages: List<String>, borrowed_closures: List<Bool>, errors: Int,
 }
 struct LoopFlow { label: String, breaks: List<Bool>, continues: List<Bool>, continued: Bool, deferred: Int }
 struct PatternRow { nodes: List<Int> }
@@ -191,6 +192,26 @@ fn add_signature(types: mut Types, name: view String, args: List<Parameter>, ret
     copy_params: List<String>.new(), ordered_params: List<String>.new(), required_trait: String.new(),
   })
   return text
+}
+
+fn value_signature(types: mut Types, ty: view String) -> Int {
+  let existing = signature_index(types, ty, true)
+  if existing >= 0 || !ty.starts_with("fn(") { return existing }
+  var parts = type_terms.function_parts(ty)
+  let result = parts.pop()
+  var parameters = List<Parameter>.new()
+  for part in parts { parameters.push(function_parameter(part)) }
+  let index = types.signatures.len()
+  let spelling = add_signature(types, String.new(), move parameters, result)
+  return index
+}
+
+pub fn function_parameter(part: view String) -> Parameter {
+  let prefix = type_terms.parameter_prefix(part)
+  var mode = String.from("Own")
+  if prefix == 5 { mode = String.from("View") }
+  else if prefix == 4 { mode = String.from("Mut") }
+  return Parameter { mode: move mode, ty: part.slice(prefix, part.len()) }
 }
 
 fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> String {
@@ -462,6 +483,7 @@ fn require_value(types: mut Types, tree: view List<ast.AstNode>, node: Int, ty: 
 
 fn immutable_reason(types: view Types, tree: view List<ast.AstNode>, id: Int) -> String {
   if types.modes.at(id) == "View" { return String.from("it is only borrowed for reading (`view`)") }
+  if types.modes.at(id) == "Capture" { return String.new() }
   let decl = types.declarations.at(id)
   if tree.at(decl).tag == "Let" && tree.at(ast.child(tree, decl, 1)).tag == "false" {
     return String.from("it was declared with `let` (immutable)")
@@ -487,7 +509,9 @@ fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<o
   var root = root_place(tree, node)
   if explicit { root = node }
   if root < 0 {
-    if mode == "Mut" { issue(types, String.from("pass a variable here (the function borrows it)")) }
+    if mode == "Mut" && !(ty.starts_with("fn(") && tree.at(node).tag == "Closure") {
+      issue(types, String.from("pass a variable here (the function borrows it)"))
+    }
     return
   }
   let id = types.identities.at(root)
@@ -535,9 +559,22 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     let mode = String.from(types.signatures.at(sig).receiver)
     record_loan(types, tree, loans, receiver, mode, owner, true)
   }
-  var at = 0
+  var nodes = List<Int>.new()
+  var order = List<Int>.new()
   var i = args + 1
   while i < tree.at(args).end {
+    if sub.names.len() == 0 || tree.at(i).tag != "Closure" { order.push(nodes.len()) }
+    nodes.push(i)
+    i = tree.at(i).end
+  }
+  // Other arguments can fix the types of a generic callback's parameters.
+  if sub.names.len() > 0 {
+    for at in 0..nodes.len() {
+      if tree.at(nodes.at(at)).tag == "Closure" { order.push(at) }
+    }
+  }
+  for at in order {
+    let i = nodes.at(at)
     var expected = unknown()
     var formal = unknown()
     if sig >= 0 {
@@ -558,7 +595,9 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
         rejected_move = true
       }
     }
-    if !rejected_move { actual = infer(types, tree, i, hint) }
+    if tree.at(i).tag == "Closure" && mode != "Own" && expected.starts_with("fn(") {
+      actual = closure_type(types, tree, i, hint, true)
+    } else if !rejected_move { actual = infer(types, tree, i, hint) }
     if sig >= 0 { record_loan(types, tree, loans, i, mode, actual, false) }
     type_terms.bind(sub, formal, actual)
     let resolved = type_terms.substitute(formal, sub)
@@ -573,8 +612,6 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
       } else if generic { expect_type(types, formal, actual) }
       else { expect_type(types, resolved, actual) }
     }
-    at = at + 1
-    i = tree.at(i).end
   }
   if sig >= 0 {
     if owner == "?" && types.errors == before {
@@ -1018,22 +1055,9 @@ fn propagate(types: mut Types, tree: view List<ast.AstNode>, node: Int) -> Strin
   return String.from(args.at(0))
 }
 
-fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
-  var hinted = signature_index(types, hint, true)
-  if hinted < 0 && hint.starts_with("fn(") {
-    var parts = type_terms.function_parts(hint)
-    let result = parts.pop()
-    var parameters = List<Parameter>.new()
-    for part in parts {
-      let prefix = type_terms.parameter_prefix(part)
-      var mode = String.from("Own")
-      if prefix == 5 { mode = String.from("View") }
-      else if prefix == 4 { mode = String.from("Mut") }
-      parameters.push(Parameter { mode: move mode, ty: part.slice(prefix, part.len()) })
-    }
-    hinted = types.signatures.len()
-    let spelling = add_signature(types, String.new(), move parameters, result)
-  }
+fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String,
+    borrow_argument: Bool) -> String {
+  let hinted = value_signature(types, hint)
   let args = param_types(types, tree, ast.child(tree, index, 4), hinted, true)
   let ret = ast.child(tree, index, 5)
   var expected = source_type(types, tree, ret)
@@ -1045,21 +1069,63 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   let floor = types.defer_floor
   types.defer_floor = types.deferred.len()
   types.return_type = String.from(state.expected)
+  let moving = tree.at(ast.child(tree, index, 0)).tag == "true"
+  let borrowing = borrow_argument && !moving
+  let worker = tree.at(ast.child(tree, index, 3)).tag == "true"
+  var captures = List<Int>.new()
+  var modes = List<String>.new()
+  if types.verify_ownership && !borrowing && !worker {
+    captures = locals.capture_ids(types.captures, index)
+    for id in captures {
+      modes.push(String.from(types.modes.at(id)))
+      let ty = String.from(types.bindings.at(id))
+      let name = binding_name(types, tree, id)
+      read_binding(types, id, name)
+      if moving { types.modes.set(id, String.from("Capture")) }
+      else {
+        if owns_value(types, ty) { issue(types, "closure must move its owned capture '{name}'") }
+        types.modes.set(id, String.from("View"))
+      }
+    }
+  }
   let before = ownership.snapshot(types.moved)
   let body = ast.child(tree, index, 6)
   let first = ast.child(tree, body, 0) + 1
-  if tree.at(ast.child(tree, index, 1)).tag == "true" && tree.at(first).tag == "Expr" {
+  if tree.at(ast.child(tree, index, 1)).tag == "true" && tree.at(first).tag == "Return" {
     let expression = ast.child(tree, first, 0)
     let actual = infer(types, tree, expression, state.expected)
-    expect_type(types, state.expected, actual)
-    require_value(types, tree, expression, actual)
+    if state.expected != "nothing" {
+      expect_type(types, state.expected, actual)
+      require_value(types, tree, expression, actual)
+    }
     state.inferred = move actual
   } else { let exits = check_body(types, state, tree, body) }
   types.moved = move before
+  for i in 0..captures.len() {
+    let id = captures.at(i)
+    types.modes.set(id, String.from(modes.at(i)))
+    if moving && owns_value(types, types.bindings.at(id)) {
+      let name = binding_name(types, tree, id)
+      move_binding(types, id, name)
+    }
+  }
   types.return_type = move outer
   types.defer_floor = floor
-  if state.expected != "?" { return add_signature(types, String.new(), move args, state.expected) }
-  return add_signature(types, String.new(), move args, state.inferred)
+  var result = String.from(state.expected)
+  if result == "?" { result = String.from(state.inferred) }
+  let spelling = add_signature(types, String.new(), move args, result)
+  if !types.trace {
+    types.expressions.set(index, String.from(spelling))
+    types.borrowed_closures.set(index, borrowing)
+  }
+  return spelling
+}
+
+fn binding_name(types: view Types, tree: view List<ast.AstNode>, id: Int) -> String {
+  let declaration = types.declarations.at(id)
+  if tree.at(declaration).tag == "Self" { return String.from("self") }
+  if tree.at(declaration).tag == "For" { return ast.name_at(tree, declaration, 1) }
+  return ast.name_at(tree, declaration, 0)
 }
 
 fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
@@ -1231,7 +1297,7 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     if id >= 0 {
       read_binding(types, id, n)
       let ty = String.from(types.bindings.at(id))
-      sig = signature_index(types, ty, true)
+      sig = value_signature(types, ty)
       if sig < 0 && ty != "?" {
         issue(types, "'{n}' is a variable of type {ty}, not a function, so it cannot be called")
       }
@@ -1253,10 +1319,10 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
   }
   if tag == "CallFn" {
     let callee = infer(types, tree, ast.child(tree, index, 0), unknown())
-    let sig = signature_index(types, callee, true)
+    let sig = value_signature(types, callee)
     return call_args(types, tree, ast.child(tree, index, 1), String.from("function value"), sig, unknown(), -1)
   }
-  if tag == "Closure" { return closure_type(types, tree, index, hint) }
+  if tag == "Closure" { return closure_type(types, tree, index, hint, false) }
   if tag == "StructLit" { return struct_literal(types, tree, index) }
   if tag == "Array" || tag == "ArrayFill" {
     var expected = type_terms.element(hint)
@@ -1295,6 +1361,15 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
       let args = ast.child(tree, index, 2)
       if owner != "?" { return member(types, tree, owner, name, args, -1, hint) }
       let receiver = infer(types, tree, node, unknown())
+      let shape = shape_index(types, receiver)
+      if shape >= 0 && !types.shapes.at(shape).is_enum && name != "at" && root_place(tree, node) >= 0 {
+        let field = field_index(types.shapes.at(shape), name)
+        if field >= 0 {
+          let ty = instantiate(types.shapes.at(shape).fields.at(field).ty, types.shapes.at(shape).generics, receiver)
+          let signature = value_signature(types, ty)
+          if signature >= 0 { return call_args(types, tree, args, name, signature, unknown(), -1) }
+        }
+      }
       return member(types, tree, receiver, name, args, node, hint)
     }
     if owner != "?" {
@@ -2112,7 +2187,7 @@ fn declare_trait(types: mut Types, tree: view List<ast.AstNode>, node: Int) {
 pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify_ownership: Bool,
     trace: Bool) -> Checked {
   var types = Types {
-    identities: List<Int>.new(), declarations: List<Int>.new(),
+    identities: List<Int>.new(), declarations: List<Int>.new(), captures: List<locals.Capture>.new(),
     bindings: List<String>.new(), shapes: List<Shape>.new(),
     signatures: List<Signature>.new(), errors: 0, generics: List<String>.new(),
     function_params: -1, impl_params: -1, return_type: unknown(),
@@ -2121,8 +2196,15 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<ownership.Loan>.new(),
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
+    borrowed_closures: List<Bool>.new(),
   }
-  if !trace { for i in 0..tree.len() { types.expressions.push(unknown()) } }
+  if !trace {
+    for i in 0..tree.len() {
+      types.expressions.push(unknown())
+      types.borrowed_closures.push(false)
+    }
+  }
+  for capture in bindings.captures { types.captures.push(capture) }
   for id in bindings.identities { types.identities.push(id) }
   for binding in bindings.bindings {
     types.declarations.push(binding.node)
@@ -2209,22 +2291,11 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     types.ordered_params = copy_names(types.signatures.at(fun.signature).ordered_params)
     let exits = check_body(types, state, tree, ast.child(tree, fun.node, 4))
   }
-  var signatures = List<FunctionType>.new()
-  if !trace {
-    for signature in types.signatures {
-      if signature.owner != "" || signature.generics.len() != 0 { continue }
-      var args = List<Parameter>.new()
-      for arg in signature.args {
-        args.push(Parameter { mode: String.from(arg.mode), ty: String.from(arg.ty) })
-      }
-      signatures.push(FunctionType {
-        spelling: String.from(signature.spelling), args: move args, result: String.from(signature.result),
-      })
-    }
-  }
+  var borrowed_closures = List<Bool>.new()
+  for borrowing in types.borrowed_closures { borrowed_closures.push(borrowing) }
   return Checked {
     bindings: copy_names(types.bindings), expressions: copy_names(types.expressions),
-    messages: copy_names(types.messages), signatures: move signatures, errors: types.errors,
+    messages: copy_names(types.messages), borrowed_closures: move borrowed_closures, errors: types.errors,
   }
 }
 

@@ -1,0 +1,21 @@
+fn main() {
+  outer: for i in 0..4 {
+    for j in 0..4 {
+      if j == 2 { continue outer }
+      if i == 3 { break outer }
+      print(i * 10 + j)
+    }
+  }
+  var n = 0
+  loop_w: while n < 10 {
+    n = n + 1
+    var m = 0
+    while m < 5 {
+      m = m + 1
+      if m == 3 { continue loop_w }
+      if n == 4 { break loop_w }
+      print(n * 100 + m)
+    }
+  }
+  for k in 0..10 step 3 { print(k) }
+}
