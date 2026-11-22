@@ -1,0 +1,46 @@
+import std.args
+
+fn main() {
+  var argv = List<String>.new()
+  argv.push(String.from("mytool"))
+  argv.push(String.from("-v"))
+  argv.push(String.from("-f"))
+  argv.push(String.from("--debug"))
+  argv.push(String.from("-xyz"))
+  argv.push(String.from("build"))
+  argv.push(String.from("main.yx"))
+  argv.push(String.from("extra.yx"))
+
+  let p = args.parse(argv)
+
+  print(args.flag(p, "v"))
+  print(args.flag(p, "-v"))
+  print(args.flag(p, "f"))
+  print(args.flag(p, "-f"))
+  print(args.flag(p, "x"))
+  print(args.flag(p, "y"))
+  print(args.flag(p, "z"))
+  print(args.flag(p, "debug"))
+  print(args.flag(p, "--debug"))
+  print(args.flag(p, "q"))
+  print(args.flag(p, "-q"))
+
+  let pos = args.positionals(p)
+  print(pos.len())
+  for s in pos {
+    print(s)
+  }
+
+  match args.positional(p, 0) {
+    Some(s) => { print(s) }
+    None => { print("none") }
+  }
+  match args.positional(p, 1) {
+    Some(s) => { print(s) }
+    None => { print("none") }
+  }
+  match args.positional(p, 2) {
+    Some(s) => { print(s) }
+    None => { print("none") }
+  }
+}

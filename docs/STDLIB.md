@@ -737,7 +737,7 @@ Beyond interpolation. Widths count characters.
 
 ### `std.args`
 
-`parse(argv)` accepts a `List<String>` including the program name; `parse_process()` uses `std.io.args()`. The schema free parser collects `--name=value` in `options`, long flags in `flags`, splits short flag groups (`-abc`), treats the first positional as `subcommand`, and keeps later values in `positionals`. `--` ends option parsing; `--help` sets `help` and adds the `help` flag. Use `has_flag(parsed, name)`, `option(parsed, name)` (last value wins), and `help_line(program, usage)` to build a usage line. Options without `=value` are flags because no option schema is provided.
+`parse(argv)` accepts a `List<String>` including the program name; `parse_process()` uses `std.io.args()`. The schema free parser collects `--name=value` in `options`, long flags in `flags`, splits short flag groups (`-abc`), treats the first positional as `subcommand`, and keeps later values in `positionals`. `--` ends option parsing; `--help` sets `help` and adds the `help` flag. Use `flag(parsed, name)` or `has_flag(parsed, name)` for boolean flags (short like `-v` or long like `--verbose`), `positionals(parsed)` to retrieve positional arguments, `option(parsed, name)` (last value wins), and `help_line(program, usage)` to build a usage line. Options without `=value` are flags because no option schema is provided.
 
 ### `std.collections`
 
