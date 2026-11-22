@@ -1,0 +1,29 @@
+struct Row { name: String, cells: List<String> }
+
+fn shout(s: view String) -> Int {
+  return s.len() * 2
+}
+
+fn main() {
+  var lines = List<String>.new()
+  lines.push(String.from("alpha"))
+  lines.push(String.from("be"))
+  var total = 0
+  var i = 0
+  while i < lines.len() {
+    let line = lines.at(i)
+    total = total + shout(line)
+    print(line)
+    i = i + 1
+  }
+  print(total)
+  lines.push(String.from("after"))
+  print(lines.len())
+  var rows = List<Row>.new()
+  var cells = List<String>.new()
+  cells.push(String.from("x"))
+  rows.push(Row { name: String.from("r1"), cells: move cells })
+  let row = rows.at(0)
+  let first = row.cells.at(0)
+  print("{row.name} {first}")
+}

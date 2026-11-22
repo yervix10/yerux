@@ -225,6 +225,8 @@ fn place_str(e: &Expr) -> String {
     }
 }
 
+/// marks a freeze made by `let x = list.at(i)` (kept in the high bit of the line number)
+const LET_BORROW: usize = 1 << 59;
 fn is_at(e: &Expr) -> bool {
     matches!(&e.k, EK::Method { m, .. } if m == "at")
 }
@@ -908,7 +910,11 @@ impl<'a> Checker<'a> {
             .map(|(fz, excl, line, m)| (place_str(fz), *excl, *line, *m));
         if let Some((fname, excl, line, from_match)) = hit {
             let n = place_str(e);
-            let d = if from_match && excl {
+            let d = if line & LET_BORROW != 0 {
+                diag(format!("cannot change '{}' while a name borrowed from it is alive", n), pos)
+                    .note(format!("the `let` on line {} names an element of '{}' as a borrow, valid until the end of its block", line & !LET_BORROW, fname))
+                    .note("help: make a copy (`String.from(x)`), or do the change after the block that uses the name")
+            } else if from_match && excl {
                 diag(format!("cannot use '{}' inside the `match mut` arm that borrows it", n), pos)
                     .note(format!("`match mut` on line {} borrows '{}' exclusively: the names the pattern binds are the only way to reach its payloads", line, fname))
                     .note("help: use the bound names inside the arm, or change/read the value after the `match`")
@@ -3911,6 +3917,30 @@ impl<'a> Checker<'a> {
                 s.k = SK::Block(v, false);
             }
             return;
+        }
+        // `let line = lines.at(i)` of an owned element: `line` names the element as a borrow (like a `for` variable)
+        // and the list is frozen until the end of the block, so the name cannot dangle
+        if pos.line < PRELUDE_LINE {
+            if let SK::Let(name, false, init, _) = &s.k {
+                if is_at(init) {
+                    let mut probe = init.clone();
+                    let errs = self.errs.len();
+                    let owned = self.place(&mut probe).is_some_and(|p| self.types.owned(p.ty));
+                    self.errs.truncate(errs);
+                    if owned {
+                        if let EK::Method { recv, .. } = &init.k {
+                            let mut fz = (**recv).clone();
+                            self.resolve_ids(&mut fz);
+                            let name = name.clone();
+                            let init = init.clone();
+                            s.k = SK::Bind(name, Mode::View, init, 0);
+                            self.stmt(s);
+                            self.frozen.push((fz, false, pos.line | LET_BORROW, true));
+                            return;
+                        }
+                    }
+                }
+            }
         }
         match &mut s.k {
             SK::Let(name, mutable, init, id) => {

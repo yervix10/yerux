@@ -1,5 +1,6 @@
 // std.args: small schema-free command-line parser. `io.args()` supplies argv including argv[0].
 import std.io
+import std.text
 
 pub struct Parsed {
   flags: List<String>,
@@ -45,6 +46,66 @@ pub fn parse(argv: view List<String>) -> Parsed {
     i = i + 1
   }
   return out
+}
+
+/// Like `parse`, but with a schema: the names in `valued` are options that take the next word as their value
+/// (`--title TEXT`, or `-o FILE` for a one-letter name; `--title=TEXT` still works), and with
+/// `with_subcommand` false the first positional stays a positional (`subcommand` is left empty).
+pub fn parse_with(argv: view List<String>, valued: view List<String>, with_subcommand: Bool) -> Parsed {
+  var out = Parsed { flags: List<String>.new(), options: List<(String, String)>.new(), positionals: List<String>.new(), subcommand: String.new(), help: false }
+  var i = 1
+  var positional_only = false
+  while i < argv.len() {
+    let a = String.from(argv.at(i))
+    if !positional_only && a == "--" {
+      positional_only = true
+    } else if !positional_only && a == "--help" {
+      out.help = true
+      out.flags.push(String.from("help"))
+    } else if !positional_only && a.starts_with("--") {
+      let eq = a.find("=")
+      if eq >= 0 {
+        let k = a.slice(2, eq)
+        let v = a.slice(eq + 1, a.len())
+        out.options.push((move k, move v))
+      } else {
+        let k = a.slice(2, a.len())
+        if is_valued(valued, k) && i + 1 < argv.len() {
+          i = i + 1
+          out.options.push((move k, String.from(argv.at(i))))
+        } else {
+          out.flags.push(move k)
+        }
+      }
+    } else if !positional_only && a.starts_with("-") && a.len() > 1 {
+      var j = 1
+      while j < a.len() {
+        let f = a.slice(j, j + 1)
+        if is_valued(valued, f) && j + 1 == a.len() && i + 1 < argv.len() {
+          i = i + 1
+          out.options.push((move f, String.from(argv.at(i))))
+        } else {
+          out.flags.push(move f)
+        }
+        j = j + 1
+      }
+    } else {
+      let v = String.from(a)
+      if with_subcommand && out.subcommand.is_empty() { out.subcommand = move v }
+      else { out.positionals.push(move v) }
+    }
+    i = i + 1
+  }
+  return out
+}
+
+fn is_valued(valued: view List<String>, name: view String) -> Bool {
+  var i = 0
+  while i < valued.len() {
+    if valued.at(i) == name { return true }
+    i = i + 1
+  }
+  return false
 }
 
 pub fn parse_process() -> Parsed {
@@ -103,4 +164,71 @@ pub fn help_line(program: view String, usage: view String) -> String {
   s.push_str(program)
   if !usage.is_empty() { s.push_byte(32); s.push_str(usage) }
   return s
+}
+
+/// The option as an Int: `None` when it is missing; `Some(Err(text))` is not representable, so an option that is
+/// present but not a number is also `None` (use `option_int_checked` to tell them apart).
+pub fn option_int(p: view Parsed, name: view String) -> Option<Int> {
+  match option(p, name) {
+    Some(v) => {
+      match text.parse_int(v) {
+        Ok(n) => { return Some(n) }
+        Err(e) => { return None }
+      }
+    }
+    None => { return None }
+  }
+}
+
+pub fn option_int_or(p: view Parsed, name: view String, default: Int) -> Int {
+  match option_int(p, name) {
+    Some(n) => { return n }
+    None => { return default }
+  }
+}
+
+/// `Ok(None)` when the option is missing, `Err(message)` when it is present but not an integer.
+pub fn option_int_checked(p: view Parsed, name: view String) -> Result<Option<Int>, String> {
+  match option(p, name) {
+    Some(v) => {
+      match text.parse_int(v) {
+        Ok(n) => { return Ok(Some(n)) }
+        Err(e) => {
+          var m = String.from("--")
+          m.push_str(name)
+          m.push_str(": ")
+          m.push_str(e)
+          return Err(move m)
+        }
+      }
+    }
+    None => { return Ok(None) }
+  }
+}
+
+pub fn option_float(p: view Parsed, name: view String) -> Option<Float> {
+  match option(p, name) {
+    Some(v) => {
+      match text.parse_float(v) {
+        Ok(x) => { return Some(x) }
+        Err(e) => { return None }
+      }
+    }
+    None => { return None }
+  }
+}
+
+pub fn option_or(p: view Parsed, name: view String, default: view String) -> String {
+  match option(p, name) {
+    Some(v) => { return v }
+    None => { return String.from(default) }
+  }
+}
+
+/// `--flag`, `--flag=true|false|yes|no|1|0`; missing is `default`.
+pub fn option_bool(p: view Parsed, name: view String, default: Bool) -> Bool {
+  match option(p, name) {
+    Some(v) => { return v == "true" || v == "yes" || v == "1" }
+    None => { return default || has_flag(p, name) }
+  }
 }

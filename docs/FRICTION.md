@@ -389,7 +389,7 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 
 1. **Fixed: `if` and `match` expressions.** `let x = if ok { 1 } else { 2 }` and `match` with bare-expression arms are
    values now (book chapter 4, SPEC; tests `if_expr`, `e1500_ifexpr_no_else`, `e1501_ifexpr_branch_no_value`).
-2. **A borrowed list element cannot be named.** `let line = lines.at(i)` is "cannot move 'lines.at(..)' out of its
+2. **Fixed: a borrowed list element can be named.** (`let line = lines.at(i)` now borrows the element until the end of the block; tests `borrowed_elem`, `e1502_borrowed_elem_frozen`, `e1503_borrowed_elem_move`.) Was: A borrowed list element cannot be named. `let line = lines.at(i)` is "cannot move 'lines.at(..)' out of its
    List"; the only ways are `String.from(lines.at(i))` (a copy) or passing `lines.at(i)` straight to a `view`
    parameter. Every loop over rows of a table copied each row or went through a helper taking `view Table`.
 3. **Fixed: dropped `JoinHandle` in a loop.** A handle owned by a loop body and not joined or moved by the end of
@@ -401,7 +401,7 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 6. **Fixed: raw string literals.** `r"..."` and `r#"..."#` (any number of `#`) are verbatim: no escapes, no
    interpolation, no doubled braces, so JSON and regexes read as written. One line only. Lexer in Rust and mirrored in
    `selfhost/lexer.yx` and both formatters (tests `raw_string`, `e1413_raw_unterminated`).
-7. **`std.args` is thin.** Options only take the `--key=value` form (`--title TEXT` is a positional), the first
+7. **Fixed: `std.args` is thin** (`parse_with` + typed accessors, see STDLIB; test `std_args_schema`). Was: Options only take the `--key=value` form (`--title TEXT` is a positional), the first
    positional word lands in `subcommand`, and there is no typed accessor.
 7. **Methods versus functions are inconsistent.** `s.split(..)` and `s.trim()` are methods but `s.lines()`,
    `s.to_upper()` and `s.is_alnum` are `text.lines(s)`, `text.to_upper(s)`; the error ("String has no method 'lines'")

@@ -1,0 +1,9 @@
+error: cannot change 'lines' while a name borrowed from it is alive
+ --> tests/e1502_borrowed_elem_frozen.yx:5:3
+  |
+5 |   lines.push(String.from("b"))
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = the `let` on line 4 names an element of 'lines' as a borrow, valid until the end of its block
+  = help: make a copy (`String.from(x)`), or do the change after the block that uses the name
+
+1 error(s). Nothing was generated.

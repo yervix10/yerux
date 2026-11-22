@@ -24,7 +24,7 @@ error: `[value; N]` copies its value, but String owns memory
 error: cannot move 'c[..]' out of its array
  --> tests/e1029_array_owned_errors.yx:7:11
   |
-7 |   let s = c[0]
+7 |   var s = c[0]
   |           ^^^^
   = help: borrow the element instead (`a[i].len()`, or pass `a[i]` to a `view`/`mut` parameter), or replace it: `a[i] = x`
 

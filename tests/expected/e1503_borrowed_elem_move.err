@@ -1,0 +1,9 @@
+error: 'line' is a String and is not copied
+ --> tests/e1503_borrowed_elem_move.yx:5:14
+  |
+5 |   let mine = line
+  |              ^^^^
+  = 'line' only borrows its value (a `view`/`mut` parameter or a `for` loop variable), so it cannot be copied or moved out
+  = help: make an independent copy with `String.from(line)`
+
+1 error(s). Nothing was generated.

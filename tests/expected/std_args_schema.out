@@ -1,0 +1,11 @@
+sub=[]
+build
+src
+Hello world
+out.bin
+12
+2.5
+true
+false
+--title: invalid digit at byte 0
+sub=[build]

@@ -1,0 +1,36 @@
+import std.args
+
+fn list(a: view List<String>) {
+  var i = 0
+  while i < a.len() {
+    print(a.at(i))
+    i = i + 1
+  }
+}
+
+fn main() {
+  var argv = List<String>.new()
+  for w in ["tool", "--title", "Hello world", "build", "-o", "out.bin", "--count", "12", "--ratio=2.5", "--fast", "src"] {
+    argv.push(String.from(w))
+  }
+  var valued = List<String>.new()
+  for w in ["title", "o", "count"] { valued.push(String.from(w)) }
+  let p = args.parse_with(argv, valued, false)
+  print("sub=[{p.subcommand}]")
+  list(p.positionals)
+  print(args.option_or(p, "title", "none"))
+  print(args.option_or(p, "o", "none"))
+  print(args.option_int_or(p, "count", -1))
+  match args.option_float(p, "ratio") {
+    Some(x) => { print(x) }
+    None => { print("no ratio") }
+  }
+  print(args.option_bool(p, "fast", false))
+  print(args.option_bool(p, "slow", false))
+  match args.option_int_checked(p, "title") {
+    Ok(v) => { print("ok") }
+    Err(e) => { print(e) }
+  }
+  let q = args.parse_with(argv, valued, true)
+  print("sub=[{q.subcommand}]")
+}

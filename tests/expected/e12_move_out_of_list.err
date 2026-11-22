@@ -1,7 +1,7 @@
 error: cannot move 'names.at(..)' out of its List
  --> examples/e12_move_out_of_list.yx:4:15
   |
-4 |   let first = names.at(0)
+4 |   var first = names.at(0)
   |               ^^^^^^^^^^^
   = help: borrow the element instead (`l.at(i).len()`, or pass `l.at(i)` to a `view`/`mut` parameter); `l.pop()` moves the last element out
 
