@@ -1,0 +1,9 @@
+error: this branch of the value produces no value
+ --> tests/e1501_ifexpr_branch_no_value.yx:2:33
+  |
+2 |   let x = if 1 > 0 { 5 } else { print("hi") }
+  |                                 ^^^^^^^^^^^
+  = the last line of each branch is its value, so it must be an expression with a result
+  = help: a call that returns nothing cannot be the value of an `if` or `match`
+
+1 error(s). Nothing was generated.

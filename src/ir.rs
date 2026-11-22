@@ -1398,6 +1398,29 @@ impl<'a> L<'a> {
     /// Introduce a variable holding `init`.
     fn declare(&mut self, id: usize, init: &Expr) -> LR<()> {
         supported(init.ty, "variables")?;
+        if matches!(init.k, EK::Uninit) {
+            // declared now, assigned later: an owned aggregate starts as "moved out" (no drop until assigned)
+            if is_agg(init.ty) {
+                let n = self.words(init.ty);
+                let a = self.new_slot(n);
+                self.vars.insert(id, Loc::Mem(a));
+                if self.types.owned(init.ty) {
+                    self.track(id, a, init.ty);
+                    let flag = self.flags[&id];
+                    self.emit(Inst::Const(flag, 0));
+                }
+            } else if self.memvars.contains(&id) {
+                let a = self.new_slot(1);
+                let zero = self.konst(0);
+                self.emit(Inst::Store(a, 0, zero));
+                self.vars.insert(id, Loc::Mem(a));
+            } else {
+                let x = self.v();
+                self.emit(Inst::Const(x, 0));
+                self.vars.insert(id, Loc::Val(x));
+            }
+            return Ok(());
+        }
         let v = self.expr(init)?;
         if is_agg(init.ty) {
             let a = if Self::fresh(init) {
@@ -2140,6 +2163,8 @@ impl<'a> L<'a> {
         Ok(match &e.k {
             EK::Ascribe(_) => unreachable!("type ascriptions are erased by the checker"),
             EK::AsElse(..) => unreachable!("`as .. else` is rewritten by the checker"),
+            EK::IfExpr(..) | EK::MatchExpr(..) => unreachable!("`if`/`match` values are rewritten by the checker"),
+            EK::Uninit => unreachable!("an uninitialised variable only appears as a `let` initialiser"),
             EK::Sequence(stmts, result) => {
                 self.scopes.push(vec![]);
                 self.stmts(stmts)?;

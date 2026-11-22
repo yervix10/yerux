@@ -1015,6 +1015,16 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
 
     fn stmt(&mut self, s: &Stmt) {
         match &s.k {
+            SK::Let(name, _, init, id) if matches!(init.k, EK::Uninit) => {
+                // declared now, assigned later; an owned value starts as "moved out" (its drop is skipped)
+                let n = format!("v{}_{}", id, name);
+                self.vars.insert(*id, (n.clone(), false, init.ty));
+                self.line(&format!("{} {} = {{0}};", self.types.cty(init.ty), n));
+                if self.types.owned(init.ty) {
+                    self.track(*id);
+                    self.line(&format!("{n}_live = false;"));
+                }
+            }
             SK::Let(name, _, init, id) => {
                 let e = self.ex(init);
                 let n = format!("v{}_{}", id, name);
@@ -1362,6 +1372,8 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
         match &e.k {
             EK::Ascribe(_) => unreachable!("type ascriptions are erased by the checker"),
             EK::AsElse(..) => unreachable!("`as .. else` is rewritten by the checker"),
+            EK::IfExpr(..) | EK::MatchExpr(..) => unreachable!("`if`/`match` values are rewritten by the checker"),
+            EK::Uninit => unreachable!("an uninitialised variable only appears as a `let` initialiser"),
             EK::Sequence(stmts, result) => {
                 let mut nested = Gen {
                     out: String::new(),

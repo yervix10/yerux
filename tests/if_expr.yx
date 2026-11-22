@@ -1,0 +1,43 @@
+enum Shape { Circle(Int), Rect(Int, Int), Empty }
+
+fn area(s: Shape) -> Int {
+  return match s {
+    Circle(r) => 3 * r * r,
+    Rect(w, h) => w * h,
+    Empty => 0,
+  }
+}
+
+fn label(n: Int) -> String {
+  let s = if n < 0 { String.from("neg") } else if n == 0 { String.from("zero") } else { String.from("pos") }
+  return s
+}
+
+fn first_or(xs: view List<Int>, d: Int) -> Int {
+  return if xs.len() > 0 { xs.get(0) } else { d }
+}
+
+fn main() {
+  let a = if 3 > 2 { 10 } else { 20 }
+  print(a)
+  print(area(Shape.Circle(2)))
+  print(area(Shape.Rect(3, 4)))
+  print(area(Shape.Empty))
+  print(label(-5))
+  print(label(0))
+  print(label(7))
+  var xs = List<Int>.new()
+  print(first_or(xs, 99))
+  xs.push(5)
+  print(first_or(xs, 99))
+  let m = match a {
+    10 => {
+      let t = a * 2
+      t + 1
+    }
+    _ => 0,
+  }
+  print(m)
+  let total = 1 + if a > 5 { 100 } else { 0 }
+  print(total)
+}

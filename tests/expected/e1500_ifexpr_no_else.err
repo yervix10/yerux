@@ -1,0 +1,9 @@
+error: an `if` used as a value needs an `else`
+ --> tests/e1500_ifexpr_no_else.yx:2:11
+  |
+2 |   let x = if 1 > 0 { 5 }
+  |           ^^
+  = both branches must produce a value of the same type
+  = help: write `if cond { a } else { b }`, or use an `if` statement when no value is needed
+
+1 error(s). Nothing was generated.

@@ -867,6 +867,21 @@ impl<'a> Checker<'a> {
                 self.scan_expr(b, out, cl);
                 self.scan_stmts(blk, out, cl);
             }
+            EK::IfExpr(c, t, e) => {
+                self.scan_expr(c, out, cl);
+                self.scan_stmts(t, out, cl);
+                self.scan_stmts(e, out, cl);
+            }
+            EK::MatchExpr(x, arms) => {
+                self.scan_expr(x, out, cl);
+                for a in arms {
+                    if let Some(g) = &a.guard {
+                        self.scan_expr(g, out, cl);
+                    }
+                    self.scan_stmts(&a.body, out, cl);
+                }
+            }
+            EK::Uninit => {}
             EK::Un("mut", b) if !self.scan_assign.get() => {
                 if let Some(n) = Self::root_name(b) {
                     out.insert(n.to_string());

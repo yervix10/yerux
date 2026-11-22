@@ -136,6 +136,16 @@ impl Scan {
                 self.stmts(stmts);
                 self.expr(result);
             }
+            EK::IfExpr(c, t, e) => {
+                self.expr(c);
+                self.stmts(t);
+                self.stmts(e);
+            }
+            EK::MatchExpr(x, arms) => {
+                self.expr(x);
+                self.arms(arms);
+            }
+            EK::Uninit => {}
             EK::ArrayLit(items) => self.args(items),
             EK::ArrayFill(b, _) => self.expr(b),
             EK::SliceOf(b, lo, hi) => {
@@ -226,22 +236,25 @@ impl Scan {
             }
             SK::Match(e, arms) => {
                 self.expr(e);
-                for a in arms {
-                    self.scopes.push(HashSet::new());
-                    for (n, _) in &a.binds {
-                        self.declare(n);
-                    }
-                    if let Some(p) = &a.pat {
-                        self.pat(p);
-                    }
-                    if let Some(g) = &a.guard {
-                        self.expr(g);
-                    }
-                    self.stmts(&a.body);
-                    self.scopes.pop();
-                }
+                self.arms(arms);
             }
             SK::Defer(s) => self.stmt(s),
+        }
+    }
+    fn arms(&mut self, arms: &[Arm]) {
+        for a in arms {
+            self.scopes.push(HashSet::new());
+            for (n, _) in &a.binds {
+                self.declare(n);
+            }
+            if let Some(p) = &a.pat {
+                self.pat(p);
+            }
+            if let Some(g) = &a.guard {
+                self.expr(g);
+            }
+            self.stmts(&a.body);
+            self.scopes.pop();
         }
     }
 }

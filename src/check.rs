@@ -128,6 +128,7 @@ fn walk_ids(e: &Expr, out: &mut Vec<usize>, only_moves: bool) {
         }
         EK::Move(_, id) => out.push(*id),
         EK::Ascribe(b) | EK::AsElse(b, _) => walk_ids(b, out, only_moves),
+        EK::IfExpr(..) | EK::MatchExpr(..) | EK::Uninit => {}
         EK::Sequence(stmts, result) => {
             for stmt in stmts {
                 if let SK::Let(_, _, init, _) = &stmt.k {
@@ -523,6 +524,10 @@ struct Checker<'a> {
     split_ok: bool,   // checking `std__split_at*`: its two halves of one slice may be lent together
     inst_fns: HashMap<(String, Vec<Ty>), (String, Sig)>,
     hint: Option<Ty>, // expected type of the next expression (to infer `Maybe.None`)
+    /// hidden result variables of `if`/`match` values whose type is fixed by their first branch value
+    infer_vars: HashSet<usize>,
+    /// the expected type of the value being built by an `if`/`match` expression
+    value_hint: Option<Ty>,
     rename: Option<String>, // set by a generic call: the instantiation to call instead
     n_inst: usize,
     broken: HashSet<String>, // generic functions whose own body has errors (not instantiated)
@@ -978,6 +983,9 @@ impl<'a> Checker<'a> {
             }
         }
         let hint = self.hint.take();
+        if matches!(e.k, EK::IfExpr(..) | EK::MatchExpr(..)) {
+            return self.value_expr(e, hint);
+        }
         // `let x: T = e`
         if matches!(e.k, EK::Ascribe(_)) {
             let want = e.ty;
@@ -1419,6 +1427,7 @@ impl<'a> Checker<'a> {
             EK::Var(..) | EK::Field(..) => unreachable!(),
             EK::Ascribe(..) => unreachable!("handled at the top of expr"),
             EK::AsElse(..) => unreachable!("handled at the top of expr"),
+            EK::IfExpr(..) | EK::MatchExpr(..) | EK::Uninit => unreachable!("handled at the top of expr"),
             EK::Int(_) | EK::Float(..) | EK::Conv(..) => unreachable!("handled by try_numeric"),
             EK::IsVariant(b, _) => {
                 self.expr_base(b);
@@ -2056,6 +2065,95 @@ impl<'a> Checker<'a> {
         };
         let init = std::mem::replace(arg, Expr { k, pos, ty });
         s_stmt(SK::Let(name, false, init, id), pos)
+    }
+
+    /// The last statement of a branch that yields a value becomes an assignment to the hidden result variable
+    /// `name`; a branch without a value gets a marker the checker turns into an error when it can finish.
+    fn branch_to_assign(&mut self, mut b: Vec<Stmt>, name: &str, id: usize, pos: Pos) -> Vec<Stmt> {
+        let entry = self.vars.len();
+        let _ = entry;
+        let target = |p: Pos| sx(EK::Var(name.to_string(), id), p);
+        let marker = |p: Pos| s_stmt(SK::Assign(target(p), sx(EK::Uninit, p)), p);
+        match b.pop() {
+            Some(Stmt { k: SK::ExprS(x), pos: sp }) => b.push(s_stmt(SK::Assign(target(sp), x), sp)),
+            Some(Stmt { k: SK::If(c, t, Some(el)), pos: sp }) => {
+                let (t, el) = (self.branch_to_assign(t, name, id, sp), self.branch_to_assign(el, name, id, sp));
+                b.push(s_stmt(SK::If(c, t, Some(el)), sp));
+            }
+            Some(Stmt { k: SK::Match(x, arms), pos: sp }) => {
+                let arms = self.arms_to_assign(arms, name, id, sp);
+                b.push(s_stmt(SK::Match(x, arms), sp));
+            }
+            Some(other) => {
+                let sp = other.pos;
+                b.push(other);
+                b.push(marker(sp));
+            }
+            None => b.push(marker(pos)),
+        }
+        b
+    }
+
+    fn arms_to_assign(&mut self, arms: Vec<Arm>, name: &str, id: usize, pos: Pos) -> Vec<Arm> {
+        arms.into_iter()
+            .map(|mut a| {
+                a.body = self.branch_to_assign(std::mem::take(&mut a.body), name, id, pos);
+                a
+            })
+            .collect()
+    }
+
+    /// `if c { .. a } else { .. b }` / `match x { P => a, .. }` as a value. A hidden variable starts uninitialised
+    /// (moved out); every branch assigns it from its last line; the result moves (or copies) it out:
+    ///   let $val; <the if/match with `$val = a` / `$val = b` as the last statement of each branch>; $val
+    fn value_expr(&mut self, e: &mut Expr, hint: Option<Ty>) -> Ty {
+        let pos = e.pos;
+        let outer_pre = std::mem::take(&mut self.pre);
+        self.hid += 1;
+        let name = format!("$val{}", self.hid);
+        self.scopes.push(HashMap::new());
+        let id = self.declare(&name, Ty::Err, Mode::Own, true);
+        self.infer_vars.insert(id);
+        self.st.moved.insert(id, pos);
+        let let_at = 0;
+        let mut out = vec![s_stmt(
+            SK::Let(name.clone(), true, Expr { k: EK::Uninit, pos, ty: Ty::Err }, id),
+            pos,
+        )];
+        let kind = match std::mem::replace(&mut e.k, EK::Int(0)) {
+            EK::IfExpr(c, t, el) => {
+                let (t, el) = (self.branch_to_assign(t, &name, id, pos), self.branch_to_assign(el, &name, id, pos));
+                SK::If(*c, t, Some(el))
+            }
+            EK::MatchExpr(x, arms) => SK::Match(*x, self.arms_to_assign(arms, &name, id, pos)),
+            _ => unreachable!(),
+        };
+        let saved_hint = std::mem::replace(&mut self.value_hint, hint);
+        self.chk(&mut out, s_stmt(kind, pos));
+        self.value_hint = saved_hint;
+        self.pre = outer_pre;
+        self.infer_vars.remove(&id);
+        let ty = self.vars[id].ty;
+        if let SK::Let(_, _, init, _) = &mut out[let_at].k {
+            init.ty = ty;
+        }
+        self.scopes.pop();
+        if ty == Ty::Err {
+            if !self.errs.is_empty() {
+                return Ty::Err;
+            }
+            self.err(diag("this `if`/`match` never produces a value", pos)
+                .note("every branch ends with `return`, `panic` or `break`"));
+            return Ty::Err;
+        }
+        let k = if self.types.owned(ty) {
+            EK::Move(name, id)
+        } else {
+            EK::Var(name, id)
+        };
+        e.k = EK::Sequence(out, Box::new(Expr { k, pos, ty }));
+        e.ty = ty;
+        ty
     }
 
     /// `operand?`: if it is the error (or `None`), return it from the function; otherwise its value.
@@ -3915,8 +4013,48 @@ impl<'a> Checker<'a> {
                 self.declare_unpack(pat, t, p);
             }
             SK::Assign(target, val) => {
-                self.hint = self.peek_ty(target);
+                // the hidden result variable of an `if`/`match` value: the first branch value fixes its type
+                let infer = match &target.k {
+                    EK::Var(_, id) if self.infer_vars.contains(id) => Some(*id),
+                    _ => None,
+                };
+                if infer.is_some() && matches!(val.k, EK::Uninit) {
+                    if !self.st.dead {
+                        self.err(
+                            diag("this branch of the value has no value", pos)
+                                .note("the last line of each branch is its value; a branch that cannot finish (`return`, `panic`, `break`) needs none")
+                                .note("help: end the branch with an expression"),
+                        );
+                    }
+                    s.k = SK::Block(vec![], self.st.dead);
+                    return;
+                }
+                self.hint = match infer {
+                    Some(id) if self.vars[id].ty == Ty::Err => self.value_hint,
+                    _ => self.peek_ty(target),
+                };
                 let t = self.expr(val);
+                if let Some(id) = infer {
+                    if t == Ty::Unit {
+                        if !self.st.dead {
+                            self.err(
+                                diag("this branch of the value produces no value", val.pos)
+                                    .note("the last line of each branch is its value, so it must be an expression with a result")
+                                    .note("help: a call that returns nothing cannot be the value of an `if` or `match`"),
+                            );
+                        }
+                        let v = std::mem::replace(val, sx(EK::Int(0), pos));
+                        s.k = SK::ExprS(v);
+                        return;
+                    }
+                    if t != Ty::Err && self.vars[id].ty == Ty::Err {
+                        self.vars[id].ty = match t {
+                            Ty::Range(..) => Ty::Int,
+                            other => other,
+                        };
+                    }
+                }
+                let t = if matches!(t, Ty::Range(..)) && infer.is_some() { Ty::Int } else { t };
                 if pos.line < PRELUDE_LINE && self.types.contains_join_handle(t) {
                     self.err(diag("a JoinHandle cannot be stored by assignment", val.pos));
                     return;
@@ -7866,6 +8004,8 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         split_ok: false,
         inst_fns: HashMap::new(),
         hint: None,
+        infer_vars: HashSet::new(),
+        value_hint: None,
         rename: None,
         n_inst: 0,
         broken: HashSet::new(),

@@ -1229,6 +1229,14 @@ pub enum EK {
     AsElse(Box<Expr>, Vec<Stmt>),
     /// Checker-generated expression scope with an ordered prelude, used by postfix `?`.
     Sequence(Vec<Stmt>, Box<Expr>),
+    /// `if c { .. v } else { .. w }` used as a value; the last statement of each branch is its value.
+    /// Parsed only: the checker rewrites it into a `Sequence` over a hidden variable.
+    IfExpr(Box<Expr>, Vec<Stmt>, Vec<Stmt>),
+    /// `match x { P => v, .. }` used as a value (arm bodies as for `IfExpr`); rewritten like `IfExpr`.
+    MatchExpr(Box<Expr>, Vec<Arm>),
+    /// The value of a variable that is declared but not yet assigned (a hidden variable of the checker; `Expr::ty`
+    /// is its type). Only appears as the initialiser of a `Let`: the variable starts moved-out.
+    Uninit,
     /// Integer literal (the type is `Expr::ty`; UInt64 values are stored as their bit pattern).
     Int(i64),
     /// Float literal: value and source text (a Float32 literal is rounded from the text once).
@@ -3538,6 +3546,41 @@ impl Parser {
 
     fn match_stmt(&mut self) -> PR<Stmt> {
         let pos = self.pos();
+        let (scrut, arms) = self.match_arms(false)?;
+        Ok(Stmt {
+            k: SK::Match(scrut, arms),
+            pos,
+        })
+    }
+
+    /// `if c { .. v } else { .. w }` where a value is wanted (the last statement of each branch is the value).
+    fn if_expr(&mut self) -> PR<Expr> {
+        let pos = self.pos();
+        self.bump();
+        let c = self.expr()?;
+        let t = self.block()?;
+        if !self.is_kw("else") {
+            return Err(diag("an `if` used as a value needs an `else`", pos)
+                .note("both branches must produce a value of the same type")
+                .note("help: write `if cond { a } else { b }`, or use an `if` statement when no value is needed"));
+        }
+        self.bump();
+        let e = if self.is_kw("if") {
+            vec![self.if_stmt()?]
+        } else {
+            self.block()?
+        };
+        Ok(mk(EK::IfExpr(Box::new(c), t, e), pos))
+    }
+
+    fn match_expr(&mut self) -> PR<Expr> {
+        let pos = self.pos();
+        let (scrut, arms) = self.match_arms(true)?;
+        Ok(mk(EK::MatchExpr(Box::new(scrut), arms), pos))
+    }
+
+    /// `match scrut { arms }`; with `as_value`, an arm body may be a bare expression (`P => e,`).
+    fn match_arms(&mut self, as_value: bool) -> PR<(Expr, Vec<Arm>)> {
         self.bump();
         // `match mut e { .. }`: the payloads are bound as mutable borrows
         let scrut = if self.is_kw("mut") {
@@ -3564,7 +3607,16 @@ impl Parser {
                     .note("example: `Some(x) if x > 3 => { .. }`"));
             }
             self.bump();
-            let body = self.block()?;
+            let body = if as_value && !self.is_sym("{") {
+                let bp = self.pos();
+                let value = self.expr()?;
+                vec![Stmt {
+                    k: SK::ExprS(value),
+                    pos: bp,
+                }]
+            } else {
+                self.block()?
+            };
             self.eat_sym(",");
             // plain `Variant(a, b)` / `_` arms keep the original representation
             let plain = self.surface.is_none() && guard.is_none()
@@ -3611,10 +3663,7 @@ impl Parser {
             }
         }
         self.expect_sym("}")?;
-        Ok(Stmt {
-            k: SK::Match(scrut, arms),
-            pos,
-        })
+        Ok((scrut, arms))
     }
 
     /// `p1 | p2 | ..`
@@ -4065,6 +4114,14 @@ impl Parser {
                     e.ty = t;
                 }
                 self.postfix(e)
+            }
+            Tok::Id(k) if (k == "if" || k == "match") && self.surface.is_none() => {
+                self.i -= 1; // the expression parsers read the keyword themselves
+                if k == "if" {
+                    self.if_expr()
+                } else {
+                    self.match_expr()
+                }
             }
             Tok::Char(c) => Ok(mk(EK::Char(c), pos)),
             Tok::Str(s) => Ok(mk(EK::Text(s), pos)),
