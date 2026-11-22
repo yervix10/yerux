@@ -47,6 +47,10 @@ struct Generator {
   result: String,
   worker_cleanup: Bool,
   user_box: Bool,
+  override_node: Int,
+  override_ty: String,
+  override_code: String,
+  no_args: Bool,
 }
 
 fn unsupported(message: view String) {
@@ -1361,6 +1365,8 @@ fn extern_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, args:
 
 fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: view String,
     args: Int, receiver: Int, ty: view String) -> Value {
+  let skip_args = gen.no_args
+  gen.no_args = false
   if gen.externs.contains(fun) { return extern_call(gen, tree, fun, args, ty) }
   let params = ast.child(tree, fun, 2)
   var sub = call_substitution(gen, tree, fun, owner)
@@ -1384,7 +1390,9 @@ fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: 
     formal = tree.at(formal).end
   }
   var actual = args + 1
-  while actual < tree.at(args).end && formal < tree.at(params).end {
+  var stop = tree.at(args).end
+  if skip_args { stop = actual }
+  while actual < stop && formal < tree.at(params).end {
     let expected = declared_type(tree, ast.child(tree, formal, 2))
     var inferred = type_terms.substitute(gen.checked.expressions.at(actual), gen.sub)
     if expected.starts_with("Slice<") {
@@ -1397,7 +1405,7 @@ fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: 
     actual = tree.at(actual).end
     formal = tree.at(formal).end
   }
-  if actual != tree.at(args).end || formal != tree.at(params).end { unsupported("function arity") }
+  if actual != stop || formal != tree.at(params).end { unsupported("function arity") }
   type_terms.bind(sub, declared_type(tree, ast.child(tree, fun, 3)), ty)
   for value in sub.values { if value == "?" { unsupported("generic argument inference") } }
 
@@ -1937,6 +1945,29 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
     }
   }
   var method = match_method(gen, tree, receiver_type, name, !is_static)
+  if method < 0 && !is_static && name != "into_iter" && name != "next" {
+    // a user iterator uses the Iter adapters through its `into_iter`: `it.map(f)` is `it.into_iter().map(f)`
+    let into = match_method(gen, tree, receiver_type, "into_iter", true)
+    if into >= 0 && match_method(gen, tree, receiver_type, "next", true) >= 0 {
+      let into_sub = call_substitution(gen, tree, into, receiver_type)
+      let iter_type = type_terms.substitute(declared_type(tree, ast.child(tree, into, 3)), into_sub)
+      gen.no_args = true
+      let converted = emit_call(gen, tree, into, receiver_type, args, recv, iter_type)
+      gen.override_node = recv
+      gen.override_ty = String.from(iter_type)
+      gen.override_code = String.from(converted.code)
+      let before = String.from(gen.checked.expressions.at(recv))
+      gen.checked.expressions.set(recv, String.from(iter_type))
+      let own = match_method(gen, tree, iter_type, name, true)
+      let adapter = find_named(tree, gen.functions, "std__iter_{name}")
+      var adapted = Value { ty: String.new(), code: String.new() }
+      if own >= 0 { adapted = emit_call(gen, tree, own, iter_type, args, recv, ty) }
+      else if adapter >= 0 { adapted = emit_call(gen, tree, adapter, String.new(), args, recv, ty) }
+      else { unsupported("iterator method {name} on {receiver_type}") }
+      gen.checked.expressions.set(recv, move before)
+      return move adapted
+    }
+  }
   if method < 0 && !is_static {
     let free = find_named(tree, gen.functions, "std__iter_{name}")
     if free >= 0 { return emit_call(gen, tree, free, String.new(), args, recv, ty) }
@@ -2174,6 +2205,11 @@ fn range_conversion(gen: mut Generator, tree: view List<ast.AstNode>, input: Int
 }
 
 fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Value {
+  if node == gen.override_node {
+    // the receiver of an adapted user iterator was already converted by `into_iter`
+    gen.override_node = -1
+    return Value { ty: String.from(gen.override_ty), code: String.from(gen.override_code) }
+  }
   let tag = String.from(tree.at(node).tag)
   let ty = type_terms.substitute(gen.checked.expressions.at(node), gen.sub)
   if tag == "Var" {
@@ -3250,7 +3286,7 @@ fn main() {
   match fs.read_to_string(args.at(1)) {
     Err(e) => { io.eprintln(e.message); env.exit(2) }
     Ok(source) => {
-      let file = ast.decode(move source)
+      let file = ast.decode_linked(move source)
       let bindings = locals.resolve(file.nodes)
       let checked = types.check_file(file.nodes, bindings, true, false)
       if checked.errors > 0 {
@@ -3268,7 +3304,7 @@ fn main() {
         function_values: List<Int>.new(), closure_envs: List<Int>.new(), wrappers: String.new(),
         references: List<Bool>.new(), out: String.new(),
         indent: 0, temp: 0, loops: List<Loop>.new(), deferred: List<Int>.new(), result: String.new(),
-        worker_cleanup: false, user_box: false,
+        worker_cleanup: false, user_box: false, override_node: -1, override_ty: String.new(), override_code: String.new(), no_args: false,
       }
       for i in 0..gen.locals.bindings.len() { gen.references.push(false) }
       generate(gen, file.nodes)

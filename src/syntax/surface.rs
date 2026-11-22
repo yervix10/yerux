@@ -303,7 +303,7 @@ impl Parser {
             ))
         })?;
         let ret = self.source_ret()?;
-        let block = if body {
+        let block = if body || (method && !external && self.is_sym("{")) {
             let block = self.block()?;
             if let Some(lexical) = &mut self.surface.as_mut().unwrap().lexical {
                 lexical.function(param_names, &block);
