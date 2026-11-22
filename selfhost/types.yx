@@ -12,9 +12,10 @@ struct Shape { name: String, generics: List<String>, fields: List<FieldType>, va
 pub struct Parameter { mode: String, ty: String }
 struct Signature {
   name: String, spelling: String, args: List<Parameter>, result: String,
-  owner: String, receiver: String, generics: List<String>, copy_params: List<String>,
+  owner: String, receiver: String, generics: List<String>, copy_params: List<String>, ordered_params: List<String>,
+  required_trait: String,
 }
-struct Function { node: Int, signature: Int }
+struct Function { node: Int, signature: Int, impl_params: Int }
 struct Types {
   identities: List<Int>,
   declarations: List<Int>,
@@ -23,11 +24,15 @@ struct Types {
   signatures: List<Signature>,
   errors: Int,
   generics: List<String>,
+  function_params: Int,
+  impl_params: Int,
   return_type: String,
   verify_ownership: Bool,
   copy_params: List<String>,
+  ordered_params: List<String>,
   modes: List<String>,
   equal_types: List<String>,
+  ordered_types: List<String>,
   aliases: List<String>,
   moved: List<Bool>,
   loops: List<LoopFlow>,
@@ -182,7 +187,8 @@ fn add_signature(types: mut Types, name: view String, args: List<Parameter>, ret
   }
   types.signatures.push(Signature {
     name: String.from(name), spelling: String.from(text), args: move args, result: String.from(ret),
-    owner: String.new(), receiver: String.new(), generics: List<String>.new(), copy_params: List<String>.new(),
+    owner: String.new(), receiver: String.new(), generics: List<String>.new(),
+    copy_params: List<String>.new(), ordered_params: List<String>.new(), required_trait: String.new(),
   })
   return text
 }
@@ -349,10 +355,11 @@ fn child_count(tree: view List<ast.AstNode>, index: Int) -> Int {
 
 fn is_owned(types: view Types, ty: view String, visiting: mut List<String>) -> Bool {
   let base = type_terms.base(ty)
-  if base == "String" || base == "List" || base == "Box" || ty.starts_with("fn(") { return true }
+  if base == "String" || base == "List" || ty.starts_with("fn(") { return true }
   if types.generics.contains(ty) { return !types.copy_params.contains(ty) }
   let shape = shape_index(types, ty)
-  if shape < 0 || visiting.contains(ty) { return false }
+  if shape < 0 { return base == "Box" }
+  if visiting.contains(ty) { return false }
   if types.shapes.at(shape).user_drop { return true }
   visiting.push(String.from(ty))
   var owns = false
@@ -539,7 +546,7 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     }
     var hint = String.from(expected)
     let generic = owner == "?" && type_terms.mentions(formal, sub.names)
-    if generic { hint = unknown() }
+    if generic && !formal.starts_with("fn(") { hint = unknown() }
     var mode = String.from("View")
     if sig >= 0 { mode = String.from(types.signatures.at(sig).args.at(at).mode) }
     var actual = unknown()
@@ -713,6 +720,26 @@ fn check_range_member(types: mut Types, tree: view List<ast.AstNode>, range: vie
   return String.from(range)
 }
 
+fn bound_method(types: view Types, tree: view List<ast.AstNode>, params: Int,
+    owner: view String, name: view String) -> Int {
+  if params < 0 { return -1 }
+  var i = params + 1
+  while i < tree.at(params).end {
+    let parameter = ast.name_at(tree, i, 0)
+    if tree.at(i).tag == "Generic" && parameter == owner {
+      let bounds = ast.child(tree, i, 1)
+      for j in bounds + 1..tree.at(bounds).end {
+        let bound = ast.decoded_name(tree, j)
+        for k in 0..types.signatures.len() {
+          if types.signatures.at(k).required_trait == bound && types.signatures.at(k).name == name { return k }
+        }
+      }
+    }
+    i = tree.at(i).end
+  }
+  return -1
+}
+
 fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     name: view String, args: Int, receiver: Int, hint: view String) -> String {
   if receiver < 0 && (name == "from" || name == "try_from") {
@@ -759,18 +786,27 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
   if receiver < 0 && shape >= 0 && types.shapes.at(shape).is_enum {
     return nominal_constructor(types, tree, owner, name, args, hint)
   }
+  var method_owner = String.from(owner)
+  if receiver >= 0 && owner.starts_with("Int<") { method_owner = String.from("Int") }
   for i in 0..types.signatures.len() {
     let formal = String.from(types.signatures.at(i).owner)
     let mode = String.from(types.signatures.at(i).receiver)
+    if types.signatures.at(i).required_trait != "" { continue }
     if types.signatures.at(i).name == name && ((receiver >= 0) == (mode != "")) {
-      if formal == owner {
-        return call_args(types, tree, args, name, i, owner, receiver)
+      if formal == method_owner {
+        if !types.trace && method_owner != owner { types.expressions.set(receiver, String.from(method_owner)) }
+        return call_args(types, tree, args, name, i, method_owner, receiver)
       }
       let base = type_terms.base(formal)
       if types.signatures.at(i).generics.len() > 0 && base == type_terms.base(owner) {
         return call_args(types, tree, args, name, i, owner, receiver)
       }
     }
+  }
+  if receiver >= 0 && types.generics.contains(owner) {
+    var signature = bound_method(types, tree, types.function_params, owner, name)
+    if signature < 0 { signature = bound_method(types, tree, types.impl_params, owner, name) }
+    if signature >= 0 { return call_args(types, tree, args, name, signature, owner, receiver) }
   }
   if receiver >= 0 && (shape >= 0 || owner == "Bool" || owner == "Text") {
     issue(types, "type {owner} has no method '{name}'")
@@ -829,6 +865,13 @@ fn zero_in_range(ty: view String) -> Bool {
   return (!has_lo || lo <= 0) && (!has_hi || hi >= 0)
 }
 
+fn ordered_type(types: view Types, ty: view String) -> Bool {
+  if types.ordered_types.contains(ty) || types.ordered_params.contains(ty) || integer(numeric_type(ty)) || floating(ty) ||
+      ty == "Bool" || ty == "Char" || ty == "String" || ty == "Text" { return true }
+  let element = type_terms.element(ty)
+  return element != "?" && ordered_type(types, element)
+}
+
 fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let op = ast.name_at(tree, index, 0)
   let left = ast.child(tree, index, 1)
@@ -867,6 +910,10 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     }
     return boolean
   }
+  if op == "+" && a == "String" && root_place(tree, left) >= 0 {
+    if b != "Text" { expect_type(types, a, b) }
+    return a
+  }
   if ordered && (a == "Char" || a == "String" || a == "Text") {
     if !((a == "String" && b == "Text") || (a == "Text" && b == "String")) { expect_type(types, a, b) }
     return boolean
@@ -876,14 +923,15 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     return unknown()
   }
   if !integer(a) && !floating(a) {
-    if types.generics.contains(a) { return unknown() }
     if ordered {
-      if a == "Bool" && tree.at(left).tag != "Var" {
-        issue(types, "cannot use `{op}` here: the left side is a Bool value that is not a variable")
-      } else if a == "Bool" { expect_type(types, a, b) }
-      else { issue(types, "cannot use `{op}` on values of type {a}: it does not implement Ordered") }
+      if !ordered_type(types, a) {
+        issue(types, "cannot use `{op}` on values of type {a}: it does not implement Ordered")
+      } else if root_place(tree, left) < 0 && (a == "Bool" || types.generics.contains(a) || types.ordered_types.contains(a)) {
+        issue(types, "cannot use `{op}` here: the left side is a {a} value that is not a variable")
+      } else { expect_type(types, a, b) }
       return boolean
     }
+    if types.generics.contains(a) { return unknown() }
     expect_type(types, String.from("Int"), a)
     return unknown()
   }
@@ -963,7 +1011,21 @@ fn propagate(types: mut Types, tree: view List<ast.AstNode>, node: Int) -> Strin
 }
 
 fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
-  let hinted = signature_index(types, hint, true)
+  var hinted = signature_index(types, hint, true)
+  if hinted < 0 && hint.starts_with("fn(") {
+    var parts = type_terms.function_parts(hint)
+    let result = parts.pop()
+    var parameters = List<Parameter>.new()
+    for part in parts {
+      let prefix = type_terms.parameter_prefix(part)
+      var mode = String.from("Own")
+      if prefix == 5 { mode = String.from("View") }
+      else if prefix == 4 { mode = String.from("Mut") }
+      parameters.push(Parameter { mode: move mode, ty: part.slice(prefix, part.len()) })
+    }
+    hinted = types.signatures.len()
+    let spelling = add_signature(types, String.new(), move parameters, result)
+  }
   let args = param_types(types, tree, ast.child(tree, index, 4), hinted, true)
   let ret = ast.child(tree, index, 5)
   var expected = source_type(types, tree, ret)
@@ -1741,7 +1803,7 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
   return false
 }
 
-fn copy_parameters(tree: view List<ast.AstNode>, generics: Int) -> List<String> {
+fn bounded_parameters(tree: view List<ast.AstNode>, generics: Int, bound: Text) -> List<String> {
   var names = List<String>.new()
   var i = generics + 1
   while i < tree.at(generics).end {
@@ -1750,7 +1812,7 @@ fn copy_parameters(tree: view List<ast.AstNode>, generics: Int) -> List<String> 
       var j = bounds + 1
       while j < tree.at(bounds).end {
         let name = ast.decoded_name(tree, j)
-        if name == "Copy" { names.push(ast.name_at(tree, i, 0)); break }
+        if name == bound { names.push(ast.name_at(tree, i, 0)); break }
         j = tree.at(j).end
       }
     }
@@ -1939,10 +2001,12 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
     impl_params: Int) -> Function {
   let method_params = ast.child(tree, node, 1)
   types.generics = generic_names(tree, method_params)
-  var copy = copy_parameters(tree, method_params)
+  var copy = bounded_parameters(tree, method_params, "Copy")
+  var ordered = bounded_parameters(tree, method_params, "Ordered")
   if impl_params >= 0 {
     for name in generic_names(tree, impl_params) { types.generics.push(String.from(name)) }
-    for name in copy_parameters(tree, impl_params) { copy.push(String.from(name)) }
+    for name in bounded_parameters(tree, impl_params, "Copy") { copy.push(String.from(name)) }
+    for name in bounded_parameters(tree, impl_params, "Ordered") { ordered.push(String.from(name)) }
   }
   let params_node = ast.child(tree, node, 2)
   var receiver = String.new()
@@ -1962,7 +2026,33 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
   types.signatures.at(index).receiver = move receiver
   types.signatures.at(index).generics = copy_names(types.generics)
   types.signatures.at(index).copy_params = move copy
-  return Function { node: node, signature: index }
+  types.signatures.at(index).ordered_params = move ordered
+  return Function { node: node, signature: index, impl_params: impl_params }
+}
+
+fn declare_trait(types: mut Types, tree: view List<ast.AstNode>, node: Int) {
+  let trait_name = ast.name_at(tree, node, 0)
+  let methods = ast.child(tree, node, 1)
+  var method = methods + 1
+  while method < tree.at(methods).end {
+    let params = ast.child(tree, method, 2)
+    if params + 1 < tree.at(params).end && tree.at(params + 1).tag == "Self" {
+      types.generics = generic_names(tree, ast.child(tree, method, 1))
+      types.generics.push(String.from("Self"))
+      let receiver = String.from(tree.at(ast.child(tree, params + 1, 0)).tag)
+      let args = param_types(types, tree, params, -1, false)
+      let result = return_type(types, tree, ast.child(tree, method, 3))
+      let name = ast.name_at(tree, method, 0)
+      let index = types.signatures.len()
+      let spelling = add_signature(types, name, move args, result)
+      types.signatures.at(index).owner = String.from("Self")
+      types.signatures.at(index).receiver = move receiver
+      types.signatures.at(index).generics = copy_names(types.generics)
+      types.signatures.at(index).required_trait = String.from(trait_name)
+    }
+    method = tree.at(method).end
+  }
+  types.generics = List<String>.new()
 }
 
 pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify_ownership: Bool,
@@ -1970,11 +2060,13 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
   var types = Types {
     identities: List<Int>.new(), declarations: List<Int>.new(),
     bindings: List<String>.new(), shapes: List<Shape>.new(),
-    signatures: List<Signature>.new(), errors: 0, generics: List<String>.new(), return_type: unknown(),
-    verify_ownership: verify_ownership, copy_params: List<String>.new(),
+    signatures: List<Signature>.new(), errors: 0, generics: List<String>.new(),
+    function_params: -1, impl_params: -1, return_type: unknown(),
+    verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<ownership.Loan>.new(),
-    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), aliases: List<String>.new(),
+    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(),
+    ordered_types: List<String>.new(), aliases: List<String>.new(),
   }
   if !trace { for i in 0..tree.len() { types.expressions.push(unknown()) } }
   for id in bindings.identities { types.identities.push(id) }
@@ -2000,6 +2092,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
           let shape = shape_index(types, owner)
           if shape >= 0 { types.shapes.at(shape).user_drop = true }
         } else if name == "Equal" { types.equal_types.push(String.from(owner)) }
+        else if name == "Ordered" { types.ordered_types.push(String.from(owner)) }
       }
     }
     decl = tree.at(decl).end
@@ -2035,6 +2128,8 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     let decl = ast.child(tree, i, 2)
     if tree.at(decl).tag == "Fn" {
       functions.push(declare_function(types, tree, decl, String.new(), -1))
+    } else if tree.at(decl).tag == "Trait" {
+      declare_trait(types, tree, decl)
     } else if tree.at(decl).tag == "Impl" {
       let impl_params = ast.child(tree, decl, 0)
       types.generics = generic_names(tree, impl_params)
@@ -2051,10 +2146,13 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     i = tree.at(i).end
   }
   for fun in functions {
+    types.function_params = ast.child(tree, fun.node, 1)
+    types.impl_params = fun.impl_params
     types.generics = copy_names(types.signatures.at(fun.signature).generics)
     var state = Returns { expected: String.from(types.signatures.at(fun.signature).result), inferred: unit() }
     types.return_type = String.from(state.expected)
     types.copy_params = copy_names(types.signatures.at(fun.signature).copy_params)
+    types.ordered_params = copy_names(types.signatures.at(fun.signature).ordered_params)
     let exits = check_body(types, state, tree, ast.child(tree, fun.node, 4))
   }
   var signatures = List<FunctionType>.new()
