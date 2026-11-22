@@ -116,6 +116,10 @@ AUX=(
   "tokens_dump|bash tests/tokens_dump.sh"
   "win_smoke|bash tests/win_smoke.sh"
   "dist|bash tests/dist.sh"
+  "tool_bench|bash tests/tool_bench.sh"
+  "tool_fmt|bash tests/tool_fmt.sh"
+  "tool_doc|bash tests/tool_doc.sh"
+  "tool_add|bash tests/tool_add.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
 )

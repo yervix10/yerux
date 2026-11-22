@@ -1,6 +1,8 @@
 // yerux v0.2 — the Yerux compiler driver
 // Pipeline: lexer -> parser -> checker (types + ownership) -> C backend -> cc
 mod a64;
+mod bench;
+mod doc;
 mod cgen;
 mod check;
 mod check_trace;
@@ -219,7 +221,11 @@ const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned
        yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
-       yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]";
+       yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]
+       yerux add NAME --path DIR | --git URL [--tag T | --version REQ]   (dependency in yerux.toml; updates yerux.lock)
+       yerux remove NAME
+       yerux doc [--html] [-o DIR] [dir|file.yx ...]
+       yerux bench [file.yx|dir ...] [--native] [--no-opt] [--filter text] [--runs N]";
 
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::new();
@@ -479,6 +485,23 @@ fn real_main() {
             }
         }
     }
+    if args.len() >= 2 && matches!(args[1].as_str(), "add" | "remove") {
+        let r = if args[1] == "add" { project::add(&args[2..]) } else { project::remove(&args[2..]) };
+        match r {
+            Ok(msg) => println!("{msg}"),
+            Err(e) => {
+                eprintln!("{e}");
+                exit(if e.starts_with("usage") { 2 } else { 1 });
+            }
+        }
+        return;
+    }
+    if args.len() >= 2 && args[1] == "doc" {
+        exit(doc::run_cli(&args[2..]));
+    }
+    if args.len() >= 2 && args[1] == "bench" {
+        exit(bench::run_cli(&args[2..]));
+    }
     if args.len() >= 2 && args[1] == "test" {
         exit(run_tests(&args[2..]));
     }
@@ -656,13 +679,14 @@ fn collect_test_files(dir: &std::path::Path, out: &mut Vec<String>) {
 }
 
 /// Build the program for one test and run it. Ok(None) = passed, Ok(Some(why)) = failed.
-fn run_one_test(
+/// Build the executable of one `test`/`bench` block (the program whose `main` is that block's body).
+fn build_block_exe(
     file: &str,
-    idx: usize,
+    mode: modules::Mode,
     native: bool,
     optimize: bool,
-) -> Result<Option<String>, Vec<String>> {
-    let (prog, sigs) = frontend(file, modules::Mode::Test(idx))?;
+) -> Result<String, Vec<String>> {
+    let (prog, sigs) = frontend(file, mode)?;
     let exe = tmp_path("bin").to_string_lossy().to_string();
     if native {
         let mut ir = ir::lower(&prog).map_err(|e| vec![format!("error: {}", e)])?;
@@ -688,6 +712,16 @@ fn run_one_test(
         c_compile(&cgen::generate(&prog, sigs), &exe, &prog.links)
             .map_err(|e| vec![format!("error: {}", e)])?;
     }
+    Ok(exe)
+}
+
+fn run_one_test(
+    file: &str,
+    idx: usize,
+    native: bool,
+    optimize: bool,
+) -> Result<Option<String>, Vec<String>> {
+    let exe = build_block_exe(file, modules::Mode::Test(idx), native, optimize)?;
     let (so, se) = (tmp_path("out"), tmp_path("err"));
     let child = Command::new(&exe)
         .stdout(fs::File::create(&so).map_err(|e| vec![e.to_string()])?)
