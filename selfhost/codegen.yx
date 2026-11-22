@@ -524,6 +524,32 @@ fn equals(gen: mut Generator, tree: view List<ast.AstNode>, left: view Value, ri
   return String.new()
 }
 
+// Lexicographic comparison of two sequences whose elements are numbers, booleans or strings.
+fn sequence_compare(gen: mut Generator, tree: view List<ast.AstNode>, op: view String, left: view Value,
+    right: view Value, item: view String, ty: view String) -> Value {
+  let id = gen.temp
+  gen.temp = id + 1
+  let a = temp(gen, tree, String.from("Int"), sequence_length(left))
+  let b = temp(gen, tree, String.from("Int"), sequence_length(right))
+  let order = temp(gen, tree, String.from("Int"), String.from("0"))
+  var less = String.new()
+  var greater = String.new()
+  if item == "String" || item == "Text" {
+    let x = Value { ty: String.from(item), code: "({left.code}).d[i{id}]" }
+    let y = Value { ty: String.from(item), code: "({right.code}).d[i{id}]" }
+    less = "sc_compare({text_view(x)}, {text_view(y)}) < 0"
+    greater = "sc_compare({text_view(x)}, {text_view(y)}) > 0"
+  } else if integer_c(item).len() != 0 || floating_c(item).len() != 0 || item == "Bool" {
+    less = "({left.code}).d[i{id}] < ({right.code}).d[i{id}]"
+    greater = "({left.code}).d[i{id}] > ({right.code}).d[i{id}]"
+  } else { unsupported("comparison of sequences of {item}") }
+  line(gen, "for (int64_t i{id} = 0; i{id} < {a.code} && i{id} < {b.code}; ++i{id}) {{")
+  line(gen, "if ({less}) {{ {order.code} = -1; break; }}")
+  line(gen, "if ({greater}) {{ {order.code} = 1; break; }} }}")
+  line(gen, "if ({order.code} == 0) {order.code} = ({a.code} > {b.code}) - ({a.code} < {b.code});")
+  return temp(gen, tree, ty, "({order.code} {op} 0)")
+}
+
 fn binary(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
   let op = ast.name_at(tree, node, 0)
   let left = expression(gen, tree, ast.child(tree, node, 1))
@@ -559,6 +585,11 @@ fn binary(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view 
       let call = comparison_call(gen, tree, method, left, right)
       return temp(gen, tree, ty, "({call} {op} 0)")
     }
+  }
+  let item = type_terms.element(left.ty)
+  if item != "?" && (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
+    let right = expression(gen, tree, ast.child(tree, node, 2))
+    return sequence_compare(gen, tree, op, left, right, item, ty)
   }
   if drop_fn(gen, tree, left.ty).len() != 0 { unsupported("operator {op} on {left.ty}") }
   let saved = temp(gen, tree, left.ty, left.code)
