@@ -25,6 +25,7 @@ struct Generator {
   methods: List<Method>,
   clone_types: List<String>,
   constants: List<Int>,
+  externs: List<Int>,
   instances: List<Instance>,
   sub: type_terms.Substitution,
   prototypes: String,
@@ -271,6 +272,10 @@ fn c_type(gen: view Generator, tree: view List<ast.AstNode>, ty: view String) ->
   if ty == "Bool" { return String.from("bool") }
   if ty.starts_with("fn(") { return String.from("NxFn") }
   if ty == "Text" { return String.from("const char *") }
+  if ty.starts_with("Ptr<") {
+    let pointee = type_terms.arguments(ty)
+    return "{c_type(gen, tree, pointee.at(0))} *"
+  }
   if ty == "String" { return String.from("String") }
   if ty == "nothing" { return String.from("void") }
   if ty == "ThreadDone" { return String.from("ScThreadDone") }
@@ -1334,8 +1339,26 @@ fn emit_split_at(gen: mut Generator, tree: view List<ast.AstNode>, recv: Int, ar
   return Value { ty: String.from("nothing"), code: String.new() }
 }
 
+fn extern_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, args: Int, ty: view String) -> Value {
+  let name = ast.name_at(tree, fun, 0)
+  var values = List<String>.new()
+  var at = args + 1
+  while at < tree.at(args).end {
+    let value = expression(gen, tree, at)
+    if value.ty == "Text" { values.push(String.from(value.code)) }
+    else if integer_c(value.ty).len() != 0 || floating_c(value.ty).len() != 0 || value.ty == "Bool" || value.ty == "Char" ||
+        value.ty.starts_with("Ptr<") {
+      values.push("({value.code})")
+    } else { unsupported("extern argument of type {value.ty}") }
+    at = tree.at(at).end
+  }
+  let joined = values.join(", ")
+  return temp(gen, tree, ty, "(({c_type(gen, tree, ty)}){name}({joined}))")
+}
+
 fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: view String,
     args: Int, receiver: Int, ty: view String) -> Value {
+  if gen.externs.contains(fun) { return extern_call(gen, tree, fun, args, ty) }
   let params = ast.child(tree, fun, 2)
   var sub = call_substitution(gen, tree, fun, owner)
   var nodes = List<Int>.new()
@@ -1971,6 +1994,11 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
         tree.at(tree.at(args + 1).end).tag == "Closure" {
       return emit_split_at(gen, tree, recv, args)
     }
+    if receiver_type.starts_with("Ptr<") && (name == "is_null" || name == "free") {
+      let pointer = expression(gen, tree, recv)
+      if name == "is_null" { return temp(gen, tree, ty, "(({pointer.code}) == 0)") }
+      return temp(gen, tree, ty, "free((void *)({pointer.code}))")
+    }
     let integer = integer_c(receiver_type)
     let float = floating_c(receiver_type)
     if integer != "" || float != "" {
@@ -2225,6 +2253,13 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
     if owner == "Int" && (member == "from" || member == "try_from") {
       let range = ast.range_type(tree, ast.child(tree, node, 1))
       return range_conversion(gen, tree, ast.child(tree, node, 3) + 1, range, ty, -1)
+    }
+    if owner == "Ptr" && member == "null" { return temp(gen, tree, ty, "(({c_type(gen, tree, ty)})0)") }
+    if owner == "Ptr" && member == "alloc" {
+      let count = expression(gen, tree, ast.child(tree, node, 3) + 1)
+      let pointee = type_terms.arguments(ty)
+      let element = c_type(gen, tree, pointee.at(0))
+      return temp(gen, tree, ty, "(({c_type(gen, tree, ty)})nx_alloc(({count.code}) * sizeof({element})))")
     }
     if owner == "List" && member == "new" { return temp(gen, tree, ty, String.from("{{0}}")) }
     if owner == "Option" || owner == "Result" || find_named(tree, gen.enums, owner) >= 0 {
@@ -3114,6 +3149,17 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
     }
     else if tag == "Trait" { gen.traits.push(item) }
     else if tag == "Const" { gen.constants.push(item) }
+    else if tag == "Link" {}
+    else if tag == "Extern" {
+      // `extern "C" { fn name(..) -> T }`: the symbols come from libc/libm, called directly
+      let list = ast.child(tree, item, 1)
+      var at_fn = list + 1
+      while at_fn < tree.at(list).end {
+        gen.externs.push(at_fn)
+        gen.functions.push(at_fn)
+        at_fn = tree.at(at_fn).end
+      }
+    }
     else if tag == "Impl" {
       let generics = ast.child(tree, item, 0)
       var params = -1
@@ -3214,7 +3260,7 @@ fn main() {
         collections: List<String>.new(), sorted_elements: List<String>.new(), globals: String.new(),
         enums: List<Int>.new(), enum_layouts: List<EnumLayout>.new(),
         traits: List<Int>.new(), heap_drops: List<String>.new(), dyn_tables: List<String>.new(),
-        struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(), constants: List<Int>.new(),
+        struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(), constants: List<Int>.new(), externs: List<Int>.new(),
         instances: List<Instance>.new(), sub: type_terms.empty(), prototypes: String.new(),
         function_values: List<Int>.new(), closure_envs: List<Int>.new(), wrappers: String.new(),
         references: List<Bool>.new(), out: String.new(),

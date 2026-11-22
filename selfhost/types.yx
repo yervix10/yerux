@@ -35,6 +35,7 @@ struct Types {
   modes: List<String>,
   equal_types: List<String>,
   lead: Int,
+  variadics: List<String>,
   lead_type: String,
   shown_types: List<String>,
   ordered_types: List<String>,
@@ -327,8 +328,10 @@ fn param_types(types: mut Types, tree: view List<ast.AstNode>, params: Int, hint
       }
       if assign {
         let id = types.identities.at(i)
-        types.bindings.set(id, String.from(ty))
-        types.modes.set(id, String.from(mode))
+        if id >= 0 {
+          types.bindings.set(id, String.from(ty))
+          types.modes.set(id, String.from(mode))
+        }
       }
       args.push(Parameter { mode: move mode, ty: move ty })
     }
@@ -565,7 +568,8 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
   if lead >= 0 { count = count + 1 }
   if sig >= 0 {
     let expected = types.signatures.at(sig).args.len()
-    if count != expected {
+    let variadic = types.variadics.contains(name) && count > expected
+    if count != expected && !variadic {
       if types.signatures.at(sig).receiver != "" {
         issue(types, "method '{name}' of {owner} expects {expected} argument(s) besides the receiver but got {count}")
       } else {
@@ -609,14 +613,16 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     var expected = unknown()
     var formal = unknown()
     if sig >= 0 {
-      formal = String.from(types.signatures.at(sig).args.at(at).ty)
-      expected = type_terms.substitute(formal, sub)
+      if at < types.signatures.at(sig).args.len() {
+        formal = String.from(types.signatures.at(sig).args.at(at).ty)
+        expected = type_terms.substitute(formal, sub)
+      }
     }
     var hint = String.from(expected)
     let generic = owner == "?" && type_terms.mentions(formal, sub.names)
     if generic && !formal.starts_with("fn(") { hint = unknown() }
     var mode = String.from("View")
-    if sig >= 0 { mode = String.from(types.signatures.at(sig).args.at(at).mode) }
+    if sig >= 0 && at < types.signatures.at(sig).args.len() { mode = String.from(types.signatures.at(sig).args.at(at).mode) }
     var actual = unknown()
     var rejected_move = false
     if types.verify_ownership && sig >= 0 && mode != "Own" && tree.at(i).tag == "Move" {
@@ -878,6 +884,16 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
       let range = source_type(types, tree, target)
       if range.starts_with("Int<") { return check_range_member(types, tree, range, name, args) }
     }
+  }
+  if owner.starts_with("Ptr<") {
+    if receiver < 0 && name == "null" && child_count(tree, args) == 0 { return String.from(owner) }
+    if receiver < 0 && name == "alloc" && child_count(tree, args) == 1 {
+      let size = String.from("Int")
+      expect_type(types, size, infer(types, tree, args + 1, size))
+      return String.from(owner)
+    }
+    if receiver >= 0 && name == "is_null" && child_count(tree, args) == 0 { return String.from("Bool") }
+    if receiver >= 0 && name == "free" && child_count(tree, args) == 0 { return unit() }
   }
   if receiver >= 0 && (name == "split_at" || name == "split_at_mut") && child_count(tree, args) == 2 &&
       (owner.starts_with("Array<") || owner.starts_with("Slice<") || owner.starts_with("List<") || owner == "List") {
@@ -2463,6 +2479,9 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
   let params = param_types(types, tree, params_node, -1, true)
   let ret = return_type(types, tree, ast.child(tree, node, 3))
   let name = ast.name_at(tree, node, 0)
+  for at in params_node + 1..tree.at(params_node).end {
+    if tree.at(at).tag == "Variadic" { types.variadics.push(String.from(name)) }
+  }
   let index = types.signatures.len()
   let spelling = add_signature(types, name, move params, ret)
   types.signatures.at(index).owner = String.from(owner)
@@ -2508,7 +2527,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(),
-    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, lead_type: String.new(), shown_types: List<String>.new(),
+    trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),
   }
@@ -2580,6 +2599,14 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     let decl = ast.child(tree, i, 2)
     if tree.at(decl).tag == "Fn" {
       functions.push(declare_function(types, tree, decl, String.new(), -1))
+    } else if tree.at(decl).tag == "Extern" {
+      // foreign functions only need their signatures
+      let list = ast.child(tree, decl, 1)
+      var foreign = list + 1
+      while foreign < tree.at(list).end {
+        let declared = declare_function(types, tree, foreign, String.new(), -1)
+        foreign = tree.at(foreign).end
+      }
     } else if tree.at(decl).tag == "Trait" {
       declare_trait(types, tree, decl)
     } else if tree.at(decl).tag == "Impl" {
