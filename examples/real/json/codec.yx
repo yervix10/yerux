@@ -227,6 +227,7 @@ fn parse_value(src: view String, pos: mut Int, depth: Int) -> Result<Value, Issu
 }
 
 pub fn parse(src: view String) -> Result<Value, Issue> {
+  if src.len() > 16777216 { return Err(issue(0, "JSON input exceeds 16 MiB limit")) }
   var pos = 0
   let value = parse_value(src, pos, 0)?
   whitespace(src, pos)

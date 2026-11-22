@@ -28,8 +28,43 @@ pub fn post_json(addr: view net.SocketAddr, host: view String, path: view String
   return request(addr, host, "POST", path, all, json)
 }
 
+fn has_control(s: view String) -> Bool {
+  var i = 0
+  while i < s.len() {
+    let b = s.byte(i)
+    if b < 32 || b == 127 { return true }
+    i = i + 1
+  }
+  return false
+}
+
+fn valid_host(host: view String) -> Bool {
+  if host.len() == 0 { return false }
+  var i = 0
+  while i < host.len() {
+    let b = host.byte(i)
+    if b <= 32 || b >= 127 { return false }
+    i = i + 1
+  }
+  return true
+}
+
+fn valid_header_name(name: view String) -> Bool {
+  if name.len() == 0 { return false }
+  var i = 0
+  while i < name.len() {
+    let b = name.byte(i)
+    let alpha = (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+    let digit = b >= 48 && b <= 57
+    let punctuation = b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 || b == 42 || b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
+    if !alpha && !digit && !punctuation { return false }
+    i = i + 1
+  }
+  return true
+}
+
 fn request(addr: view net.SocketAddr, host: view String, method: Text, path: view String, headers: view List<(String, String)>, body: view String) -> Result<Response, io.IoError> {
-  if path.len() == 0 || path.byte(0) != 47 || path.contains("\r") || path.contains("\n") || host.contains("\r") || host.contains("\n") {
+  if path.len() == 0 || path.byte(0) != 47 || has_control(path) || path.contains(" ") || !valid_host(host) {
     return Err(io.custom_error(io.IoErrorKind.InvalidInput, "http: invalid host or request path"))
   }
   var req = String.new()
@@ -41,7 +76,7 @@ fn request(addr: view net.SocketAddr, host: view String, method: Text, path: vie
   req.push_str("\r\nConnection: close\r\n")
   var i = 0
   while i < headers.len() {
-    if headers.at(i).0.len() == 0 || headers.at(i).0.contains(":") || headers.at(i).0.contains("\r") || headers.at(i).0.contains("\n") || headers.at(i).1.contains("\r") || headers.at(i).1.contains("\n") {
+    if !valid_header_name(headers.at(i).0) || has_control(headers.at(i).1) {
       return Err(io.custom_error(io.IoErrorKind.InvalidInput, "http: invalid header"))
     }
     req.push_str(headers.at(i).0)
@@ -61,9 +96,13 @@ fn request(addr: view net.SocketAddr, host: view String, method: Text, path: vie
   let sent = net.write(stream, req)?
   var raw = String.new()
   while raw.len() < 10485760 {
-    let chunk = net.read(stream, 65536)?
+    let remaining = 10485760 - raw.len()
+    let chunk = net.read(stream, remaining.min(65536))?
     if chunk.len() == 0 { break }
     raw.push_str(chunk)
+  }
+  if raw.len() == 10485760 {
+    return Err(io.custom_error(io.IoErrorKind.InvalidData, "http: response exceeds 10 MiB limit"))
   }
   let split = raw.find("\r\n\r\n")
   if split < 0 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "http: malformed response")) }

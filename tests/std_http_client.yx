@@ -4,22 +4,52 @@ import std.io
 
 fn serve(listener: net.TcpListener) -> Result<Int, io.IoError> {
   var passed = 0
-  for i in 0..2 {
+  for i in 0..3 {
     let peer = net.accept(listener)?
     let req = net.read(peer, 8192)?
     if i == 0 && req.starts_with("GET /health HTTP/1.1") { passed = passed + 1 }
     if i == 1 && req.starts_with("POST /items HTTP/1.1") && req.contains("application/json") && req.contains("n\":1") { passed = passed + 1 }
-    let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nX-Test: yes\r\n\r\nok"
-    let sent = net.write(peer, response)?
+    if i == 2 {
+      var large = String.from("HTTP/1.1 200 OK\r\nContent-Length: 10485761\r\nConnection: close\r\n\r\n")
+      for j in 0..10485761 { large.push_byte(120) }
+      match net.write(peer, large) { Ok(n) => {}, Err(e) => {} }
+    } else {
+      let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nX-Test: yes\r\n\r\nok"
+      let sent = net.write(peer, response)?
+    }
     let closed = net.close_stream(move peer)?
   }
   let closed = net.close_listener(move listener)?
   return Ok(passed)
 }
 
+fn rejected(addr: view net.SocketAddr, host: view String, path: view String, headers: view List<(String, String)>) -> Bool {
+  match http.get(addr, host, path, headers) {
+    Ok(r) => { return false }
+    Err(e) => { return e.kind == io.IoErrorKind.InvalidInput }
+  }
+}
+
 fn exercise() -> Result<Int, io.IoError> {
   let a = net.address("127.0.0.1", 43996)?
   let listener = net.listen(a)?
+  var empty = List<(String, String)>.new()
+  var nul_host = String.from("127.0.0.1:43996")
+  nul_host.push_byte(0)
+  var nul_path = String.from("/health")
+  nul_path.push_byte(0)
+  assert(rejected(a, nul_host, "/health", empty))
+  assert(rejected(a, "127.0.0.1:43996", nul_path, empty))
+  var bad_value = List<(String, String)>.new()
+  var value = String.from("x")
+  value.push_byte(0)
+  bad_value.push((String.from("X-Test"), move value))
+  assert(rejected(a, "127.0.0.1:43996", "/health", bad_value))
+  var bad_name = List<(String, String)>.new()
+  var name = String.from("X-Test")
+  name.push_byte(0)
+  bad_name.push((move name, String.from("ok")))
+  assert(rejected(a, "127.0.0.1:43996", "/health", bad_name))
   scope {
           let worker = spawn move || serve(move listener)
           var hs = List<(String, String)>.new()
@@ -30,6 +60,10 @@ fn exercise() -> Result<Int, io.IoError> {
           let post_result = http.post_json(a, "127.0.0.1:43996", "/items", hs, "{{\"n\":1}}")
           let pr = move post_result?
   assert(pr.status == 200); assert(pr.body.eq("ok"))
+          match http.get(a, "127.0.0.1:43996", "/large", hs) {
+            Ok(r) => { assert(false) }
+            Err(e) => { assert(e.message.contains("10 MiB limit")) }
+          }
           var n = 0
           match worker.join() { Ok(v) => { match move v { Ok(value) => { n = value }, Err(_) => { assert(false) } } }, Err(_) => { assert(false) } }
   assert(n == 2)
