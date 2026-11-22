@@ -1,0 +1,396 @@
+// md2html: a Markdown to HTML converter in the style of small static-site tools.
+//
+//   md2html [--page] [--toc] [--title=TEXT] [FILE]     reads FILE (or stdin), writes HTML to stdout
+//
+// Blocks: ATX headings (# .. ######) with slug ids, paragraphs, fenced code (```lang), block quotes (>),
+// bullet lists (- or *), numbered lists (1.), one level of nesting by indentation, and horizontal rules (---).
+// Inline: **strong**, *em* / _em_, `code`, [text](url), ![alt](src),
+// backslash escapes. Everything else is HTML-escaped. With --toc a table of contents of the headings goes first;
+// with --page the result is a full HTML document.
+// Exit status: 0 ok, 1 unreadable input, 2 usage error.
+import std.args
+import std.io
+import std.text
+
+struct Heading { level: Int, text: String, id: String }
+
+// ---------- escaping and slugs ----------
+
+fn escape_byte(out: mut String, b: Int) {
+  if b == 38 {
+    out.push_str("&amp;")
+  } else if b == 60 {
+    out.push_str("&lt;")
+  } else if b == 62 {
+    out.push_str("&gt;")
+  } else if b == 34 {
+    out.push_str("&quot;")
+  } else {
+    out.push_byte(b)
+  }
+}
+
+fn escape(s: view String) -> String {
+  var out = String.new()
+  for i in 0..s.len() {
+    escape_byte(out, s.byte(i))
+  }
+  return out
+}
+
+// "Hello, World 2!" -> "hello-world-2"
+fn slug(s: view String) -> String {
+  var out = String.new()
+  var pending_dash = false
+  for i in 0..s.len() {
+    var b = s.byte(i)
+    if b >= 65 && b <= 90 {
+      b = b + 32
+    }
+    let alnum = (b >= 97 && b <= 122) || (b >= 48 && b <= 57)
+    if alnum {
+      if pending_dash && out.len() > 0 {
+        out.push_byte(45)
+      }
+      pending_dash = false
+      out.push_byte(b)
+    } else if b == 32 || b == 45 || b == 95 {
+      pending_dash = true
+    }
+  }
+  return out
+}
+
+// ---------- inline spans ----------
+
+// Index of the closing `mark` at or after `from`, or -1. A backslash protects the next byte.
+fn find_close(s: view String, mark: view String, from: Int) -> Int {
+  var i = from
+  while i < s.len() {
+    if s.byte(i) == 92 {
+      i = i + 2
+      continue
+    }
+    if s.slice(i, s.len()).starts_with(mark) {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+fn is_word_byte(b: Int) -> Bool {
+  return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57)
+}
+
+// `url "title"` -> (escaped url, ` title="..."` or empty)
+fn split_target(raw: view String) -> (String, String) {
+  let sp = raw.find(" ")
+  if sp < 0 {
+    return (escape(raw), String.new())
+  }
+  let quoted = raw.slice(sp + 1, raw.len()).trim()
+  if quoted.len() >= 2 && quoted.starts_with("\"") && quoted.ends_with("\"") {
+    let t = escape(quoted.slice(1, quoted.len() - 1))
+    return (escape(raw.slice(0, sp)), " title=\"{t}\"")
+  }
+  return (escape(raw), String.new())
+}
+
+fn inline(s: view String) -> String {
+  var out = String.new()
+  var i = 0
+  let n = s.len()
+  while i < n {
+    let b = s.byte(i)
+    if b == 92 && i + 1 < n {
+      escape_byte(out, s.byte(i + 1))
+      i = i + 2
+      continue
+    }
+    if b == 96 {
+      let end = find_close(s, "`", i + 1)
+      if end > i {
+        out.push_str("<code>")
+        out.push_str(escape(s.slice(i + 1, end)))
+        out.push_str("</code>")
+        i = end + 1
+        continue
+      }
+    }
+    if b == 42 && i + 1 < n && s.byte(i + 1) == 42 {
+      let end = find_close(s, "**", i + 2)
+      if end > i + 2 {
+        out.push_str("<strong>")
+        out.push_str(inline(s.slice(i + 2, end)))
+        out.push_str("</strong>")
+        i = end + 2
+        continue
+      }
+    }
+    if b == 42 || b == 95 {
+      let mark = s.slice(i, i + 1)
+      let end = find_close(s, mark, i + 1)
+      // `snake_case_name` is not emphasis: a closing underscore must not be followed by a letter or digit
+      let word_inside = b == 95 && end > 0 && end + 1 < n && is_word_byte(s.byte(end + 1))
+      if end > i + 1 && !word_inside {
+        out.push_str("<em>")
+        out.push_str(inline(s.slice(i + 1, end)))
+        out.push_str("</em>")
+        i = end + 1
+        continue
+      }
+    }
+    let is_image = b == 33 && i + 1 < n && s.byte(i + 1) == 91
+    if b == 91 || is_image {
+      var open = i
+      if is_image {
+        open = i + 1
+      }
+      let close = find_close(s, "]", open + 1)
+      if close > 0 && close + 1 < n && s.byte(close + 1) == 40 {
+        let end = find_close(s, ")", close + 2)
+        if end > 0 {
+          let label = s.slice(open + 1, close)
+          let (url, title) = split_target(s.slice(close + 2, end))
+          if is_image {
+            out.push_str("<img src=\"{url}\" alt=\"{escape(label)}\"{title}>")
+          } else {
+            out.push_str("<a href=\"{url}\"{title}>{inline(label)}</a>")
+          }
+          i = end + 1
+          continue
+        }
+      }
+    }
+    escape_byte(out, b)
+    i = i + 1
+  }
+  return out
+}
+
+// ---------- block structure ----------
+
+fn indent_of(line: view String) -> Int {
+  var n = 0
+  while n < line.len() && line.byte(n) == 32 {
+    n = n + 1
+  }
+  return n
+}
+
+// The marker length of a list line ("- ", "* ", "12. "), or 0 when it is not a list item.
+fn list_marker(line: view String) -> Int {
+  if line.starts_with("- ") || line.starts_with("* ") {
+    return 2
+  }
+  var d = 0
+  while d < line.len() && line.byte(d) >= 48 && line.byte(d) <= 57 {
+    d = d + 1
+  }
+  if d > 0 && line.slice(d, line.len()).starts_with(". ") {
+    return d + 2
+  }
+  return 0
+}
+
+fn is_rule(line: view String) -> Bool {
+  let t = line.trim()
+  if t.len() < 3 {
+    return false
+  }
+  let c = t.byte(0)
+  if c != 45 && c != 42 && c != 95 {
+    return false
+  }
+  for i in 0..t.len() {
+    if t.byte(i) != c {
+      return false
+    }
+  }
+  return true
+}
+
+fn heading_level(line: view String) -> Int {
+  var n = 0
+  while n < line.len() && line.byte(n) == 35 {
+    n = n + 1
+  }
+  if n >= 1 && n <= 6 && n < line.len() && line.byte(n) == 32 {
+    return n
+  }
+  return 0
+}
+
+fn starts_block(line: view String) -> Bool {
+  return line.starts_with("```") || line.starts_with(">") || heading_level(line) > 0 || list_marker(line) > 0 ||
+    is_rule(line)
+}
+
+// One list at `lines[from..]`: consecutive items of the same kind; deeper-indented lines belong to the item.
+// Returns the HTML and the index after the list.
+fn render_list(lines: view List<String>, from: Int, headings: mut List<Heading>) -> (String, Int) {
+  let ordered = !(lines.at(from).starts_with("- ") || lines.at(from).starts_with("* "))
+  var tag = "ul"
+  if ordered {
+    tag = "ol"
+  }
+  var out = String.from("<{tag}>\n")
+  var i = from
+  while i < lines.len() {
+    let line = String.from(lines.at(i))
+    let m = list_marker(line)
+    if m == 0 {
+      break
+    }
+    let this_ordered = !(line.starts_with("- ") || line.starts_with("* "))
+    if this_ordered != ordered {
+      break
+    }
+    var item = inline(line.slice(m, line.len()))
+    i = i + 1
+    var nested = List<String>.new()
+    while i < lines.len() && indent_of(lines.at(i)) >= 2 {
+      nested.push(lines.at(i).slice(2, lines.at(i).len()))
+      i = i + 1
+    }
+    if nested.len() > 0 {
+      item.push_str("\n")
+      item.push_str(render_blocks(nested, headings).trim_end())
+      item.push_str("\n")
+    }
+    out.push_str("<li>{item}</li>\n")
+  }
+  out.push_str("</{tag}>\n")
+  return (move out, i)
+}
+
+fn render_blocks(lines: view List<String>, headings: mut List<Heading>) -> String {
+  var out = String.new()
+  var i = 0
+  while i < lines.len() {
+    let line = String.from(lines.at(i))
+    if line.trim().len() == 0 {
+      i = i + 1
+      continue
+    }
+    if line.starts_with("```") {
+      let lang = line.slice(3, line.len()).trim()
+      var j = i + 1
+      var body = String.new()
+      while j < lines.len() && !lines.at(j).starts_with("```") {
+        body.push_str(escape(lines.at(j)))
+        body.push_str("\n")
+        j = j + 1
+      }
+      var class = String.new()
+      if lang.len() > 0 {
+        class.push_str(" class=\"language-")
+        class.push_str(lang)
+        class.push_str("\"")
+      }
+      out.push_str("<pre><code{class}>{body}</code></pre>\n")
+      i = j + 1
+      continue
+    }
+    let level = heading_level(line)
+    if level > 0 {
+      let title = line.slice(level + 1, line.len()).trim()
+      let id = slug(title)
+      out.push_str("<h{level} id=\"{id}\">{inline(title)}</h{level}>\n")
+      headings.push(Heading { level: level, text: move title, id: move id })
+      i = i + 1
+      continue
+    }
+    if is_rule(line) && list_marker(line) == 0 {
+      out.push_str("<hr>\n")
+      i = i + 1
+      continue
+    }
+    if line.starts_with(">") {
+      var quoted = List<String>.new()
+      while i < lines.len() && lines.at(i).starts_with(">") {
+        let q = lines.at(i).slice(1, lines.at(i).len())
+        if q.starts_with(" ") {
+          quoted.push(q.slice(1, q.len()))
+        } else {
+          quoted.push(move q)
+        }
+        i = i + 1
+      }
+      out.push_str("<blockquote>\n{render_blocks(quoted, headings)}</blockquote>\n")
+      continue
+    }
+    if list_marker(line) > 0 {
+      let (html, next) = render_list(lines, i, headings)
+      out.push_str(html)
+      i = next
+      continue
+    }
+    var para = List<String>.new()
+    while i < lines.len() && lines.at(i).trim().len() > 0 && (para.len() == 0 || !starts_block(lines.at(i))) {
+      para.push(lines.at(i).trim())
+      i = i + 1
+    }
+    out.push_str("<p>{inline(para.join(" "))}</p>\n")
+  }
+  return out
+}
+
+fn toc(headings: view List<Heading>) -> String {
+  var out = String.from("<nav>\n<ul>\n")
+  for h in headings {
+    let pad = String.from("  ").repeat(h.level - 1)
+    out.push_str("{pad}<li><a href=\"#{h.id}\">{escape(h.text)}</a></li>\n")
+  }
+  out.push_str("</ul>\n</nav>\n")
+  return out
+}
+
+fn convert(source: view String, with_toc: Bool, page: Bool, title: view String) -> String {
+  var headings = List<Heading>.new()
+  let body = render_blocks(text.lines(source), headings)
+  var out = String.new()
+  if page {
+    out.push_str("<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"><title>{escape(title)}</title></head>\n<body>\n")
+  }
+  if with_toc && headings.len() > 0 {
+    out.push_str(toc(headings))
+  }
+  out.push_str(body)
+  if page {
+    out.push_str("</body>\n</html>\n")
+  }
+  return out
+}
+
+fn main() {
+  let argv = args.parse_process()
+  let with_toc = args.has_flag(argv, "toc")
+  let page = args.has_flag(argv, "page")
+  var title = String.from("Document")
+  match args.option(argv, "title") {
+    Some(t) => { title = move t }
+    None => {}
+  }
+  var source = String.new()
+  // std.args puts the first positional word in `subcommand`
+  if argv.subcommand.len() > 0 {
+    match io.read_file(argv.subcommand) {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("md2html: {argv.subcommand}: {e.message}")
+        io.exit(1)
+      }
+    }
+  } else {
+    match io.read_all() {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("md2html: {e.message}")
+        io.exit(1)
+      }
+    }
+  }
+  print(convert(source, with_toc, page, title).trim_end())
+}

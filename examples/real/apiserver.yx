@@ -1,0 +1,498 @@
+// apiserver: a JSON task-list API over HTTP/1.1 with shared state, a worker per connection queue and a scripted
+// client that exercises it (so the output is deterministic).
+//
+//   GET /tasks[?done=true|false]   POST /tasks {"title":..,"tags":[..]}   GET|PUT|DELETE /tasks/<id>
+//   GET /stats                     POST /shutdown
+//
+// Threads: one acceptor deals connections round-robin to WORKERS workers through channels; the task list is a
+// `Shared<Locked<Store>>`, the request counter a `Shared<Atomic<Int>>`. The client side is std.http plus four
+// threads posting concurrently. The port is derived from the process id and retried if it is busy.
+import std.http
+import std.io
+import std.net
+import std.text
+import json.codec
+
+struct Task { id: Int, title: String, done: Bool, tags: List<String> }
+struct Store { tasks: List<Task>, next_id: Int }
+struct Request { method: String, path: String, query: String, body: String }
+struct Reply { status: Int, body: String }
+
+// ---------- JSON out ----------
+
+fn jstr(s: view String) -> String {
+  return codec.format(codec.Value.Str(String.from(s)), false)
+}
+
+fn task_json(t: view Task) -> String {
+  var tags = String.new()
+  for i in 0..t.tags.len() {
+    if i > 0 {
+      tags.push_str(",")
+    }
+    tags.push_str(jstr(t.tags.at(i)))
+  }
+  return "{{\"id\":{t.id},\"title\":{jstr(t.title)},\"done\":{t.done},\"tags\":[{tags}]}}"
+}
+
+fn error_reply(status: Int, message: view String) -> Reply {
+  return Reply { status: status, body: "{{\"error\":{jstr(message)}}}" }
+}
+
+// ---------- JSON in ----------
+
+// What a member of a JSON object is: 0 absent, 1 string, 2 boolean, 3 array, 4 anything else.
+fn kind_of(v: view codec.Value, key: view String) -> Int {
+  match v {
+    Object(m) => {
+      let at = codec.find_member(m, key)
+      if at < 0 {
+        return 0
+      }
+      match m.entries.at(at).value.get() {
+        Str(_) => { return 1 }
+        Boolean(_) => { return 2 }
+        Array(_) => { return 3 }
+        _ => { return 4 }
+      }
+    }
+    _ => { return 0 }
+  }
+}
+
+fn string_of(v: view codec.Value, key: view String) -> String {
+  match v {
+    Object(m) => {
+      match m.entries.at(codec.find_member(m, key)).value.get() {
+        Str(s) => { return String.from(s) }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  return String.new()
+}
+
+fn bool_of(v: view codec.Value, key: view String) -> Bool {
+  match v {
+    Object(m) => {
+      match m.entries.at(codec.find_member(m, key)).value.get() {
+        Boolean(b) => { return b }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  return false
+}
+
+// the string items of an array member; None when an item is not a string
+fn strings_of(v: view codec.Value, key: view String) -> Option<List<String>> {
+  var out = List<String>.new()
+  if kind_of(v, key) != 3 {
+    return Some(move out)
+  }
+  match v {
+    Object(m) => {
+      match m.entries.at(codec.find_member(m, key)).value.get() {
+        Array(items) => {
+          for item in items {
+            match item.get() {
+              Str(s) => { out.push(String.from(s)) }
+              _ => { return None }
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  return Some(move out)
+}
+
+fn parse_task(body: view String) -> Result<Task, String> {
+  let doc = match_parse(body)?
+  if kind_of(doc, "title") != 1 {
+    return Err(String.from("title must be a string"))
+  }
+  let title = string_of(doc, "title")
+  if title.trim().len() == 0 {
+    return Err(String.from("title must not be empty"))
+  }
+  if kind_of(doc, "tags") != 0 && kind_of(doc, "tags") != 3 {
+    return Err(String.from("tags must be an array"))
+  }
+  match strings_of(doc, "tags") {
+    Some(tags) => { return Ok(Task { id: 0, title: move title, done: false, tags: move tags }) }
+    None => { return Err(String.from("tags must be strings")) }
+  }
+}
+
+fn match_parse(body: view String) -> Result<codec.Value, String> {
+  match codec.parse(body) {
+    Ok(v) => { return Ok(move v) }
+    Err(e) => { return Err("invalid JSON at byte {e.offset}: {e.message}") }
+  }
+}
+
+// ---------- routes ----------
+
+fn find(store: view Store, id: Int) -> Int {
+  for i in 0..store.tasks.len() {
+    if store.tasks.at(i).id == id {
+      return i
+    }
+  }
+  return -1
+}
+
+fn list(store: view Store, filter: view String) -> Reply {
+  var items = String.new()
+  var n = 0
+  for t in store.tasks {
+    if filter.len() == 0 || (filter == "done=true") == t.done {
+      if n > 0 {
+        items.push_str(",")
+      }
+      items.push_str(task_json(t))
+      n = n + 1
+    }
+  }
+  return Reply { status: 200, body: "{{\"count\":{n},\"tasks\":[{items}]}}" }
+}
+
+fn create(store: mut Store, body: view String) -> Reply {
+  match parse_task(body) {
+    Ok(task) => {
+      var t = move task
+      t.id = store.next_id
+      store.next_id = store.next_id + 1
+      let json = task_json(t)
+      store.tasks.push(move t)
+      return Reply { status: 201, body: move json }
+    }
+    Err(e) => { return error_reply(400, e) }
+  }
+}
+
+fn update(store: mut Store, at: Int, body: view String) -> Reply {
+  match match_parse(body) {
+    Err(e) => { return error_reply(400, e) }
+    Ok(doc) => {
+      if kind_of(doc, "done") == 2 {
+        store.tasks.at(at).done = bool_of(doc, "done")
+      } else if kind_of(doc, "done") != 0 {
+        return error_reply(400, "done must be a boolean")
+      }
+      if kind_of(doc, "title") == 1 {
+        store.tasks.at(at).title = string_of(doc, "title")
+      } else if kind_of(doc, "title") != 0 {
+        return error_reply(400, "title must be a string")
+      }
+      return Reply { status: 200, body: task_json(store.tasks.at(at)) }
+    }
+  }
+}
+
+fn route(store: view Shared<Locked<Store>>, req: view Request) -> Reply {
+  let parts = req.path.split("/")
+  if req.path == "/tasks" {
+    if req.method == "GET" {
+      return store.with_view(|s| list(s, req.query))
+    }
+    if req.method == "POST" {
+      return store.with(|s| create(s, req.body))
+    }
+    return error_reply(405, "use GET or POST on /tasks")
+  }
+  if req.path.starts_with("/tasks/") && parts.len() == 3 {
+    let id = text.parse_int(parts.at(2)).unwrap_or(-1)
+    if req.method == "GET" {
+      return store.with_view(|s| {
+        let at = find(s, id)
+        if at < 0 {
+          return error_reply(404, "no such task")
+        }
+        return Reply { status: 200, body: task_json(s.tasks.at(at)) }
+      })
+    }
+    if req.method == "PUT" {
+      return store.with(|s| {
+        let at = find(s, id)
+        if at < 0 {
+          return error_reply(404, "no such task")
+        }
+        return update(s, at, req.body)
+      })
+    }
+    if req.method == "DELETE" {
+      return store.with(|s| {
+        let at = find(s, id)
+        if at < 0 {
+          return error_reply(404, "no such task")
+        }
+        let gone = s.tasks.remove(at)
+        return Reply { status: 200, body: "{{\"deleted\":{id}}}" }
+      })
+    }
+    return error_reply(405, "use GET, PUT or DELETE on a task")
+  }
+  return error_reply(404, "no such route")
+}
+
+// ---------- HTTP ----------
+
+fn reason(status: Int) -> String {
+  if status == 200 {
+    return String.from("OK")
+  }
+  if status == 201 {
+    return String.from("Created")
+  }
+  if status == 400 {
+    return String.from("Bad Request")
+  }
+  if status == 404 {
+    return String.from("Not Found")
+  }
+  return String.from("Method Not Allowed")
+}
+
+fn read_request(conn: view net.TcpStream) -> Result<Request, String> {
+  var raw = String.new()
+  var split = -1
+  while split < 0 {
+    if raw.len() > 65536 {
+      return Err(String.from("request head too large"))
+    }
+    match net.read(conn, 4096) {
+      Ok(chunk) => {
+        if chunk.len() == 0 {
+          return Err(String.from("connection closed"))
+        }
+        raw.push_str(chunk)
+      }
+      Err(e) => { return Err(String.from(e.message)) }
+    }
+    split = raw.find("\r\n\r\n")
+  }
+  let head = raw.slice(0, split)
+  var body = raw.slice(split + 4, raw.len())
+  let lines = head.split("\r\n")
+  let first = lines.at(0).split(" ")
+  if first.len() != 3 {
+    return Err(String.from("bad request line"))
+  }
+  var wanted = 0
+  for i in 1..lines.len() {
+    let lower = text.to_lower(lines.at(i))
+    if lower.starts_with("content-length:") {
+      wanted = text.parse_int(lower.slice(15, lower.len()).trim()).unwrap_or(0)
+    }
+  }
+  while body.len() < wanted && wanted <= 65536 {
+    match net.read(conn, wanted - body.len()) {
+      Ok(chunk) => {
+        if chunk.len() == 0 {
+          return Err(String.from("body cut short"))
+        }
+        body.push_str(chunk)
+      }
+      Err(e) => { return Err(String.from(e.message)) }
+    }
+  }
+  var path = String.from(first.at(1))
+  var query = String.new()
+  let q = first.at(1).find("?")
+  if q >= 0 {
+    path = first.at(1).slice(0, q)
+    query = first.at(1).slice(q + 1, first.at(1).len())
+  }
+  return Ok(Request { method: String.from(first.at(0)), path: move path, query: move query, body: move body })
+}
+
+fn serve(conn: view net.TcpStream, store: view Shared<Locked<Store>>, served: view Shared<Atomic<Int>>,
+         stop: view Shared<Atomic<Int>>) {
+  served.add(1)
+  var reply = error_reply(400, "malformed request")
+  match read_request(conn) {
+    Ok(req) => {
+      if req.method == "GET" && req.path == "/stats" {
+        let count = store.with_view(|s| s.tasks.len())
+        reply = Reply { status: 200, body: "{{\"tasks\":{count},\"requests\":{served.load()}}}" }
+      } else if req.method == "POST" && req.path == "/shutdown" {
+        stop.store(1)
+        reply = Reply { status: 200, body: "{{\"bye\":true}}" }
+      } else {
+        reply = route(store, req)
+      }
+    }
+    Err(e) => { reply = error_reply(400, e) }
+  }
+  let head = "HTTP/1.1 {reply.status} {reason(reply.status)}\r\nContent-Type: application/json\r\nContent-Length: {reply.body.len()}\r\nConnection: close\r\n\r\n"
+  match net.write(conn, "{head}{reply.body}") {
+    Ok(_) => {}
+    Err(_) => {}
+  }
+}
+
+const WORKERS: Int = 3
+
+fn worker(rx: Receiver<net.TcpStream>, store: Shared<Locked<Store>>, served: Shared<Atomic<Int>>,
+          stop: Shared<Atomic<Int>>, done: Sender<Int>) -> Int {
+  var handled = 0
+  while true {
+    match rx.recv() {
+      Some(conn) => {
+        serve(conn, store, served, stop)
+        handled = handled + 1
+      }
+      None => {
+        done.send(handled)
+        return handled
+      }
+    }
+  }
+  return handled
+}
+
+// ---------- scripted client ----------
+
+fn show(addr: view net.SocketAddr, label: view String, result: Result<http.Response, io.IoError>) {
+  match result {
+    Ok(r) => { print("{label} -> {r.status} {r.body}") }
+    Err(e) => { print("{label} -> failed: {e.message}") }
+  }
+}
+
+fn client(addr: view net.SocketAddr) {
+  let none = List<(String, String)>.new()
+  show(addr, "GET /tasks", http.get(addr, "localhost", "/tasks", none))
+  show(addr, "POST /tasks", http.post_json(addr, "localhost", "/tasks", none, "{{\"title\":\"write the book\",\"tags\":[\"docs\",\"yerux\"]}}"))
+  show(addr, "POST /tasks", http.post_json(addr, "localhost", "/tasks", none, "{{\"title\":\"say \\\"hi\\\"\"}}"))
+  show(addr, "POST /tasks (bad)", http.post_json(addr, "localhost", "/tasks", none, "{{\"title\":3}}"))
+  show(addr, "POST /tasks (broken)", http.post_json(addr, "localhost", "/tasks", none, "{{\"title\":"))
+  show(addr, "PUT /tasks/1", http.put_json(addr, "localhost", "/tasks/1", none, "{{\"done\":true}}"))
+  show(addr, "GET /tasks?done=true", http.get(addr, "localhost", "/tasks?done=true", none))
+  show(addr, "GET /tasks/2", http.get(addr, "localhost", "/tasks/2", none))
+  show(addr, "GET /tasks/9", http.get(addr, "localhost", "/tasks/9", none))
+  show(addr, "DELETE /tasks/2", http.delete(addr, "localhost", "/tasks/2", none))
+  show(addr, "DELETE /tasks/2", http.delete(addr, "localhost", "/tasks/2", none))
+  show(addr, "DELETE /tasks", http.delete(addr, "localhost", "/tasks", none))
+  show(addr, "GET /nowhere", http.get(addr, "localhost", "/nowhere", none))
+}
+
+// one client of the burst: five POSTs, the number created goes to `out`
+fn batch(target: net.SocketAddr, c: Int, out: Sender<Int>) -> Int {
+  var created = 0
+  let none = List<(String, String)>.new()
+  for k in 0..5 {
+    match http.post_json(target, "localhost", "/tasks", none, "{{\"title\":\"bulk {c}-{k}\"}}") {
+      Ok(r) => {
+        if r.status == 201 {
+          created = created + 1
+        }
+      }
+      Err(_) => {}
+    }
+  }
+  out.send(created)
+  return created
+}
+
+// four clients at once, five tasks each: the ids differ from run to run, the totals do not.
+// (A JoinHandle is joined when it is dropped and cannot be stored in a List, so each thread is named.)
+fn burst(addr: view net.SocketAddr) -> Int {
+  let (results, inbox) = Sender<Int>.unbounded()
+  scope {
+    let a = net.SocketAddr { ip: String.from(addr.ip), port: addr.port }
+    let b = net.SocketAddr { ip: String.from(addr.ip), port: addr.port }
+    let c = net.SocketAddr { ip: String.from(addr.ip), port: addr.port }
+    let d = net.SocketAddr { ip: String.from(addr.ip), port: addr.port }
+    let (r1, r2, r3, r4) = (results.clone(), results.clone(), results.clone(), results.clone())
+    let t1 = spawn move { return batch(move a, 1, move r1) }
+    let t2 = spawn move { return batch(move b, 2, move r2) }
+    let t3 = spawn move { return batch(move c, 3, move r3) }
+    let t4 = spawn move { return batch(move d, 4, move r4) }
+    var total = 0
+    for _ in 0..4 {
+      total = total + inbox.recv().unwrap()
+    }
+    return total
+  }
+}
+
+fn main() {
+  var port = 20000 + io.process_id() % 20000
+  var listener = net.listen(net.address("127.0.0.1", port).unwrap())
+  var tries = 0
+  while listener.is_err() && tries < 50 {
+    port = port + 1
+    tries = tries + 1
+    listener = net.listen(net.address("127.0.0.1", port).unwrap())
+  }
+  if listener.is_err() {
+    io.eprintln("apiserver: no free port")
+    io.exit(1)
+  }
+  let socket = listener.unwrap()
+  let addr = net.address("127.0.0.1", port).unwrap()
+  let store = Shared.new(Locked.new(Store { tasks: List<Task>.new(), next_id: 1 }))
+  let served = Shared.new(Atomic<Int>.new(0))
+  let stop = Shared.new(Atomic<Int>.new(0))
+  let (done, finished) = Sender<Int>.unbounded()
+  scope {
+    var senders = List<Sender<net.TcpStream>>.new()
+    var inboxes = List<Receiver<net.TcpStream>>.new()
+    for _ in 0..WORKERS {
+      let (tx, rx) = Sender<net.TcpStream>.bounded(8)
+      senders.push(move tx)
+      inboxes.push(move rx)
+    }
+    let (rx1, rx2, rx3) = (inboxes.pop(), inboxes.pop(), inboxes.pop())
+    let (s1, s2, s3) = (store.clone(), store.clone(), store.clone())
+    let (n1, n2, n3) = (served.clone(), served.clone(), served.clone())
+    let (t1, t2, t3) = (stop.clone(), stop.clone(), stop.clone())
+    let (d1, d2, d3) = (done.clone(), done.clone(), done.clone())
+    let w1 = spawn move { return worker(move rx1, move s1, move n1, move t1, move d1) }
+    let w2 = spawn move { return worker(move rx2, move s2, move n2, move t2, move d2) }
+    let w3 = spawn move { return worker(move rx3, move s3, move n3, move t3, move d3) }
+    let stopper = stop.clone()
+    let acceptor_done = done.clone()
+    let acceptor = spawn move {
+      var next = 0
+      while stopper.load() == 0 {
+        match net.accept(socket) {
+          Ok(conn) => {
+            senders.at(next % WORKERS).send(move conn)
+            next = next + 1
+          }
+          Err(_) => {}
+        }
+      }
+      for tx in senders {
+        tx.close()
+      }
+      acceptor_done.send(next)
+      return 0
+    }
+    client(addr)
+    print("burst: {burst(addr)} created")
+    let none = List<(String, String)>.new()
+    show(addr, "GET /stats", http.get(addr, "localhost", "/stats", none))
+    show(addr, "POST /shutdown", http.post_json(addr, "localhost", "/shutdown", none, "{{}}"))
+    // wake the acceptor, which is blocked in accept, so it notices the stop flag
+    match net.connect(addr) {
+      Ok(wake) => {
+        let closed = net.close_stream(move wake)
+      }
+      Err(_) => {}
+    }
+    var total = 0
+    for _ in 0..WORKERS + 1 {
+      total = total + finished.recv().unwrap()
+    }
+    print("connections accepted and handled: {total / 2}")
+  }
+}

@@ -1,0 +1,9 @@
+import std.text
+
+fn is_shout(s: view String) -> Bool {
+  return text.to_upper(s) == "HEY"
+}
+
+fn main() {
+  print(is_shout("hey"))
+}

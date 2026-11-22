@@ -80,3 +80,29 @@ from `std.args`, output is formatted with `std.fmt`, bytes are read with `std.fs
 compares it with `sha256sum`, Python's `zlib.crc32`, `base64` and `xxd` on 300 KB of random data and covers the
 error paths and exit codes (0 ok, 1 unreadable file / failed check, 2 usage), on the C and native backends.
 
+## Markdown to HTML
+
+`md2html.yx` converts Markdown from stdin (or a file) to HTML: ATX headings with slug ids, paragraphs, fenced code,
+block quotes, bullet and numbered lists with one level of nesting, horizontal rules, `**strong**`, `*em*`, `` `code` ``,
+links and images with titles, backslash escapes, and HTML escaping of everything else. `--toc` adds a table of contents,
+`--page` wraps a full document, `--title=TEXT` sets its title. Test: `tests/md2html.stdin` and `.args`.
+
+```sh
+target/release/yerux run examples/real/md2html.yx -- --toc < README.md
+```
+
+## In-memory database
+
+`minidb.yx` reads a SQL-like script from stdin: `LOAD t file.csv` (INT columns are detected), `SELECT` with `WHERE`
+(`= != < <= > >=`, `AND`), `GROUP BY`, `ORDER BY .. [DESC]`, `LIMIT` and the aggregates `COUNT SUM AVG MIN MAX`,
+`INSERT`, `UPDATE`, `DELETE`, and `SAVE`/`RESTORE`/`PURGE` of whole tables in a `std.kv` store (`--store=PATH`).
+Errors print `error: ...` and the script continues. Test: `tests/minidb.stdin` with `tests/minidb_employees.csv`.
+
+## JSON API server
+
+`apiserver.yx` serves a task-list API (`GET/POST /tasks`, `GET/PUT/DELETE /tasks/<id>`, `/stats`, `/shutdown`) over
+HTTP/1.1 on loopback: an acceptor thread deals connections to three workers through channels, the tasks live in a
+`Shared<Locked<..>>`, requests are counted in a `Shared<Atomic<Int>>`, bodies are parsed with the JSON codec of
+`examples/real/json`. A scripted client (std.http) and four concurrent client threads drive it, so the output is
+deterministic. The port comes from the process id and is retried when busy.
+

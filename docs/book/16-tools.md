@@ -6,7 +6,7 @@ Everything below is part of the one `yerux` binary.
 |---|---|
 | `yerux check file.yx` | type- and ownership-check, print every error, generate nothing |
 | `yerux build file.yx [-o out] [--native] [--target linux\|aarch64\|windows]` | compile to an executable |
-| `yerux run file.yx [--native]` | build to a temporary file and run it |
+| `yerux run file.yx [--native] [-- args]` | build to a temporary file and run it; what follows `--` is the program's command line |
 | `yerux c file.yx` / `yerux ir file.yx` | print the generated C / the optimised IR |
 | `yerux new NAME` / `yerux build` / `yerux run` / `yerux test` | project commands (chapter 13) |
 | `yerux test [file.yx\|dir] [--native] [--filter text]` | run `test "name" { .. }` blocks |
