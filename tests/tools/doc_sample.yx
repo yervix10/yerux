@@ -26,7 +26,11 @@ fn internal_helper() -> Int {
   return 0
 }
 
-pub const LIMIT: Int = 3
+/// Primary colors.
+pub enum Color {
+  Red,
+  Green,
+}
 
 fn main() {
   print(add(1, 2))

@@ -16,7 +16,7 @@ grep -q '^### `Point`' "$T/md/doc_sample.md" || note "FAIL struct entry"
 grep -q '^#### `Point.total`' "$T/md/doc_sample.md" || note "FAIL method entry"
 grep -q 'Sum of both coordinates.' "$T/md/doc_sample.md" || note "FAIL method doc"
 grep -q '^fn add(a: Int, b: Int) -> Int$' "$T/md/doc_sample.md" || note "FAIL signature of add"
-grep -q 'LIMIT' "$T/md/doc_sample.md" || note "FAIL const entry"
+grep -q '^## Enums' "$T/md/doc_sample.md" || note "FAIL enum entry"
 grep -q 'internal_helper\|fn main' "$T/md/doc_sample.md" && note "FAIL a private item was documented"
 grep -q '| \[`doc_sample`\](doc_sample.md) | Geometry helpers for the doc test. | 4 |' "$T/md/index.md" || note "FAIL index row: $(cat "$T/md/index.md")"
 
