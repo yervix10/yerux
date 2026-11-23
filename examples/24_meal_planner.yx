@@ -1,0 +1,184 @@
+// Price a takeaway order in integer cents: parse a menu, total the dishes through
+// a `Costed` trait, apply a coupon through a `Discounts` trait, add tax rounded to
+// the cent and show the cost per serving. No floating point, so the bill is exact.
+
+trait Costed { fn cents(view self) -> Int }
+trait Discounts { fn discount(view self, subtotal: Int) -> Int }
+
+fn money(cents: Int) -> String {
+  var value = cents
+  var out = String.new()
+  if value < 0 {
+    out.push_char('-')
+    value = 0 - value
+  }
+  out.push_char('$')
+  out.push_int(value / 100)
+  out.push_char('.')
+  let rest = value % 100
+  if rest < 10 {
+    out.push_char('0')
+  }
+  out.push_int(rest)
+  return out
+}
+
+fn subtotal<T: Costed>(items: view List<T>) -> Int {
+  var total = 0
+  for item in items {
+    total = total + item.cents()
+  }
+  return total
+}
+
+enum Coupon { None, Percent(Int), Fixed(Int) }
+
+impl Discounts for Coupon {
+  fn discount(view self, subtotal: Int) -> Int {
+    match self {
+      None => {
+        return 0
+      }
+      Percent(rate) => {
+        if rate <= 0 {
+          return 0
+        }
+        if rate >= 100 {
+          return subtotal
+        }
+        return subtotal * rate / 100
+      }
+      Fixed(amount) => {
+        if amount <= 0 {
+          return 0
+        }
+        if amount > subtotal {
+          return subtotal
+        }
+        return amount
+      }
+    }
+  }
+}
+
+impl Show for Coupon {
+  fn show(view self) -> String {
+    match self {
+      None => {
+        return String.from("none")
+      }
+      Percent(rate) => {
+        return "{rate}% off"
+      }
+      Fixed(amount) => {
+        return "{money(amount)} off"
+      }
+    }
+  }
+}
+
+struct Dish { name: String, price_cents: Int, servings: Int }
+
+impl Costed for Dish {
+  fn cents(view self) -> Int {
+    return self.price_cents
+  }
+}
+
+impl Show for Dish {
+  fn show(view self) -> String {
+    return "{self.name}  {money(self.price_cents)}  serves {self.servings}"
+  }
+}
+
+struct Order { dishes: List<Dish>, coupon: Coupon }
+
+impl Costed for Order {
+  fn cents(view self) -> Int {
+    return subtotal(self.dishes)
+  }
+}
+
+struct Bill { subtotal: Int, discount: Int, tax: Int, total: Int }
+
+fn parse(text: view String) -> Result<Dish, String> {
+  let cells = text.split(",")
+  if cells.len() != 3 {
+    return Err("need name,price,servings")
+  }
+  let name = cells.at(0).trim()
+  if name.len() == 0 {
+    return Err("empty dish name")
+  }
+  var price = 0
+  if !cells.at(1).trim().parse_int(price) {
+    return Err("bad price '{cells.at(1)}'")
+  }
+  var servings = 0
+  if !cells.at(2).trim().parse_int(servings) {
+    return Err("bad servings '{cells.at(2)}'")
+  }
+  if price <= 0 {
+    return Err("price must be positive")
+  }
+  if servings <= 0 {
+    return Err("servings must be positive")
+  }
+  return Ok(Dish { name: move name, price_cents: price, servings: servings })
+}
+
+fn total_servings(dishes: view List<Dish>) -> Int {
+  var n = 0
+  for dish in dishes {
+    n = n + dish.servings
+  }
+  return n
+}
+
+fn bill_of(order: view Order) -> Bill {
+  let sub = subtotal(order.dishes)
+  let discount = order.coupon.discount(sub)
+  let taxable = sub - discount
+  let tax = (taxable * 825 + 5000) / 10000
+  return Bill { subtotal: sub, discount: discount, tax: tax, total: taxable + tax }
+}
+
+fn main() {
+  let menu = String.from("Margherita pizza,1250,2\nChicken bowl,1495,1\nGarlic bread,450,4\nMinestrone soup,875,2\nBad dish,abc,1\n")
+  var dishes = List<Dish>.new()
+  print("menu:")
+  for line in menu.lines() {
+    if line.len() == 0 {
+      continue
+    }
+    match parse(line) {
+      Ok(dish) => {
+        print("  {dish}")
+        dishes.push(move dish)
+      }
+      Err(problem) => {
+        print("  skipped: {problem}")
+      }
+    }
+  }
+
+  let coupon = Coupon.Percent(15)
+  let order = Order { dishes: move dishes, coupon: move coupon }
+  print("{order.dishes.len()} dishes, subtotal via trait: {money(order.cents())}")
+
+  let bill = bill_of(order)
+  print("coupon: {order.coupon}")
+  print("subtotal:  {money(bill.subtotal)}")
+  print("discount: -{money(bill.discount)}")
+  print("tax 8.25%: {money(bill.tax)}")
+  print("total:     {money(bill.total)}")
+  let servings = total_servings(order.dishes)
+  let each = (bill.total + servings / 2) / servings
+  print("per serving ({servings} servings): {money(each)}")
+
+  let fixed = Coupon.Fixed(750)
+  let half = Coupon.Percent(50)
+  print("fixed coupon: {fixed}, total would be {money(order.cents() - fixed.discount(order.cents()))}")
+  print("half-off total: {money(order.cents() - half.discount(order.cents()))}")
+  print("no coupon: {Coupon.None}")
+}
