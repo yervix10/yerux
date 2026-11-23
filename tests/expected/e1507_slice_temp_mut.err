@@ -3,6 +3,6 @@ error: pass a variable here (the function borrows it)
   |
 2 | fn main() { bump([1, 2][0..1]) }
   |                  ^^^^^^
-  = a temporary would be modified and thrown away
+  = help: store the value in a `var` first, then pass that variable
 
 1 error(s). Nothing was generated.

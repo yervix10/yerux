@@ -2850,7 +2850,7 @@ impl<'a> Checker<'a> {
                 if mode == Mode::Mut {
                     self.err(
                         diag("pass a variable here (the function borrows it)", b.pos)
-                            .note("a temporary would be modified and thrown away"),
+                            .note("help: store the value in a `var` first, then pass that variable"),
                     );
                     return;
                 }
@@ -2915,7 +2915,7 @@ impl<'a> Checker<'a> {
         if mode == Mode::Mut {
             self.err(
                 diag("pass a variable here (the function borrows it)", apos)
-                    .note("a temporary would be modified and thrown away"),
+                    .note("help: store the value in a `var` first, then pass that variable"),
             );
             return;
         }
