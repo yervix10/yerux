@@ -2763,7 +2763,11 @@ impl<'a> Checker<'a> {
                         format!("index {} is out of bounds for the array {}", k, an),
                         idx.pos,
                     )
-                    .note(format!("valid indexes are 0 to {}", n - 1)),
+                    .note(format!("valid indexes are 0 to {}", n - 1))
+                    .note(format!(
+                        "help: keep the index between 0 and {}; `a.len()` gives the length",
+                        n - 1
+                    )),
                 );
             }
         }
