@@ -416,12 +416,12 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
    the iteration is now a compile error that explains that dropping a handle joins its worker, and a
    `List<JoinHandle<T>>` is allowed (start N workers in a loop, `push(move h)`, join after the loop; handles left in
    the list are joined when it drops). Tests `thread_handles_list`, `e1414_joinhandle_dropped_in_loop`.
-5. **Fixed: struct-literal shorthand.** `Task { title, tags }` now means `Task { title: title, tags: tags }`, with the
+4. **Fixed: struct-literal shorthand.** `Task { title, tags }` now means `Task { title: title, tags: tags }`, with the
    same move rules as the explicit form (tests `struct_shorthand`, `e1412_struct_shorthand_move`).
-6. **Fixed: raw string literals.** `r"..."` and `r#"..."#` (any number of `#`) are verbatim: no escapes, no
+5. **Fixed: raw string literals.** `r"..."` and `r#"..."#` (any number of `#`) are verbatim: no escapes, no
    interpolation, no doubled braces, so JSON and regexes read as written. One line only. Lexer in Rust and mirrored in
    `selfhost/lexer.yx` and both formatters (tests `raw_string`, `e1413_raw_unterminated`).
-7. **Fixed: `std.args` is thin** (`parse_with` + typed accessors, see STDLIB; test `std_args_schema`). Was: Options only take the `--key=value` form (`--title TEXT` is a positional), the first
+6. **Fixed: `std.args` is thin** (`parse_with` + typed accessors, see STDLIB; test `std_args_schema`). Was: Options only take the `--key=value` form (`--title TEXT` is a positional), the first
    positional word lands in `subcommand`, and there is no typed accessor.
 7. **Partly fixed: the "String has no method" error now points to the `std.text` function of that name** (test `e1505_string_method_in_std_text`; `lines`/`to_upper` are methods already). Was: Methods versus functions are inconsistent. `s.split(..)` and `s.trim()` are methods but `s.lines()`,
    `s.to_upper()` and `s.is_alnum` are `text.lines(s)`, `text.to_upper(s)`; the error ("String has no method 'lines'")
