@@ -25,6 +25,7 @@ mod opt;
 mod project;
 mod selfhost;
 mod regalloc;
+mod sepc;
 mod sroa;
 mod stdlib;
 mod syntax;
@@ -135,42 +136,93 @@ fn find_c_compiler() -> Option<String> {
 
 const NO_CC: &str = "no C compiler found (looked for $YERUX_CC, cc, gcc, clang). Install gcc/clang (on Windows: MinGW-w64 or LLVM), set YERUX_CC, or use the native backend: `yerux build prog.yx --native`";
 
-/// Compile generated C with the system C compiler.
-fn c_compile_mode(c: &str, out: &str, links: &[String], debug: bool) -> Result<(), String> {
-    let cc = find_c_compiler().ok_or_else(|| NO_CC.to_string())?;
-    let cfile = tmp_path("c");
-    fs::write(&cfile, c).map_err(|_| "could not write the temporary C file".to_string())?;
-    let mut cmd = Command::new(&cc);
-    cmd.args([
+/// Compiler flags shared by every C build (one translation unit or many).
+fn cc_flags(debug: bool) -> Vec<String> {
+    let mut v: Vec<String> = [
         if debug { "-O0" } else { "-O2" },
         if debug { "-g" } else { "-DNDEBUG" },
         "-w",
         "-fno-math-errno",
         "-ffp-contract=off",
         "-pthread",
-        "-o",
-        out,
-    ])
-    .arg(&cfile)
-    .arg("-lm");
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
     // with YERUX_BACKTRACE set at build time every Yerux function keeps its own frame, so the panic stack is complete
     let bt = env::var("YERUX_BACKTRACE").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
     if bt {
-        cmd.args(["-fno-inline", "-fno-optimize-sibling-calls"]);
+        v.extend(["-fno-inline".to_string(), "-fno-optimize-sibling-calls".to_string()]);
     }
     if bt || debug {
-        cmd.arg("-DNX_BACKTRACE");
+        v.push("-DNX_BACKTRACE".to_string());
     }
     if let Ok(extra) = env::var("YERUX_CC_FLAGS") {
-        cmd.args(extra.split_whitespace());
+        v.extend(extra.split_whitespace().map(|s| s.to_string()));
     }
-    for lib in links {
-        if lib.starts_with("lib") && lib.contains(".so") {
-            cmd.arg(format!("-Wl,-l:{}", lib));
-        } else {
-            cmd.arg(format!("-l{}", lib));
+    v
+}
+
+fn link_flags(links: &[String]) -> Vec<String> {
+    links
+        .iter()
+        .map(|lib| {
+            if lib.starts_with("lib") && lib.contains(".so") {
+                format!("-Wl,-l:{}", lib)
+            } else {
+                format!("-l{}", lib)
+            }
+        })
+        .collect()
+}
+
+/// `--separate`: compile the generated C as one unit per user module, reusing cached objects (src/sepc.rs).
+/// Falls back to the single-unit build when the C has a shape the splitter does not know.
+fn c_compile_separate(c: &str, out: &str, links: &[String], debug: bool, source_files: &[String]) -> Result<(), String> {
+    let cc = find_c_compiler().ok_or_else(|| NO_CC.to_string())?;
+    let mut mods = std::collections::HashSet::new();
+    for f in source_files {
+        if f.starts_with("<std>") {
+            continue;
+        }
+        let p = std::path::Path::new(f);
+        if let Some(st) = p.file_stem().and_then(|s| s.to_str()) {
+            mods.insert(st.to_string());
         }
     }
+    mods.remove("main");
+    let entry_stem = source_files.first().and_then(|f| std::path::Path::new(f).file_stem()).map(|s| s.to_string_lossy().into_owned());
+    if let Some(e) = entry_stem {
+        mods.remove(&e);
+    }
+    let Some(split) = sepc::split(c, &mods) else {
+        eprintln!("separate: generated C not splittable, compiling as one unit");
+        return c_compile_mode(c, out, links, debug);
+    };
+    let cache = match env::var("YERUX_CACHE") {
+        Ok(d) if !d.is_empty() => std::path::PathBuf::from(d),
+        _ => std::path::PathBuf::from(format!("{out}.cache")),
+    };
+    match sepc::build(&split, &cc, &cc_flags(debug), &link_flags(links), out, &cache) {
+        Ok((n, hit)) => {
+            eprintln!("separate: {n} unit(s), {hit} reused from {}", cache.display());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("separate: {e}; compiling as one unit");
+            c_compile_mode(c, out, links, debug)
+        }
+    }
+}
+
+/// Compile generated C with the system C compiler.
+fn c_compile_mode(c: &str, out: &str, links: &[String], debug: bool) -> Result<(), String> {
+    let cc = find_c_compiler().ok_or_else(|| NO_CC.to_string())?;
+    let cfile = tmp_path("c");
+    fs::write(&cfile, c).map_err(|_| "could not write the temporary C file".to_string())?;
+    let mut cmd = Command::new(&cc);
+    cmd.args(cc_flags(debug)).arg("-o").arg(out).arg(&cfile).arg("-lm");
+    cmd.args(link_flags(links));
     let st = cmd
         .status()
         .map_err(|_| format!("C compiler ({}) could not be started", cc))?;
@@ -247,7 +299,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--obj mod.yxo] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--obj mod.yxo] [--separate] [--no-opt] [--native-debug-alloc]
        yerux --selfhost <check|c|build|run|--stage2> ...
        yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
@@ -676,7 +728,13 @@ fn compile_file(args: &[String]) {
     }
     let build = |out: &str| {
         let start = Instant::now();
-        if let Err(e) = c_compile_mode(&c, out, &prog.links, debug) {
+        let separate = args.iter().any(|a| a == "--separate");
+        let r = if separate {
+            c_compile_separate(&c, out, &prog.links, debug, &source_files)
+        } else {
+            c_compile_mode(&c, out, &prog.links, debug)
+        };
+        if let Err(e) = r {
             eprintln!("{}", e);
             exit(1);
         }

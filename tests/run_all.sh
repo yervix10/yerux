@@ -133,8 +133,9 @@ AUX=(
   "panic_trace|bash tests/panic_trace.sh"
   "gdb_native|bash tests/gdb_native.sh"
   "modobj|bash tests/modobj.sh"
+  "separate|bash tests/separate.sh"
 )
-FAST_AUX=" fuzz_compile mutate_compile runtime_hostile parser_depth win_smoke dist range_ir inline_ir modules modobj fmt tokens_dump sumtool minimake_errors noopt_shortcircuit selfhost_stage2 "
+FAST_AUX=" fuzz_compile mutate_compile runtime_hostile parser_depth win_smoke dist range_ir inline_ir modules modobj separate fmt tokens_dump sumtool minimake_errors noopt_shortcircuit selfhost_stage2 "
 aux=()
 if [ "$BLESS" = 0 ]; then
   for a in "${AUX[@]}"; do
