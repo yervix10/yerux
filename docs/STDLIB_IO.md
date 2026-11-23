@@ -1,6 +1,6 @@
 # Standard library I/O (`import std.io`)
 
-Status: implemented (ROADMAP M3, first slice). Linux x86-64 native backend and the C backend (test oracle). No libc, no FFI on the native path: every operation is a raw Linux `syscall` instruction emitted by the compiler.
+Status: implemented (ROADMAP M3, first slice). The Linux x86-64 and AArch64 native backends issue kernel calls directly. The C backend is the test oracle.
 
 ```
 import std.io
@@ -157,16 +157,16 @@ All arguments are plain `Int`s, so the checker needs nothing special beyond arit
 - **IR.** Two new instructions: `Syscall(dst, [nr, a1..a6])` and `Global(dst, n)`. The raw memory intrinsics reuse `Load`, `Load8`, `Store`, `Store8`, `Alloc`, `Free`; `push_raw` is a call of the existing string-append helper; `raw_addr` is a header load. `Syscall` counts as a call everywhere: it clobbers all caller-saved registers (the kernel also clobbers `rcx`/`r11`), invalidates cached loads (`memopt`, redundant-load elimination), and is never deleted or reordered (its result is used or not, the effect stays).
 - **x86-64 native.** `Syscall` pushes its seven values, then pops them into `r9 r8 r10 rdx rsi rdi rax` (so an argument living in one of those registers cannot be overwritten before it is read) and executes `syscall`. `Global(n)` is the constant address `0x600000 + 256 + 8n` in the writable runtime segment; when a program uses any `Global`, `_start` additionally stores the initial `rsp` into cell 0. Programs without it get byte-identical start-up code.
 - **C backend (oracle).** `__syscall` is libc `syscall()` with `errno` converted to `-errno` and a `fflush(stdout)` first; `__global` is a static array whose cell 0 points at a heap image of `argc/argv/envp` built in `main`; `__alloc/__free` are `malloc/free`.
-- **AArch64 native.** The compiler follows calls, function addresses and vtables from `main` before checking which APIs it needs. It translates the constant syscall numbers used by [`std.net`](NET.md), including socket I/O and timeouts, to Linux AArch64 numbers in `x8`, loads arguments into `x0`–`x5` and issues `svc #0`. Reachable code that uses `__global`, a runtime syscall number or a syscall outside the supported set produces a compile-time error.
+- **AArch64 native.** The compiler follows calls, function addresses and vtables from `main` before checking which APIs it needs. It translates supported syscall numbers and arguments, then issues `svc #0`. Cell 0 holds the initial stack pointer. Runtime syscall numbers and calls outside the supported set produce a compile-time error. See the [AArch64 backend limits](BACKEND.md).
 - **Windows native.** Raw system calls and `__global` produce a compile-time error.
 
 ## Tests
 
-`tests/io_*.yx` run on both backends under `tests/run_all.sh`, which learned two optional inputs per test (nothing changes for tests without them): `tests/<name>.stdin` is fed to the program and `tests/<name>.args` holds its arguments, one per line; `YX_IO_TEST=hello_env` is always in the environment. Tests that touch files create their own temp files under `/tmp` (named with `process_id()`) and delete them. `tests/fs_basic.yx`, `tests/env_basic.yx` (+ `.args`) and `tests/time_clock.yx` cover `std.fs`, `std.env` and `std.time` with every error kind they can produce (both backends + ASan); `tests/e980`..`e984` are the checker errors for misuse (unhandled `Result`, private helper, `?` in `main`, `Instant` where a duration goes, no `env.set`). `tests/io_targets.sh` checks the compile-time errors of the other targets (also for the three new modules).
+`tests/io_*.yx` run on both backends under `tests/run_all.sh`, which learned two optional inputs per test (nothing changes for tests without them): `tests/<name>.stdin` is fed to the program and `tests/<name>.args` holds its arguments, one per line; `YX_IO_TEST=hello_env` is always in the environment. Tests that touch files create their own temp files under `/tmp` (named with `process_id()`) and delete them. `tests/fs_basic.yx`, `tests/env_basic.yx` (+ `.args`) and `tests/time_clock.yx` cover `std.fs`, `std.env` and `std.time` with every error kind they can produce (both backends + ASan); `tests/e980`..`e984` are the checker errors for misuse (unhandled `Result`, private helper, `?` in `main`, `Instant` where a duration goes, no `env.set`). `tests/io_targets.sh` checks target support and `tests/a64_all.sh --system` runs the AArch64 system fixtures under QEMU.
 
 ## Not done yet
 
-Non-blocking I/O and `epoll`, threads and a lock around the stdin buffer, time zones, a Windows port and the remaining filesystem and process APIs on AArch64. See [NET.md](NET.md) for blocking TCP.
+Non-blocking I/O and `epoll`, threads and a lock around the stdin buffer, time zones, a Windows port and process spawning on AArch64. See [NET.md](NET.md) for blocking TCP.
 
 ## Ending the process: `exit`, `exit_clean`, `run_status`
 

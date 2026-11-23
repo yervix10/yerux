@@ -28,9 +28,9 @@ graph.
 
 | M | Name | Contents | Depends on | Effort | Done when |
 |---|---|---|---|---|---|
-| **M1** | Native backend foundations | x86-64 Linux native backend, register allocation, structs/enums/match, borrows, allocator and drop glue are implemented. AArch64 Linux core IR and Windows PE support are present with documented limitations. C remains the default backend and test oracle. | substantially complete | — | See `BACKEND.md` for supported features and target-specific gaps. |
+| **M1** | Native backend foundations | x86-64 Linux native backend, register allocation, structs/enums/match, borrows, allocator and drop glue are implemented. AArch64 Linux covers core IR and basic OS services. Windows PE support is present with documented limitations. C remains the default backend and test oracle. | substantially complete | — | See `BACKEND.md` for supported features and target-specific gaps. |
 | **M2** | Systems types and language core | Sized integers, `Float`/`Float32`, `Ptr<T>` construction, `String`, generic `List<T>`, `Option`/`Result`/`?`, modules, formatting, ranges, compile-time evaluation, fixed-size arrays `[T; N]` and second-class slices `view [T]`/`mut [T]` are implemented (docs/ARRAYS.md: owned elements, `==`/`print`, `const` items, `const N: Int` parameters, chunks/windows/split_at, arrays in comptime). | substantially complete | — | See `SPEC.md` and `docs/STDLIB.md`. |
-| **M3** | Stdlib core + FFI | `std.io` has an implemented first slice, extended by `std.fs` (directories, metadata), `std.env` and the clocks/calendar of `std.time` (Linux x86-64 native + C backend), then by file handles (explicit close), binary/buffered I/O, links, `env.set` and `time.Duration` (docs/STDLIB_SYSTEM.md), and `std.process` (docs/STDLIB_PROCESS.md). C FFI works through the C backend and Linux x86-64 native path; dynamic ELF loading is implemented for that native path. `std.net` provides TCP sockets with configurable timeouts and endpoint queries (docs/NET.md) and `std.http` a small HTTP/1.1 client; also `std.log`, `std.kv`, `std.compress` (run-length), `std.unicode`, `std.sync`, and the text/encoding/regex/csv/toml/hash/sort/iter/collections modules (docs/STDLIB.md). The broader syscall, polling and capability design remains future work. | partial | — | See `docs/STDLIB_IO.md` and `docs/FFI.md`. |
+| **M3** | Stdlib core + FFI | `std.io` has an implemented first slice, extended by `std.fs` (directories, metadata), `std.env` and the clocks/calendar of `std.time` (Linux x86-64 and AArch64 native + C backend), then by file handles (explicit close), binary/buffered I/O, links, `env.set` and `time.Duration` (docs/STDLIB_SYSTEM.md), and `std.process` on x86-64 native and C (docs/STDLIB_PROCESS.md). C FFI works through the C backend and Linux x86-64 native path; dynamic ELF loading is implemented for that native path. `std.net` provides TCP sockets with configurable timeouts and endpoint queries (docs/NET.md) and `std.http` a small HTTP/1.1 client; also `std.log`, `std.kv`, `std.compress` (run-length), `std.unicode`, `std.sync`, and the text/encoding/regex/csv/toml/hash/sort/iter/collections modules (docs/STDLIB.md). The broader syscall, polling and capability design remains future work. | partial | — | See `docs/STDLIB_IO.md` and `docs/FFI.md`. |
 | **M4** | Window + pixels (Linux) | Wayland client from scratch, memfd+shm, xdg-shell, events; first CPU fill; headless Weston CI + golden images | M3 (sockets only; no FFI needed) | 3-5 | Solid-colour window, closes cleanly |
 | **M5** | Text and first widgets | Closures and function values (done); interfaces/traits with dynamic dispatch (done: `Box<dyn Trait>`); TTF reader, outline rasterizer, glyph cache; display list; pointer/keyboard input; box-constraint layout core; "counter" app | M4, language work | 6-9 | Line of text and clickable button (Linux Wayland, CPU) |
 | **M6** | Framework core + X11 | Element/render tree, rebuild/state model (decision on diff vs signals), gestures, focus, scroll, animation ticker/vsync; X11 backend; hot restart | M5 | 8-12 | Todo-list app with text field (Latin) runs on Wayland and X11 |
@@ -50,7 +50,7 @@ expensive milestones and are at zero.
 
 | M | Done / items | % | Evidence and gaps |
 |---|---|---|---|
-| M1 | 9 / 9 | 100 | x86-64 backend, register allocation, structs/enums/match, borrows, allocator, drop glue, AArch64 core IR (`tests/a64_all.sh`), Windows PE (`tests/wine_all.sh`; not run on real Windows), C backend as oracle |
+| M1 | 9 / 9 | 100 | x86-64 backend, register allocation, structs/enums/match, borrows, allocator, drop glue, AArch64 core IR and Linux system services (`tests/a64_all.sh`), Windows PE (`tests/wine_all.sh`; not run on real Windows), C backend as oracle |
 | M2 | 12 / 12 | 100 | sized ints, floats, `Ptr<T>`, `String`, `List<T>`, `Option`/`Result`/`?`, modules, formatting, ranges, `comptime`, arrays, slices |
 | M3 | 12 / 13 | 92 | `std.io/fs/env/time/process/net`, handles, binary/buffered I/O, links, `Duration`, C FFI, dynamic ELF; missing: the broader capability design |
 | M4 | 0 / 6 | 0 | no Wayland, shm, xdg-shell, windowing code in the repository (RENDERING.md is design only) |
@@ -61,8 +61,11 @@ expensive milestones and are at zero.
 | M9 | 1.5 / 7 | 21 | PE writer (0.5: no `.pdata`, fixed base, console only) and Win64 calling convention at the OS boundary; no callbacks, Win32 window, IME, DPI, Vulkan |
 | M10 | 0 / 6 | 0 | `std.unicode` is a small helper set, not a shaping engine |
 | M11 | 0 / 6 | 0 | `std.compress` is run-length encoding, not an image codec |
-| M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, no OS services); nothing else |
+| M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, console, filesystem, environment, clocks and blocking TCP); Apple, mobile and web pending |
 | **All** | **43.5 / 100** | **43.5** | |
+
+The AArch64 system fixture group passed 30/30 under QEMU, up from 3/30 at
+`a1e3b3a` on the same corpus. See the [AArch64 backend limits](BACKEND.md).
 
 ### Numbers behind the table
 

@@ -1,9 +1,9 @@
 # System library, part 2: `impl Drop`, file handles, binary I/O, links, `env.set`, `Duration`
 
 Extends [STDLIB_IO.md](STDLIB_IO.md) (std.io / std.fs / std.env / std.time basics). Same ground rules: Linux
-x86-64 native backend and the C backend (oracle), raw syscalls, no libc on the native path. Every failure
-is an `io.IoError` value (`Result<T, io.IoError>`). `--target windows` / `aarch64` refuse these modules at
-compile time (`tests/io_targets.sh`).
+x86-64 and AArch64 native backends and the C backend (oracle). The native backends call the kernel directly.
+Every failure is an `io.IoError` value (`Result<T, io.IoError>`). `--target windows` rejects these modules at
+compile time (`tests/io_targets.sh`). Filesystem metadata uses `statx` and requires Linux 4.11 or later.
 
 ## Handles close themselves (`Drop`)
 
@@ -110,4 +110,4 @@ reported as an unqualified use. Test: `tests/mod_ok/variant_type_names`.
 
 `Duration` operators,
 byte-packed `List<UInt8>` (binary I/O copies), `readv`/`writev`, file locking, `mmap`, `Reader`/`Writer`
-over stdin/stdout, propagating `env.set` to child processes (no spawn API), Windows/aarch64 implementations.
+over stdin/stdout, propagating `env.set` to child processes (no spawn API), a Windows implementation.
