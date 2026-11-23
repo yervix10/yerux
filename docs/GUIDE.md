@@ -1300,6 +1300,11 @@ Beyond the prelude (`String`, `List`, `Map`, `Option`, `Iter`, ...), `import std
 `rand`, `sort`, `iter`, `collections`, `hash`, `hex`, `base64`, `regex`, `csv`, `toml`, `args`, `env`, `io`, `fs`, `path`,
 `process`, `time`, `net`, `http`, `log`, `kv`, `compress`, `unicode` and `sync`.
 
+`std.net` blocks on connect, read, write and accept after five seconds; `connect_timeout(addr, ms)`,
+`set_read_timeout(stream, ms)` and `set_write_timeout(stream, ms)` change one of them (milliseconds, `0` leaves the
+wait to the OS, an expired call is an `IoError` with code 110), and `listener_local_addr(l)`, `local_addr(s)` and
+`peer_addr(s)` report the bound address (with the kernel-assigned port) and both ends of a connected stream.
+
 ```yx
 import std.text
 import std.hash
