@@ -1,0 +1,49 @@
+// Count word frequencies in a paragraph. Map<String, Int> holds the counts and
+// std.collections walks the entries without exposing the map's storage.
+import std.collections
+import std.text
+
+fn is_word_byte(b: Int) -> Bool {
+  return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b >= 128
+}
+
+// Lowercase and trim punctuation from both ends of a whitespace token.
+fn clean(token: view String) -> String {
+  let lower = token.to_lower()
+  var a = 0
+  var b = lower.len()
+  while a < b && !is_word_byte(lower.byte(a)) {
+    a = a + 1
+  }
+  while b > a && !is_word_byte(lower.byte(b - 1)) {
+    b = b - 1
+  }
+  return lower.slice(a, b)
+}
+
+fn main() {
+  let doc = String.from("The quick brown fox jumps over the lazy dog.\nThe dog barks; the fox runs.\nQuick, quick!\n")
+  var counts = Map<String, Int>.new()
+  for line in doc.lines() {
+    for token in text.split_ws(line) {
+      let word = clean(token)
+      if word.len() == 0 {
+        continue
+      }
+      let entry = counts.find(word)
+      if entry < 0 {
+        counts.insert(move word, 1)
+      } else {
+        let next = counts.vals.at(entry) + 1
+        counts.vals.set(entry, next)
+      }
+    }
+  }
+
+  print("unique words: {counts.len()}")
+  collections.map_for_each(counts, |word: view String, n: view Int| {
+    print("{word}: {n}")
+  })
+  let common = String.from("the")
+  print("the: {counts.get_or(common, 0)}")
+}

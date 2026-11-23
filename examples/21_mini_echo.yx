@@ -1,0 +1,27 @@
+// A tiny echo: read standard input line by line and number each line.
+// The fixture tests/21_mini_echo.stdin has CRLF, a blank line and no final newline.
+import std.io
+
+fn main() {
+  var n = 0
+  while true {
+    match io.read_line() {
+      Ok(line) => {
+        match line {
+          Some(body) => {
+            n = n + 1
+            print("{n}| {body}")
+          }
+          None => {
+            break
+          }
+        }
+      }
+      Err(e) => {
+        io.eprintln("echo: {e.message}")
+        break
+      }
+    }
+  }
+  print("echoed {n} lines")
+}

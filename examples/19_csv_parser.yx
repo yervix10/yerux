@@ -1,0 +1,57 @@
+// Parse an RFC 4180 CSV export, validate the records and print a small report.
+// Quoted fields keep commas and doubled quotes, so the parser (std.csv) does the hard part.
+import std.csv
+
+struct Employee { name: String, team: String, salary: Int }
+
+fn salary_of(s: view String) -> Option<Int> {
+  var n = 0
+  if s.parse_int(n) {
+    return Option.Some(n)
+  }
+  return Option.None
+}
+
+fn main() {
+  var data = String.from(r"name,team,salary")
+  data.push_str("\r\n")
+  data.push_str(r#""Ada, Lovelace",engineering,120000"#)
+  data.push_str("\r\n")
+  data.push_str(r"Grace Hopper,engineering,140000")
+  data.push_str("\r\n")
+  data.push_str(r#""Katherine ""KJ"" Johnson",research,130000"#)
+  data.push_str("\r\n")
+  data.push_str(r"Alan Turing,research,125000")
+
+  let rows = csv.parse(data)
+  print("rows: {rows.len()}")
+
+  var total = 0
+  var bad = 0
+  var i = 1
+  while i < rows.len() {
+    let row = rows.at(i)
+    if row.len() != 3 {
+      bad = bad + 1
+      i = i + 1
+      continue
+    }
+    let name = row.at(0)
+    let team = row.at(1)
+    match salary_of(row.at(2)) {
+      Some(salary) => {
+        total = total + salary
+        print("{name} ({team}): {salary}")
+      }
+      None => {
+        bad = bad + 1
+      }
+    }
+    i = i + 1
+  }
+  print("payroll: {total}")
+  print("bad rows: {bad}")
+
+  let encoded = csv.write(rows)
+  print("encoded bytes: {encoded.len()}")
+}
