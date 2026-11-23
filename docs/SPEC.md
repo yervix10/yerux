@@ -828,13 +828,61 @@ A program is a set of files, each one a module. Module behaviour below is fixed 
 
 ## 7. FFI and ABI
 
-(Placeholder: section 7, to be written in its own commit.)
+Foreign functions are declared in `extern "C" { ... }` blocks, with the library given by a
+`link "<name>"` directive (tests/ffi_basic.yx, tests/ffi_native.sh). The implemented ABI is
+**System V x86-64 on Linux**, with ELF dynamic imports for `--native` builds. Anything not listed
+here is **no especificado**. The syntax of [FFI.md](FFI.md) section 6 (`from <os>`, `optional`,
+`@c struct`, `@link_name`, `CStr`) is a proposal with no test; it is **no especificado** and is
+listed in section 10.
 
----
+### 7.1 Declarations and calls
 
-## 7. FFI and ABI
+- A call to an `extern` function must be inside an `unsafe` block (tests/e40_ffi_unsafe.yx).
+- Argument and result types are checked against the declaration. A wrong argument count is an
+  error (tests/e53_ffi_variadic_plain.yx).
+- Types used in the fixtures: `Int` (64-bit), `Int32`, `UInt8`, `UInt64`, `Float`, `Text` and
+  `Ptr<T>` (tests/ffi_basic.yx, tests/ffi_variadic.yx, tests/ffi_native.sh).
+- A `Text` argument is passed as a NUL-terminated C string: `strlen("hello")` returns `5`
+  (tests/ffi_basic.yx).
+- `Ptr<T>.null()` needs no `unsafe` block; `Ptr<T>.alloc(n)` and `p.free()` are language-provided
+  (tests/ptr_construct.yx). `Ptr<T>` values returned by an extern function can be passed to another
+  extern function (tests/ffi_native.sh: `ffi_identity` then `strlen`).
 
-(Placeholder: section 7, to be written in its own commit.)
+### 7.2 Calling convention
+
+- Integer and floating-point arguments follow System V: the first six integer arguments and the
+  first eight `Float` arguments go in registers, the rest on the stack. Tests with eight integer
+  arguments and nine `Float` arguments check the boundary (tests/ffi_native.sh: `ffi_stack8` returns
+  `36`, `ffi_float9` returns `45.0`).
+- Variadic calls set the number of vector registers used in `%al` as System V requires. Observable
+  through correct `%f` output of `printf`/`snprintf` (tests/ffi_variadic.yx, expected output in
+  tests/expected/ffi_variadic.out).
+
+### 7.3 Variadic functions
+
+- `...` must be the last parameter and the declaration needs at least one fixed parameter
+  (tests/e52_ffi_variadic_pos.yx, tests/e51_ffi_variadic_few.yx).
+- Each variadic argument must be an integer, `Bool`, `Char`, `Float`, `Text` or `Ptr<T>`. A struct
+  is rejected (tests/e50_ffi_variadic_arg.yx).
+- `Float32` arguments are promoted to `Float` (tests/ffi_variadic.yx: `%.2f` of a `Float32` prints
+  `0.25`). Narrow integers are passed as 64-bit values (tests/ffi_variadic.yx: a `UInt8` printed with
+  `%u`).
+
+### 7.4 Libraries and targets
+
+- `link "libyeruxffi.so"` loads a shared library at run time; `LD_LIBRARY_PATH` locates it
+  (tests/ffi_native.sh).
+- Native ELF output for x86-64 Linux has no executable-and-writable segment and marks the stack
+  non-executable (tests/ffi_native.sh checks `GNU_STACK` as RW and two `LOAD` segments).
+- On the aarch64 and Windows native targets, any `extern "C"` declaration is rejected with
+  `extern C is not supported on the <target> target yet` (tests/ffi_native.sh).
+
+### 7.5 Not specified
+
+- Callbacks from C into Yerux (taking the address of an `extern "C" fn`).
+- `@c struct` layout, `Ptr` dereference rules, and the mapping of `Ptr` to drop glue.
+- The `ffi` capability and any package-level permission for FFI.
+- Error conversion of C return codes.
 
 ---
 
