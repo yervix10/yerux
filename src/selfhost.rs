@@ -6,6 +6,10 @@ use std::{
 };
 
 pub fn dispatch(args: &[String]) -> Option<i32> {
+    // The formatter already owns its subcommand's `--selfhost` switch.
+    if args.first().is_some_and(|arg| arg == "fmt") {
+        return None;
+    }
     let end = args
         .iter()
         .position(|arg| arg == "--")

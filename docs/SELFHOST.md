@@ -312,8 +312,10 @@ and category for each unsupported file.
    releases, measure parity on diagnostics and programs beyond the current
    corpus, and cover the commands still provided by the Rust CLI. Those
    include project dependency resolution and `--locked`, unit-test and
-   benchmark harnesses, formatter and LSP integration, module objects,
-   and the x86-64, aarch64 and PE native backends and IR options.
+   benchmark harnesses, installed formatter and LSP integration, module
+   objects, and the x86-64, aarch64 and PE native backends and IR options.
+   The existing `yerux fmt --selfhost --stdout FILE` still builds its
+   formatter from the checkout.
 
 ### Compile time
 
