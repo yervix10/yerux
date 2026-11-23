@@ -1083,7 +1083,7 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
       let lock = expression(gen, tree, args + 1)
       let held = temp(gen, tree, lock.ty, transfer(gen, tree, lock))
       line(gen, "sc_drop_ScBox(&{held.code}.m{hex_text("mutex")});")
-      return temp(gen, tree, ty, "{held.code}.m{hex_text("value")}")
+      return temp(gen, tree, ty, "sc_take_ScBox(&{held.code}.m{hex_text("value")})")
     }
     if name == "__parallel_address" {
       let body = local_place(gen, args + 1)
