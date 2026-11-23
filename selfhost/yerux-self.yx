@@ -338,6 +338,9 @@ fn with_prelude(build: view Build, source: view String) -> String {
   let text = read_text(source)
   let scan = "{text}\n{imported_text(build, text, 0)}"
   var head = String.new()
+  if uses(scan, "parallel") {
+    head.push_str(read_text(path.join(build.runtime, "prelude_parallel.yx")))
+  }
   let iterates = uses(scan, "Iter<") || uses(scan, "Iter.") || uses(scan, ".into_iter(") || uses(scan, "fn next(mut self) -> Option<")
   // the iterator prelude has to_set / to_map, which need Set and Map
   if iterates || uses(scan, "Map<") || uses(scan, "Set<") || uses(scan, "Map.") || uses(scan, "Set.") {

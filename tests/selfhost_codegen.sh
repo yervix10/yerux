@@ -86,6 +86,14 @@ if "$driver" "$tmp/deferred-move.yx" 2>"$tmp/deferred-move.err"; then
 fi
 grep -q 'this deferred statement uses' "$tmp/deferred-move.err"
 
+for file in tests/e736_parallel_assign.yx tests/e737_parallel_mut_list.yx; do
+  if "$driver" "$file" -o "$tmp/invalid" 2>"$tmp/parallel.err"; then
+    printf 'selfhost accepted a write through a parallel capture in %s\n' "$file" >&2
+    exit 1
+  fi
+  grep -q 'only borrowed for reading' "$tmp/parallel.err"
+done
+
 source_ast() {
   : >"$tmp/source.err"
   "$tmp/rebuilt/lexer" "$1" --positioned --columns >"$tmp/tokens" 2>"$tmp/source.err" || return
@@ -93,7 +101,7 @@ source_ast() {
     cp "$tmp/ast" "$tmp/source.err"
     return 1
   }
-  if [[ $(<"$tmp/ast") == *',Import('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self' "$1"; then
+  if [[ $(<"$tmp/ast") == *',Import('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\bparallel\b' "$1"; then
     "$tmp/rebuilt/yerux-self" --emit-ast "$1" -o "$tmp/ast" 2>"$tmp/source.err"
   fi
 }
