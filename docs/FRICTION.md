@@ -27,10 +27,9 @@ fn main() {
 }
 ```
 
-The lookup still requires `V: Copy`. The old diagnostic suggested `at(i)`
-and `pop()` on the map. The new one explains the checked index from
-`m.find(key)`, the value place `m.vals.at(i)`, and the removing lookup
-`m.take(key)`.
+The lookup still requires `V: Copy`. The help now points first at
+`collections.map_with` (a borrowed read that returns an Option), then at the
+removing lookup `m.take(key)` (test `e1511_map_get_owned_help`).
 
 ### `read_line` discarded a final CR at EOF
 
@@ -266,15 +265,23 @@ no-follow flags. The example checks each path component with
 `fs.symlink_metadata` before opening and assumes a trusted static tree
 that is not being modified concurrently.
 
-### Open: a sized conversion written with .from gives a missing-variable error
+### Partly fixed: a sized conversion written with .from gives a missing-variable error
 
 ```yx
 fn main() { let b = UInt8.from(0) }
 ```
 
-The diagnostic says the variable `UInt8` does not exist. For this type use a
-suffixed literal such as `0u8` or a checked conversion such as
-`n.to_uint8()`. Both forms work in a fixed-size buffer initializer.
+The diagnostic still says the variable `UInt8` does not exist, but its help now
+says that it is a type and gives the suffixed literal `0u8` or the conversion
+`n.to_uint8()` (test `e1509_type_name_as_value`). Both forms work in a
+fixed-size buffer initializer.
+
+### Fixed (help text): four error messages gave weak next steps
+
+- `print(p)` on a struct: the error now suggests `print("{p}")`, which works for any type with `Show` (`e1510_print_struct_help`).
+- `s.lenn()` on a String: an unknown method close to a built-in one now gets `help: did you mean `len`?` (`e1512_string_method_typo`).
+- `UInt8.from(0)` and the other sized types: the help says it is a type and gives `0u8` or `n.to_uint8()` (`e1509_type_name_as_value`).
+- `Map.get` on an owned value: the help points at `collections.map_with` first (`e1511_map_get_owned_help`).
 
 ### Fixed: formatting an escaped apostrophe desynchronized later Char tokens
 

@@ -1,0 +1,5 @@
+// Map.get on a non-Copy value: the help points at collections.map_with (borrowed read) first.
+fn main() {
+  var m = Map<String, String>.new()
+  print(m.get("key"))
+}

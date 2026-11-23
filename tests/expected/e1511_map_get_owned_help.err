@@ -1,0 +1,9 @@
+error: type Map<String, String> has no method 'get'
+ --> tests/e1511_map_get_owned_help.yx:4:9
+  |
+4 |   print(m.get("key"))
+  |         ^^^^^^^^^^^^
+  = 'get' needs V: Copy, but String does not implement Copy; String values are owned and cannot be copied
+  = help: `import std.collections` and read it with `collections.map_with(m, key, |v: view V| ..)`, which returns an Option; or `m.take(key)` removes and returns the value
+
+1 error(s). Nothing was generated.
