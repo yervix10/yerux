@@ -46,6 +46,15 @@ fn main() {
 Feed the executable with `printf 'a\r'`. It used to print `1`. It now prints
 `2`, preserving the CR as input data. CRLF still ends a line and is stripped.
 
+### Owned map lookups no longer need an index or a storage field
+
+A caller that needed to read an owned value without removing it used `find`
+and checked for `-1` before borrowing `vals.at(i)`. Now
+`collections.map_with(m, k, f)` returns `Option<R>`: `f` receives the value by
+`view` and its result is wrapped in `Some`, or `None` when the key is missing.
+The map keeps the value. `Option<view V>` itself is not expressible, so the
+borrow stays inside the callback. Test: `std_map_with`.
+
 ## Open
 
 ### Selfhosted clone derivation fails on generic fields
@@ -65,15 +74,6 @@ fn main() {
 with the bootstrap compiler on clone/inference errors for this generic derive.
 The failing fixture also exercises cloning a generic enum payload containing
 the cloned struct. This repro is recorded for the selfhost compiler work.
-
-### Fixed: owned map lookups no longer need an index or a storage field
-
-A caller that needed to read an owned value without removing it used `find`
-and checked for `-1` before borrowing `vals.at(i)`. Now
-`collections.map_with(m, k, f)` returns `Option<R>`: `f` receives the value by
-`view` and its result is wrapped in `Some`, or `None` when the key is missing.
-The map keeps the value. `Option<view V>` itself is not expressible, so the
-borrow stays inside the callback. Test: `std_map_with`.
 
 ### Built-in string borrows require a named place
 
@@ -251,12 +251,13 @@ The codec now passes slices to `net.read_into` and `net.write_bytes`,
 and uses `io.write_stdout_bytes` to emit the body. Byte containers
 currently need a scratch copy for direct socket I/O.
 
-### Open: blocking sockets lack timeouts and a bound-address query
+### Fixed: blocking sockets lack timeouts and a bound-address query
 
-`net.listen` can bind port zero, but the API cannot return the selected
-port. The loopback test reserves a port and retries on a collision.
-Blocking reads have no timeout option, so the example handles peers
-sequentially and the test runner bounds each exchange externally.
+`net.listen` can bind port zero, and `listener_local_addr(listener)` returns
+the kernel-assigned port (`local_addr(stream)` and `peer_addr(stream)` query
+connected stream endpoints). Sockets now support configurable timeouts via
+`connect_timeout(addr, ms)`, `set_read_timeout(stream, ms)`, and
+`set_write_timeout(stream, ms)` (test `net_timeouts`). See [NET](NET.md#timeouts-and-addresses).
 
 ### Open: path lookup and file open are separate operations
 
