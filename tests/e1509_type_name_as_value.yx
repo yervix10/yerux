@@ -1,0 +1,2 @@
+// A sized integer type used as a value (`UInt8.from(0)`): the help suggests a suffixed literal or a conversion.
+fn main() { let b = UInt8.from(0) }

@@ -1,0 +1,5 @@
+// An unknown String method close to a built-in one gets a "did you mean" hint.
+fn main() {
+  let s = String.from("a")
+  print(s.lenn())
+}

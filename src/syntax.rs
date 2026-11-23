@@ -117,6 +117,12 @@ pub fn render(d: &Diag, file: &str, src: &str) -> String {
 fn diagnostic_hint(msg: &str) -> Option<String> {
     let hint = if msg.starts_with("expected ") && msg.contains(" but this is ") {
         "check the value at this expression; convert it explicitly or change the expected type"
+    } else if let Some(ty) = numeric_type_name(msg) {
+        return Some(format!(
+            "`{ty}` is a type, not a value: write a suffixed literal (`0{}`) or a checked conversion (`n.to_{}()`)",
+            ty.to_lowercase().replacen("uint", "u", 1).replacen("int", "i", 1),
+            ty.to_lowercase()
+        ));
     } else if msg.starts_with("variable '") && msg.ends_with("' does not exist") {
         "check the spelling, scope, and whether the name needs to be imported or qualified"
     } else if msg.starts_with("function '") && msg.ends_with("' does not exist") {
@@ -5007,4 +5013,12 @@ fn strip_derives(user: Vec<Token>) -> Vec<Token> {
         i += 1;
     }
     out
+}
+
+/// `X` of "variable 'X' does not exist" when X is a numeric type name (`UInt8.from(0)`).
+fn numeric_type_name(msg: &str) -> Option<&str> {
+    let name = msg.strip_prefix("variable '")?.strip_suffix("' does not exist")?;
+    let bits = ["8", "16", "32", "64"];
+    let known = bits.iter().any(|b| name == format!("Int{b}") || name == format!("UInt{b}"));
+    known.then_some(name)
 }

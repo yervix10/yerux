@@ -3074,6 +3074,8 @@ impl<'a> Checker<'a> {
                 let mut d = diag(format!("String has no method '{}'", m), pos);
                 if in_text {
                     d = d.note(format!("help: `{m}` is a function of std.text: add `import std.text` and write `text.{m}(s, ..)`"));
+                } else if let Some(near) = nearest_name(m, STRING_METHODS) {
+                    d = d.note(format!("help: did you mean `{near}`?"));
                 }
                 self.err(d
                     .note("methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)")
@@ -3503,7 +3505,7 @@ impl<'a> Checker<'a> {
                         self.err(diag(
                             "print only accepts numbers, Char, Bool, Text or String",
                             args[0].pos,
-                        ));
+                        ).note("help: print a value inside a string: `print(\"{x}\")` (any type with Show)"));
                     }
                 }
                 return Ty::Unit;
@@ -6497,7 +6499,7 @@ impl<'a> Checker<'a> {
                                         .is_some_and(|(name, _)| name == "Map")
                                         && matches!(m, "get" | "get_or") =>
                                 {
-                                    note += "\nhelp: use `m.find(key)` and, if the index is nonnegative, borrow `m.vals.at(i)`; `m.take(key)` removes and returns an existing value";
+                                    note += "\nhelp: `import std.collections` and read it with `collections.map_with(m, key, |v: view V| ..)`, which returns an Option; or `m.take(key)` removes and returns the value";
                                 }
                                 _ => {}
                             }
@@ -8450,4 +8452,33 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
+
+/// Built-in String methods, for the "did you mean" hint of an unknown method.
+const STRING_METHODS: &[&str] = &[
+    "len", "push_str", "push_int", "push_char", "push_byte", "push_slice", "reserve", "eq", "byte", "char_at",
+    "char_size", "clear", "slice", "chars", "starts_with", "find", "contains", "trim", "clone",
+];
+
+/// The candidate closest to `m` (edit distance at most 2, and at most a third of its length), if any.
+fn nearest_name(m: &str, names: &[&str]) -> Option<String> {
+    let dist = |a: &str, b: &str| -> usize {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        for i in 1..=a.len() {
+            let mut cur = vec![i; b.len() + 1];
+            for j in 1..=b.len() {
+                let sub = prev[j - 1] + usize::from(a[i - 1] != b[j - 1]);
+                cur[j] = sub.min(prev[j] + 1).min(cur[j - 1] + 1);
+            }
+            prev = cur;
+        }
+        prev[b.len()]
+    };
+    names
+        .iter()
+        .map(|n| (dist(m, n), *n))
+        .filter(|(d, _)| *d <= 2 && *d * 3 <= m.chars().count().max(3))
+        .min()
+        .map(|(_, n)| n.to_string())
 }
