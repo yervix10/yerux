@@ -2675,7 +2675,7 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
             let mut all = b.code;
             all.extend_from_slice(&b.blob);
             let mut elf = elf64(&all, b.entry);
-            if b.dbg.funcs.len() > 0 {
+            if !b.dbg.funcs.is_empty() {
                 crate::dwarf::append(&mut elf, &b.dbg, ir, BASE + HDR, HDR, code_len);
             }
             elf

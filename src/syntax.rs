@@ -839,7 +839,7 @@ pub fn check_array_len(types: &Types, elem: Ty, n: i64, pos: Pos) -> Result<(), 
         return Err(diag("an array needs at least one element", pos)
             .note("help: use `List<T>.new()` for a collection that may be empty"));
     }
-    let ws = array_elem_bytes(&types, elem).max(1) as i128;
+    let ws = array_elem_bytes(types, elem).max(1) as i128;
     if (n as i128) * ws > MAX_ARRAY_BYTES as i128 {
         return Err(diag(
             format!(
@@ -4100,12 +4100,7 @@ impl Parser {
         match tk.t {
             Tok::Num(n) => self.postfix(mk(EK::Int(n), pos)),
             Tok::NumT(v, sfx) => {
-                let k = if sfx.is_empty() {
-                    EK::Int(v as i64)
-                } else {
-                    EK::Int(v as i64)
-                };
-                let mut e = mk(k, pos);
+                let mut e = mk(EK::Int(v as i64), pos);
                 // a typed literal carries its type already; an untyped one that is too big keeps `Ty::Unit`
                 // until the checker decides (it needs to be UInt64)
                 if let Some(t) = numeric::suffix_ty(sfx) {
@@ -4675,15 +4670,12 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
         return out;
     }
     let eof = out.pop();
-    match lex(&gen) {
-        Ok(mut g) => {
-            g.pop();
-            for t in g.iter_mut() {
-                t.pos = at;
-            }
-            out.extend(g);
+    if let Ok(mut g) = lex(&gen) {
+        g.pop();
+        for t in g.iter_mut() {
+            t.pos = at;
         }
-        Err(_) => {}
+        out.extend(g);
     }
     out.extend(eof);
     out
@@ -4807,7 +4799,7 @@ fn derive_impl(
                 let items: Vec<String> =
                     fields.iter().map(|f| format!("{f}: {{self.{f}}}")).collect();
                 let text = if items.is_empty() {
-                    format!("{name}")
+                    name.to_string()
                 } else {
                     format!("{name} {{{{ {} }}}}", items.join(", "))
                 };

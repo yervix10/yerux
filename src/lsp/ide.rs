@@ -313,7 +313,7 @@ pub fn fn_parts(doc: &Doc, name_tok: usize, start: usize, end: usize) -> FnParts
     }
     let mut ret = None;
     let mut sig_end = close.min(end);
-    if close + 1 <= end && close + 1 < t.len() && is_sym(&t[close + 1], "->") {
+    if close < end && close + 1 < t.len() && is_sym(&t[close + 1], "->") {
         let mut e = close + 2;
         while e <= end && e < t.len() && !is_sym(&t[e], "{") {
             e += 1;
@@ -709,7 +709,7 @@ pub fn chain_type(ctx: &Ctx, di: usize, start: usize, end: usize) -> Option<Cur>
         }
         Tok::Id(name) => {
             let name = name.as_str();
-            let call = i + 1 <= end && is_sym(&t[i + 1], "(");
+            let call = i < end && is_sym(&t[i + 1], "(");
             if name == "true" || name == "false" {
                 Cur::Ty("Bool".into())
             } else if name == "self" {
@@ -720,7 +720,7 @@ pub fn chain_type(ctx: &Ctx, di: usize, start: usize, end: usize) -> Option<Cur>
                 let parts = fn_parts(ctx.doc(f.0), f.1.name_tok, f.1.start, f.1.end);
                 i = close;
                 Cur::Ty(parts.ret?)
-            } else if i + 1 <= end && is_sym(&t[i + 1], "{") && name.chars().next().is_some_and(|c| c.is_uppercase()) {
+            } else if i < end && is_sym(&t[i + 1], "{") && name.chars().next().is_some_and(|c| c.is_uppercase()) {
                 i = matching_close(t, i + 1);
                 Cur::Ty(name.to_string())
             } else if let Some(d) = visible_locals(doc, i).into_iter().find(|&j| id_name(&t[j]) == Some(name)) {
