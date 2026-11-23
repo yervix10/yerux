@@ -73,6 +73,12 @@ pub static DWARF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 
 struct Asm {
     code: Vec<u8>,
+    /// (slot, register, code length right after it) of the last `mov [rbp+slot], reg`: an immediate reload is dropped
+    last_store: (i32, u8, usize),
+    /// code length at the last label bound (a jump may land there, so nothing before it can be assumed)
+    last_bind: usize,
+    /// (vreg, condition code, code length) of the last comparison materialised with setcc: the flags still hold it
+    cmp_rec: (usize, u8, usize),
     labels: Vec<Option<usize>>,
     fix: Vec<(usize, usize)>,  // (position of rel32, label)
     dfix: Vec<(usize, usize)>, // (position of rel32, data blob id)
@@ -97,6 +103,9 @@ struct Asm {
 impl Asm {
     fn new(os: Os) -> Asm {
         Asm {
+            last_store: (0, 0, usize::MAX),
+            last_bind: usize::MAX,
+            cmp_rec: (usize::MAX, 0, usize::MAX),
             code: vec![],
             labels: vec![],
             fix: vec![],
@@ -140,6 +149,7 @@ impl Asm {
     }
     fn bind(&mut self, l: usize) {
         self.labels[l] = Some(self.code.len());
+        self.last_bind = self.code.len();
     }
     /// `n` bytes of multi-byte NOPs (Intel recommended forms), n <= 15
     fn nops(&mut self, mut n: usize) {
@@ -304,19 +314,29 @@ impl Asm {
     }
     /// mov r64, [rbp+disp]
     fn load(&mut self, r: u8, slot: i32) {
+        if self.last_store == (slot, r, self.code.len()) && self.last_bind != self.code.len() {
+            return; // `r` still holds the value that was just stored
+        }
         self.rm(0x8B, r, RBP, slot);
     }
     /// mov [rbp+disp], r64
     fn store(&mut self, slot: i32, r: u8) {
         self.rm(0x89, r, RBP, slot);
+        self.last_store = (slot, r, self.code.len());
     }
     /// mov r64, [base+disp]
     fn ld(&mut self, r: u8, base: u8, disp: i32) {
+        if base == RBP && self.last_store == (disp, r, self.code.len()) && self.last_bind != self.code.len() {
+            return; // `r` still holds the value that was just stored to this frame slot
+        }
         self.rm(0x8B, r, base, disp);
     }
     /// mov [base+disp], r64
     fn st(&mut self, base: u8, disp: i32, r: u8) {
         self.rm(0x89, r, base, disp);
+        if base == RBP {
+            self.last_store = (disp, r, self.code.len());
+        }
     }
     /// lea r64, [base+disp]
     fn lea(&mut self, r: u8, base: u8, disp: i32) {
@@ -589,6 +609,12 @@ impl Asm {
         self.alu(0x31, size, size);
         self.bts(size, cls);
         self.bind(done);
+    }
+    /// cmovcc dst, src (64-bit)
+    fn cmov_rr(&mut self, cc: u8, dst: u8, src: u8) {
+        self.rex(true, dst, src);
+        self.raw(&[0x0F, 0x40 + cc]);
+        self.modrm_reg(dst, src);
     }
     fn test_rr(&mut self, r: u8) {
         self.alu(0x85, r, r);
@@ -1614,6 +1640,7 @@ impl<'a> G<'a> {
                         let dr = self.dreg(*d, RAX);
                         self.a.setcc_to(cc, dr);
                         self.fin(*d, dr);
+                        self.a.cmp_rec = (*d, cc, self.a.code.len());
                     }
                 }
             },
@@ -1749,6 +1776,28 @@ impl<'a> G<'a> {
                     let ir = self.reg(*i, RCX);
                     self.a.rm_sib(0x89, vr, br, ir, *k, e);
                 }
+            }
+            Inst::Sel(d, c, a, b) => {
+                // d = c ? a : b without a branch: rax = b; test c; cmovne rax, a
+                // when the comparison that made `c` was the last thing emitted, its flags are still live (movs
+                // do not touch them): cmp + cmovcc, no setcc/test round trip
+                let rec = self.a.cmp_rec;
+                let flags = (rec.0 == *c && rec.2 == self.a.code.len() && self.a.last_bind != rec.2).then_some(rec.1);
+                self.mov_to(RAX, *b);
+                let ar = self.reg(*a, RDX);
+                match flags {
+                    Some(cc) => self.a.cmov_rr(cc, RAX, ar),
+                    None => {
+                        let cr = self.reg(*c, RCX);
+                        self.a.test_rr(cr);
+                        self.a.cmov_rr(CC_NE, RAX, ar);
+                    }
+                }
+                let dr = self.dreg(*d, RAX);
+                if dr != RAX {
+                    self.a.mov_rr(dr, RAX);
+                }
+                self.fin(*d, dr);
             }
             Inst::LeaX(d, b, i, k) => {
                 let (br, e) = self.addr(*b, RAX);
@@ -2112,6 +2161,110 @@ impl<'a> G<'a> {
     }
 }
 
+/// If-conversion: `if c { d = a }` / `if c { d = a } else { d = b }` where every arm is one `Mov`/`Const` into a
+/// vreg becomes `Sel` (cmov) in the branching block, so the branch (and its misprediction) disappears. Block numbers
+/// do not change; the emptied arms are left unreachable.
+fn ifconv(f: &IrFunc) -> Option<IrFunc> {
+    let n = f.blocks.len();
+    let mut preds = vec![0usize; n];
+    for b in &f.blocks {
+        for s in crate::opt::succs(&b.term) {
+            preds[s] += 1;
+        }
+    }
+    let mut g = IrFunc {
+        name: f.name.clone(),
+        lib: f.lib,
+        debug_bindings: f.debug_bindings,
+        nparams: f.nparams,
+        vranges: f.vranges.clone(),
+        nvregs: f.nvregs,
+        slots: f.slots.clone(),
+        blocks: f.blocks.iter().map(|b| Block { insts: b.insts.clone(), term: b.term.clone() }).collect(),
+    };
+    let mut changed = false;
+    for bi in 0..n {
+        let (c, t, e) = match g.blocks[bi].term {
+            Term::Br(c, t, e) => (c, t, e),
+            _ => continue,
+        };
+        // an arm: (block, its single assignment); a branch straight to the join is an empty arm
+        let arm = |g: &IrFunc, x: usize| -> Option<(Vec<Inst>, usize)> {
+            if x == bi || preds[x] != 1 {
+                return None;
+            }
+            let blk = &g.blocks[x];
+            let insts: Vec<Inst> = blk.insts.iter().filter(|i| !matches!(i, Inst::Loc(_))).cloned().collect();
+            match blk.term {
+                Term::Jmp(j) if insts.len() == 1 && matches!(insts[0], Inst::Mov(d, s) if d != s) || matches!(insts.first(), Some(Inst::Const(..)) if insts.len() == 1) => Some((insts, j)),
+                _ => None,
+            }
+        };
+        let (ta, ea) = (arm(&g, t), arm(&g, e));
+        let join = match (&ta, &ea) {
+            (Some((_, j1)), Some((_, j2))) if j1 == j2 => *j1,
+            (Some((_, j)), None) if *j == e && e != bi => *j,
+            (None, Some((_, j))) if *j == t && t != bi => *j,
+            _ => continue,
+        };
+        if join == bi {
+            continue;
+        }
+        let mut sels: Vec<Inst> = vec![];
+        let mut dsts: Vec<V> = vec![];
+        let mut next = g.nvregs;
+        let mut prep: Vec<Inst> = vec![];
+        let src_of = |i: &Inst, prep: &mut Vec<Inst>, next: &mut usize| -> (V, V) {
+            match i {
+                Inst::Mov(d, s) => (*d, *s),
+                Inst::Const(d, k) => {
+                    let tmp = *next;
+                    *next += 1;
+                    prep.push(Inst::Const(tmp, *k));
+                    (*d, tmp)
+                }
+                _ => unreachable!(),
+            }
+        };
+        let tm = ta.as_ref().map(|(i, _)| src_of(&i[0], &mut prep, &mut next));
+        let em = ea.as_ref().map(|(i, _)| src_of(&i[0], &mut prep, &mut next));
+        match (tm, em) {
+            (Some((d1, s1)), Some((d2, s2))) if d1 == d2 => {
+                sels.push(Inst::Sel(d1, c, s1, s2));
+                dsts.push(d1);
+            }
+            (a, b) => {
+                if let Some((d, s)) = a {
+                    sels.push(Inst::Sel(d, c, s, d));
+                    dsts.push(d);
+                }
+                if let Some((d, s)) = b {
+                    sels.push(Inst::Sel(d, c, d, s));
+                    dsts.push(d);
+                }
+            }
+        }
+        if dsts.contains(&c) {
+            continue;
+        }
+        g.nvregs = next;
+        g.vranges.resize(next, None);
+        let blk = &mut g.blocks[bi];
+        for (k, p) in prep.into_iter().enumerate() {
+            blk.insts.insert(k, p);
+        }
+        blk.insts.extend(sels);
+        blk.term = Term::Jmp(join);
+        for x in [t, e] {
+            if x != join {
+                g.blocks[x].insts.clear();
+            }
+        }
+        changed = true;
+    }
+    changed.then_some(g)
+}
+
 fn gen_func(
     a: &mut Asm,
     rt: &Rt,
@@ -2119,6 +2272,8 @@ fn gen_func(
     cold_fn: &[bool],
     debug_scopes: &[usize],
 ) -> (Vec<i32>, Vec<(usize, usize)>) {
+    let converted = if std::env::var_os("YERUX_NO_IFCONV").is_some() || f.debug_bindings { None } else { ifconv(f) };
+    let f = converted.as_ref().unwrap_or(f);
     let (laid, cold) = if std::env::var_os("YERUX_NO_COLD").is_some() {
         (None, vec![false; f.blocks.len()])
     } else {
@@ -2318,6 +2473,17 @@ fn gen_func(
             }
         }
     }
+    // blocks entered from exactly one place: when that is the fall-through from the block before, nothing can
+    // jump to the label, so a reload of a slot stored just before it can be dropped (`Asm::load`)
+    let mut npred = vec![0usize; nb];
+    for (bi, b) in f.blocks.iter().enumerate() {
+        if fwd[bi].is_none() {
+            for t in succs_of(&b.term) {
+                npred[if early[bi] { t } else { thread(t) }] += 1;
+            }
+        }
+    }
+    let no_early = !early.iter().any(|&e| e);
     // innermost loop headers (targets of back edges between hot blocks): aligned to 16 bytes when that costs few NOPs
     let align_max: usize = std::env::var("YERUX_ALIGN")
         .ok()
@@ -2361,7 +2527,11 @@ fn gen_func(
         if hot_header[bi] {
             g.a.align_small(align_max);
         }
+        let before_bind = g.a.last_bind;
         g.a.bind(bl[bi]);
+        if no_early && bi > 0 && npred[bi] == 1 && fwd[bi].is_none() {
+            g.a.last_bind = before_bind;
+        }
         if g.a.dwarf {
             let at = g.a.code.len();
             g.a.cfi.push((at, if frameless || early[bi] { crate::dwarf::CFA_ENTRY } else { crate::dwarf::CFA_FRAME }));

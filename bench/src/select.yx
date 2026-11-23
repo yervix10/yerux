@@ -1,0 +1,34 @@
+// selects on pseudo-random data (running max, clamp at 500 = a 50/50 branch): the case if-conversion (cmov) is for
+fn main() {
+  var data = List<Int>.new()
+  var x = 12345
+  var i = 0
+  while i < 1000 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    data.push(x % 1000)
+    i = i + 1
+  }
+  var best = 0
+  var clamped = 0
+  var rounds = 0
+  while rounds < 20000 {
+    i = 0
+    while i < data.len() {
+      let v = data.get(i)
+      var m = best
+      if v > m {
+        m = v
+      }
+      best = m
+      var c = v
+      if c > 500 {
+        c = 500
+      }
+      clamped = clamped + c
+      i = i + 1
+    }
+    rounds = rounds + 1
+  }
+  print(best)
+  print(clamped)
+}

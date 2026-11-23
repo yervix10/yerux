@@ -39,6 +39,9 @@ fn finalize(f: &mut IrFunc) {
         return;
     }
     let mut did = false;
+    if !pass_off("licm") {
+        did |= crate::loopopt::hoist_header_loads(f);
+    }
     if !pass_off("versioning") {
         let cands = rangeopt_collect(f);
         did |= crate::loopopt::version_checks(f, &cands);
@@ -254,7 +257,7 @@ pub(crate) fn def(i: &Inst) -> Option<V> {
         | Inst::Realloc(d, ..)
         | Inst::LoadX(d, ..)
         | Inst::LeaX(d, ..) => Some(*d),
-        Inst::N(_, d, ..) => Some(*d),
+        Inst::N(_, d, ..) | Inst::Sel(d, ..) => Some(*d),
         Inst::Thread(_, d, _)
         | Inst::Atomic(_, d, _)
         | Inst::Syscall(d, _)
@@ -284,7 +287,7 @@ fn def_mut(i: &mut Inst) -> Option<&mut V> {
         | Inst::Realloc(d, ..)
         | Inst::LoadX(d, ..)
         | Inst::LeaX(d, ..) => Some(d),
-        Inst::N(_, d, ..) => Some(d),
+        Inst::N(_, d, ..) | Inst::Sel(d, ..) => Some(d),
         Inst::Thread(_, d, _)
         | Inst::Atomic(_, d, _)
         | Inst::Syscall(d, _)
@@ -347,6 +350,11 @@ pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
         Inst::LoadX(_, b, i, _) | Inst::LeaX(_, b, i, _) => {
             f(b);
             f(i)
+        }
+        Inst::Sel(_, c, a, b) => {
+            f(c);
+            f(a);
+            f(b)
         }
         Inst::StoreX(b, i, _, v) => {
             f(b);
@@ -517,7 +525,7 @@ fn cp_step(i: &Inst, st: &mut CState) -> Option<Inst> {
         | Inst::Realloc(d, ..)
         | Inst::LoadX(d, ..)
         | Inst::LeaX(d, ..) => st[*d] = Lat::Top,
-        Inst::N(_, d, ..) => st[*d] = Lat::Top,
+        Inst::N(_, d, ..) | Inst::Sel(d, ..) => st[*d] = Lat::Top,
         Inst::StoreX(..) => {}
         Inst::Store(..) | Inst::Copy(..) | Inst::ListPush(..) | Inst::ListFree(..) => {}
         Inst::Free(..)
@@ -679,7 +687,7 @@ fn copyprop(f: &mut IrFunc) {
 
 // ───────────────────────── liveness ─────────────────────────
 
-fn liveness(f: &IrFunc) -> Vec<Vec<bool>> {
+pub(crate) fn liveness(f: &IrFunc) -> Vec<Vec<bool>> {
     // returns live-out per block
     let n = f.blocks.len();
     let nv = f.nvregs;

@@ -1266,6 +1266,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                 let cl = flocs[bi][ii];
                 match ins {
                     Inst::Loc(_) => {}
+                    Inst::Sel(..) => unreachable!("x86-64 if-conversion only"),
                     Inst::Thread(..) | Inst::Atomic(..) | Inst::Global(..) => {
                         unreachable!("rejected by os_intrinsics_error")
                     }

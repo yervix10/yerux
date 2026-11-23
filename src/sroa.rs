@@ -44,6 +44,11 @@ pub(crate) fn uses_mut(i: &mut Inst, f: &mut dyn FnMut(&mut V)) {
             f(b);
             f(i)
         }
+        Inst::Sel(_, c, a, b) => {
+            f(c);
+            f(a);
+            f(b)
+        }
         Inst::StoreX(b, i, _, v) => {
             f(b);
             f(i);

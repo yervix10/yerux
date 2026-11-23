@@ -257,6 +257,8 @@ pub enum Inst {
     /// in the same block belong to that `.yx` position. No effect; the backends turn it into the panic site table
     /// (`strip_locs` removes it first, so register allocation and code generation never see it).
     Loc(u32),
+    /// d = if c != 0 { a } else { b }: introduced by the x86-64 if-conversion only (`x64::ifconv`), never by lowering
+    Sel(V, V, V, V),
 }
 
 /// Instructions that can panic (or call something that can) and so need a location marker in front of them.
@@ -4170,6 +4172,7 @@ pub fn lower_with_debug(prog: &Program, debug: bool) -> Result<IrProgram, String
 fn fmt_inst(i: &Inst) -> String {
     match i {
         Inst::Loc(l) => format!("loc#{}", l),
+        Inst::Sel(d, c, a, b) => format!("v{} = select v{} ? v{} : v{}", d, c, a, b),
         Inst::Const(d, n) => format!("v{} = {}", d, n),
         Inst::Text(d, n) => format!("v{} = text#{}", d, n),
         Inst::VTableAddr(d, n) => format!("v{} = vtable#{}", d, n),
