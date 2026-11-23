@@ -946,7 +946,58 @@ inside functions. Both use the language's own semantics; the compiler evaluates 
 
 ## 9. Standard library contract
 
-(Placeholder: section 9, to be written in its own commit.)
+The standard library is two things: **prelude** types and methods, available without an import, and
+**`std.*` modules**, written in Yerux and embedded in the compiler (27 files in `src/std/`). The
+reference is [STDLIB.md](STDLIB.md). This section fixes only what the tests pin down. A function
+that no test calls is **no especificado** even if the reference lists it.
+
+### 9.1 Modules and imports
+
+- `import std.<name>` makes the module available under its last path segment, for example
+  `import std.hash` then `hash.fnv1a32("")` (tests/std_hash.yx).
+- Private helpers of a `std` module are not visible to the user (tests/e981_fs_private_helper.yx,
+  tests/e1303_process_private_helper.yx). An unknown item is an error (tests/e1502_unknown_module_item.yx).
+- Every module in `src/std/` is imported by at least one test in `tests/`.
+
+### 9.2 Panics and bounds
+
+- Out-of-range `List` slices panic with exit code 101 (tests/panic_list_slice_past_end.yx).
+- A `String` slice end that is not on a character boundary panics with exit code 101
+  (tests/panic_string_slice_end.yx). A valid boundary succeeds (tests/edge_string_utf8_boundaries.yx).
+- `String.push_byte` outside `0..255` panics with exit code 101 (tests/panic_push_byte_neg.yx).
+- Empty-collection and edge-case behaviour of `List`, `String`, `Map`, `Set` and `Option`/`Result`
+  is fixed by tests/edge_list_*.yx, tests/edge_string_*.yx, tests/edge_map_set.yx and
+  tests/edge_option_result.yx.
+
+### 9.3 Modules with fixed behaviour
+
+- `std.hash`: FNV-1a, CRC-32 and SHA-256 known answers (tests/std_hash.yx); hex and byte
+  conversions (tests/std_hash_hex_bytes.yx); base64 and hex encoding (tests/std_encoding.yx).
+- `std.rand`: two generators with the same seed produce the same sequence, and `next` returns values
+  in `0..2^32` (tests/std_rand.yx).
+- `std.compress`: run-length encoding. Decompressing output larger than 16 MiB returns
+  `Err` with the message `decompressed output exceeds 16 MiB limit` (tests/std_compress_hostile.yx).
+  Round trips are in tests/std_compress.yx. The module is not gzip or deflate.
+- `std.kv`, `std.csv`, `std.toml`, `std.regex`: normal and malformed input are covered by
+  tests/std_kv.yx, tests/std_csv.yx, tests/std_toml.yx, tests/std_regex.yx and their `*_hostile`
+  companions. The accepted grammar is described in [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md); behaviour
+  outside it is **no especificado**.
+- `std.collections`: ordered maps, heaps and deques (tests/std_btreemap.yx, tests/std_heap.yx,
+  tests/std_vecdeque.yx).
+- `std.sort`: tests/std_sort.yx. `std.iter`: tests/std_iter.yx. `std.path`: tests/std_path_complete.yx.
+- `std.log`: tests/std_log.yx. `std.args`: tests/std_args.yx, tests/std_args_schema.yx.
+- `std.sync`: tests/std_sync.yx (see section 5 for the thread primitives).
+- `std.fs`, `std.env`, `std.time`, `std.process`, `std.net`, `std.http`: tests/std_fs_metadata.yx,
+  tests/std_env_typed.yx, tests/std_time_calendar.yx, tests/time_duration.yx,
+  tests/process_*.yx, tests/net_loopback.yx, tests/std_http_client.yx. Network and process behaviour
+  beyond these tests is **no especificado**.
+
+### 9.4 Not specified
+
+- Output formats of `std.fmt` and number printing beyond the golden outputs of the tests.
+- Performance, memory use and allocation pattern of any function.
+- Any function not called by a test in `tests/`.
+- Whether an API listed in STDLIB.md but absent from `src/std/` is removed or renamed.
 
 ---
 
