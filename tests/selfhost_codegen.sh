@@ -116,12 +116,19 @@ source_ast() {
   }
   local parsed
   parsed=$(<"$tmp/ast")
-  if [[ $parsed == *',Import('* || $parsed == *',Enum('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\bparallel\b|\b(Atomic|Shared|Locked|Mutex|RwLock|Sender|Receiver)\b|thread_pool|select2' "$1"; then
+  if [[ $parsed == *',Import('* || $parsed == *',Enum('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\b(parallel|spawn|JoinHandle|ThreadPanic|Atomic|Shared|Locked|Mutex|RwLock|Sender|Receiver)\b|thread_pool|select2' "$1"; then
     "$tmp/rebuilt/yerux-self" --emit-ast "$1" -o "$tmp/ast" 2>"$tmp/source.err"
   fi
 }
 
+declare -A concurrency_cases=()
+for file in examples/{concurrency,concurrency_channels,thread_pool}.yx \
+    tests/{conc_parallel,conc_sharing,conc_spawn,concurrency_channel,concurrency_mutex,concurrency_rwlock,concurrency_thread_pool,net_drop,thread_handles_list,std_sync,conc_channel_worker_panic}.yx; do
+  concurrency_cases["$file"]=1
+done
+
 required() {
+  if [[ ${concurrency_cases[$1]:-} != "" ]]; then return 0; fi
   case "$1" in
     tests/selfhost/codegen/*|examples/12_modules/main.yx|examples/project/src/main.yx|examples/06_string.yx|tests/agg_struct_by_value.yx|tests/agg_nested_structs.yx|\
     tests/agg_string_ops.yx|tests/opt_shortcircuit.yx|tests/n2_overflow.yx|\
@@ -137,7 +144,7 @@ required() {
     tests/gen_types.yx|tests/own_deep_box_drop.yx|tests/t912_box_tree.yx|tests/dyn_call_order.yx|tests/dyn_handlers.yx|\
     tests/hard2_dyn_generic_impls.yx|tests/hard2_dyn_holders.yx|tests/hard2_dyn_nested_drop.yx|\
     tests/conc_print.yx|tests/drop_worker.yx|tests/drop_double_panic.yx|tests/drop_panic.yx|\
-    tests/net_loopback.yx|tests/std_http_client.yx|tests/std_sync.yx|tests/enum_implicit_equal.yx|tests/own_deep_scc_drop.yx) return 0 ;;
+    tests/net_loopback.yx|tests/std_http_client.yx|tests/enum_implicit_equal.yx|tests/own_deep_scc_drop.yx) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -151,6 +158,7 @@ fail() {
 total=0
 identical=0
 panics=0
+concurrency_matches=0
 skipped=0
 rejections=0
 declare -A reasons=()
@@ -253,15 +261,21 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
     diff -u "$tmp/rust.err" "$tmp/self.err" | head -n 24 >&2 || true
   else
     identical=$((identical + 1))
+    if [[ ${concurrency_cases[$file]:-} != "" ]]; then
+      concurrency_matches=$((concurrency_matches + 1))
+    fi
     if [[ $rust_rc == 101 ]]; then panics=$((panics + 1)); fi
   fi
 done
 printf 'selfhost codegen: %d/%d identical executions (%d panics), %d outside subset, %d expected rejections, %d mismatches\n' \
   "$identical" "$total" "$panics" "$skipped" "$rejections" "$failures"
+printf 'selfhost concurrency: %d/%d required executions match the Rust C backend\n' \
+  "$concurrency_matches" "${#concurrency_cases[@]}"
 if ((skipped > 0)); then
   printf 'Rejections by category (first diagnostic per candidate):\n'
   for category in "${!reasons[@]}"; do
     printf '%4d  %s\n' "${reasons[$category]}" "$category"
   done | sort -k1,1nr -k2
 fi
-[[ $identical -ge 457 && $panics -ge 2 && $rejections == 1 && $failures == 0 ]]
+[[ $identical -ge 458 && $panics -ge 101 && $skipped == 0 && $rejections == 1 &&
+   $failures == 0 && $concurrency_matches == "${#concurrency_cases[@]}" ]]
