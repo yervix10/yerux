@@ -409,3 +409,83 @@ pub fn version_checks(f: &mut IrFunc, cands: &[CheckInfo]) -> bool {
     }
     changed
 }
+
+/// An instruction that cannot write memory (so a header word read before the loop still holds inside it).
+fn reads_only(i: &Inst) -> bool {
+    matches!(
+        i,
+        Inst::N(..)
+            | Inst::Const(..)
+            | Inst::Text(..)
+            | Inst::Mov(..)
+            | Inst::Bin(..)
+            | Inst::Neg(..)
+            | Inst::Not(..)
+            | Inst::FnAddr(..)
+            | Inst::VTableAddr(..)
+            | Inst::Slot(..)
+            | Inst::Load(..)
+            | Inst::LoadH(..)
+            | Inst::Lea(..)
+            | Inst::Load8(..)
+            | Inst::LoadX(..)
+            | Inst::LeaX(..)
+            | Inst::Check(..)
+            | Inst::CheckNonEmpty(..)
+            | Inst::Assert(..)
+            | Inst::Loc(..)
+            | Inst::Global(..)
+    )
+}
+
+/// Loop-invariant list/string header loads: in a loop that never writes memory (no store, call, allocation...), a
+/// `LoadH` through an address defined outside the loop reads the same word every iteration, so it is read once in
+/// the preheader. This keeps `len`/`ptr` of the lists in registers and lets the range analysis see one length vreg
+/// for the whole loop. Returns true when something moved.
+pub fn hoist_header_loads(f: &mut IrFunc) -> bool {
+    let mut changed = false;
+    let mut done: Vec<usize> = vec![];
+    loop {
+        let loops = find_loops(f);
+        let Some(l) = loops.into_iter().find(|l| !done.contains(&l.header)) else { break };
+        done.push(l.header);
+        let nb = f.blocks.len();
+        let inb = |b: usize| l.body.get(b).copied().unwrap_or(false);
+        if (0..nb).any(|b| inb(b) && f.blocks[b].insts.iter().any(|i| !reads_only(i))) {
+            continue;
+        }
+        let mut ndefs = vec![0usize; f.nvregs];
+        for b in 0..nb {
+            if inb(b) {
+                for i in &f.blocks[b].insts {
+                    if let Some(d) = def(i) {
+                        ndefs[d] += 1;
+                    }
+                }
+            }
+        }
+        let cand = |i: &Inst| matches!(i, Inst::LoadH(d, a, _) if ndefs[*a] == 0 && ndefs[*d] == 1);
+        if !(0..nb).any(|b| inb(b) && f.blocks[b].insts.iter().any(|i| cand(i))) {
+            continue;
+        }
+        let Some(pre) = make_preheader(f, &l) else { continue };
+        let live = crate::opt::liveness(f);
+        let mut hoisted = vec![];
+        for b in 0..nb {
+            if !inb(b) {
+                continue;
+            }
+            let insts = std::mem::take(&mut f.blocks[b].insts);
+            for i in insts {
+                if cand(&i) && matches!(&i, Inst::LoadH(d, ..) if !live[pre][*d]) {
+                    hoisted.push(i);
+                } else {
+                    f.blocks[b].insts.push(i);
+                }
+            }
+        }
+        changed |= !hoisted.is_empty();
+        f.blocks[pre].insts.extend(hoisted);
+    }
+    changed
+}

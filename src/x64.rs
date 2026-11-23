@@ -590,6 +590,12 @@ impl Asm {
         self.bts(size, cls);
         self.bind(done);
     }
+    /// cmovcc dst, src (64-bit)
+    fn cmov_rr(&mut self, cc: u8, dst: u8, src: u8) {
+        self.rex(true, dst, src);
+        self.raw(&[0x0F, 0x40 + cc]);
+        self.modrm_reg(dst, src);
+    }
     fn test_rr(&mut self, r: u8) {
         self.alu(0x85, r, r);
     }
@@ -1750,6 +1756,19 @@ impl<'a> G<'a> {
                     self.a.rm_sib(0x89, vr, br, ir, *k, e);
                 }
             }
+            Inst::Sel(d, c, a, b) => {
+                // d = c ? a : b without a branch: rax = b; test c; cmovne rax, a
+                self.mov_to(RAX, *b);
+                let ar = self.reg(*a, RDX);
+                let cr = self.reg(*c, RCX);
+                self.a.test_rr(cr);
+                self.a.cmov_rr(CC_NE, RAX, ar);
+                let dr = self.dreg(*d, RAX);
+                if dr != RAX {
+                    self.a.mov_rr(dr, RAX);
+                }
+                self.fin(*d, dr);
+            }
             Inst::LeaX(d, b, i, k) => {
                 let (br, e) = self.addr(*b, RAX);
                 let dr = self.dreg(*d, RAX);
@@ -2112,6 +2131,108 @@ impl<'a> G<'a> {
     }
 }
 
+/// If-conversion: `if c { d = a }` / `if c { d = a } else { d = b }` where every arm is one `Mov`/`Const` into a
+/// vreg becomes `Sel` (cmov) in the branching block, so the branch (and its misprediction) disappears. Block numbers
+/// do not change; the emptied arms are left unreachable.
+fn ifconv(f: &IrFunc) -> Option<IrFunc> {
+    let n = f.blocks.len();
+    let mut preds = vec![0usize; n];
+    for b in &f.blocks {
+        for s in crate::opt::succs(&b.term) {
+            preds[s] += 1;
+        }
+    }
+    let mut g = IrFunc {
+        name: f.name.clone(),
+        lib: f.lib,
+        debug_bindings: f.debug_bindings,
+        nparams: f.nparams,
+        vranges: f.vranges.clone(),
+        nvregs: f.nvregs,
+        slots: f.slots.clone(),
+        blocks: f.blocks.iter().map(|b| Block { insts: b.insts.clone(), term: b.term.clone() }).collect(),
+    };
+    let mut changed = false;
+    for bi in 0..n {
+        let (c, t, e) = match g.blocks[bi].term {
+            Term::Br(c, t, e) => (c, t, e),
+            _ => continue,
+        };
+        // an arm: (block, its single assignment); a branch straight to the join is an empty arm
+        let arm = |g: &IrFunc, x: usize| -> Option<(Vec<Inst>, usize)> {
+            if x == bi || preds[x] != 1 {
+                return None;
+            }
+            let blk = &g.blocks[x];
+            let insts: Vec<Inst> = blk.insts.iter().filter(|i| !matches!(i, Inst::Loc(_))).cloned().collect();
+            match blk.term {
+                Term::Jmp(j) if insts.len() == 1 && matches!(insts[0], Inst::Mov(d, s) if d != s) || matches!(insts.first(), Some(Inst::Const(..)) if insts.len() == 1) => Some((insts, j)),
+                _ => None,
+            }
+        };
+        let (ta, ea) = (arm(&g, t), arm(&g, e));
+        let join = match (&ta, &ea) {
+            (Some((_, j1)), Some((_, j2))) if j1 == j2 => *j1,
+            (Some((_, j)), None) if *j == e && e != bi => *j,
+            (None, Some((_, j))) if *j == t && t != bi => *j,
+            _ => continue,
+        };
+        if join == bi {
+            continue;
+        }
+        let mut sels: Vec<Inst> = vec![];
+        let mut dsts: Vec<V> = vec![];
+        let mut next = g.nvregs;
+        let mut prep: Vec<Inst> = vec![];
+        let mut src_of = |i: &Inst, prep: &mut Vec<Inst>, next: &mut usize| -> (V, V) {
+            match i {
+                Inst::Mov(d, s) => (*d, *s),
+                Inst::Const(d, k) => {
+                    let tmp = *next;
+                    *next += 1;
+                    prep.push(Inst::Const(tmp, *k));
+                    (*d, tmp)
+                }
+                _ => unreachable!(),
+            }
+        };
+        let tm = ta.as_ref().map(|(i, _)| src_of(&i[0], &mut prep, &mut next));
+        let em = ea.as_ref().map(|(i, _)| src_of(&i[0], &mut prep, &mut next));
+        match (tm, em) {
+            (Some((d1, s1)), Some((d2, s2))) if d1 == d2 => {
+                sels.push(Inst::Sel(d1, c, s1, s2));
+                dsts.push(d1);
+            }
+            (a, b) => {
+                if let Some((d, s)) = a {
+                    sels.push(Inst::Sel(d, c, s, d));
+                    dsts.push(d);
+                }
+                if let Some((d, s)) = b {
+                    sels.push(Inst::Sel(d, c, d, s));
+                    dsts.push(d);
+                }
+            }
+        }
+        if dsts.contains(&c) {
+            continue;
+        }
+        g.nvregs = next;
+        g.vranges.resize(next, None);
+        let blk = &mut g.blocks[bi];
+        blk.insts.extend(prep);
+        blk.insts.extend(sels);
+        blk.term = Term::Jmp(join);
+        for x in [t, e] {
+            if x != join {
+                g.blocks[x].insts.clear();
+            }
+        }
+        changed = true;
+    }
+    changed.then_some(g)
+}
+
 fn gen_func(
     a: &mut Asm,
     rt: &Rt,
@@ -2119,6 +2240,8 @@ fn gen_func(
     cold_fn: &[bool],
     debug_scopes: &[usize],
 ) -> (Vec<i32>, Vec<(usize, usize)>) {
+    let converted = if std::env::var_os("YERUX_NO_IFCONV").is_some() || f.debug_bindings { None } else { ifconv(f) };
+    let f = converted.as_ref().unwrap_or(f);
     let (laid, cold) = if std::env::var_os("YERUX_NO_COLD").is_some() {
         (None, vec![false; f.blocks.len()])
     } else {

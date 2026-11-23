@@ -71,7 +71,7 @@ pub fn inst_def(i: &Inst) -> Option<V> {
         | Inst::Realloc(d, ..)
         | Inst::LoadX(d, ..)
         | Inst::LeaX(d, ..) => Some(*d),
-        Inst::N(_, d, ..) => Some(*d),
+        Inst::N(_, d, ..) | Inst::Sel(d, ..) => Some(*d),
         Inst::Thread(_, d, _)
         | Inst::Atomic(_, d, _)
         | Inst::Syscall(d, _)
@@ -120,6 +120,7 @@ pub fn inst_uses(i: &Inst) -> Vec<V> {
         | Inst::ListPush(a, v)
         | Inst::ListGet(_, a, v) => vec![*a, *v],
         Inst::LoadX(_, b, i, _) | Inst::LeaX(_, b, i, _) => vec![*b, *i],
+        Inst::Sel(_, c, a, b) => vec![*c, *a, *b],
         Inst::StoreX(b, i, _, v) => vec![*b, *i, *v],
     }
 }
