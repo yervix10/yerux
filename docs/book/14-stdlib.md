@@ -150,6 +150,34 @@ Yerux!
 true
 ```
 
+The same functions take raw bytes: `hash.fnv1a32_bytes(data)`, `hash.crc32_bytes(data)` and `hash.sha256_bytes(data)`
+hash a `view [UInt8]`, `hex.encode_bytes(data)` encodes one, and `hex.decode_bytes(text)` returns
+`Result<List<UInt8>, String>` with the same validation as `decode`. The input can be a `List<UInt8>` (from
+`fs.read_bytes`), an array or any slice:
+
+```yerux
+import std.hash
+import std.hex
+
+fn main() {
+  let hi = [104u8, 105u8]              // "hi" as raw bytes
+  print(hex.encode_bytes(hi))
+  print(hash.crc32_bytes(hi) == hash.crc32("hi"))
+  print(hash.fnv1a32_bytes(hi) == hash.fnv1a32("hi"))
+  match hex.decode_bytes("6869") {
+    Ok(data) => { print(data.len()) }
+    Err(e) => { print(e) }
+  }
+}
+```
+
+```output
+6869
+true
+true
+2
+```
+
 ## Regex, CSV, TOML
 
 `std.regex` is a bounded ASCII matcher (literals, `.`, classes, groups, `^ $`, `* + ?`; every match step is

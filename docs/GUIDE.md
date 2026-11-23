@@ -1305,13 +1305,19 @@ Beyond the prelude (`String`, `List`, `Map`, `Option`, `Iter`, ...), `import std
 wait to the OS, an expired call is an `IoError` with code 110), and `listener_local_addr(l)`, `local_addr(s)` and
 `peer_addr(s)` report the bound address (with the kernel-assigned port) and both ends of a connected stream.
 
+`std.hash` and `std.hex` also work on raw bytes: `hash.fnv1a32_bytes` / `crc32_bytes` / `sha256_bytes` take a
+`view [UInt8]` (`List<UInt8>`, array or slice), `hex.encode_bytes` encodes bytes and `hex.decode_bytes` returns
+`Result<List<UInt8>, String>`.
+
 ```yx
 import std.text
 import std.hash
+import std.hex
 
 fn main() {
   print(text.split_ws("a  b c").len())   // 3
   print(hash.crc32("123456789"))         // 3421780262
+  print(hex.encode_bytes([104u8, 105u8])) // 6869
 }
 ```
 
