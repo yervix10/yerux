@@ -187,3 +187,79 @@ alias with deprecation, or document as intended) before the item it touches beco
 M2 (language core) and M3 (stdlib core) in [ROADMAP.md](ROADMAP.md) are the milestones that must
 finish their Stable-candidate items before 1.0. M12 is the release point. This policy takes effect
 when the first item of section 6 is frozen, and then applies to every release after 0.5.0.
+
+## 9. Features documented only in the root SPEC.md
+
+The root [SPEC.md](../SPEC.md) (v0.4 wording) is the detailed feature reference. The features below are
+described there and have no numbered section in [SPEC.md](SPEC.md) of this directory. Their level follows
+the rules of section 1; the tests are the evidence. A feature not covered by a test named here is
+Experimental.
+
+| Feature (root SPEC.md section) | Level | Evidence |
+|---|---|---|
+| String interpolation `"{x}"`, `{{ }}` escapes, raw strings `r"..."`, `r#"..."#` (Strings) | Stable-candidate | tests/fmt_inline_blocks.yx, tests/interp_quotes.yx, tests/raw_string.yx, tests/e1413_raw_unterminated.yx |
+| Text literal converted to `String` where a `String` is expected; temporaries for `view` parameters (Strings) | Stable-candidate | tests/conv_text_literal.yx, tests/e800_text_var_to_string.yx, tests/view_temporaries.yx, tests/e801_mut_temporary.yx |
+| String API: `slice`, `split`, `find`, `trim*`, `to_upper/lower`, `parse_int`, `char_at`, `push_char` (Strings, Char) | Stable-candidate | tests/edge_string_api.yx, tests/string_trim_vt_ff.yx, tests/str_case_latin_ext_a.yx, tests/string_case_greek_micro.yx, tests/unicode_basic.yx |
+| List API beyond the prelude core: `insert`, `swap_remove`, `truncate`, `index_of`, `slice`, `copy`, `is_sorted` (Standard collections) | Stable-candidate | tests/edge_list_api.yx, tests/edge_list_growth_edges.yx |
+| `Map<K, V>` and `Set<T>` (Standard collections) | Stable-candidate | tests/edge_map_set.yx, tests/std_map_with.yx, tests/std_collections.yx |
+| Fixed-size arrays `[T; N]`, slices `view [T]` / `mut [T]`, `chunks`, `windows`, `split_at_mut` | Stable-candidate | tests/slice_basic.yx, tests/slice_chunks.yx, tests/arr_const.yx, tests/comptime_arrays.yx, tests/range_array_loops.yx |
+| Sized integers, checked conversions `to_int8()` etc., wrapping ops, Float semantics and shortest printing (Numbers) | Stable-candidate | tests/num_sized.yx, tests/num_float_basic.yx, tests/num_panic_conv.yx, tests/num_math.yx |
+| Generics by monomorphisation, inference, bounds, generic `impl` blocks (Generics) | Stable-candidate | tests/gen_basic.yx, tests/gen_owned.yx, tests/gen_traits.yx, tests/gen_methods.yx, tests/mod_ok/generic_impls, tests/derive_basic.yx |
+| Explicit type arguments on calls, generic methods, default type arguments (Generics: "not yet") | Not yet available | listed as not implemented in SPEC.md |
+| Traits, `Box<dyn Trait>`, built-in traits `Equal`/`Ordered`/`Show`/`Hash`/`Copy` (Traits) | Stable-candidate | tests/dyn_shapes.yx, tests/dyn_handlers.yx, tests/dyn_call_order.yx, tests/mod_ok/dyn |
+| `Box<T>` and recursive types; iterative release of box chains (Box) | Stable-candidate | 27 tests use `Box<`; release of deep chains: tests/drop_flow.yx, tests/drop_generic.yx. Mutual recursion through `dyn` and join handles: Experimental (SPEC.md says not iterative) |
+| `match`: patterns, guards, ranges, or-patterns, exhaustiveness (Match, Enums and match) | Stable-candidate | tests/match_move_option_tuple.yx, tests/match_temp_text_arg.yx, tests/e772_range_match_not_exhaustive.yx, tests/e785_range_match_wildcard.yx |
+| `if` and `match` as expressions (Enums and match) | Stable-candidate | tests/agg_match_lists.yx, tests/agg_early_return.yx |
+| Tuples `(A, B)` up to 6 elements, `let (a, b) = e` patterns | Stable-candidate | tests/e50_tuple_errors.yx, tests/e53_tuple_big.yx, tests/e956_tuple_one_element.yx, tests/e1401_move_tuple_element.yx |
+| `Char` and UTF-8 rules (Char and UTF-8) | Stable-candidate | tests/unicode_basic.yx, tests/e1020_char_escape_plus.yx |
+| Loops: `for` over ranges, `step`, labels, `break`/`continue`, `for mut`, `for x in move l` (Loops) | Stable-candidate | tests/range_features.yx, tests/e804_step_negative_literal.yx, tests/t915_defer_scopes.yx |
+| `defer` and its ownership rules (defer) | Stable | tests/t915_defer_scopes.yx, tests/drop_exits.yx |
+| `test "name" { }` blocks, `assert`, `assert_eq`, `yerux test` (Tests and assertions) | Stable-candidate | tests/test_cmd (directory), tests/modules.sh (the `yerux test` checks) |
+| Evaluation order rules (Evaluation order) | Stable | tests/eval_order_multiple_panics.yx, tests/interp_move_order.yx, tests/fuzz_order.py |
+| `yerux fmt` canonical layout (Formatter) | Experimental | tests/fmt.sh, tests/fmt/ |
+| Compile-time `comptime` expressions and statements (Comptime) | Stable-candidate | tests/comptime_basic.yx, tests/e966_comptime_string.yx, tests/e1027_comptime_array_oob.yx; step budget 20 million (see section 10) |
+| `Arena<T>` library type, `ArenaRef` tickets and epochs (Arenas) | Experimental | tests/arena_basic.yx, tests/arena_stale.yx |
+| User-defined destructors `impl Drop` / `fn drop(mut self)` (User-defined destructors) | Experimental | tests/drop_basic.yx, tests/drop_panic.yx, tests/drop_worker.yx; docs/DROP.md |
+| Imports with `as`, `<root>` lookup (Modules) | Stable-candidate | tests/mod_ok/shadow_module, tests/modules.sh; the lookup root is in conflict (section 10) |
+| `std.io` and the system modules, `std.process`, `std.fs` (Standard I/O, Standard-library modules) | Stable-candidate for `std.io`/`std.fs`, Experimental for `std.process` | tests/io_*.yx (15 files), tests/std_fs_metadata.yx, tests/process_*.yx; the root list of modules is shorter than STDLIB.md (section 10) |
+| Thread API: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, `parallel for` (Threads) | Experimental | tests/conc_*.yx, tests/concurrency*.yx, tests/e729-e745 |
+| FFI, `link`, `extern "C"`, variadics, `Ptr<T>` (C declarations) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/e40-e53 |
+| Panic exit code 101 and messages (Panic) | Stable | tests/panic_list_slice_past_end.yx and the `panic_*` series |
+
+## 10. Contradictions between docs/SPEC.md, the root SPEC.md and the other design documents
+
+Listed, not resolved. Each one needs a decision by the language owner.
+
+1. **Drop.** The root SPEC.md says the language has no user `Drop` (file handles are closed with
+   `fs.close(move f)`, Standard I/O section) and, in its last section, that a struct may implement `Drop`
+   with `fn drop(mut self)`. Both cannot hold.
+2. **Const generics.** The root "Range integer types" section lists const generics as not implemented; the
+   root "Fixed-size arrays" section says `fn dot<const N: Int>` works. tests/arr_const.yx and
+   tests/e1023_const_generic_lengths.yx exercise the latter.
+3. **Version and milestones.** The root SPEC.md roadmap places "v0.5 Option/Result", "v0.6 effects" and
+   "v1.0 self-hosting"; docs/ROADMAP.md places self-hosting in M7 and the 1.0 release in M12, and the
+   current version is 0.5.0. The roadmap of the root file is outdated.
+4. **Module root.** The root SPEC.md says `<root>` is the folder of the file being compiled. docs/PACKAGES.md
+   says imports resolve in the package's `src/` with `src/lib.yx` as fallback. docs/SPEC.md section 6 does
+   not decide it.
+5. **Comptime budget.** The root SPEC.md says 20 million steps and recursion deeper than 1000 calls.
+   docs/COMPTIME.md proposes 10^8 steps and a 256 MiB memory limit. The 1000-call limit appears in no test.
+6. **Comptime keyword.** The root SPEC.md says no keyword is needed on functions. docs/COMPTIME.md proposes
+   `comptime fn`, `comptime for` and `comptime if`. docs/SPEC.md section 8 leaves them unspecified.
+7. **Parallel and step.** The root Threads section says explicit range steps are unsupported in
+   `parallel for`; the root Loops section says `for i in 0..100 step 5` is supported. They concern different
+   constructs, but the wording is ambiguous.
+8. **Std module list.** The root SPEC.md lists `std.text`, `std.math`, `std.sort`, `std.iter`, `std.fmt`,
+   `std.time`, `std.path`, `std.fs` and `std.env` as the embedded modules. docs/STDLIB.md lists 27 modules.
+9. **Generic `impl` for library and user code.** The root "Standard collections" section says library generic
+   `impl` blocks "exist only inside the library for now", while the "Generics" section says generic `impl`
+   blocks work for user types. Both may hold; the wording should say so.
+10. **Explicit type arguments.** The root "Generics" section lists them as "not yet", but the "Threads" section
+    says `Shared` and `Atomic` "accept explicit type arguments". Clarify whether this is a language feature or
+    library-only syntax.
+11. **Thread handle retention.** The root SPEC.md says a standalone `spawn` statement retains its handle until
+    the block exits. docs/SPEC.md section 5.1 does not state it; docs/CONCURRENCY.md says tasks are joined at
+    scope end. The three must agree before freezing.
+12. **Concurrency design vs implementation.** docs/CONCURRENCY.md describes `spawn { }` without `move`,
+    `Channel<T>.new`, `Task<T>` and work-stealing `parallel` scheduling; the root Threads section describes the
+    implemented forms. Section 1 of this document lists the same difference.

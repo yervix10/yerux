@@ -1,5 +1,13 @@
 # Yerux Language Specification 1.0 (draft)
 
+> **Role of this document.** This is the structured specification: numbered sections, each claim
+> cited to a test in `tests/`, and the runnable examples of sections 1-4 checked as conformance programs
+> (section 11). The detailed feature-by-feature reference, including the range integer rules, the
+> `extern` declarations and the v0.4 wording, is [SPEC.md](../SPEC.md) at the repository root. The two
+> are kept side by side; contradictions between them are listed in
+> [COMPATIBILITY.md](COMPATIBILITY.md), section 10, and are not resolved silently. Stability levels:
+> [COMPATIBILITY.md](COMPATIBILITY.md), section 9.
+
 Status: **draft**. Describes the language as implemented by `yerux` 0.5.0. Where the
 implementation and this text disagree, the text is the target and the difference is recorded in
 section 10 (Pending decisions). Sources: [GUIDE.md](GUIDE.md), [DESIGN.md](DESIGN.md), the

@@ -1,5 +1,12 @@
 # Yerux — Specification v0.4
 
+> **Role of this document.** This is the detailed reference of the language, organised by feature
+> (v0.4 wording). It is the source for the feature list, examples and error messages. The structured
+> 1.0 draft, with numbered sections, one test reference per claim and conformance programs for its
+> examples, is [docs/SPEC.md](docs/SPEC.md). Where the two disagree, the disagreement is listed in
+> [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md), section 10; neither document overrides the other silently.
+> Stability levels of each feature: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md), section 9.
+
 ## C declarations (experimental)
 Linux C-backend builds accept `extern "C" { fn name(arg: Type) -> Type }` declarations and `link "libname"` directives. Linux x86-64 native builds emit dynamically loaded ELF executables for these declarations and lower scalar integer, pointer, and floating-point arguments through SysV AMD64 registers and stack slots. Text literals passed to C are NUL terminated. `Ptr<T>` values may cross the ABI boundary and extern calls must be inside a lexical `unsafe { ... }` block. C variadic functions are declared with a trailing `...` after at least one fixed parameter (`fn snprintf(buf: Ptr<UInt8>, n: UInt64, fmt: Text, ...) -> Int32`); the fixed parameters are checked normally and each extra argument must be an integer, `Bool`, `Char`, `Float`, `Float32` (promoted to `Float`), `Text` or `Ptr<T>`, otherwise the checker reports an error. Pointers can be made without declaring `malloc`: `Ptr<T>.null()`, `Ptr<T>.alloc(n)` (room for `n` elements of `T`, which must be an integer, float or pointer type; needs `unsafe`), `p.is_null()` and `p.free()` (needs `unsafe`; null is a no-op). `Ptr<T>.alloc` memory belongs to the language's own allocator in every backend, so release it with `p.free()`, never with C's `free` (and a pointer from C's `malloc` is released with C's `free`, not `p.free()`). Test: `tests/ptr_construct.yx`. Dereferencing and pointer arithmetic are not implemented. PE/aarch64 native builds reject extern declarations with an explicit target diagnostic; see [docs/FFI.md](docs/FFI.md).
 
