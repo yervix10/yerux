@@ -1,0 +1,25 @@
+struct Tag { name: String }
+
+fn describe(tags: view List<Tag>, i: Int) -> Int {
+  let t = tags.at(i)
+  print(t.name)
+  return t.name.len()
+}
+
+fn main() {
+  let names = [String.from("alpha"), String.from("beta")]
+  let first = names.at(0)
+  let second = names.at(1)
+  print(first)
+  print(second)
+  print(first.len() + second.len())
+  var tags = List<Tag>.new()
+  tags.push(Tag { name: String.from("x") })
+  tags.push(Tag { name: String.from("yy") })
+  print(describe(tags, 1))
+  var words = List<String>.new()
+  words.push(String.from("one"))
+  let w = words.at(0)
+  print(w)
+  print(words.len())
+}
