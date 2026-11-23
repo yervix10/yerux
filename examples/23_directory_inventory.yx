@@ -1,0 +1,111 @@
+// Inventory a small directory tree: recursive listing, sizes, link kinds, then
+// copy/rename/remove with errors reported as values. The sandbox lives under the
+// temporary directory and is named with the process id, so parallel runs do not
+// collide; only relative names appear in the output.
+
+import std.fs
+import std.io
+import std.path
+
+struct Totals { files: Int, dirs: Int, bytes: Int, links: Int }
+
+fn kind_name(k: io.IoErrorKind) -> Text {
+  if k == io.IoErrorKind.NotFound { return "NotFound" }
+  if k == io.IoErrorKind.AlreadyExists { return "AlreadyExists" }
+  if k == io.IoErrorKind.NotDirectory { return "NotDirectory" }
+  if k == io.IoErrorKind.IsDirectory { return "IsDirectory" }
+  if k == io.IoErrorKind.NotEmpty { return "NotEmpty" }
+  if k == io.IoErrorKind.InvalidInput { return "InvalidInput" }
+  return "other"
+}
+
+fn report(what: view String, outcome: Result<Int, io.IoError>) {
+  match outcome {
+    Ok(n) => { print("{what}: ok {n}") }
+    Err(e) => { print("{what}: {kind_name(e.kind)}") }
+  }
+}
+
+fn walk(dir: view String, depth: Int, totals: mut Totals) -> Result<Bool, io.IoError> {
+  let entries = fs.read_dir_entries(dir)?
+  for entry in entries {
+    let child = path.join(dir, entry.name)
+    let pad = String.from("  ").repeat(depth)
+    match entry.kind {
+      Dir => {
+        totals.dirs = totals.dirs + 1
+        print("{pad}{entry.name}/")
+        walk(child, depth + 1, totals)?
+      }
+      File => {
+        let meta = fs.metadata(child)?
+        totals.files = totals.files + 1
+        totals.bytes = totals.bytes + meta.size
+        print("{pad}{entry.name} ({meta.size} bytes)")
+      }
+      Symlink => {
+        totals.links = totals.links + 1
+        print("{pad}{entry.name} (symlink)")
+      }
+      Other => {
+        print("{pad}{entry.name} (other)")
+      }
+    }
+  }
+  return Ok(true)
+}
+
+fn build(root: view String) -> Result<Int, io.IoError> {
+  fs.create_dir_all(path.join(root, "logs/archive"))?
+  fs.create_dir(path.join(root, "tmp"))?
+  fs.write(path.join(root, "README.md"), "# Inventory notes\n")?
+  fs.write(path.join(root, "logs/app.log"), "boot ok\nwarn: disk 91%\n")?
+  fs.write(path.join(root, "logs/archive/2026-01.txt"), "january totals\n")?
+  fs.write(path.join(root, "notes.txt"), "remember the milk\n")?
+  fs.symlink("README.md", path.join(root, "latest"))?
+  return Ok(0)
+}
+
+fn run(root: view String) -> Result<Int, io.IoError> {
+  if fs.exists(root) {
+    fs.remove_dir_all(root)?
+  }
+  build(root)?
+  var totals = Totals { files: 0, dirs: 1, bytes: 0, links: 0 }
+  print("tree:")
+  walk(root, 0, totals)?
+  print("summary: files={totals.files} dirs={totals.dirs} bytes={totals.bytes} links={totals.links}")
+
+  report("copy README", fs.copy(path.join(root, "README.md"), path.join(root, "logs/README.copy")))
+  report("rename notes", fs.rename(path.join(root, "notes.txt"), path.join(root, "logs/notes.txt")))
+  report("remove tmp", fs.remove_dir(path.join(root, "tmp")))
+  report("remove logs", fs.remove_dir(path.join(root, "logs")))
+  print("README exists: {fs.exists(path.join(root, "README.md"))}")
+  print("old notes exists: {fs.exists(path.join(root, "notes.txt"))}")
+
+  match fs.read_to_string(path.join(root, "notes.txt")) {
+    Ok(_) => { print("old notes still readable") }
+    Err(e) => { print("old notes: {kind_name(e.kind)}") }
+  }
+  match fs.read_to_string(path.join(root, "logs/notes.txt")) {
+    Ok(text) => { print("moved notes: {text.len()} bytes") }
+    Err(e) => { print("moved notes: {kind_name(e.kind)}") }
+  }
+  match fs.file_size(path.join(root, "logs/README.copy")) {
+    Ok(n) => { print("copied README: {n} bytes") }
+    Err(e) => { print("copied README: {kind_name(e.kind)}") }
+  }
+  return Ok(totals.files + totals.links)
+}
+
+fn main() {
+  let root = "/tmp/yerux_inventory_{io.process_id()}"
+  match run(root) {
+    Ok(n) => { print("visited {n} entries") }
+    Err(e) => { io.eprintln("inventory: {e}") }
+  }
+  match fs.remove_dir_all(root) {
+    Ok(_) => {}
+    Err(e) => { io.eprintln("cleanup: {e}") }
+  }
+}

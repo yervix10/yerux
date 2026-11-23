@@ -1,0 +1,20 @@
+tree:
+README.md (18 bytes)
+latest (symlink)
+logs/
+  app.log (23 bytes)
+  archive/
+    2026-01.txt (15 bytes)
+notes.txt (18 bytes)
+tmp/
+summary: files=4 dirs=4 bytes=74 links=1
+copy README: ok 18
+rename notes: ok 0
+remove tmp: ok 0
+remove logs: NotEmpty
+README exists: true
+old notes exists: false
+old notes: NotFound
+moved notes: 18 bytes
+copied README: 18 bytes
+visited 5 entries
