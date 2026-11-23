@@ -1,0 +1,10 @@
+// busy for about a second, then prints a checksum: the VM smoke test inspects the running process (image base)
+fn main() {
+  var s = 0
+  var i = 0
+  while i < 1500000000 {
+    s = s + i % 7
+    i = i + 1
+  }
+  print(s)
+}

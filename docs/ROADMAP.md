@@ -58,7 +58,7 @@ expensive milestones and are at zero.
 | M6 | 0 / 8 | 0 | SIGNALS.md is a design document |
 | M7 | 6.5 / 8 | 81 | formatter, LSP, package manager (path/Git resolution, no registry), disassembler check, fuzzing done; self-hosting partial (0.5, 431/447 candidates, see below); DWARF debug info done (`--native --dwarf`: line tables, stack unwinding, locals/params in gdb); module object format stage 1 done (docs/MODULE_OBJECT.md); stage 2 done for the C backend (`--separate`, per-module C objects cached); missing: native backend and objects embedded in .yxo |
 | M8 | 0 / 7 | 0 | |
-| M9 | 1.5 / 7 | 21 | PE writer (0.5: no `.pdata`, fixed base, console only) and Win64 calling convention at the OS boundary; no callbacks, Win32 window, IME, DPI, Vulkan |
+| M9 | 1.5 / 7 | 21 | PE writer (1.0: `.pdata`/`.xdata` unwind info, ASLR with an empty `.reloc`, checked on a Windows Server 2022 VM; console only) and Win64 calling convention at the OS boundary; no callbacks, Win32 window, IME, DPI, Vulkan |
 | M10 | 0 / 6 | 0 | `std.unicode` is a small helper set, not a shaping engine |
 | M11 | 0 / 6 | 0 | `std.compress` is run-length encoding, not an image codec |
 | M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, no OS services); nothing else |
