@@ -1,4 +1,4 @@
-// Driver for the self-hosted compiler. The four stage binaries are installed beside it.
+// Driver for the self-hosted compiler. The stage binaries are installed beside it.
 import std.env
 import std.fs
 import std.io
@@ -13,6 +13,8 @@ struct Build {
   work: String,
   seen: List<String>,
   keep_c: Bool,
+  debug: Bool,
+  optimize: Bool,
 }
 
 fn report(step: view String, message: view String) {
@@ -408,7 +410,29 @@ fn with_prelude(build: view Build, source: view String) -> String {
   return combined
 }
 
-fn compile(build: mut Build, source: view String, output: view String, emit_ast: Bool) -> Bool {
+// Keep emitted C usable without a separate copy of the installed runtime.
+fn emit_c(build: view Build, body: view String, output: view String) -> Bool {
+  var contents = String.new()
+  for row in body.split("\n") {
+    if row.starts_with("#include \"c_") && row.ends_with(".h\"") {
+      let header = path.join(build.runtime, row.slice(10, row.len() - 1))
+      match fs.read_to_string(header) {
+        Err(error) => { report(header, error.message); return false }
+        Ok(text) => { contents.push_str(text) }
+      }
+    } else {
+      contents.push_str(row)
+    }
+    contents.push_str("\n")
+  }
+  if output.len() > 0 { return publish(path.join(build.work, "program.c"), output, contents) }
+  match io.write_stdout(contents) {
+    Err(error) => { report("writing C", error.message); return false }
+    Ok(count) => { return true }
+  }
+}
+
+fn compile(build: mut Build, source: view String, output: view String, mode: view String) -> Bool {
   let entry = path.file_name(source)
   var origin = String.from(source)
   let combined = with_prelude(build, source)
@@ -423,7 +447,7 @@ fn compile(build: mut Build, source: view String, output: view String, emit_ast:
   match invoke(resolver, args, "resolving {source}") {
     None => { return false }
     Some(linked) => {
-      if emit_ast { return publish(linked_path, output, linked) }
+      if mode == "ast" { return publish(linked_path, output, linked) }
       if !write(linked_path, linked) { return false }
     }
   }
@@ -437,7 +461,11 @@ fn compile(build: mut Build, source: view String, output: view String, emit_ast:
   args.push("{user_lines}")
   match invoke(generator, args, "checking and generating C for {source}") {
     None => { return false }
-    Some(body) => { if !write(c_file, body) { return false } }
+    Some(body) => {
+      if mode == "check" { print("ok: no type or ownership errors"); return true }
+      if mode == "c" { return emit_c(build, body, output) }
+      if !write(c_file, body) { return false }
+    }
   }
 
   if build.keep_c {
@@ -452,13 +480,22 @@ fn compile(build: mut Build, source: view String, output: view String, emit_ast:
   }
 
   let exe = path.join(build.work, "program")
-  args = String.from("-std=gnu11,-O2,-w,-fno-math-errno,-ffp-contract=off,-pthread,-I").split(",")
+  args = String.from("-std=gnu11,-w,-fno-math-errno,-ffp-contract=off,-pthread,-I").split(",")
   args.push(String.from(build.runtime))
   args.push(move c_file)
   args.push(String.from("-o"))
   args.push(String.from(exe))
   args.push(String.from("-lm"))
-  match invoke("cc", args, "compiling C for {source}") {
+  if build.optimize { args.push(String.from("-O2")) }
+  else { args.push(String.from("-O0")) }
+  if build.debug { args.push(String.from("-g")) }
+  let flags = env.get_or("YERUX_CC_FLAGS", "").replace("\t", " ").replace("\n", " ").replace("\r", " ")
+  for flag in flags.split(" ") {
+    if flag.len() > 0 { args.push(String.from(flag)) }
+  }
+  var cc = env.get_or("YERUX_CC", "cc")
+  if cc.len() == 0 { cc = String.from("cc") }
+  match invoke(cc, args, "compiling C for {source}") {
     None => { return false }
     Some(ok) => {}
   }
@@ -525,7 +562,7 @@ fn package_name(manifest: view String) -> Option<String> {
 }
 
 fn usage() {
-  print("usage: yerux-self [build] [FILE.yx|PROJECT_DIR|yerux.toml] [-o OUTPUT] [--runtime DIRECTORY] [--emit-ast] [--keep-c] | --stage2 [--sources DIR] [-o DIR]")
+  print("usage: yerux-self [build|check|c] [FILE.yx|PROJECT_DIR|yerux.toml] [-o OUTPUT] [--debug|--release] [--no-opt] [--runtime DIRECTORY] [--emit-ast] [--keep-c] | --stage2 [--sources DIR] [-o DIR]")
 }
 
 // Rebuild every compiler stage (and this driver) from `sources` with the stages installed next to this
@@ -560,6 +597,7 @@ fn build_stage2(stages: view String, runtime: view String, sources: view String,
   }
   args.clear()
   args.push(String.from("-R"))
+  args.push(String.from("-T"))
   args.push(String.from("--"))
   args.push(String.from(runtime))
   args.push(path.join(out, "runtime"))
@@ -574,17 +612,26 @@ fn main() {
   var input = String.new()
   var output = String.new()
   var runtime = String.new()
-  var emit_ast = false
+  var mode = String.from("build")
   var keep_c = false
+  var debug = false
+  var release = false
+  var no_opt = false
   var stage2 = false
-  var sources = String.from("selfhost")
+  var sources = String.new()
   var i = 1
-  if i < cli.len() && cli.at(i) == "build" { i = i + 1 }
+  if i < cli.len() && (cli.at(i) == "build" || cli.at(i) == "check" || cli.at(i) == "c") {
+    mode = String.from(cli.at(i))
+    i = i + 1
+  }
   while i < cli.len() {
     let arg = String.from(cli.at(i))
     if arg == "--help" || arg == "-h" { usage(); return }
-    if arg == "--emit-ast" { emit_ast = true }
+    if arg == "--emit-ast" && mode == "build" { mode = String.from("ast") }
     else if arg == "--keep-c" { keep_c = true }
+    else if arg == "--debug" { debug = true }
+    else if arg == "--release" { release = true }
+    else if arg == "--no-opt" { no_opt = true }
     else if arg == "--stage2" { stage2 = true }
     else if arg == "-o" || arg == "--runtime" || arg == "--sources" {
       i = i + 1
@@ -598,6 +645,13 @@ fn main() {
       return
     } else { input = move arg }
     i = i + 1
+  }
+  if (debug && release) || (mode == "check" && output.len() > 0) ||
+      (keep_c && mode != "build") || (!stage2 && sources.len() > 0) ||
+      (stage2 && (input.len() > 0 || mode != "build" || keep_c || debug || release || no_opt)) {
+    usage()
+    env.exit(2)
+    return
   }
 
   var stages = String.new()
@@ -613,6 +667,7 @@ fn main() {
   }
 
   if stage2 {
+    if sources.len() == 0 { sources = String.from("selfhost") }
     build_stage2(stages, runtime, sources, output)
     return
   }
@@ -629,7 +684,7 @@ fn main() {
     match package_name(manifest) {
       None => { env.exit(1); return }
       Some(name) => {
-        if output.len() == 0 {
+        if output.len() == 0 && (mode == "build" || mode == "ast") {
           let target = path.join(input, "target")
           args.push(String.from("-p"))
           args.push(String.from("--"))
@@ -638,7 +693,7 @@ fn main() {
             None => { env.exit(1); return }
             Some(ok) => {
               output = path.join(target, name)
-              if emit_ast { output.push_str(".ast") }
+              if mode == "ast" { output.push_str(".ast") }
             }
           }
         }
@@ -646,24 +701,25 @@ fn main() {
     }
     input = path.join(input, "src/main.yx")
   } else if output.len() == 0 {
-    if emit_ast { output = path.with_extension(input, "ast") }
-    else { output = path.with_extension(input, "") }
+    if mode == "ast" { output = path.with_extension(input, "ast") }
+    if mode == "build" { output = path.with_extension(input, "") }
   }
 
-  let work_root = path.parent(output)
-  let template = path.join(work_root, ".yerux-self.XXXXXX")
   args.clear()
   args.push(String.from("-d"))
-  args.push(String.from("--"))
-  args.push(move template)
+  if output.len() > 0 {
+    args.push(String.from("--"))
+    args.push(path.join(path.parent(output), ".yerux-self.XXXXXX"))
+  }
   match invoke("mktemp", args, "creating build directory") {
     None => { env.exit(1) }
     Some(created) => {
       var build = Build {
         runtime: move runtime, stages: move stages, root: path.parent(input),
-        work: created.slice(0, created.len() - 1), seen: List<String>.new(), keep_c: keep_c,
+        work: created.slice(0, created.len() - 1), seen: List<String>.new(),
+        keep_c: keep_c, debug: debug, optimize: !(debug || no_opt),
       }
-      let success = compile(build, input, output, emit_ast)
+      let success = compile(build, input, output, mode)
       args.clear()
       args.push(String.from("-rf"))
       args.push(String.from("--"))

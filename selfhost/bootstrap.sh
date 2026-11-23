@@ -6,10 +6,14 @@ selfhost_stages=(lexer parser resolve types codegen fmt yerux-self)
 
 seed_selfhost() {
   local output=$1 stage
+  local seed=${YERUX_SEED:-}
   mkdir -p "$output"
-  cargo build -q
+  if [[ -z $seed ]]; then
+    cargo build -q
+    seed=target/debug/yerux
+  fi
   for stage in "${selfhost_stages[@]}"; do
-    target/debug/yerux build "selfhost/$stage.yx" -o "$output/$stage" >/dev/null
+    "$seed" build "selfhost/$stage.yx" -o "$output/$stage" >/dev/null
   done
 }
 
@@ -30,7 +34,7 @@ compile_selfhost() {
     if [[ -n $reference ]]; then
       cmp "$reference/$stage.c" "$output/$stage.c"
     fi
-    if ! cc -std=gnu11 -O0 -I src "$output/$stage.c" -o "$output/$stage" -pthread -lm 2>"$output/cc.err"; then
+    if ! "${YERUX_CC:-cc}" -std=gnu11 -O0 -I src "$output/$stage.c" -o "$output/$stage" -pthread -lm 2>"$output/cc.err"; then
       printf 'selfhost bootstrap: C compilation failed for %s\n' "$source" >&2
       head -n 20 "$output/cc.err" >&2
       return 1
@@ -51,6 +55,9 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   fi
   mkdir -p "$1"
   destination=$(cd "$1" && pwd)
+  if [[ ${YERUX_SEED:-} == */* && $YERUX_SEED != /* ]]; then
+    export YERUX_SEED="$PWD/$YERUX_SEED"
+  fi
   cd "$(dirname "$0")/.."
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT

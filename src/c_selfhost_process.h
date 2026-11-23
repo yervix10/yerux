@@ -14,6 +14,13 @@ static inline char *sc_process_arg(Str arg) {
   return result;
 }
 
+static inline String sc_env_get_or(Str name, Str fallback) {
+  char *key = sc_process_arg(name);
+  const char *value = key ? getenv(key) : NULL;
+  free(key);
+  return value ? sc_cstr(value) : nx_str_from(fallback);
+}
+
 static inline int sc_capture(FILE *file, String *output) {
   if (fseek(file, 0, SEEK_SET) != 0) return errno;
   char buf[8192];
