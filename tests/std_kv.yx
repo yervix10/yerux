@@ -1,8 +1,9 @@
 import std.kv
 import std.fs
+import std.io
 
 fn main() {
-    let path = String.from("/tmp/yerux_std_kv_test.db")
+    let path = "/tmp/yerux_std_kv_test_{io.process_id()}.db"
     match fs.remove_file(path) { Ok(_) => {} Err(_) => {} }
     let store = kv.Store { path: String.from(path) }
     match kv.set(store, "name", "Yerux") { Ok(_) => {} Err(_) => { print("write error") } }

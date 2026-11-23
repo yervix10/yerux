@@ -4272,7 +4272,7 @@ pub fn dump(p: &IrProgram) -> String {
 }
 
 /// Reject OS intrinsics unavailable on the target. AArch64 validates its supported syscall numbers separately.
-pub fn os_intrinsics_error(p: &IrProgram, allow_syscalls: bool) -> Option<String> {
+pub fn os_intrinsics_error(p: &IrProgram, allow_linux_os: bool) -> Option<String> {
     for f in &p.funcs {
         for b in &f.blocks {
             for i in &b.insts {
@@ -4283,7 +4283,7 @@ pub fn os_intrinsics_error(p: &IrProgram, allow_syscalls: bool) -> Option<String
                             f.name
                         ))
                     }
-                    Inst::Syscall(..) if allow_syscalls => {}
+                    Inst::Syscall(..) | Inst::Global(..) if allow_linux_os => {}
                     Inst::Syscall(..) | Inst::Global(..) => {
                         return Some(format!(
                             "raw system calls (std.io, used by function '{}')",
