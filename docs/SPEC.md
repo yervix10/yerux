@@ -1,5 +1,13 @@
 # Yerux Language Specification 1.0 (draft)
 
+> **Role of this document.** This is the structured specification: numbered sections, each claim
+> cited to a test in `tests/`, and the runnable examples of sections 1-4 checked as conformance programs
+> (section 11). The detailed feature-by-feature reference, including the range integer rules, the
+> `extern` declarations and the v0.4 wording, is [SPEC.md](../SPEC.md) at the repository root. The two
+> are kept side by side; contradictions between them are listed in
+> [COMPATIBILITY.md](COMPATIBILITY.md), section 10, and are not resolved silently. Stability levels:
+> [COMPATIBILITY.md](COMPATIBILITY.md), section 9.
+
 Status: **draft**. Describes the language as implemented by `yerux` 0.5.0. Where the
 implementation and this text disagree, the text is the target and the difference is recorded in
 section 10 (Pending decisions). Sources: [GUIDE.md](GUIDE.md), [DESIGN.md](DESIGN.md), the
@@ -1031,3 +1039,26 @@ unfixed point that no test pins down. The implemented behaviour in sections 1-9 
     import (PACKAGES.md) is not tested. Pending.
 11. **Standard library coverage.** STDLIB.md lists APIs that no test calls, and `prelude_parallel.yx`
     has no test that names `parallel map`/`reduce`. Those APIs are pending until tested.
+
+---
+
+## 11. Conformance tests
+
+Every runnable `yx` example in this document has a test program in `tests/` with its golden output in
+`tests/expected/` (`.out` for stdout, `.code` for the exit code). The programs are checked on the C
+backend and on `--native` by `tests/run_all.sh`.
+
+| Section | Example | Program | Golden |
+|---|---|---|---|
+| 1.3 Literals | literal forms and escapes | tests/spec_01_literals.yx | tests/expected/spec_01_literals.out |
+| 2.6 Range integers | widening, `try_from`, out-of-range `from` | tests/spec_02_range_int.yx | tests/expected/spec_02_range_int.out, `.code` = 101 |
+| 2.8 Function values | fn values, `view fn` parameters, borrowed capture | tests/spec_03_closures.yx | tests/expected/spec_03_closures.out |
+| 3.3 Temporaries | `move`, owned parameter, borrowed `String` argument | tests/spec_04_ownership.yx | tests/expected/spec_04_ownership.out |
+| 4.2 `?` operator | `?` with `defer` on success and on error | tests/spec_05_result_defer.yx | tests/expected/spec_05_result_defer.out |
+| 4.3 Inspecting results | `context` with `?` and `unwrap` | tests/spec_06_context.yx | tests/expected/spec_06_context.out |
+
+Notes:
+- The example in 4.2 was a fragment without `main`. The program adds a `main` that calls it with a
+  successful and a failing divisor. The example in 2.6 ends in a panic, so its golden exit code is 101.
+- Sections 5 to 10 have no runnable `yx` examples; their claims are the test references given in place.
+- Run the conformance set with `tests/run_all.sh spec_`.

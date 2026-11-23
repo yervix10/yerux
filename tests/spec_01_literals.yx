@@ -1,0 +1,13 @@
+fn main() {
+  print(0xFF)            // 255
+  print(1_000_000)       // 1000000
+  print(0b1010)          // 10
+  print(1.5e3)           // 1500.0
+  print(250u8)           // 250
+  print(1.5f32)          // 1.5
+  print('\u{1F600}')     // 😀
+  print("tab\tq\"b\\ {{x}}")   // tab<TAB>q"b\ {x}
+  print(-7 / 2)          // -3  (truncates toward zero)
+  print(10 % 3)          // 1
+  print(!true)           // false
+}

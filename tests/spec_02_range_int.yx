@@ -1,0 +1,13 @@
+type Percent = Int<0..100>
+fn show(p: Percent) { print(p) }
+fn main() {
+  let a: Int<0..255> = 200
+  let b: Int<0..1000> = a          // widening: accepted
+  print(b)                          // 200
+  let n = 150
+  print(Percent.try_from(n).is_err())   // true
+  let p: Percent = 42
+  show(p)                            // 42
+  let x = Int<0..255>.from(300)      // panic: integer conversion out of range: 300 not in 0..255
+  print(x)
+}

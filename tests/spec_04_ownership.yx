@@ -1,0 +1,14 @@
+fn consume(l: List<Int>) -> Int { return l.len() }
+fn grow(l: List<Int>) -> List<Int> { l.push(7); return l }   // owned parameter is mutable
+fn main() {
+  var a = List<Int>.new()
+  a.push(1)
+  print(consume(move a))          // 1
+  // print(a.len())               // error: cannot use 'a': it was already moved
+  let x = grow(List<Int>.new())   // owned temporary, moved in
+  print(x.at(0))                  // 7
+  var s = String.from("ab")
+  let r = String.from("c")
+  s.push_str(r)                   // borrowed String argument, no move
+  print(s)                        // abc
+}

@@ -1,0 +1,19 @@
+fn divide(a: Int, b: Int) -> Result<Int, String> {
+  if b == 0 { return Err(String.from("division by zero")) }
+  return Ok(a / b)
+}
+fn calculation(b: Int) -> Result<Int, String> {
+  defer print("division attempted")
+  let n = divide(60, b)?
+  return Ok(n + 1)
+}
+fn main() {
+  match calculation(5) {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }
+  }
+  match calculation(0) {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }
+  }
+}
