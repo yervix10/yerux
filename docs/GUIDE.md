@@ -505,6 +505,8 @@ fn main() {
 ## 10. Map and Set
 
 ```yx
+import std.collections
+
 struct Point { x: Int, y: Int }
 
 impl Show for Point {
@@ -544,6 +546,8 @@ fn main() {
     }
     i = i + 1
   }
+  let size = collections.map_with(groups, 1, |v: view List<String>| -> Int { return v.len() })
+  print(size.unwrap())                        // 2 (borrowed read: the list stays in the map)
   let moved = groups.take(1)               // removes the entry, moves the list out
   print("{moved}")                           // [n1, n4]
 
@@ -559,6 +563,9 @@ fn main() {
 - `insert(k, v)` moves key and value in; replaces the value if the key exists
 - `find(k)` returns the entry index or -1 (borrow the value with `vals.at(e)`)
 - `get(k)`, `get_or(k, d)` copy the value (need `V: Copy`); `get` panics on a missing key
+- `collections.map_with(m, k, f)` (in `std.collections`) reads a value you cannot copy: `f` receives `view V` and
+  the call returns `Option<R>` (`None` when the key is missing); the map keeps the value. A refused
+  `get` on an owned `V` suggests it first
 - `take(k)` moves the value out and removes the entry (panics if missing)
 - `remove(k)` drops key and value and returns a `Bool`
 - `contains(k)`, `clear()`

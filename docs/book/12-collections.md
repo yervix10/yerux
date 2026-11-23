@@ -87,6 +87,28 @@ b=2
 2
 ```
 
+To read a value you cannot copy (`V` is owned), use `collections.map_with(m, key, f)`: `f` receives the value as
+`view V` and the result is `Some(f(v))`, or `None` when the key is missing. The map keeps the value, so there is
+no entry index and no `-1` to check:
+
+```yerux
+import std.collections
+
+struct Item { name: String, qty: Int }
+
+fn main() {
+  var items = Map<Int, Item>.new()
+  items.insert(7, Item { name: String.from("nut"), qty: 3 })
+  print(collections.map_with(items, 7, |it: view Item| -> Int { return it.qty * 2 }).unwrap())
+  print(collections.map_with(items, 8, |it: view Item| -> Int { return it.qty }).unwrap_or(-1))
+}
+```
+
+```output
+6
+-1
+```
+
 `std.collections` also has a double-ended queue (`vecdeque_*`), a binary heap (`heap_push`/`heap_pop`) and an
 ordered map over a sorted list (`btree_*`), all implemented over `List`.
 
