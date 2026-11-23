@@ -1,6 +1,10 @@
 /* The bootstrap emitter instantiates these helpers for concrete element types. */
-#define SC_LIST(C, E, DROP) \
-typedef struct { E *d; int64_t len, cap; } C; \
+#define SC_LIST_LAYOUT(C, E) \
+struct C { E *d; int64_t len, cap; }; \
+static inline void sc_drop_##C(C *l); \
+static inline void sc_clear_##C(C *l);
+
+#define SC_LIST_HELPERS(C, E, DROP) \
 static inline E *sc_at_##C(C *l, int64_t i) { \
   if (i < 0 || i >= l->len) nx_panic("index out of range"); \
   return &l->d[i]; \
@@ -54,15 +58,21 @@ static inline void sc_truncate_##C(C *l, int64_t n) { \
   if (n < 0) nx_panic("List.truncate length is negative"); \
   while (l->len > n) { --l->len; DROP(&l->d[l->len]); } \
 } \
-static inline void sc_clear_##C(C *l) { \
+static inline void sc_list_elements_##C(C *l) { \
   for (int64_t i = 0; i < l->len; ++i) DROP(&l->d[i]); \
-  l->len = 0; \
 } \
-static inline void sc_drop_##C(C *l) { sc_clear_##C(l); free(l->d); *l = (C){0}; } \
 static inline C sc_take_##C(C *l) { C x = *l; *l = (C){0}; return x; }
 
+#define SC_LIST_DROP(C) \
+static inline void sc_clear_##C(C *l) { sc_list_elements_##C(l); l->len = 0; } \
+static inline void sc_drop_##C(C *l) { sc_clear_##C(l); free(l->d); *l = (C){0}; }
+
+#define SC_LIST_COMPONENT_DROP(C, DROP, TAG) \
+static inline void sc_drop_##C(C *l) { C old = sc_take_##C(l); DROP(TAG, old.d, old.len); } \
+static inline void sc_clear_##C(C *l) { sc_drop_##C(l); }
+
 #define SC_ARRAY(C, E, N) \
-typedef struct { E d[(N) > 0 ? (N) : 1]; } C; \
+struct C { E d[(N) > 0 ? (N) : 1]; }; \
 static inline E *sc_at_##C(C *a, int64_t i) { \
   if (i < 0 || i >= (N)) nx_panic("index out of range"); \
   return &a->d[i]; \
@@ -74,7 +84,7 @@ static inline void sc_drop_##C(C *a) { for (int64_t i = 0; i < (N); ++i) DROP(&a
 static inline C sc_take_##C(C *a) { C x = *a; *a = (C){0}; return x; }
 
 #define SC_SLICE(C, E) \
-typedef struct { E *d; int64_t len; } C; \
+struct C { E *d; int64_t len; }; \
 static inline E *sc_at_##C(C *s, int64_t i) { \
   if (i < 0 || i >= s->len) nx_panic("index out of range"); \
   return &s->d[i]; \

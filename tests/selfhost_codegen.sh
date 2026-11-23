@@ -137,7 +137,7 @@ required() {
     tests/gen_types.yx|tests/own_deep_box_drop.yx|tests/t912_box_tree.yx|tests/dyn_call_order.yx|tests/dyn_handlers.yx|\
     tests/hard2_dyn_generic_impls.yx|tests/hard2_dyn_holders.yx|tests/hard2_dyn_nested_drop.yx|\
     tests/conc_print.yx|tests/drop_worker.yx|tests/drop_double_panic.yx|tests/drop_panic.yx|\
-    tests/net_loopback.yx|tests/std_http_client.yx|tests/std_sync.yx|tests/enum_implicit_equal.yx) return 0 ;;
+    tests/net_loopback.yx|tests/std_http_client.yx|tests/std_sync.yx|tests/enum_implicit_equal.yx|tests/own_deep_scc_drop.yx) return 0 ;;
     *) return 1 ;;
   esac
 }

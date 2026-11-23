@@ -1,11 +1,15 @@
 #include <stddef.h>
 
 typedef void (*ScHeapDrop)(void *);
-typedef struct ScHeapCell {
+typedef struct ScHeapCell *ScBox;
+typedef void (*ScComponentDrop)(ScBox);
+
+struct ScHeapCell {
     ScHeapDrop drop;
+    ScComponentDrop component;
     struct ScHeapCell *next;
     _Alignas(max_align_t) unsigned char data[];
-} *ScBox;
+};
 
 typedef struct ScHeapDropFrame {
     ScHeapDrop drop;
@@ -19,6 +23,7 @@ static inline ScBox sc_box_new(size_t size, ScHeapDrop drop) {
     ScBox box = malloc(sizeof(*box) + size);
     if (!box) nx_panic("out of memory");
     box->drop = drop;
+    box->component = NULL;
     box->next = NULL;
     return box;
 }
@@ -33,6 +38,10 @@ static inline void sc_drop_ScBox(ScBox *slot) {
     ScBox box = sc_take_ScBox(slot);
     if (!box || !box->drop) {
         free(box);
+        return;
+    }
+    if (box->component) {
+        box->component(box);
         return;
     }
     // A repeated destructor signals a recursive path. Keep its pending
@@ -53,6 +62,22 @@ static inline void sc_drop_ScBox(ScBox *slot) {
         free(box);
     }
     sc_heap_drop = frame.previous;
+}
+
+typedef struct { int tag; void *data; int64_t len; } ScDropItem;
+typedef struct { ScDropItem *items; size_t len, cap; } ScDropWorklist;
+
+static inline void sc_drop_push(ScDropWorklist *work, int tag, void *data, int64_t len) {
+    if (!data) return;
+    if (work->len == work->cap) {
+        if (work->cap > SIZE_MAX / 2 / sizeof(ScDropItem)) nx_panic("drop worklist too large");
+        size_t cap = work->cap ? work->cap * 2 : 16;
+        ScDropItem *items = realloc(work->items, cap * sizeof(*items));
+        if (!items) nx_panic("out of memory");
+        work->items = items;
+        work->cap = cap;
+    }
+    work->items[work->len++] = (ScDropItem){tag, data, len};
 }
 
 typedef struct { ScBox box; const NxDynSlot *table; } ScDyn;
