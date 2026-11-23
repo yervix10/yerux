@@ -2526,7 +2526,7 @@ impl<'a> Checker<'a> {
         if matches!(a.k, EK::Move(..)) {
             self.err(
                 diag("this only borrows its String argument: remove `move`", apos)
-                    .note("the String stays yours; it is only read during the call"),
+                    .note("help: drop `move`; the String stays yours and you can use it again after the call"),
             );
         } else if self.isp(a) {
             if let Some(p) = self.place(a) {
@@ -2850,7 +2850,7 @@ impl<'a> Checker<'a> {
                 if mode == Mode::Mut {
                     self.err(
                         diag("pass a variable here (the function borrows it)", b.pos)
-                            .note("a temporary would be modified and thrown away"),
+                            .note("help: store the value in a `var` first, then pass that variable"),
                     );
                     return;
                 }
@@ -2915,7 +2915,7 @@ impl<'a> Checker<'a> {
         if mode == Mode::Mut {
             self.err(
                 diag("pass a variable here (the function borrows it)", apos)
-                    .note("a temporary would be modified and thrown away"),
+                    .note("help: store the value in a `var` first, then pass that variable"),
             );
             return;
         }

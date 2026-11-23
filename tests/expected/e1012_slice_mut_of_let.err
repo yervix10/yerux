@@ -17,6 +17,6 @@ error: pass a variable here (the function borrows it)
   |
 7 |   clear([4, 5])
   |         ^^^^^^
-  = a temporary would be modified and thrown away
+  = help: store the value in a `var` first, then pass that variable
 
 3 error(s). Nothing was generated.

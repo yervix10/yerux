@@ -119,7 +119,7 @@ fn diagnostic_hint(msg: &str) -> Option<String> {
         "check the value at this expression; convert it explicitly or change the expected type"
     } else if let Some(ty) = numeric_type_name(msg) {
         return Some(format!(
-            "`{ty}` is a type, not a value: write a suffixed literal (`0{}`) or a checked conversion (`n.to_{}()`)",
+            "help: `{ty}` is a type, not a value: write a suffixed literal (`0{}`) or a checked conversion (`n.to_{}()`)",
             ty.to_lowercase().replacen("uint", "u", 1).replacen("int", "i", 1),
             ty.to_lowercase()
         ));

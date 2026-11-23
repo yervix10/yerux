@@ -39,7 +39,7 @@ error: this only borrows its String argument: remove `move`
    |
 13 |   s.push_str(move q)
    |              ^^^^^^
-   = the String stays yours; it is only read during the call
+   = help: drop `move`; the String stays yours and you can use it again after the call
 
 error: String has no method 'shout'
   --> examples/e15_list_type_errors.yx:14:3
