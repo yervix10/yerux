@@ -238,7 +238,7 @@ pub enum Inst {
     Check(V, V),         // panic "index out of range" unless 0 <= idx < len
     CheckNonEmpty(V),    // panic "pop from an empty list" when len == 0
     Assert(V),           // panic "assertion failed" when the value is 0 (`assert`, `assert_eq`)
-    /// Raw Linux system call (x86-64 ELF only): d = syscall(args[0] = number, args[1..7] = arguments); the
+    /// Raw Linux system call: d = syscall(args[0] = number, args[1..7] = arguments); the
     /// raw kernel result (-errno on failure). Behaves like a call: may read and write any memory.
     Syscall(V, Vec<V>),
     /// Sequentially consistent access to an aligned 64-bit word. A full memory barrier in the optimizer.
@@ -260,6 +260,9 @@ pub enum Inst {
 }
 
 /// Instructions that can panic (or call something that can) and so need a location marker in front of them.
+/// A location marker before every instruction (the native backend's DWARF line table): set by `--dwarf`/`--debug`.
+pub static ALL_LOCS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn needs_loc(i: &Inst) -> bool {
     match i {
         Inst::Bin(_, op, ..) => matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod),
@@ -278,6 +281,7 @@ pub(crate) fn needs_loc(i: &Inst) -> bool {
 
 /// Take the location markers out of a function: the same instructions without them, and for every instruction
 /// the location it belongs to (0 = unknown; markers apply to the rest of their block).
+/// Each block ends with one extra location for its terminator.
 pub fn strip_locs(f: &IrFunc) -> (IrFunc, Vec<Vec<u32>>) {
     let mut locs = Vec::with_capacity(f.blocks.len());
     let blocks = f
@@ -295,6 +299,7 @@ pub fn strip_locs(f: &IrFunc) -> (IrFunc, Vec<Vec<u32>>) {
                     ls.push(cur);
                 }
             }
+            ls.push(cur); // the terminator follows the last marker too
             locs.push(ls);
             Block {
                 insts,
@@ -306,6 +311,7 @@ pub fn strip_locs(f: &IrFunc) -> (IrFunc, Vec<Vec<u32>>) {
         IrFunc {
             name: f.name.clone(),
             lib: f.lib,
+            debug_bindings: f.debug_bindings,
             nparams: f.nparams,
             vranges: f.vranges.clone(),
             nvregs: f.nvregs,
@@ -319,7 +325,8 @@ pub fn strip_locs(f: &IrFunc) -> (IrFunc, Vec<Vec<u32>>) {
 /// Interned source positions of the IR program: (file, line, column), index 0 = unknown.
 pub struct LocTab {
     pub rows: Vec<(u32, u32, u32)>,
-    ix: HashMap<(u32, u32, u32), u32>,
+    ix: HashMap<((u32, u32, u32), usize), u32>,
+    debug_scopes: Vec<usize>,
 }
 
 impl LocTab {
@@ -327,15 +334,18 @@ impl LocTab {
         LocTab {
             rows: vec![(0, 0, 0)],
             ix: HashMap::new(),
+            debug_scopes: vec![0],
         }
     }
-    fn intern(&mut self, pos: Pos) -> u32 {
-        let key = ((pos.line >> 20) as u32, (pos.line & 0xFFFFF) as u32, pos.col as u32);
+    fn intern(&mut self, pos: Pos, scope: usize) -> u32 {
+        let row = ((pos.line >> 20) as u32, (pos.line & 0xFFFFF) as u32, pos.col as u32);
+        let key = (row, scope);
         if let Some(i) = self.ix.get(&key) {
             return *i;
         }
         let i = self.rows.len() as u32;
-        self.rows.push(key);
+        self.rows.push(row);
+        self.debug_scopes.push(scope);
         self.ix.insert(key, i);
         i
     }
@@ -359,6 +369,8 @@ pub struct IrFunc {
     pub name: String,
     /// a function of the built-in library: its panics are reported at the user's call (see `Inst::Loc`)
     pub lib: bool,
+    /// Preserve frame slots and scope markers for the debugger.
+    pub debug_bindings: bool,
     pub nparams: usize,
     /// Declared integer intervals (`Int<lo..hi>` types), indexed by vreg and possibly shorter than `nvregs`:
     /// every definition of such a vreg produces a value inside the interval (parameters, variables of a range
@@ -369,7 +381,31 @@ pub struct IrFunc {
     pub blocks: Vec<Block>,
 }
 
+pub struct DebugBinding {
+    pub name: String,
+    pub ty: Ty,
+    pub slot: usize,
+    /// The slot holds the address of the value (a borrowed parameter or binding).
+    pub indirect: bool,
+}
+
+#[derive(Default)]
+pub struct DebugBindings {
+    pub decl_loc: u32,
+    pub params: Vec<DebugBinding>,
+    /// Each local extends its parent scope. State 0 precedes the prologue stores, 1 is
+    /// the function body with no locals yet, and state n + 2 adds locals[n].
+    pub locals: Vec<(usize, DebugBinding)>,
+}
+
+pub struct IrDebug {
+    pub types: Types,
+    pub functions: Vec<DebugBindings>,
+    pub scopes: Vec<usize>,
+}
+
 pub struct IrProgram {
+    pub debug: Option<IrDebug>,
     pub funcs: Vec<IrFunc>,
     pub texts: Vec<Vec<u8>>, // literal bytes
     pub main: usize,
@@ -486,6 +522,8 @@ struct L<'a> {
     slots: Vec<usize>,
     vars: HashMap<usize, Loc>,
     memvars: HashSet<usize>,
+    debug: Option<DebugBindings>,
+    debug_scope: usize,
     ret_ptr: Option<V>,
     loops: Vec<LoopL>,
     types: &'a Types,
@@ -680,6 +718,42 @@ fn scan_expr(e: &Expr, sigs: &HashMap<String, Sig>, types: &Types, out: &mut Has
     }
 }
 
+pub(crate) fn native_words(types: &Types, t: Ty) -> usize {
+    match t {
+        Ty::Int | Ty::Range(..) | Ty::Num(_) | Ty::Char | Ty::Bool | Ty::Text | Ty::Ptr(_) => 1,
+        Ty::List(_) | Ty::String => 3,
+        Ty::Fn(_) | Ty::Dyn(_) => 2,
+        Ty::Box(_) => 1,
+        // `[T; N]`: N elements laid out like a List buffer (packed bytes for Bool)
+        Ty::Struct(i) if types.arrays.contains_key(&i) => {
+            let (e, n) = types.arrays[&i];
+            (native_elem_bytes(types, e) * n).div_ceil(8)
+        }
+        Ty::Struct(i) => types.structs[i]
+            .fields
+            .iter()
+            .map(|(_, f)| native_words(types, *f))
+            .sum(),
+        Ty::Enum(i) => {
+            1 + types.enums[i]
+                .variants
+                .iter()
+                .map(|(_, ps)| ps.iter().map(|p| native_words(types, *p)).sum::<usize>())
+                .max()
+                .unwrap_or(0)
+        }
+        _ => 0,
+    }
+}
+
+pub(crate) fn native_elem_bytes(types: &Types, ty: Ty) -> usize {
+    if ty == Ty::Bool {
+        1
+    } else {
+        8 * native_words(types, ty).max(1)
+    }
+}
+
 impl<'a> L<'a> {
     fn v(&mut self) -> V {
         self.nv += 1;
@@ -691,19 +765,22 @@ impl<'a> L<'a> {
         self.blocks.len() - 1
     }
     fn emit(&mut self, i: Inst) {
-        let wants = match &i {
+        let wants = ALL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || match &i {
             Inst::Call(_, id, _) => self.lib_fn.get(*id).copied().unwrap_or(false),
             Inst::CallInd(..) => false,
             other => needs_loc(other),
         };
-        if wants && self.loc.line != 0 {
-            let id = self.locs.intern(self.loc);
-            if self.bloc[self.cur] != id {
-                self.blocks[self.cur].0.push(Inst::Loc(id));
-                self.bloc[self.cur] = id;
-            }
+        if self.debug.is_some() || wants && self.loc.line != 0 {
+            self.mark_location();
         }
         self.blocks[self.cur].0.push(i);
+    }
+    fn mark_location(&mut self) {
+        let id = self.locs.intern(self.loc, self.debug_scope);
+        if self.bloc[self.cur] != id {
+            self.blocks[self.cur].0.push(Inst::Loc(id));
+            self.bloc[self.cur] = id;
+        }
     }
     /// Make `pos` the current source location (library code has none); returns the previous one.
     fn at_pos(&mut self, pos: Pos) -> Pos {
@@ -715,6 +792,9 @@ impl<'a> L<'a> {
     }
     fn term(&mut self, t: Term) {
         if self.blocks[self.cur].1.is_none() {
+            if self.debug.is_some() {
+                self.mark_location();
+            }
             self.blocks[self.cur].1 = Some(t);
         }
     }
@@ -724,31 +804,7 @@ impl<'a> L<'a> {
 
     // ── layout ──
     fn words(&self, t: Ty) -> usize {
-        match t {
-            Ty::Int | Ty::Range(..) | Ty::Num(_) | Ty::Char | Ty::Bool | Ty::Text | Ty::Ptr(_) => 1,
-            Ty::List(_) | Ty::String => 3,
-            Ty::Fn(_) | Ty::Dyn(_) => 2,
-            Ty::Box(_) => 1,
-            // `[T; N]`: N elements laid out like a List buffer (packed bytes for Bool)
-            Ty::Struct(i) if self.types.arrays.contains_key(&i) => {
-                let (e, n) = self.types.arrays[&i];
-                (self.esz(e) as usize * n).div_ceil(8)
-            }
-            Ty::Struct(i) => self.types.structs[i]
-                .fields
-                .iter()
-                .map(|(_, f)| self.words(*f))
-                .sum(),
-            Ty::Enum(i) => {
-                1 + self.types.enums[i]
-                    .variants
-                    .iter()
-                    .map(|(_, ps)| ps.iter().map(|p| self.words(*p)).sum::<usize>())
-                    .max()
-                    .unwrap_or(0)
-            }
-            _ => 0,
-        }
+        native_words(self.types, t)
     }
     fn field_off(&self, sid: usize, name: &str) -> (i32, Ty) {
         let mut off = 0;
@@ -969,11 +1025,7 @@ impl<'a> L<'a> {
     /// Bytes per list element (an element always takes at least one word).
     /// `Bool` elements are packed to one byte (`Load8`/`Store8`); everything else is word-sized.
     fn esz(&self, t: Ty) -> i64 {
-        if t == Ty::Bool {
-            1
-        } else {
-            8 * self.words(t).max(1) as i64
-        }
+        native_elem_bytes(self.types, t) as i64
     }
     /// A place that is one packed byte of a `List<Bool>` (`l.at(i)`): it cannot be read or written with
     /// word loads/stores and cannot be handed out as a pointer.
@@ -1352,10 +1404,12 @@ impl<'a> L<'a> {
     }
     /// Run a nested block: its owned locals are released at the end.
     fn scoped(&mut self, b: &[Stmt]) -> LR<()> {
+        let scope = self.debug_scope;
         self.scopes.push(vec![]);
         self.stmts(b)?;
         self.drop_scope(self.scopes.len() - 1);
         self.scopes.pop();
+        self.debug_scope = scope;
         Ok(())
     }
     /// Register an owned variable (drop flag starts set).
@@ -1394,6 +1448,43 @@ impl<'a> L<'a> {
             self.stmt(s)?;
         }
         Ok(())
+    }
+
+    /// Save a debugger-visible name in a stable frame slot. Borrowed values keep their
+    /// original address so a debugger sees changes made through the callee or its caller.
+    fn debug_binding(&mut self, name: &str, ty: Ty, loc: Loc) -> Option<(DebugBinding, Loc)> {
+        if self.debug.is_none() || name.starts_with(['$', '#']) || name == "_" || ty == Ty::Unit {
+            return None;
+        }
+        let slot = self.slots.len();
+        let home = self.new_slot(1);
+        let (value, actual, indirect) = match loc {
+            Loc::Val(value) => (value, Loc::Mem(home), false),
+            Loc::Mem(addr) => (addr, loc, true),
+        };
+        self.emit(Inst::Store(home, 0, value));
+        Some((
+            DebugBinding {
+                name: name.to_owned(),
+                ty,
+                slot,
+                indirect,
+            },
+            actual,
+        ))
+    }
+
+    fn debug_local(&mut self, binding: DebugBinding) {
+        let debug = self.debug.as_mut().unwrap();
+        debug.locals.push((self.debug_scope, binding));
+        self.debug_scope = debug.locals.len() + 1;
+    }
+
+    fn record_local(&mut self, name: &str, ty: Ty, id: usize) {
+        if let Some((binding, loc)) = self.debug_binding(name, ty, self.vars[&id]) {
+            self.vars.insert(id, loc);
+            self.debug_local(binding);
+        }
     }
 
     /// Introduce a variable holding `init`.
@@ -1455,7 +1546,7 @@ impl<'a> L<'a> {
     /// Bind every leaf of a tuple pattern to a variable holding a copy of that part of the aggregate at `a`.
     fn unpack(&mut self, pat: &UnpackPat, a: V, off: i32, ty: Ty) -> LR<()> {
         match pat {
-            UnpackPat::Bind(_, _, id, _) => {
+            UnpackPat::Bind(name, _, id, _) => {
                 supported(ty, "variables")?;
                 if is_agg(ty) {
                     let src = self.at(a, off);
@@ -1475,6 +1566,7 @@ impl<'a> L<'a> {
                         self.vars.insert(*id, Loc::Val(x));
                     }
                 }
+                self.record_local(name, ty, *id);
             }
             UnpackPat::Tuple(items, _) => {
                 let Ty::Struct(sid) = ty else {
@@ -1499,7 +1591,10 @@ impl<'a> L<'a> {
 
     fn stmt_at(&mut self, s: &Stmt) -> LR<()> {
         match &s.k {
-            SK::Let(_, _, init, id) => self.declare(*id, init)?,
+            SK::Let(name, _, init, id) => {
+                self.declare(*id, init)?;
+                self.record_local(name, init.ty, *id);
+            }
             SK::Assign(target, val) => {
                 supported(val.ty, "assignments")?;
                 if let EK::Var(_, id) = &target.k {
@@ -1642,7 +1737,7 @@ impl<'a> L<'a> {
                 let a = self.expr(init)?;
                 self.unpack(pat, a, 0, init.ty)?;
             }
-            SK::Bind(_, mode, place, id) => {
+            SK::Bind(name, mode, place, id) => {
                 let (base, off) = self.place(place)?;
                 let a = self.at(base, off);
                 self.vars.insert(*id, Loc::Mem(a));
@@ -1657,6 +1752,7 @@ impl<'a> L<'a> {
                     let live = self.at(base, flag);
                     self.capture_flags.insert(*id, live);
                 }
+                self.record_local(name, place.ty, *id);
             }
             SK::Return(opt) => {
                 match opt {
@@ -1703,8 +1799,9 @@ impl<'a> L<'a> {
                         None => self.term(Term::Jmp(body)),
                     }
                     self.switch(body);
+                    let scope = self.debug_scope;
                     if let Some(vi) = arm.variant {
-                        for (k, (_, bid)) in arm.binds.iter().enumerate() {
+                        for (k, (name, bid)) in arm.binds.iter().enumerate() {
                             let (off, pty) = self.payload_off(eid, vi, k);
                             let loc = if is_agg(pty) {
                                 let src = self.at(a, off);
@@ -1721,9 +1818,11 @@ impl<'a> L<'a> {
                                 Loc::Val(x)
                             };
                             self.vars.insert(*bid, loc);
+                            self.record_local(name, pty, *bid);
                         }
                     }
                     self.scoped(&arm.body)?;
+                    self.debug_scope = scope;
                     self.term(Term::Jmp(end));
                     self.switch(next);
                 }
@@ -3765,6 +3864,10 @@ impl<'a> L<'a> {
 }
 
 pub fn lower(prog: &Program) -> Result<IrProgram, String> {
+    lower_with_debug(prog, false)
+}
+
+pub fn lower_with_debug(prog: &Program, debug: bool) -> Result<IrProgram, String> {
     let ids: HashMap<String, usize> = prog
         .funcs
         .iter()
@@ -3799,6 +3902,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         .collect();
     let mut texts = vec![];
     let mut funcs = vec![];
+    let mut debug_functions = vec![];
     let mut loc_tab = LocTab::new();
     let lib_fn: Vec<bool> = prog.funcs.iter().map(|f| f.pos.line >= PRELUDE_LINE).collect();
     let mut helpers = Helpers {
@@ -3829,6 +3933,8 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             slots: vec![],
             vars: HashMap::new(),
             memvars,
+            debug: (debug && f.pos.line < PRELUDE_LINE).then(DebugBindings::default),
+            debug_scope: 0,
             ret_ptr: None,
             loops: vec![],
             types: &prog.types,
@@ -3860,6 +3966,12 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             } else {
                 Loc::Val(pv)
             };
+            let loc = if let Some((binding, actual)) = l.debug_binding(&p.name, p.ty, loc) {
+                l.debug.as_mut().unwrap().params.push(binding);
+                actual
+            } else {
+                loc
+            };
             l.vars.insert(p.id, loc);
             if p.mode == Mode::Own && prog.types.owned(p.ty) {
                 if let Loc::Mem(a) = loc {
@@ -3874,6 +3986,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
                 }
             }
         }
+        l.debug_scope = usize::from(l.debug.is_some());
         l.stmts(&f.body)?;
         l.drop_scope(0);
         l.term(if f.ret == Ty::Unit {
@@ -3901,9 +4014,18 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
                 }
             }
         }
+        let debug_bindings = l.debug.is_some();
+        if debug {
+            let mut bindings = l.debug.unwrap_or_default();
+            if debug_bindings {
+                bindings.decl_loc = l.locs.intern(f.pos, 0);
+            }
+            debug_functions.push(bindings);
+        }
         funcs.push(IrFunc {
             name: f.name.clone(),
             lib: f.pos.line >= PRELUDE_LINE,
+            debug_bindings,
             nparams,
             vranges,
             nvregs: l.nv,
@@ -3970,6 +4092,8 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             slots: vec![],
             vars: HashMap::new(),
             memvars: HashSet::new(),
+            debug: None,
+            debug_scope: 0,
             ret_ptr: None,
             loops: vec![],
             types: &prog.types,
@@ -4016,6 +4140,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         funcs.push(IrFunc {
             name,
             lib: false,
+            debug_bindings: false,
             nparams,
             vranges: vec![None; nparams],
             nvregs: l.nv,
@@ -4026,6 +4151,11 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
     }
     let main = ids["main"];
     Ok(IrProgram {
+        debug: debug.then(|| IrDebug {
+            types: prog.types.clone(),
+            functions: debug_functions,
+            scopes: loc_tab.debug_scopes,
+        }),
         funcs,
         texts,
         main,
@@ -4138,9 +4268,8 @@ pub fn dump(p: &IrProgram) -> String {
     s
 }
 
-/// The first function that uses a Linux-only runtime intrinsic, if any. Only the x86-64
-/// Linux backend implements them; the other targets report a compile-time error instead.
-pub fn os_intrinsics_error(p: &IrProgram) -> Option<String> {
+/// Reject OS intrinsics unavailable on the target. AArch64 validates its supported syscall numbers separately.
+pub fn os_intrinsics_error(p: &IrProgram, allow_syscalls: bool) -> Option<String> {
     for f in &p.funcs {
         for b in &f.blocks {
             for i in &b.insts {
@@ -4151,13 +4280,8 @@ pub fn os_intrinsics_error(p: &IrProgram) -> Option<String> {
                             f.name
                         ))
                     }
-                    Inst::Syscall(..) => {
-                        return Some(format!(
-                            "raw system calls (std.io, used by function '{}')",
-                            f.name
-                        ))
-                    }
-                    Inst::Global(..) => {
+                    Inst::Syscall(..) if allow_syscalls => {}
+                    Inst::Syscall(..) | Inst::Global(..) => {
                         return Some(format!(
                             "raw system calls (std.io, used by function '{}')",
                             f.name

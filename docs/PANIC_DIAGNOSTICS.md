@@ -43,27 +43,42 @@ failing operation (overflow, index, slice, unwrap/expect, division, explicit `pa
   return address in a site table; the runtime reports by walking the rbp chain.
   Functions that call are no longer frameless. Active only when the program has user markers:
   hello world 3301 -> 3327 bytes.
-* Limits: aarch64 ignores markers (no location line); Windows prints no locations;
+* aarch64: the `at file:line:col` line is printed too (no `YERUX_BACKTRACE`): each failure site is a small stub
+  `mov x17, loc; b <shared panic>`, a call into a library function sets `x17` to the caller's position first, and the
+  shared stubs call an `at` routine that reads the location and file tables (checked under emulation by
+  `tests/a64_emu.py`, which compares the stderr with the x86-64 build).
+* Limits: Windows prints no locations (the report routine is Linux-syscall based and cannot be tested here);
   programs built by the selfhost compiler print the location of the same sites as the plain C release build (see below).
 
-## Design: DWARF / gdb for native (not implemented)
-Minimal viable plan: emit section headers into the ELF with `.symtab`/`.strtab` (one FUNC symbol
-per Yerux function; the `funcs` table already exists in the `dbg` blob) and a `.debug_line`
-(DWARF 4, one sequence per function, rows from the same per-inst loc table; the `sites`/`locs`
-tables give offset->(file,line,col)). That gives `bt`, `break main.foo` and `list`-less stepping
-by line in gdb. `.debug_info` (CU + subprograms with `low_pc/high_pc`) is a small addition;
-variables/types (`DW_TAG_variable`, location lists from regalloc) are the expensive part and
-are out of scope. Work is mostly a writer for those sections plus offsets recorded per inst in x64.rs.
+## DWARF / gdb for the native backend (x86-64 Linux)
+`yerux build prog.yx --native --dwarf` (and `--debug`, which also turns the optimiser off) appends a section header
+table and debug sections after the loaded image. gdb can resolve Yerux function names and `.yx` lines, unwind
+frames, and read parameters and locals from the stack.
 
-## Self-hosted compiler
-`yerux-self` programs print `at file:line:col` for the sites the plain C release build reports: element access and
-mutation on List/Array/Slice (`at`, `get`, `set`, `swap`, `pop`, `xs[i]`, `xs[a..b]`), `chunks`/`windows` with a zero
-size, `unwrap`/`expect` of an Option, `assert*` and `panic` (unless its message is a built temporary, e.g. an
-interpolated string). The lexer's `--columns` adds the column to each token row (`line:col:Kind..`); in `--build`
-mode the parser appends `Pos(line,col)` as the last child of `Method`, `Slice` and the `panic`/`assert*` `Call`
-(position of the start of the expression, as in the Rust compiler); the AST of the parity scripts is unchanged.
-`codegen FILE.ast NAME USER-LINES` stamps `nx_cur_loc` around those sites and writes the `nx_dbg` table; the runtime
-reads it because the program defines `NX_SELFHOST_LOCS`. The driver puts the prelude *after* the user's source so
-lines stay true, and sites past `USER-LINES` (prelude code) carry no position. Limits: every site is attributed
-to the entry file (modules print their line under the entry name); positions inside `{..}` interpolations use the
-string's column.
+    $ gdb -batch -ex 'break fact.yx:3' -ex run -ex bt ./prog
+    Breakpoint 1 at 0x400f5a: file fact.yx, line 3.
+    #0  fact (n=1) at fact.yx:3
+    #1  0x0000000000400f7a in fact (n=2) at fact.yx:5
+    ...
+    #5  0x0000000000400fde in main () at fact.yx:14
+
+Works: `break fun`, `break file.yx:N`, `bt` (stops at `main`), `up`/`down`, `finish`, `next`/`step` by line, `list`, `info line`,
+`info symbol`, `info args`, `info locals`, and `print x`. gdb uses C expression syntax, so `print point.x` reads a
+struct field. Scalar values use their declared widths, and enums show the variant name and active payload.
+A local becomes visible after its declaration executes and leaves view at the end of its scope. Values before
+initialization or after a move are outside the debugger's ownership tracking.
+
+How it is built (`src/dwarf.rs`, hooks in `x64::gen_func`):
+* `ir::ALL_LOCS` puts a location marker before every instruction (normally only before checks and library calls); the
+  stripped per-instruction locations become line rows `(code offset, file:line:col)`, one sequence per function.
+* Frame state per code offset: `CFA = rsp+8` at entry and in shrink-wrapped early blocks and after `leave`;
+  `rsp+16` after `push rbp`; `rbp+16` in the body. The prologue may be out of line (trampolines at the end of the
+  function), so the table is recorded where the bytes are emitted, not by function.
+* DWARF builds give user bindings stable stack homes. Borrowed and aggregate bindings can hold the address
+  of the original value. `.debug_ranges` maps local scopes to machine-code ranges, and `.debug_loc` makes
+  parameters available once their homes are set up. `--dwarf` still optimizes code. It skips inlining and
+  scalar replacement of user frame slots, and sets up those frames on entry.
+* Not covered: runtime helpers (allocator, printing) have no symbols, programs with `extern` imports (the dynamic ELF
+  writer) get no debug sections, and aarch64/Windows have none.
+
+Panic locations (above) need none of this; they work without gdb.

@@ -42,17 +42,34 @@ fn close_result(fd: mut Int) -> Result<Int, io.IoError> {
   return Ok(0)
 }
 
-// Bound blocking socket reads and writes so a peer cannot hold a worker
-// forever with a stalled connection. The runtime currently targets Linux.
-fn set_io_timeouts(fd: Int) -> Int {
+const DEFAULT_TIMEOUT_MS: Int = 5000
+
+fn set_timeout(fd: Int, option: Int, timeout_ms: Int) -> Result<Int, io.IoError> {
+  if timeout_ms < 0 {
+    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: timeout must be nonnegative"))
+  }
   let tv = __alloc(16)
-  __store64(tv, 5)
-  __store64(tv + 8, 0)
-  let read_result = __syscall(54, fd, 1, 20, tv, 16, 0) // SO_RCVTIMEO
-  var result = read_result
-  if result >= 0 { result = __syscall(54, fd, 1, 21, tv, 16, 0) } // SO_SNDTIMEO
-  __free(tv)
-  return result
+  defer __free(tv)
+  __store64(tv, timeout_ms / 1000)
+  __store64(tv + 8, (timeout_ms % 1000) * 1000)
+  let r = __syscall(54, fd, 1, option, tv, 16, 0) // SOL_SOCKET
+  if r < 0 { return Err(io.os_error("setsockopt", "socket", 0 - r)) }
+  return Ok(0)
+}
+
+fn set_default_timeouts(fd: Int) -> Result<Int, io.IoError> {
+  let applied = set_timeout(fd, 20, DEFAULT_TIMEOUT_MS)? // SO_RCVTIMEO
+  return set_timeout(fd, 21, DEFAULT_TIMEOUT_MS) // SO_SNDTIMEO
+}
+
+/// Set the receive timeout in milliseconds. Zero disables it.
+pub fn set_read_timeout(s: view TcpStream, timeout_ms: Int) -> Result<Int, io.IoError> {
+  return set_timeout(s.fd, 20, timeout_ms)
+}
+
+/// Set the send timeout in milliseconds. Zero disables it.
+pub fn set_write_timeout(s: view TcpStream, timeout_ms: Int) -> Result<Int, io.IoError> {
+  return set_timeout(s.fd, 21, timeout_ms)
 }
 
 pub fn address(ip: Text, port: Int) -> Result<SocketAddr, io.IoError> {
@@ -67,8 +84,7 @@ pub fn address(ip: Text, port: Int) -> Result<SocketAddr, io.IoError> {
 }
 
 fn valid_literal(s: view String) -> Bool {
-  // Accept canonical IPv6 literals and IPv4 dotted quads. IPv6 is validated by inet_pton below
-  // when a socket is opened; this cheap lexical check rejects hostnames early.
+  // Full parsing happens when a socket is opened. Reject hostnames early.
   var dots = 0
   var colons = 0
   var digits = 0
@@ -81,10 +97,13 @@ fn valid_literal(s: view String) -> Bool {
     else { return false }
     i = i + 1
   }
-  return (dots == 3 && colons == 0 && digits > 0) || (colons >= 2 && digits > 0)
+  return (dots == 3 && colons == 0 && digits > 0) || (colons >= 2 && (digits > 0 || s.eq("::")))
 }
 
 fn sockaddr(a: view SocketAddr, out: Int) -> Int {
+  if a.port < 0 || a.port > 65535 { return -1 }
+  // Clear padding, IPv6 flow info and the scope ID.
+  for i in 0..4 { __store64(out + i * 8, 0) }
   if a.ip.find(":") >= 0 {
     __store8(out, 10)
     __store8(out + 1, 0)
@@ -92,10 +111,8 @@ fn sockaddr(a: view SocketAddr, out: Int) -> Int {
     __store8(out + 3, a.port % 256)
     // Parse IPv6 hex groups, including one compressed run of zero groups.
     var i = 0
-    while i < 16 { __store8(out + 8 + i, 0); i = i + 1 }
     var groups = 0
     var compress = -1
-    i = 0
     while i < a.ip.len() {
       if a.ip.byte(i) == 58 {
         if i + 1 >= a.ip.len() || a.ip.byte(i + 1) != 58 || compress >= 0 { return -1 }
@@ -161,53 +178,46 @@ fn sockaddr(a: view SocketAddr, out: Int) -> Int {
   return 16
 }
 
-/// Connect to an IPv4 or `::1` IPv6 literal.
+/// Connect to a numeric IPv4 or IPv6 address with the default timeout.
 pub fn connect(a: view SocketAddr) -> Result<TcpStream, io.IoError> {
-  var family = 2
-  if a.ip.find(":") >= 0 { family = 10 }
-  let fd = __syscall(41, family, 1, 0, 0, 0, 0)
+  return connect_timeout(a, DEFAULT_TIMEOUT_MS)
+}
+
+/// Connect to a numeric address with a timeout in milliseconds. Zero uses the OS default.
+pub fn connect_timeout(a: view SocketAddr, timeout_ms: Int) -> Result<TcpStream, io.IoError> {
+  let sa = __alloc(32)
+  defer __free(sa)
+  let n = sockaddr(a, sa)
+  if n < 0 { return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal")) }
+  let fd = __syscall(41, __load8(sa), 1, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
   let stream = TcpStream { fd: fd }
-  let timeout = set_io_timeouts(fd)
-  if timeout < 0 { return Err(io.os_error("setsockopt", a.ip, 0 - timeout)) }
-  let sa = __alloc(32)
-  let n = sockaddr(a, sa)
-  if n < 0 {
-    __free(sa)
-    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal"))
-  }
+  // Linux applies SO_SNDTIMEO to blocking connect and reports expiry as EINPROGRESS.
+  let timeout = set_timeout(fd, 21, timeout_ms)?
   let r = __syscall(42, fd, sa, n, 0, 0, 0)
-  __free(sa)
+  if r == -115 { return Err(io.os_error("connect", a.ip, 110)) }
   if r < 0 { return Err(io.os_error("connect", a.ip, 0 - r)) }
+  let defaults = set_default_timeouts(fd)?
   return Ok(move stream)
 }
 
 /// Bind and listen on an IPv4 or `::1` IPv6 literal.
 pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
-  var family = 2
-  if a.ip.find(":") >= 0 { family = 10 }
-  let fd = __syscall(41, family, 1, 0, 0, 0, 0)
+  let sa = __alloc(32)
+  defer __free(sa)
+  let n = sockaddr(a, sa)
+  if n < 0 { return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal")) }
+  let fd = __syscall(41, __load8(sa), 1, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("socket", a.ip, 0 - fd)) }
   let listener = TcpListener { fd: fd }
-  let timeout = set_io_timeouts(fd)
-  if timeout < 0 { return Err(io.os_error("setsockopt", a.ip, 0 - timeout)) }
-  let yes = __alloc(4)
-  __store8(yes, 1)
-  let so = __syscall(54, fd, 1, 2, yes, 4, 0)
+  let timeout = set_timeout(fd, 20, DEFAULT_TIMEOUT_MS)?
+  let yes = __alloc(8)
+  __store64(yes, 1)
+  let so = __syscall(54, fd, 1, 2, yes, 4, 0) // SO_REUSEADDR
   __free(yes)
-  let sa = __alloc(32)
-  let n = sockaddr(a, sa)
-  if n < 0 {
-    __free(sa)
-    return Err(io.custom_error(io.IoErrorKind.InvalidInput, "net: invalid address literal"))
-  }
+  if so < 0 { return Err(io.os_error("setsockopt", a.ip, 0 - so)) }
   let b = __syscall(49, fd, sa, n, 0, 0, 0)
-  __free(sa)
-  if so < 0 || b < 0 {
-    var e = so
-    if e >= 0 { e = b }
-    return Err(io.os_error("bind", a.ip, 0 - e))
-  }
+  if b < 0 { return Err(io.os_error("bind", a.ip, 0 - b)) }
   let r = __syscall(50, fd, 128, 0, 0, 0, 0)
   if r < 0 { return Err(io.os_error("listen", a.ip, 0 - r)) }
   return Ok(move listener)
@@ -217,13 +227,72 @@ pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
 pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
   let fd = __syscall(43, l.fd, 0, 0, 0, 0, 0)
   if fd < 0 { return Err(io.os_error("accept", "", 0 - fd)) }
-  let timeout = set_io_timeouts(fd)
-  if timeout < 0 {
-    var fd_to_close = fd
-    drop_fd(fd_to_close)
-    return Err(io.os_error("setsockopt", "accepted socket", 0 - timeout))
+  let stream = TcpStream { fd: fd }
+  let defaults = set_default_timeouts(fd)?
+  return Ok(move stream)
+}
+
+fn endpoint(fd: Int, peer: Bool) -> Result<SocketAddr, io.IoError> {
+  let buf = __alloc(40)
+  defer __free(buf)
+  let len = buf + 32
+  __store64(len, 32)
+  let r = if peer {
+    __syscall(52, fd, buf, len, 0, 0, 0) // getpeername
+  } else {
+    __syscall(51, fd, buf, len, 0, 0, 0) // getsockname
   }
-  return Ok(TcpStream { fd: fd })
+  if r < 0 {
+    let op = if peer { "getpeername" } else { "getsockname" }
+    return Err(io.os_error(op, "socket", 0 - r))
+  }
+
+  let size = __load64(len)
+  if size < 4 || size > 32 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "net: invalid socket address length")) }
+  let port = __load8(buf + 2) * 256 + __load8(buf + 3)
+  let family = __load8(buf) + __load8(buf + 1) * 256
+  var ip = String.new()
+  if family == 2 && size >= 16 {
+    for i in 0..4 {
+      if i > 0 { ip.push_str(".") }
+      ip.push_int(__load8(buf + 4 + i))
+    }
+  } else if family == 10 && size >= 28 {
+    let hex = "0123456789abcdef"
+    for i in 0..8 {
+      if i > 0 { ip.push_str(":") }
+      for j in 0..2 {
+        let b = __load8(buf + 8 + 2 * i + j)
+        let hi = b / 16
+        let lo = b % 16
+        ip.push_slice(hex, hi, hi + 1)
+        ip.push_slice(hex, lo, lo + 1)
+      }
+    }
+  } else {
+    return Err(io.custom_error(io.IoErrorKind.InvalidData, "net: unsupported socket address"))
+  }
+  return Ok(SocketAddr { ip: move ip, port: port })
+}
+
+/// Query the local address of a connected stream.
+pub fn local_addr(s: view TcpStream) -> Result<SocketAddr, io.IoError> {
+  return endpoint(s.fd, false)
+}
+
+/// Query the remote address of a connected stream.
+pub fn peer_addr(s: view TcpStream) -> Result<SocketAddr, io.IoError> {
+  return endpoint(s.fd, true)
+}
+
+/// Query the bound address of a listener, including the port assigned after a port-zero bind.
+pub fn listener_local_addr(l: view TcpListener) -> Result<SocketAddr, io.IoError> {
+  return endpoint(l.fd, false)
+}
+
+fn socket_io_error(op: Text, n: Int) -> io.IoError {
+  if n == -11 { return io.os_error(op, "socket", 110) } // EAGAIN after a blocking socket timeout
+  return io.os_error(op, "socket", 0 - n)
 }
 
 /// Read up to `limit` bytes; an empty String means orderly EOF.
@@ -232,7 +301,7 @@ pub fn read(s: view TcpStream, limit: Int) -> Result<String, io.IoError> {
   let p = __alloc(limit + 1)
   defer __free(p)
   let n = receive(s, p, limit)
-  if n < 0 { return Err(io.os_error("read", "socket", 0 - n)) }
+  if n < 0 { return Err(socket_io_error("read", n)) }
   var out = String.new()
   out.push_raw(p, n)
   return Ok(move out)
@@ -252,7 +321,7 @@ pub fn read_into(s: view TcpStream, data: mut [UInt8]) -> Result<Int, io.IoError
   let p = __alloc(size)
   defer __free(p)
   let n = receive(s, p, size)
-  if n < 0 { return Err(io.os_error("read", "socket", 0 - n)) }
+  if n < 0 { return Err(socket_io_error("read", n)) }
   for i in 0..n { data[i] = __load8(p + i).to_uint8() }
   return Ok(n)
 }
@@ -263,7 +332,7 @@ fn send_all(s: view TcpStream, p: Int, total: Int) -> Result<Int, io.IoError> {
     // sendto with MSG_NOSIGNAL on a connected socket.
     let n = __syscall(44, s.fd, p + off, total - off, 16384, 0, 0)
     if n == -4 { continue }
-    if n < 0 { return Err(io.os_error("write", "socket", 0 - n)) }
+    if n < 0 { return Err(socket_io_error("write", n)) }
     if n == 0 { return Err(io.custom_error(io.IoErrorKind.Other, "socket write made no progress")) }
     off = off + n
   }

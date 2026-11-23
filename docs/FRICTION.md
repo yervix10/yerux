@@ -27,10 +27,9 @@ fn main() {
 }
 ```
 
-The lookup still requires `V: Copy`. The old diagnostic suggested `at(i)`
-and `pop()` on the map. The new one explains the checked index from
-`m.find(key)`, the value place `m.vals.at(i)`, and the removing lookup
-`m.take(key)`.
+The lookup still requires `V: Copy`. The help now points first at
+`collections.map_with` (a borrowed read that returns an Option), then at the
+removing lookup `m.take(key)` (test `e1511_map_get_owned_help`).
 
 ### `read_line` discarded a final CR at EOF
 
@@ -46,6 +45,15 @@ fn main() {
 
 Feed the executable with `printf 'a\r'`. It used to print `1`. It now prints
 `2`, preserving the CR as input data. CRLF still ends a line and is stripped.
+
+### Owned map lookups no longer need an index or a storage field
+
+A caller that needed to read an owned value without removing it used `find`
+and checked for `-1` before borrowing `vals.at(i)`. Now
+`collections.map_with(m, k, f)` returns `Option<R>`: `f` receives the value by
+`view` and its result is wrapped in `Some`, or `None` when the key is missing.
+The map keeps the value. `Option<view V>` itself is not expressible, so the
+borrow stays inside the callback. Test: `std_map_with`.
 
 ## Open
 
@@ -66,13 +74,6 @@ fn main() {
 with the bootstrap compiler on clone/inference errors for this generic derive.
 The failing fixture also exercises cloning a generic enum payload containing
 the cloned struct. This repro is recorded for the selfhost compiler work.
-
-### Owned map lookups require an index and access to a storage field
-
-The map repro above also illustrates the API gap. A caller that needs to read
-an owned value without removing it uses `find` and checks for `-1` before
-borrowing `vals.at(i)`. A lookup that supplies a read-only value to a callback
-could express this without returning a borrow or exposing the storage field.
 
 ### Built-in string borrows require a named place
 
@@ -150,19 +151,22 @@ operator. Both backends report `panic: integer overflow in negation` with
 exit status 101. In-range literal negations still participate in static
 index checking.
 
-### Open: a slice range needs a named array or list
+### Fixed: a slice range over a temporary array or List
 
 ```yx
 fn first(xs: view [Int]) -> Int { return xs[0] }
 fn main() { print(first([4, 5][0..1])) }
 ```
 
-The compiler accepts `first([4, 5])` and rejects the explicit range with
-“cannot take a slice of a temporary.” The lexer binds its fixed keyword
-array before taking a slice. Slices themselves are parameter-only, so the
-parser and evaluator pass slices through their helpers.
+Previously `[4, 5][0..1]` was rejected with "cannot take a slice of a
+temporary". Now a temporary array or List in a slice range is kept alive in a
+hidden variable for the call, the same way `first([4, 5])` already worked, so
+`make()[0..2]` and `[1, 2, 3][2..]` are accepted for `view [T]` parameters.
+`mut [T]` parameters still need a variable (e1507: the temporary would be
+modified and thrown away). Slices remain parameter-only. Test:
+`slice_temp_array`.
 
-### Open: Copy enums still need an explicit equality implementation
+### Fixed: payload-free enums need no explicit equality implementation
 
 ```yx
 enum Kind { Word, End }
@@ -173,8 +177,12 @@ fn main() {
 }
 ```
 
-The compiler asks for an `Equal` implementation even for a payload-free
-enum. The tokenizer compares its token kinds with an explicit pair match.
+Previously the compiler asked for an `Equal` implementation even for a
+payload-free enum. Now a non-generic enum whose variants carry no payload is
+`Equal` implicitly: `==` and `!=` work on variables, fields, list elements and
+variant literals (`Kind.End == k`). A hand-written `impl Equal for E` or a
+`derive Equal for E` line still wins. Enums with a payload keep requiring an
+`Equal` implementation (`yerux check` error e1506). Test: `enum_implicit_equal`.
 
 ### Open: whole-file reads have no size argument
 
@@ -243,12 +251,13 @@ The codec now passes slices to `net.read_into` and `net.write_bytes`,
 and uses `io.write_stdout_bytes` to emit the body. Byte containers
 currently need a scratch copy for direct socket I/O.
 
-### Open: blocking sockets lack timeouts and a bound-address query
+### Fixed: blocking sockets lack timeouts and a bound-address query
 
-`net.listen` can bind port zero, but the API cannot return the selected
-port. The loopback test reserves a port and retries on a collision.
-Blocking reads have no timeout option, so the example handles peers
-sequentially and the test runner bounds each exchange externally.
+`net.listen` can bind port zero, and `listener_local_addr(listener)` returns
+the kernel-assigned port (`local_addr(stream)` and `peer_addr(stream)` query
+connected stream endpoints). Sockets now support configurable timeouts via
+`connect_timeout(addr, ms)`, `set_read_timeout(stream, ms)`, and
+`set_write_timeout(stream, ms)` (test `net_timeouts`). See [NET](NET.md#timeouts-and-addresses).
 
 ### Open: path lookup and file open are separate operations
 
@@ -257,15 +266,23 @@ no-follow flags. The example checks each path component with
 `fs.symlink_metadata` before opening and assumes a trusted static tree
 that is not being modified concurrently.
 
-### Open: a sized conversion written with .from gives a missing-variable error
+### Partly fixed: a sized conversion written with .from gives a missing-variable error
 
 ```yx
 fn main() { let b = UInt8.from(0) }
 ```
 
-The diagnostic says the variable `UInt8` does not exist. For this type use a
-suffixed literal such as `0u8` or a checked conversion such as
-`n.to_uint8()`. Both forms work in a fixed-size buffer initializer.
+The diagnostic still says the variable `UInt8` does not exist, but its help now
+says that it is a type and gives the suffixed literal `0u8` or the conversion
+`n.to_uint8()` (test `e1509_type_name_as_value`). Both forms work in a
+fixed-size buffer initializer.
+
+### Fixed (help text): four error messages gave weak next steps
+
+- `print(p)` on a struct: the error now suggests `print("{p}")`, which works for any type with `Show` (`e1510_print_struct_help`).
+- `s.lenn()` on a String: an unknown method close to a built-in one now gets `help: did you mean `len`?` (`e1512_string_method_typo`).
+- `UInt8.from(0)` and the other sized types: the help says it is a type and gives `0u8` or `n.to_uint8()` (`e1509_type_name_as_value`).
+- `Map.get` on an owned value: the help points at `collections.map_with` first (`e1511_map_get_owned_help`).
 
 ### Fixed: formatting an escaped apostrophe desynchronized later Char tokens
 
@@ -331,9 +348,10 @@ the first one outside any nested literal (inside a nested literal braces still f
 
 ### Still open
 
-- **A pair out of an `Option<(A, B)>` pattern is not movable field by field** (`let want = pair.0` fails with "cannot
-  move 'pair._0' out of its struct"); `let (want, name) = move pair` works but the error text names the internal
-  field `_0` and does not suggest it.
+- **A pair out of an `Option<(A, B)>` pattern is not movable field by field**: `let want = pair.0` still fails (its
+  error now names `pair.0` and suggests `let (x0, x1) = move pair`, test `e1508_tuple_field_in_option`). Work around it
+  with `match move o { Some(pair) => { let (want, name) = move pair } .. }` (test `match_move_option_tuple`): a plain
+  `match o` binds `pair` as a borrow, so `move pair` is refused ("only borrows").
 - **Closures cannot be passed where a named function would do without a signature**: `each_file(files, sha_line)`
   needs `sha_line` declared with exactly `view String` parameters, and the nested-quote limitation made inline
   closures with interpolation impractical until the fix above.
@@ -399,12 +417,12 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
    the iteration is now a compile error that explains that dropping a handle joins its worker, and a
    `List<JoinHandle<T>>` is allowed (start N workers in a loop, `push(move h)`, join after the loop; handles left in
    the list are joined when it drops). Tests `thread_handles_list`, `e1414_joinhandle_dropped_in_loop`.
-5. **Fixed: struct-literal shorthand.** `Task { title, tags }` now means `Task { title: title, tags: tags }`, with the
+4. **Fixed: struct-literal shorthand.** `Task { title, tags }` now means `Task { title: title, tags: tags }`, with the
    same move rules as the explicit form (tests `struct_shorthand`, `e1412_struct_shorthand_move`).
-6. **Fixed: raw string literals.** `r"..."` and `r#"..."#` (any number of `#`) are verbatim: no escapes, no
+5. **Fixed: raw string literals.** `r"..."` and `r#"..."#` (any number of `#`) are verbatim: no escapes, no
    interpolation, no doubled braces, so JSON and regexes read as written. One line only. Lexer in Rust and mirrored in
    `selfhost/lexer.yx` and both formatters (tests `raw_string`, `e1413_raw_unterminated`).
-7. **Fixed: `std.args` is thin** (`parse_with` + typed accessors, see STDLIB; test `std_args_schema`). Was: Options only take the `--key=value` form (`--title TEXT` is a positional), the first
+6. **Fixed: `std.args` is thin** (`parse_with` + typed accessors, see STDLIB; test `std_args_schema`). Was: Options only take the `--key=value` form (`--title TEXT` is a positional), the first
    positional word lands in `subcommand`, and there is no typed accessor.
 7. **Partly fixed: the "String has no method" error now points to the `std.text` function of that name** (test `e1505_string_method_in_std_text`; `lines`/`to_upper` are methods already). Was: Methods versus functions are inconsistent. `s.split(..)` and `s.trim()` are methods but `s.lines()`,
    `s.to_upper()` and `s.is_alnum` are `text.lines(s)`, `text.to_upper(s)`; the error ("String has no method 'lines'")
@@ -415,3 +433,101 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 9. **Fixed: no cascade after the `==` error** (test `e1504_eq_no_cascade`). Was: The cascade after the `==` error. The fixed message is followed by a second error about the right operand
     ("'word' is a String and is not copied") that is a consequence of the first.
 
+
+# Round 3: CSV report, word counter and mini echo
+
+Written as `examples/19_csv_parser.yx`, `examples/20_word_count.yx` and `examples/21_mini_echo.yx`.
+
+## Open
+
+### Updating a map value through `vals.at` needs a read and a `set`
+
+```yx
+let entry = counts.find(word)
+if entry >= 0 {
+  counts.vals.at(entry) = counts.vals.at(entry) + 1
+}
+```
+
+The checker rejects the assignment ("cannot assign to 'counts.vals.at(..)' directly") and suggests
+`l.set(i, value)`. The word counter spells the update as `let next = counts.vals.at(entry) + 1` followed
+by `counts.vals.set(entry, next)`. This is the ordinary increment idiom, so the diagnostic could name the
+`counts.vals.set(entry, next)` form for a map.
+
+### `split_ws` is a free function while the other token helpers are methods
+
+```yx
+for token in line.split_ws() { print(token) }        // no method 'split_ws'
+for token in text.split_ws(line) { print(token) }    // needs `import std.text`
+```
+
+`line.lines()` and `line.trim()` are methods, but splitting on arbitrary whitespace requires importing
+`std.text` for one call. The word counter mixes the two styles because of this.
+
+### `read_line`'s `Result<Option<String>, IoError>` needs two nested matches
+
+```yx
+match io.read_line() {
+  Ok(Some(line)) => { print(line) }
+  Ok(None) => { print("eof") }
+  Err(e) => { print("{e.message}") }
+}
+```
+
+The combined pattern is rejected: "cannot look inside an owned payload in `match move`". The echo loops
+through `match io.read_line() { Ok(line) => match line { Some(body) => .., None => break }, Err(e) => .. }`.
+The help says to bind and match the name, which is exactly the extra level of nesting.
+
+### `std.csv` reports no parse error
+
+```yx
+let rows = csv.parse(String.from("\"unterminated,field\n"))
+// rows.len() == 1, rows.at(0).at(0) == "unterminated,field"
+```
+
+`parse` returns `List<List<String>>`, so an unbalanced quote is accepted as field data and an oversized
+input (over 16 MiB or 100000 cells) silently becomes an empty list. The report cannot tell malformed CSV
+from an empty file. A `Result` or at least a parsed/error flag would let a real importer explain the problem.
+Also, `csv.write` always ends every record with CRLF, including the last one, so a write→parse round-trip
+returns the data but not the exact input text.
+
+# Round 4: JSON linter, directory inventory and meal planner
+
+Written as `examples/22_json_lint.yx`, `examples/23_directory_inventory.yx` and `examples/24_meal_planner.yx`.
+
+## Open
+
+### There is no `std.json`, only the example CLI
+
+`docs/JSON.md` describes `examples/real/json/`, but importing `std.json` fails: the embedded modules contain no
+JSON reader or writer. A program that needs to validate or read JSON must either copy the 340-line tree codec or
+hand-roll a scanner, as `22_json_lint.yx` does for validation and counting. A `std.json` module (at least string
+escaping and a `Value` enum) would let the example reuse the standard library instead of duplicating grammar.
+
+### A `Text` literal has no `String` methods
+
+```yx
+let pad = "  ".repeat(depth)
+```
+
+This reports "type Text has no method 'repeat'" and then a cascade of "cannot infer the type parameter T of
+'std__fmt_val'" errors in every `print` that uses `pad`. The fix is `String.from("  ").repeat(depth)`, but the
+first diagnostic does not say so, and the cascade hides the one real error. A `Text` literal looks like a
+`String` everywhere else (interpolation, `push_str`, `view String` parameters).
+
+### Every ordinary string is a format string, including diagnostics
+
+```yx
+return Err("expected ',' or '}'")
+```
+
+This is "a lone `}` in a string"; the escape is `"}}`". The JSON linter has to write `"expected ',' or '}}'"`,
+which reads like an unbalanced literal in the output. A raw string avoids it, but the same rule made the
+earlier CSV example avoid braces in messages. Error text that contains JSON syntax should not need doubling.
+
+### File-existence helpers are split across `std.io` and `std.fs`
+
+`io.file_exists(path)` exists, `fs.file_exists(path)` does not (the `std.fs` name is `fs.exists`, and
+`fs.is_file`/`fs.is_dir` follow symlinks). The inventory example first used the `fs.` spelling and got a list of
+40 public items without a hint that `exists` is the one it wanted; the docs table in STDLIB_IO lists
+`io.file_exists` and a later section introduces `fs.exists`.

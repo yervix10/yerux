@@ -1,0 +1,8 @@
+error: variable 'UInt8' does not exist
+ --> tests/e1509_type_name_as_value.yx:2:21
+  |
+2 | fn main() { let b = UInt8.from(0) }
+  |                     ^^^^^
+  = `UInt8` is a type, not a value: write a suffixed literal (`0u8`) or a checked conversion (`n.to_uint8()`)
+
+1 error(s). Nothing was generated.

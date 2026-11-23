@@ -1,0 +1,102 @@
+import std.io
+import std.net
+import std.time
+
+fn check_endpoints(listener: view net.TcpListener, expected: Text) {
+  let bound = net.listener_local_addr(listener).unwrap()
+  assert(bound.ip.eq(expected))
+  assert(bound.port > 0 && bound.port <= 65535)
+  let client = net.connect_timeout(bound, 1000).unwrap()
+  let server = net.accept(listener).unwrap()
+  let client_local = net.local_addr(client).unwrap()
+  let client_peer = net.peer_addr(client).unwrap()
+  let server_local = net.local_addr(server).unwrap()
+  let server_peer = net.peer_addr(server).unwrap()
+  assert(client_local.ip.eq(expected) && client_peer.ip.eq(expected))
+  assert(server_local.ip.eq(expected) && server_peer.ip.eq(expected))
+  assert_eq(client_peer.port, bound.port)
+  assert_eq(server_local.port, bound.port)
+  assert(client_local.port > 0 && client_local.port != bound.port)
+  assert_eq(server_peer.port, client_local.port)
+}
+
+fn check_timeouts(listener: view net.TcpListener) {
+  let remote = net.listener_local_addr(listener).unwrap()
+  match net.connect_timeout(remote, -1) {
+    Ok(s) => { panic("negative connect timeout accepted") }
+    Err(e) => { assert(e.kind == io.IoErrorKind.InvalidInput) }
+  }
+  let client = net.connect_timeout(remote, 0).unwrap()
+  let server = net.accept(listener).unwrap()
+  assert(net.set_read_timeout(client, -1).is_err())
+  assert(net.set_write_timeout(client, -1).is_err())
+  assert_eq(net.set_read_timeout(client, 20).unwrap(), 0)
+  match net.read(client, 1) {
+    Ok(data) => { panic("read returned without data") }
+    Err(e) => { assert_eq(e.code, 110) }
+  }
+  assert_eq(net.set_read_timeout(client, 0).unwrap(), 0)
+  assert_eq(net.write(server, "ok").unwrap(), 2)
+  var response = String.new()
+  while response.len() < 2 {
+    let part = net.read(client, 2 - response.len()).unwrap()
+    assert(part.len() > 0)
+    response.push_str(part)
+  }
+  assert(response.eq("ok"))
+
+  // Keep the peer idle and shrink the send buffer so write-all blocks.
+  let option = __alloc(8)
+  __store64(option, 4096)
+  let set = __syscall(54, client.fd, 1, 7, option, 4, 0) // SO_SNDBUF
+  __free(option)
+  assert_eq(set, 0)
+  assert_eq(net.set_write_timeout(client, 20).unwrap(), 0)
+  let block = String.from("0123456789abcdef")
+  let payload = block.repeat(262144)
+  match net.write(client, payload) {
+    Ok(count) => { panic("write returned before the peer read its data") }
+    Err(e) => { assert_eq(e.code, 110) }
+  }
+  assert_eq(net.set_write_timeout(client, 0).unwrap(), 0)
+}
+
+fn check_connect_timeout(ip: view net.SocketAddr) {
+  let listener = net.listen(ip).unwrap()
+  let bound = net.listener_local_addr(listener).unwrap()
+  // On Linux a zero backlog holds one completed connection.
+  assert_eq(__syscall(50, listener.fd, 0, 0, 0, 0, 0), 0)
+  let queued = net.connect_timeout(bound, 1000).unwrap()
+  let poll_fd = __alloc(24)
+  __store64(poll_fd, listener.fd)
+  __store8(poll_fd + 4, 1) // POLLIN: the accept queue contains the connection.
+  let wait = poll_fd + 8
+  __store64(wait, 1)
+  __store64(wait + 8, 0)
+  let ready = __syscall(271, poll_fd, 1, wait, 0, 0, 0) // ppoll, with a one-second timespec
+  __free(poll_fd)
+  assert_eq(ready, 1)
+  let start = time.monotonic_ns()
+  match net.connect_timeout(bound, 20) {
+    Ok(s) => { panic("connect succeeded with a full listen backlog") }
+    Err(e) => { assert_eq(e.code, 110) }
+  }
+  assert(time.monotonic_ns() - start >= 10000000)
+  let accepted = net.accept(listener).unwrap()
+  let connected = net.connect_timeout(bound, 1000).unwrap()
+}
+
+fn main() {
+  let ipv4 = net.address("127.0.0.1", 0).unwrap()
+  let listener = net.listen(ipv4).unwrap()
+  check_endpoints(listener, "127.0.0.1")
+  check_timeouts(listener)
+  check_connect_timeout(ipv4)
+
+  let ipv6 = net.address("::1", 0).unwrap()
+  match net.listen(ipv6) {
+    Ok(listener6) => { check_endpoints(listener6, "0000:0000:0000:0000:0000:0000:0000:0001") }
+    Err(e) => { assert(e.code == 97 || e.code == 99) }
+  }
+  print("socket endpoints and timeouts ok")
+}

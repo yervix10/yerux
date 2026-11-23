@@ -3,6 +3,6 @@ error: cannot move 'p.0' out of its struct
   |
 8 |   let first = p.0
   |               ^^^
-  = help: take the whole tuple apart instead: `let (a, b) = move t` (each name then owns its element), or borrow the element (call a method on it, or pass it to a `view`/`mut` parameter)
+  = help: take the tuple apart instead: `let (x0, x1) = move p` (each name then owns its element)
 
 1 error(s). Nothing was generated.

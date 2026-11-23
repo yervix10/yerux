@@ -1,0 +1,66 @@
+// `if` and `match` are expressions: the chosen branch produces the value.
+// A struct literal can abbreviate `x: x` as just `x`.
+
+struct Point { x: Int, y: Int }
+enum Level { Low, Mid(Int), High }
+
+fn level(score: Int) -> Level {
+  return if score < 10 { Level.Low } else if score < 100 { Level.Mid(score) } else { Level.High }
+}
+
+fn award(l: Level) -> Int {
+  return match l {
+    Level.Low => 1,
+    Level.Mid(n) => n / 10,
+    Level.High => 100,
+  }
+}
+
+fn quadrant(p: Point) -> Text {
+  return match (p.x >= 0, p.y >= 0) {
+    (true, true) => "I",
+    (false, true) => "II",
+    (false, false) => "III",
+    (true, false) => "IV",
+  }
+}
+
+fn main() {
+  // A raw string is verbatim: backslashes and quotes need no escaping.
+  print(r"C:\scores\2026")
+
+  // Build a small document from raw one-line fragments.
+  var doc = String.from(r"12")
+  doc.push_str("\n")
+  doc.push_str(r"250")
+  doc.push_str("\n")
+  doc.push_str(r"7")
+  let lines = doc.lines()
+  print(lines.len())
+
+  var total = 0
+  for line in lines {
+    var n = 0
+    let ok = line.parse_int(n)
+    let score = if ok { n } else { -1 }
+    let l = level(score)
+    let got = award(l)
+    let kind = match l {
+      Level.Low => "low",
+      Level.Mid(_) => "mid",
+      Level.High => "high",
+    }
+    print("{kind}: {score} -> {got}")
+    total = total + got
+  }
+  print(total)
+
+  let x = 3
+  let y = -4
+  let p = Point { x, y }
+  print(quadrant(p))
+  let dx = 0
+  let dy = 5
+  print(quadrant(Point { x: dx, y: dy }))
+  print(1 + if total > 100 { 10 } else { 0 })
+}

@@ -168,7 +168,7 @@ pub fn extract(name: &str, src: &str) -> Module {
                     if let Some(("fn", fname)) = item_kind(rest) {
                         let sig = signature(&lines, i);
                         let sig = sig.strip_prefix("pub ").unwrap_or(&sig).to_string();
-                        let owner = if *bk == "impl" { Some(bty.clone()) } else if *bpub { Some(bty.clone()) } else { None };
+                        let owner = if *bk == "impl" || *bpub { Some(bty.clone()) } else { None };
                         if let Some(o) = owner {
                             items.push((
                                 Item { kind: "method".into(), name: format!("{}.{}", bty, fname), signature: sig, doc },

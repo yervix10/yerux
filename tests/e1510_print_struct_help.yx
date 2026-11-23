@@ -1,0 +1,6 @@
+// print takes scalars and text only: the help shows how to print a struct through a string.
+struct P { x: Int }
+fn main() {
+  let p = P { x: 1 }
+  print(p)
+}

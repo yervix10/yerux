@@ -21,7 +21,11 @@ const X8: u32 = 8;
 const X9: u32 = 9;
 const X10: u32 = 10;
 const X11: u32 = 11;
+const X12: u32 = 12;
+const X13: u32 = 13;
+const X15: u32 = 15;
 const X16: u32 = 16;
+const X17: u32 = 17;
 const X29: u32 = 29;
 const X30: u32 = 30;
 const XZR: u32 = 31; // zero register in most encodings
@@ -536,6 +540,107 @@ fn slot(v: V) -> u32 {
 
 // ───────────────────────── Compiler ─────────────────────────
 
+/// Imported modules include all their functions. Keep function IDs stable while
+/// dropping code that cannot be called, including unsupported OS APIs.
+pub fn discard_unused_functions(ir: &mut IrProgram) {
+    let mut reachable = vec![false; ir.funcs.len()];
+    let mut pending = vec![ir.main];
+    while let Some(fid) = pending.pop() {
+        if std::mem::replace(&mut reachable[fid], true) {
+            continue;
+        }
+        for inst in ir.funcs[fid].blocks.iter().flat_map(|b| &b.insts) {
+            match inst {
+                Inst::Call(_, callee, _) | Inst::FnAddr(_, callee) => pending.push(*callee),
+                Inst::VTableAddr(_, table) => pending.extend(&ir.vtables[*table]),
+                _ => {}
+            }
+        }
+    }
+    for (f, used) in ir.funcs.iter_mut().zip(reachable) {
+        if !used {
+            f.nparams = 0;
+            f.nvregs = 0;
+            f.slots.clear();
+            f.blocks = vec![Block {
+                insts: vec![],
+                term: Term::Unreachable,
+            }];
+        }
+    }
+}
+
+/// Translate the x86-64 numbers used by the raw syscall intrinsic before A64 code generation.
+pub fn translate_syscalls(ir: &mut IrProgram) -> Result<(), String> {
+    for f in &mut ir.funcs {
+        if !f
+            .blocks
+            .iter()
+            .flat_map(|b| &b.insts)
+            .any(|i| matches!(i, Inst::Syscall(..)))
+        {
+            continue;
+        }
+        // Accept only a single-definition constant. A first argument computed at runtime
+        // could otherwise accidentally invoke a different AArch64 syscall.
+        let mut defined = vec![false; f.nvregs];
+        let mut constants = vec![None; f.nvregs];
+        defined[..f.nparams].fill(true);
+        for inst in f.blocks.iter().flat_map(|b| &b.insts) {
+            if let Some(d) = crate::opt::def(inst) {
+                constants[d] = match inst {
+                    Inst::Const(_, n) if !defined[d] => Some(*n),
+                    _ => None,
+                };
+                defined[d] = true;
+            }
+        }
+        for block in &mut f.blocks {
+            let mut translated = Vec::with_capacity(block.insts.len());
+            for mut inst in std::mem::take(&mut block.insts) {
+                if let Inst::Syscall(_, args) = &mut inst {
+                    let number = constants[args[0]];
+                    let Some(a64) = number.and_then(linux_syscall_number) else {
+                        let number =
+                            number.map_or_else(|| "dynamic number".to_string(), |n| n.to_string());
+                        return Err(format!(
+                            "raw system calls ({} in function '{}')",
+                            number, f.name
+                        ));
+                    };
+                    args[0] = f.nvregs;
+                    f.nvregs += 1;
+                    translated.push(Inst::Const(args[0], a64));
+                }
+                translated.push(inst);
+            }
+            block.insts = translated;
+        }
+    }
+    Ok(())
+}
+
+fn linux_syscall_number(x64: i64) -> Option<i64> {
+    Some(match x64 {
+        // These Linux calls share argument layouts and return conventions on both targets.
+        0 => 63,    // read
+        1 => 64,    // write
+        3 => 57,    // close
+        41 => 198,  // socket
+        42 => 203,  // connect
+        43 => 202,  // accept
+        44 => 206,  // sendto
+        49 => 200,  // bind
+        50 => 201,  // listen
+        51 => 204,  // getsockname
+        52 => 205,  // getpeername
+        54 => 208,  // setsockopt
+        228 => 113, // clock_gettime
+        271 => 73,  // ppoll
+        _ => return None,
+    })
+}
+
 pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let mut a = Asm::new();
 
@@ -569,6 +674,11 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let l_panic_bytes = a.label();
     let l_range_panic = a.label();
     let l_write_int2 = a.label();
+    let l_at = a.label();
+    // `  at file:line:col` after a panic message (see `l_at`): only when the program has user source positions
+    let report = ir.locs.len() > 1;
+    let dbg0 = D_TEXT0 + ir.texts.len() + ir.vtables.len();
+    let (d_at, d_colon, d_locs, d_files) = (dbg0, dbg0 + 1, dbg0 + 2, dbg0 + 3);
     let (l_mmap, l_alloc, l_free, l_push, l_get) =
         (a.label(), a.label(), a.label(), a.label(), a.label());
     let (l_realloc, l_memcpy) = (a.label(), a.label());
@@ -577,6 +687,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
 
     // _start: main(); exit(0)
     a.bind(l_start);
+    a.mov_imm(X17, 0);
     a.bl(l_funcs[ir.main]);
     if debug_alloc {
         // report allocations, frees and the difference on stderr
@@ -617,6 +728,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.lea_data(X1, D_NL);
         a.mov_imm(X2, 1);
         a.bl(l_write2);
+        if report {
+            a.bl(l_at);
+        }
         a.sys_exit(101);
     }
 
@@ -673,7 +787,46 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.lea_data(X1, D_NL);
     a.mov_imm(X2, 1);
     a.bl(l_write2);
+    if report {
+        a.bl(l_at);
+    }
     a.sys_exit(101);
+
+    // at: x17 = location id (0: none). Writes "  at file:line:col\n" to stderr. Keeps x9-x11 (write_int2) and uses x12-x15.
+    if report {
+        let l_none = a.label();
+        a.bind(l_at);
+        a.cbz(X17, l_none);
+        a.mov(X15, X30);
+        a.lea_data(X10, d_locs);
+        a.mov_imm(X11, 24);
+        a.mul(X9, X17, X11);
+        a.add_reg(X10, X10, X9); // x10 = &locs[id] = {file, line, col}
+        a.lea_data(X1, d_at);
+        a.mov_imm(X2, 5);
+        a.bl(l_write2);
+        a.ldr_i(X12, X10, 0);
+        a.lsl_imm(X12, X12, 4);
+        a.lea_data(X13, d_files);
+        a.add_reg(X12, X13, X12); // x12 = &files[file] = {offset from the table, length}
+        a.ldr_i(X1, X12, 0);
+        a.add_reg(X1, X13, X1);
+        a.ldr_i(X2, X12, 8);
+        a.bl(l_write2);
+        for k in [8i32, 16] {
+            a.lea_data(X1, d_colon);
+            a.mov_imm(X2, 1);
+            a.bl(l_write2);
+            a.ldr_i(X0, X10, k);
+            a.bl(l_write_int2);
+        }
+        a.lea_data(X1, D_NL);
+        a.mov_imm(X2, 1);
+        a.bl(l_write2);
+        a.mov(X30, X15);
+        a.bind(l_none);
+        a.ret();
+    }
 
     // print_int: value in x0, fd in x6. Prints decimal + newline to stdout. Leaf routine.
     a.bind(l_print_int);
@@ -766,6 +919,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.lea_data(X1, D_NL);
         a.mov_imm(X2, 1);
         a.bl(l_write2);
+        if report {
+            a.bl(l_at);
+        }
         a.sys_exit(101);
     }
 
@@ -1069,7 +1225,22 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.ret();
 
     // user functions
+    // failure paths with a position: `mov x17, loc; b <shared stub>` per (target, location), after each function
+    let site = |a: &mut Asm, stubs: &mut Vec<(usize, usize, u32)>, target: usize, loc: u32| -> usize {
+        if !report || loc == 0 {
+            return target;
+        }
+        if let Some((l, _, _)) = stubs.iter().find(|(_, t, c)| *t == target && *c == loc) {
+            return *l;
+        }
+        let l = a.label();
+        stubs.push((l, target, loc));
+        l
+    };
     for (fi, f) in ir.funcs.iter().enumerate() {
+        let (sf, flocs) = strip_locs(f);
+        let f = &sf;
+        let mut stubs: Vec<(usize, usize, u32)> = vec![];
         a.bind(l_funcs[fi]);
         a.stp_pre16(X29, X30);
         a.mov_sp(X29, SP);
@@ -1091,11 +1262,21 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         let bl: Vec<usize> = f.blocks.iter().map(|_| a.label()).collect();
         for (bi, b) in f.blocks.iter().enumerate() {
             a.bind(bl[bi]);
-            for ins in &b.insts {
+            for (ii, ins) in b.insts.iter().enumerate() {
+                let cl = flocs[bi][ii];
                 match ins {
                     Inst::Loc(_) => {}
-                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Syscall(..) | Inst::Global(..) => {
+                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Global(..) => {
                         unreachable!("rejected by os_intrinsics_error")
+                    }
+                    Inst::Syscall(d, args) => {
+                        // Linux AArch64 kernel ABI: x8 = number, x0..x5 = arguments.
+                        a.ldr(X8, SP, slot(args[0]));
+                        for (reg, arg) in [X0, X1, X2, X3, X4, X5].into_iter().zip(&args[1..]) {
+                            a.ldr(reg, SP, slot(*arg));
+                        }
+                        a.svc();
+                        a.str(X0, SP, slot(*d));
                     }
                     Inst::Const(d, n) => {
                         a.mov_imm(X0, *n);
@@ -1166,23 +1347,23 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                                 let ok = a.label();
                                 a.fmov_dx(0, X0);
                                 a.fcmp(0, 0);
-                                a.bcond(VS, l_panic[P_F2I]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_F2I], cl); a.bcond(VS, t); }
                                 a.fcvtzs(X2, 0);
                                 a.mov_imm(X1, i64::MAX);
                                 a.cmp(X2, X1);
-                                a.bcond(EQ, l_panic[P_F2I]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_F2I], cl); a.bcond(EQ, t); }
                                 a.mov_imm(X1, i64::MIN);
                                 a.cmp(X2, X1);
                                 a.bcond(NE, ok);
                                 a.mov_imm(X1, 0xC3E0_0000_0000_0000u64 as i64);
                                 a.cmp(X0, X1);
-                                a.bcond(NE, l_panic[P_F2I]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_F2I], cl); a.bcond(NE, t); }
                                 a.bind(ok);
                                 a.mov(X0, X2);
                             }
                             NOp::Chk(rng, msg) => {
                                 let (lo, hi) = rng.bounds();
-                                let l = l_panic[CHK_PANIC[msg as usize]];
+                                let l = site(&mut a, &mut stubs, l_panic[CHK_PANIC[msg as usize]], cl);
                                 if rng == Rng::NonNeg {
                                     a.cmp(X0, XZR);
                                     a.bcond(MI, l);
@@ -1197,7 +1378,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                                     a.mov(X9, X0);
                                     a.mov_imm(X10, lo);
                                     a.mov_imm(X11, hi);
-                                    a.b(l_range_panic);
+                                    { let t = site(&mut a, &mut stubs, l_range_panic, cl); a.b(t); }
                                     a.bind(l_ok);
                                 } else {
                                     a.mov_imm(X2, lo);
@@ -1221,20 +1402,20 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                             NOp::WMul => a.mul(X0, X0, X1),
                             NOp::UAdd => {
                                 a.adds(X0, X0, X1);
-                                a.bcond(HS, l_panic[P_ADD]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_ADD], cl); a.bcond(HS, t); }
                             }
                             NOp::USub => {
                                 a.subs(X0, X0, X1);
-                                a.bcond(LO, l_panic[P_SUB]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_SUB], cl); a.bcond(LO, t); }
                             }
                             NOp::UMul => {
                                 a.umulh(X2, X0, X1);
                                 a.mul(X0, X0, X1);
-                                a.cbnz(X2, l_panic[P_MUL]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_MUL], cl); a.cbnz(X2, t); }
                             }
                             NOp::UDiv | NOp::UMod => {
                                 let is_div = *op == NOp::UDiv;
-                                a.cbz(X1, l_panic[if is_div { P_DIV0 } else { P_MOD0 }]);
+                                { let t = site(&mut a, &mut stubs, l_panic[if is_div { P_DIV0 } else { P_MOD0 }], cl); a.cbz(X1, t); }
                                 a.udiv(X2, X0, X1);
                                 if is_div {
                                     a.mov(X0, X2);
@@ -1256,7 +1437,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                     Inst::Neg(d, s) => {
                         a.ldr(X0, SP, slot(*s));
                         a.subs(X0, XZR, X0);
-                        a.bcond(VS, l_panic[P_NEG]);
+                        { let t = site(&mut a, &mut stubs, l_panic[P_NEG], cl); a.bcond(VS, t); }
                         a.str(X0, SP, slot(*d));
                     }
                     Inst::Not(d, s) => {
@@ -1270,29 +1451,29 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         match op.checked() {
                             Op::Add => {
                                 a.adds(X0, X0, X1);
-                                a.bcond(VS, l_panic[P_ADD]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_ADD], cl); a.bcond(VS, t); }
                             }
                             Op::Sub => {
                                 a.subs(X0, X0, X1);
-                                a.bcond(VS, l_panic[P_SUB]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_SUB], cl); a.bcond(VS, t); }
                             }
                             Op::Mul => {
                                 // overflow iff high 64 bits != sign-extension of the low 64 bits
                                 a.mul(X2, X0, X1);
                                 a.smulh(X3, X0, X1);
                                 a.cmp_asr63(X3, X2);
-                                a.bcond(NE, l_panic[P_MUL]);
+                                { let t = site(&mut a, &mut stubs, l_panic[P_MUL], cl); a.bcond(NE, t); }
                                 a.mov(X0, X2);
                             }
                             Op::Div | Op::Mod => {
                                 let is_div = op.checked() == Op::Div;
                                 let (l_do, l_done) = (a.label(), a.label());
-                                a.cbz(X1, l_panic[if is_div { P_DIV0 } else { P_MOD0 }]);
+                                { let t = site(&mut a, &mut stubs, l_panic[if is_div { P_DIV0 } else { P_MOD0 }], cl); a.cbz(X1, t); }
                                 a.cmn_1(X1); // divisor == -1 ?
                                 a.bcond(NE, l_do);
                                 if is_div {
                                     a.subs(X0, XZR, X0); // x / -1 = -x
-                                    a.bcond(VS, l_panic[P_DIV]);
+                                    { let t = site(&mut a, &mut stubs, l_panic[P_DIV], cl); a.bcond(VS, t); }
                                 } else {
                                     a.mov_imm(X0, 0); // x % -1 == 0
                                 }
@@ -1341,7 +1522,13 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                             a.str(X0, SP, 8 * i as u32);
                         }
                         match ins {
-                            Inst::Call(_, fid, _) => a.bl(l_funcs[*fid]),
+                            Inst::Call(_, fid, _) => {
+                        // a failure inside a library function is reported at its caller's position
+                        if report && cl != 0 && ir.funcs[*fid].lib {
+                            a.mov_imm(X17, cl as i64);
+                        }
+                        a.bl(l_funcs[*fid])
+                    }
                             Inst::ExternCall(..) => {
                                 unreachable!("extern calls are unsupported on aarch64")
                             }
@@ -1439,11 +1626,13 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                     Inst::ListPush(l, v) => {
                         a.ldr(X0, SP, slot(*l));
                         a.ldr(X1, SP, slot(*v));
+                        if report && cl != 0 { a.mov_imm(X17, cl as i64); }
                         a.bl(l_push);
                     }
                     Inst::ListGet(d, l, i) => {
                         a.ldr(X0, SP, slot(*l));
                         a.ldr(X1, SP, slot(*i));
+                        if report && cl != 0 { a.mov_imm(X17, cl as i64); }
                         a.bl(l_get);
                         a.str(X0, SP, slot(*d));
                     }
@@ -1492,21 +1681,22 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                     Inst::Panic(p, n) => {
                         a.ldr(X1, SP, slot(*p));
                         a.ldr(X2, SP, slot(*n));
+                        if report && cl != 0 { a.mov_imm(X17, cl as i64); }
                         a.bl(l_panic_bytes);
                     }
                     Inst::Check(i, n) => {
                         a.ldr(X0, SP, slot(*i));
                         a.ldr(X1, SP, slot(*n));
                         a.cmp(X0, X1);
-                        a.bcond(HS, l_panic[P_INDEX]); // unsigned: negative indices fail too
+                        { let t = site(&mut a, &mut stubs, l_panic[P_INDEX], cl); a.bcond(HS, t); } // unsigned: negative indices fail too
                     }
                     Inst::CheckNonEmpty(n) => {
                         a.ldr(X0, SP, slot(*n));
-                        a.cbz(X0, l_panic[P_POP]);
+                        { let t = site(&mut a, &mut stubs, l_panic[P_POP], cl); a.cbz(X0, t); }
                     }
                     Inst::Assert(n) => {
                         a.ldr(X0, SP, slot(*n));
-                        a.cbz(X0, l_panic[P_ASSERT]);
+                        { let t = site(&mut a, &mut stubs, l_panic[P_ASSERT], cl); a.cbz(X0, t); }
                     }
                 }
             }
@@ -1534,6 +1724,11 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                 Term::Unreachable => a.udf(),
             }
         }
+        for (l, t, c) in stubs {
+            a.bind(l);
+            a.mov_imm(X17, c as i64);
+            a.b(t);
+        }
     }
 
     // lay out: code, padding to 16, then data blobs (each 8-aligned)
@@ -1557,6 +1752,30 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         for &func in table {
             let code = a.labels[l_funcs[func]].unwrap() as i64;
             blob.extend_from_slice(&(code - address).to_le_bytes());
+        }
+    }
+    if report {
+        // positions: "  at ", ":", the location rows (file, line, col as u64) and the file table
+        // ({offset from the table, length} per file, then the names)
+        let mut files: Vec<u8> = vec![];
+        let mut names: Vec<u8> = vec![];
+        let base = 16 * ir.files.len();
+        for n in &ir.files {
+            files.extend_from_slice(&((base + names.len()) as u64).to_le_bytes());
+            files.extend_from_slice(&(n.len() as u64).to_le_bytes());
+            names.extend_from_slice(n.as_bytes());
+        }
+        files.extend(names);
+        let mut locs: Vec<u8> = vec![];
+        for (f, l, c) in &ir.locs {
+            for w in [*f, *l, *c] {
+                locs.extend_from_slice(&(w as u64).to_le_bytes());
+            }
+        }
+        for d in [b"  at ".to_vec(), b":".to_vec(), locs, files] {
+            blob.resize((blob.len() + 7) & !7, 0);
+            offs.push(blob.len());
+            blob.extend_from_slice(&d);
         }
     }
     a.finalize(BASE + HDR, data_start, &offs);

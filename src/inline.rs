@@ -143,6 +143,7 @@ fn clone_func(f: &IrFunc) -> IrFunc {
     IrFunc {
         name: f.name.clone(),
         lib: f.lib,
+        debug_bindings: f.debug_bindings,
         nparams: f.nparams,
         vranges: f.vranges.clone(),
         nvregs: f.nvregs,

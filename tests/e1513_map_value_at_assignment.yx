@@ -1,0 +1,5 @@
+// Updating a map value through vals.at is rejected; callers must use vals.set.
+fn main() {
+  var counts = Map<String, Int>.new()
+  counts.vals.at(0) = 1
+}

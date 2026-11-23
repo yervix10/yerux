@@ -1,0 +1,8 @@
+error: print only accepts numbers, Char, Bool, Text or String
+ --> tests/e1510_print_struct_help.yx:5:9
+  |
+5 |   print(p)
+  |         ^
+  = help: print a value inside a string: `print("{x}")` (any type with Show)
+
+1 error(s). Nothing was generated.

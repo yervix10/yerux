@@ -1,0 +1,76 @@
+// Raw strings keep backslashes, quotes and braces verbatim.
+// `lines()` splits a String on newlines and drops the final empty line.
+
+struct Rule { key: Text, weight: Int }
+
+fn classify(line: view String) -> Int {
+  let t = line.trim()
+  return if t.len() == 0 {
+    0
+  } else if t.byte(0) == 35 {
+    1
+  } else {
+    2
+  }
+}
+
+fn score(kind: Int, n: Int) -> Int {
+  return match kind {
+    0 => 0,
+    1 => 1,
+    _ => if n > 10 { n * 2 } else { n },
+  }
+}
+
+fn main() {
+  let windows_path = r"C:\config\app.ini"
+  let json = r#"{"path": "C:\tmp", "n": 3}"#
+  print(windows_path)
+  print(json)
+
+  var doc = String.from(r"# comment")
+  doc.push_str("\n")
+  doc.push_str(r"path=C:\config\app.ini")
+  doc.push_str("\n")
+  doc.push_str(r"n=17")
+  doc.push_str("\n")
+  doc.push_str(r"empty=")
+  let lines = doc.lines()
+  print(lines.len())
+
+  var total = 0
+  var rules = 0
+  for line in lines {
+    let kind = classify(line)
+    let eq = line.find("=")
+    let value_text = if eq >= 0 {
+      line.slice(eq + 1, line.len())
+    } else {
+      String.new()
+    }
+    let key = if eq >= 0 {
+      line.slice(0, eq)
+    } else {
+      String.new()
+    }
+    var value = 0
+    let ok = value_text.parse_int(value)
+    let kind_name = match kind {
+      0 => "blank",
+      1 => "comment",
+      _ => "entry",
+    }
+    let used = if ok { value } else { 0 }
+    let w = score(kind, used)
+    print("{kind_name}: {key} -> {w}")
+    total = total + w
+    if kind == 2 { rules = rules + 1 }
+  }
+  print(total)
+  print(rules)
+
+  let key = r"n"
+  let weight = 17
+  let rule = Rule { key, weight }
+  print("{rule.key} {rule.weight}")
+}

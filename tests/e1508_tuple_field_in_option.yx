@@ -1,0 +1,11 @@
+// A tuple field moved out of an owned match binding: the help names the variable and suggests destructuring.
+fn main() {
+  let o: Option<(String, Int)> = Option.Some((String.from("a"), 2))
+  match o {
+    Some(pair) => {
+      let want = pair.0
+      print(want)
+    }
+    None => {}
+  }
+}

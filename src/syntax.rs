@@ -117,6 +117,12 @@ pub fn render(d: &Diag, file: &str, src: &str) -> String {
 fn diagnostic_hint(msg: &str) -> Option<String> {
     let hint = if msg.starts_with("expected ") && msg.contains(" but this is ") {
         "check the value at this expression; convert it explicitly or change the expected type"
+    } else if let Some(ty) = numeric_type_name(msg) {
+        return Some(format!(
+            "`{ty}` is a type, not a value: write a suffixed literal (`0{}`) or a checked conversion (`n.to_{}()`)",
+            ty.to_lowercase().replacen("uint", "u", 1).replacen("int", "i", 1),
+            ty.to_lowercase()
+        ));
     } else if msg.starts_with("variable '") && msg.ends_with("' does not exist") {
         "check the spelling, scope, and whether the name needs to be imported or qualified"
     } else if msg.starts_with("function '") && msg.ends_with("' does not exist") {
@@ -833,7 +839,7 @@ pub fn check_array_len(types: &Types, elem: Ty, n: i64, pos: Pos) -> Result<(), 
         return Err(diag("an array needs at least one element", pos)
             .note("help: use `List<T>.new()` for a collection that may be empty"));
     }
-    let ws = array_elem_bytes(&types, elem).max(1) as i128;
+    let ws = array_elem_bytes(types, elem).max(1) as i128;
     if (n as i128) * ws > MAX_ARRAY_BYTES as i128 {
         return Err(diag(
             format!(
@@ -4094,12 +4100,7 @@ impl Parser {
         match tk.t {
             Tok::Num(n) => self.postfix(mk(EK::Int(n), pos)),
             Tok::NumT(v, sfx) => {
-                let k = if sfx.is_empty() {
-                    EK::Int(v as i64)
-                } else {
-                    EK::Int(v as i64)
-                };
-                let mut e = mk(k, pos);
+                let mut e = mk(EK::Int(v as i64), pos);
                 // a typed literal carries its type already; an untyped one that is too big keeps `Ty::Unit`
                 // until the checker decides (it needs to be UInt64)
                 if let Some(t) = numeric::suffix_ty(sfx) {
@@ -4117,7 +4118,7 @@ impl Parser {
                 }
                 self.postfix(e)
             }
-            Tok::Id(k) if (k == "if" || k == "match") && self.surface.is_none() => {
+            Tok::Id(k) if k == "if" || k == "match" => {
                 self.i -= 1; // the expression parsers read the keyword themselves
                 if k == "if" {
                     self.if_expr()
@@ -4552,7 +4553,8 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
         .iter()
         .any(|t| matches!(&t.t, Tok::Id(k) if k == "derive"));
     let auto = auto_into_iter(&user);
-    if !has_derive && auto.is_empty() {
+    let auto_eq = auto_enum_equal(&user);
+    if !has_derive && auto.is_empty() && auto_eq.is_empty() {
         return user;
     }
     // definitions: name -> (is_struct, generic, body tokens between the braces)
@@ -4622,6 +4624,9 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
     let mut gen = String::new();
     let mut at = user.first().map(|t| t.pos).unwrap_or_default();
     gen.push_str(&auto);
+    for n in &auto_eq {
+        gen.push_str(&derive_impl("Equal", n, defs.get(n), gens.get(n), &parts));
+    }
     let mut depth = 0i32;
     let mut i = 0;
     while i < user.len() {
@@ -4665,18 +4670,87 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
         return out;
     }
     let eof = out.pop();
-    match lex(&gen) {
-        Ok(mut g) => {
-            g.pop();
-            for t in g.iter_mut() {
-                t.pos = at;
-            }
-            out.extend(g);
+    if let Ok(mut g) = lex(&gen) {
+        g.pop();
+        for t in g.iter_mut() {
+            t.pos = at;
         }
-        Err(_) => {}
+        out.extend(g);
     }
     out.extend(eof);
     out
+}
+
+/// Non-generic enums whose variants carry no payload are `Equal` without a `derive` line: `==` / `!=` just
+/// work on them. An enum with a hand-written `impl Equal for E` or a `derive .., Equal, .. for E` keeps it.
+fn auto_enum_equal(user: &[Token]) -> Vec<String> {
+    let mut have: Vec<String> = vec![];
+    let mut cands: Vec<String> = vec![];
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < user.len() {
+        match &user[i].t {
+            Tok::Sym("{") => depth += 1,
+            Tok::Sym("}") => depth -= 1,
+            Tok::Id(k) if depth == 0 && k == "impl" => {
+                if matches!(user.get(i + 1).map(|t| &t.t), Some(Tok::Id(t)) if t == "Equal")
+                    && matches!(user.get(i + 2).map(|t| &t.t), Some(Tok::Id(f)) if f == "for")
+                {
+                    if let Some(Tok::Id(n)) = user.get(i + 3).map(|t| &t.t) {
+                        have.push(n.clone());
+                    }
+                }
+            }
+            Tok::Id(k) if depth == 0 && k == "derive" => {
+                let mut j = i + 1;
+                let mut eq = false;
+                while let Some(Tok::Id(t)) = user.get(j).map(|t| &t.t) {
+                    if t == "for" {
+                        break;
+                    }
+                    eq |= t == "Equal";
+                    j += 1;
+                    if user.get(j).map(|t| &t.t) == Some(&Tok::Sym(",")) {
+                        j += 1;
+                    }
+                }
+                if eq {
+                    if let Some(Tok::Id(n)) = user.get(j + 1).map(|t| &t.t) {
+                        have.push(n.clone());
+                    }
+                }
+            }
+            Tok::Id(k) if depth == 0 && k == "enum" => {
+                if let (Some(Tok::Id(n)), Some(Tok::Sym("{"))) =
+                    (user.get(i + 1).map(|t| &t.t), user.get(i + 2).map(|t| &t.t))
+                {
+                    let (mut d, mut j, mut variants, mut payload) = (0i32, i + 2, 0, false);
+                    while j < user.len() {
+                        match &user[j].t {
+                            Tok::Sym("{") => d += 1,
+                            Tok::Sym("}") => d -= 1,
+                            Tok::Sym("(") => payload = true,
+                            Tok::Id(_) if d == 1 && matches!(user[j - 1].t, Tok::Sym("{") | Tok::Sym(",")) => variants += 1,
+                            _ => {}
+                        }
+                        if d == 0 {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    if variants > 0 && !payload {
+                        cands.push(n.clone());
+                    }
+                    // the body was scanned: continue after it (depth stays 0)
+                    i = j;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    cands.retain(|n| !have.contains(n));
+    cands
 }
 
 fn derive_impl(
@@ -4725,7 +4799,7 @@ fn derive_impl(
                 let items: Vec<String> =
                     fields.iter().map(|f| format!("{f}: {{self.{f}}}")).collect();
                 let text = if items.is_empty() {
-                    format!("{name}")
+                    name.to_string()
                 } else {
                     format!("{name} {{{{ {} }}}}", items.join(", "))
                 };
@@ -4931,4 +5005,12 @@ fn strip_derives(user: Vec<Token>) -> Vec<Token> {
         i += 1;
     }
     out
+}
+
+/// `X` of "variable 'X' does not exist" when X is a numeric type name (`UInt8.from(0)`).
+fn numeric_type_name(msg: &str) -> Option<&str> {
+    let name = msg.strip_prefix("variable '")?.strip_suffix("' does not exist")?;
+    let bits = ["8", "16", "32", "64"];
+    let known = bits.iter().any(|b| name == format!("Int{b}") || name == format!("UInt{b}"));
+    known.then_some(name)
 }

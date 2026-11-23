@@ -1,0 +1,18 @@
+fn fact(n: Int) -> Int {
+  if n <= 1 {
+    return 1
+  }
+  let r = fact(n - 1)
+  return n * r
+}
+
+fn show(x: Int) {
+  print(x)
+}
+
+fn main() {
+  let a = fact(5)
+  show(a)
+  let b = fact(3)
+  show(b)
+}

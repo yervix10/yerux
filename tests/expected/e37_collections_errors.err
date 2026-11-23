@@ -4,7 +4,7 @@ error: type Map<String, String> has no method 'get'
 7 |   let v = m.get(k)
   |           ^^^^^^^^
   = 'get' needs V: Copy, but String does not implement Copy; String values are owned and cannot be copied
-  = help: use `m.find(key)` and, if the index is nonnegative, borrow `m.vals.at(i)`; `m.take(key)` removes and returns an existing value
+  = help: `import std.collections` and read it with `collections.map_with(m, key, |v: view V| ..)`, which returns an Option; or `m.take(key)` removes and returns the value
 
 error: Set<P> has no function 'new'
  --> examples/e37_collections_errors.yx:8:11

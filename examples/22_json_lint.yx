@@ -1,0 +1,289 @@
+// Validate JSON documents and summarise their structure without building a tree.
+// A single pass over the bytes enforces the grammar and counts each value kind;
+// the error of the first document shows how far a broken input got.
+
+enum Kind { Object, Array, Str, Number, Literal }
+
+struct Tally {
+  objects: Int,
+  arrays: Int,
+  strings: Int,
+  numbers: Int,
+  literals: Int,
+  max_depth: Int,
+}
+
+impl Show for Tally {
+  fn show(view self) -> String {
+    return "objects={self.objects} arrays={self.arrays} strings={self.strings} numbers={self.numbers} literals={self.literals} depth={self.max_depth}"
+  }
+}
+
+struct Scanner { pos: Int, depth: Int }
+
+fn peek(src: view String, pos: Int) -> Int {
+  if pos >= src.len() {
+    return -1
+  }
+  return src.byte(pos)
+}
+
+fn is_digit(b: Int) -> Bool {
+  return b >= 48 && b <= 57
+}
+
+fn is_hex(b: Int) -> Bool {
+  return is_digit(b) || (b >= 65 && b <= 70) || (b >= 97 && b <= 102)
+}
+
+fn skip_ws(src: view String, pos: mut Int) {
+  while true {
+    let b = peek(src, pos)
+    if b != 32 && b != 9 && b != 10 && b != 13 {
+      return
+    }
+    pos = pos + 1
+  }
+}
+
+fn fail(where_: view String, pos: Int) -> Result<Bool, String> {
+  return Err("{where_} at byte {pos}")
+}
+
+fn count(tally: mut Tally, kind: Kind) {
+  match kind {
+    Object => { tally.objects = tally.objects + 1 }
+    Array => { tally.arrays = tally.arrays + 1 }
+    Str => { tally.strings = tally.strings + 1 }
+    Number => { tally.numbers = tally.numbers + 1 }
+    Literal => { tally.literals = tally.literals + 1 }
+  }
+}
+
+fn enter(tally: mut Tally, depth: Int) {
+  if depth > tally.max_depth {
+    tally.max_depth = depth
+  }
+}
+
+fn string_value(src: view String, s: mut Scanner, tally: mut Tally) -> Result<Bool, String> {
+  s.pos = s.pos + 1
+  while s.pos < src.len() {
+    let b = src.byte(s.pos)
+    if b == 34 {
+      s.pos = s.pos + 1
+      count(tally, Kind.Str)
+      return Ok(true)
+    }
+    if b < 32 {
+      return fail("control character in string", s.pos)
+    }
+    if b == 92 {
+      s.pos = s.pos + 1
+      let e = peek(src, s.pos)
+      if e == 34 || e == 47 || e == 92 || e == 98 || e == 102 || e == 110 || e == 114 || e == 116 {
+        s.pos = s.pos + 1
+      } else if e == 117 {
+        s.pos = s.pos + 1
+        var i = 0
+        while i < 4 {
+          if !is_hex(peek(src, s.pos)) {
+            return fail("bad \\u escape", s.pos)
+          }
+          s.pos = s.pos + 1
+          i = i + 1
+        }
+      } else {
+        return fail("bad escape", s.pos)
+      }
+    } else {
+      s.pos = s.pos + 1
+    }
+  }
+  return fail("unterminated string", s.pos)
+}
+
+fn number_value(src: view String, s: mut Scanner, tally: mut Tally) -> Result<Bool, String> {
+  if peek(src, s.pos) == 45 {
+    s.pos = s.pos + 1
+  }
+  if peek(src, s.pos) == 48 {
+    s.pos = s.pos + 1
+  } else if is_digit(peek(src, s.pos)) {
+    while is_digit(peek(src, s.pos)) {
+      s.pos = s.pos + 1
+    }
+  } else {
+    return fail("expected a digit", s.pos)
+  }
+  if peek(src, s.pos) == 46 {
+    s.pos = s.pos + 1
+    if !is_digit(peek(src, s.pos)) {
+      return fail("expected a digit after '.'", s.pos)
+    }
+    while is_digit(peek(src, s.pos)) {
+      s.pos = s.pos + 1
+    }
+  }
+  let e = peek(src, s.pos)
+  if e == 101 || e == 69 {
+    s.pos = s.pos + 1
+    let sign = peek(src, s.pos)
+    if sign == 43 || sign == 45 {
+      s.pos = s.pos + 1
+    }
+    if !is_digit(peek(src, s.pos)) {
+      return fail("expected a digit in the exponent", s.pos)
+    }
+    while is_digit(peek(src, s.pos)) {
+      s.pos = s.pos + 1
+    }
+  }
+  count(tally, Kind.Number)
+  return Ok(true)
+}
+
+fn literal(src: view String, s: mut Scanner, spelling: Text, tally: mut Tally) -> Result<Bool, String> {
+  let word = String.from(spelling)
+  var i = 0
+  while i < word.len() {
+    if peek(src, s.pos) != word.byte(i) {
+      return fail("bad literal", s.pos)
+    }
+    s.pos = s.pos + 1
+    i = i + 1
+  }
+  count(tally, Kind.Literal)
+  return Ok(true)
+}
+
+fn value(src: view String, s: mut Scanner, tally: mut Tally) -> Result<Bool, String> {
+  skip_ws(src, s.pos)
+  let b = peek(src, s.pos)
+  if b == 123 {
+    return object(src, s, tally)
+  }
+  if b == 91 {
+    return array(src, s, tally)
+  }
+  if b == 34 {
+    return string_value(src, s, tally)
+  }
+  if b == 45 || is_digit(b) {
+    return number_value(src, s, tally)
+  }
+  if b == 116 {
+    return literal(src, s, "true", tally)
+  }
+  if b == 102 {
+    return literal(src, s, "false", tally)
+  }
+  if b == 110 {
+    return literal(src, s, "null", tally)
+  }
+  if b < 0 {
+    return fail("unexpected end of document", s.pos)
+  }
+  return fail("unexpected byte", s.pos)
+}
+
+fn object(src: view String, s: mut Scanner, tally: mut Tally) -> Result<Bool, String> {
+  s.pos = s.pos + 1
+  count(tally, Kind.Object)
+  s.depth = s.depth + 1
+  enter(tally, s.depth)
+  skip_ws(src, s.pos)
+  if peek(src, s.pos) == 125 {
+    s.pos = s.pos + 1
+    s.depth = s.depth - 1
+    return Ok(true)
+  }
+  while true {
+    skip_ws(src, s.pos)
+    if peek(src, s.pos) != 34 {
+      return fail("object member name must be a string", s.pos)
+    }
+    string_value(src, s, tally)?
+    skip_ws(src, s.pos)
+    if peek(src, s.pos) != 58 {
+      return fail("expected ':' after a member name", s.pos)
+    }
+    s.pos = s.pos + 1
+    value(src, s, tally)?
+    skip_ws(src, s.pos)
+    let b = peek(src, s.pos)
+    if b == 125 {
+      s.pos = s.pos + 1
+      s.depth = s.depth - 1
+      return Ok(true)
+    }
+    if b != 44 {
+      return fail("expected ',' or '}}'", s.pos)
+    }
+    s.pos = s.pos + 1
+  }
+}
+
+fn array(src: view String, s: mut Scanner, tally: mut Tally) -> Result<Bool, String> {
+  s.pos = s.pos + 1
+  count(tally, Kind.Array)
+  s.depth = s.depth + 1
+  enter(tally, s.depth)
+  skip_ws(src, s.pos)
+  if peek(src, s.pos) == 93 {
+    s.pos = s.pos + 1
+    s.depth = s.depth - 1
+    return Ok(true)
+  }
+  while true {
+    value(src, s, tally)?
+    skip_ws(src, s.pos)
+    let b = peek(src, s.pos)
+    if b == 93 {
+      s.pos = s.pos + 1
+      s.depth = s.depth - 1
+      return Ok(true)
+    }
+    if b != 44 {
+      return fail("expected ',' or ']'", s.pos)
+    }
+    s.pos = s.pos + 1
+  }
+}
+
+fn lint(doc: view String) -> Result<Tally, String> {
+  if doc.len() == 0 {
+    return Err("empty document")
+  }
+  var s = Scanner { pos: 0, depth: 0 }
+  var tally = Tally { objects: 0, arrays: 0, strings: 0, numbers: 0, literals: 0, max_depth: 0 }
+  value(doc, s, tally)?
+  skip_ws(doc, s.pos)
+  if s.pos != doc.len() {
+    return Err("trailing data at byte {s.pos}")
+  }
+  return Ok(tally)
+}
+
+fn report(label: Text, doc: view String) {
+  match lint(doc) {
+    Ok(tally) => { print("{label}: valid, {tally}") }
+    Err(problem) => { print("{label}: invalid, {problem}") }
+  }
+}
+
+fn main() {
+  let profile = String.from(r#"{"user":{"name":"Ada","active":true,"roles":["admin","ops"],"score":9.5},"count":2,"tags":[]}"#)
+  let events = String.from(r#"[{"id":1,"ok":true},{"id":2,"ok":false,"note":"retry"},{"id":3,"ok":null}]"#)
+  let escaped = String.from(r#"{"path":"C:\\tmp\\new","unicode":"\u00e9","empty":"","zero":-0.5e+3}"#)
+  let broken_key = String.from(r#"{name:"Ada","count":2}"#)
+  let broken_tail = String.from(r#"{"count":2} extra"#)
+  let broken_number = String.from(r#"{"count":2.}"#)
+
+  report("profile", profile)
+  report("events", events)
+  report("escaped", escaped)
+  report("broken-key", broken_key)
+  report("broken-tail", broken_tail)
+  report("broken-number", broken_number)
+}

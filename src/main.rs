@@ -11,6 +11,7 @@ mod dropscc;
 mod elfdyn;
 mod fmt;
 mod inline;
+mod dwarf;
 mod ir;
 mod json;
 mod layout;
@@ -199,7 +200,10 @@ fn native_build(
         exit(1);
     }
     let start = Instant::now();
-    let mut ir = ir::lower(prog).unwrap_or_else(|e| {
+    let dwarf = matches!(target, "" | "linux")
+        && prog.externs.is_empty()
+        && x64::DWARF.load(std::sync::atomic::Ordering::Relaxed);
+    let mut ir = ir::lower_with_debug(prog, dwarf).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         exit(1)
     });
@@ -211,7 +215,15 @@ fn native_build(
         profile_stage("native optimization", start);
     }
     if !target.is_empty() && target != "linux" {
-        if let Some(what) = ir::os_intrinsics_error(&ir) {
+        let aarch64 = target == "aarch64";
+        if aarch64 {
+            a64::discard_unused_functions(&mut ir);
+        }
+        let mut unsupported = ir::os_intrinsics_error(&ir, aarch64);
+        if aarch64 && unsupported.is_none() {
+            unsupported = a64::translate_syscalls(&mut ir).err();
+        }
+        if let Some(what) = unsupported {
             eprintln!("error: native backend: {} is not supported on the {} target yet (available on x86-64 Linux)", what, target);
             exit(1);
         }
@@ -233,7 +245,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--no-opt] [--native-debug-alloc]
        yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
@@ -544,6 +556,11 @@ fn real_main() {
         exit(2);
     }
     let no_opt = args.iter().any(|a| a == "--no-opt") || debug;
+    if debug || args.iter().any(|a| a == "--dwarf") {
+        // native Linux: symbols + DWARF source, frame and variable information for gdb (docs/PANIC_DIAGNOSTICS.md)
+        ir::ALL_LOCS.store(true, std::sync::atomic::Ordering::Relaxed);
+        x64::DWARF.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if debug || std::env::var_os("YERUX_BACKTRACE").is_some() || std::env::var_os("YERUX_LOCS").is_some() {
         cgen::FULL_LOCS.store(true, std::sync::atomic::Ordering::Relaxed);
     }

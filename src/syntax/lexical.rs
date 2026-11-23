@@ -118,20 +118,7 @@ impl Lexical {
                 self.block(body);
                 self.bindings.truncate(mark);
             }
-            SK::Match(e, arms) => {
-                self.expr(e);
-                for arm in arms {
-                    let mark = self.bindings.len();
-                    if let Some(p) = &arm.pat {
-                        self.pattern(p);
-                    }
-                    if let Some(guard) = &arm.guard {
-                        self.expr(guard);
-                    }
-                    self.block(&arm.body);
-                    self.bindings.truncate(mark);
-                }
-            }
+            SK::Match(e, arms) => self.arms(e, arms),
             SK::Block(body, _) | SK::Unsafe(body) => self.block(body),
             SK::Defer(stmt) => self.stmt(stmt),
             SK::Break(..) | SK::Continue(..) | SK::Return(None) => {}
@@ -154,6 +141,12 @@ impl Lexical {
                 self.function(params.iter().map(|p| p.name.clone()), body);
                 self.closures.pop();
             }
+            EK::IfExpr(c, yes, no) => {
+                self.expr(c);
+                self.block(yes);
+                self.block(no);
+            }
+            EK::MatchExpr(e, arms) => self.arms(e, arms),
             EK::AsElse(e, body) => {
                 self.expr(e);
                 self.block(body);
@@ -179,6 +172,21 @@ impl Lexical {
             }
             EK::Int(_) | EK::Float(..) | EK::Text(_) | EK::Char(_) | EK::Bool(_) => {}
             _ => unreachable!("resolved expression in source lexical pass"),
+        }
+    }
+
+    fn arms(&mut self, e: &Expr, arms: &[Arm]) {
+        self.expr(e);
+        for arm in arms {
+            let mark = self.bindings.len();
+            if let Some(p) = &arm.pat {
+                self.pattern(p);
+            }
+            if let Some(guard) = &arm.guard {
+                self.expr(guard);
+            }
+            self.block(&arm.body);
+            self.bindings.truncate(mark);
         }
     }
 

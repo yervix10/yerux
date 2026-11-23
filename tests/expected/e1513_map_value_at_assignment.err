@@ -1,0 +1,8 @@
+error: cannot assign to 'counts.vals.at(..)' directly
+ --> tests/e1513_map_value_at_assignment.yx:4:3
+  |
+4 |   counts.vals.at(0) = 1
+  |   ^^^^^^
+  = help: use `l.set(i, value)` to replace an element
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,55 @@
+// Payload-free enums are Equal without a `derive` line: `==` / `!=` work on variables,
+// fields, list elements and variant literals.
+enum Kind { Word, End, Num }
+pub enum Level { Low, Mid, High }
+enum Tag { A, B }
+derive Equal, Show for Tag
+
+// a hand-written Equal wins over the implicit one: every Mode equals every other
+enum Mode { Fast, Slow }
+impl Equal for Mode {
+  fn eq(view self, other: view Mode) -> Bool { return true }
+}
+
+struct Token { kind: Kind, len: Int }
+
+fn is_end(k: view Kind) -> Bool { return k == Kind.End }
+
+fn count(ks: view List<Kind>, want: Kind) -> Int {
+  var n = 0
+  var i = 0
+  while i < ks.len() {
+    if ks.at(i) == want { n = n + 1 }
+    i = i + 1
+  }
+  return n
+}
+
+fn main() {
+  let a = Kind.Word
+  let b = Kind.End
+  print(a == b)
+  print(a != b)
+  print(a == Kind.Word)
+  print(Kind.Num == Kind.Num)
+  print(Kind.Num != Kind.Num)
+  print(is_end(b))
+  print(is_end(a))
+  let t = Token { kind: Kind.Num, len: 3 }
+  print(t.kind == Kind.Num)
+  print(t.kind != Kind.Word)
+  var ks = List<Kind>.new()
+  ks.push(Kind.Word)
+  ks.push(Kind.Num)
+  ks.push(Kind.Word)
+  print(count(ks, Kind.Word))
+  print(count(ks, Kind.End))
+  print(ks.at(1) == Kind.Num)
+  let l = Level.Mid
+  print(l == Level.Mid)
+  print(Level.Low == Level.High)
+  print(Tag.A == Tag.B)
+  let m = Mode.Fast
+  print(m == Mode.Slow)
+  assert(a == Kind.Word)
+}

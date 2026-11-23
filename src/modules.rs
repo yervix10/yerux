@@ -160,10 +160,8 @@ fn arm_arrow_ahead(toks: &[Token], j: usize) -> bool {
         }
         if is_sym(t, "(") || is_sym(t, "[") {
             depth += 1;
-        } else if is_sym(t, ")") || is_sym(t, "]") {
-            if depth > 0 {
-                depth -= 1;
-            }
+        } else if (is_sym(t, ")") || is_sym(t, "]")) && depth > 0 {
+            depth -= 1;
         }
         i += 1;
     }

@@ -1,0 +1,10 @@
+error: String has no method 'lenn'
+ --> tests/e1512_string_method_typo.yx:4:9
+  |
+4 |   print(s.lenn())
+  |         ^^^^^^^^
+  = help: did you mean `len`?
+  = methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)
+  = to visit the characters write `for c in s.chars() { .. }`
+
+1 error(s). Nothing was generated.

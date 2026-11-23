@@ -1335,8 +1335,15 @@ impl<'a> Checker<'a> {
         // `a == b`, `a < b` on a type that implements Equal / Ordered
         if let EK::Bin(op, a, _) = &e.k {
             // a Text literal on the left (`"abc" < s`) is compared like a Text variable
+            // a payload-free enum variant on the left (`Kind.End == k`) compares like an enum variable
             let lit = if matches!(a.k, EK::Text(_)) {
                 Some(Ty::Text)
+            } else if let EK::Variant { eid, args, .. } = &a.k {
+                if args.is_empty()  {
+                    Some(Ty::Enum(*eid))
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -1392,7 +1399,24 @@ impl<'a> Checker<'a> {
                             _ => false,
                         };
                         if tuple {
-                            d.note("help: take the whole tuple apart instead: `let (a, b) = move t` (each name then owns its element), or borrow the element (call a method on it, or pass it to a `view`/`mut` parameter)")
+                            // name the real variable and its arity: `let (x0, x1) = move pair`
+                            let whole = match &e.k {
+                                EK::Field(b, _) if matches!(b.k, EK::Var(..)) => {
+                                    let arity = self.tuple_elems(b.ty).map_or(0, |v| v.len());
+                                    (arity > 0).then(|| (place_str(b), arity))
+                                }
+                                _ => None,
+                            };
+                            match whole {
+                                Some((v, n)) => {
+                                    let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+                                    d.note(format!(
+                                        "help: take the tuple apart instead: `let ({}) = move {}` (each name then owns its element)",
+                                        names.join(", "), v
+                                    ))
+                                }
+                                None => d.note("help: take the whole tuple apart instead: `let (a, b) = move t` (each name then owns its element), or borrow the element (call a method on it, or pass it to a `view`/`mut` parameter)"),
+                            }
                         } else {
                             d.note("help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct")
                         }
@@ -2739,7 +2763,11 @@ impl<'a> Checker<'a> {
                         format!("index {} is out of bounds for the array {}", k, an),
                         idx.pos,
                     )
-                    .note(format!("valid indexes are 0 to {}", n - 1)),
+                    .note(format!("valid indexes are 0 to {}", n - 1))
+                    .note(format!(
+                        "help: keep the index between 0 and {}; `a.len()` gives the length",
+                        n - 1
+                    )),
                 );
             }
         }
@@ -2818,10 +2846,27 @@ impl<'a> Checker<'a> {
                 self.expect(t, Ty::Int, x.pos);
             }
             if !self.isp(b) {
-                self.err(diag("cannot take a slice of a temporary", b.pos).note(
-                    "help: store the array or List in a variable first, then slice the variable",
-                ));
-                return;
+                // a temporary array or List (`first([4, 5][0..1])`): it lives in a hidden variable for the call
+                if mode == Mode::Mut {
+                    self.err(
+                        diag("pass a variable here (the function borrows it)", b.pos)
+                            .note("a temporary would be modified and thrown away"),
+                    );
+                    return;
+                }
+                self.hint = Some(pty);
+                let t = self.expr(b);
+                if t == Ty::Err {
+                    return;
+                }
+                if self.types.seq_elem(t) != Some(selem) {
+                    self.err(diag(
+                        format!("expected {} but this is {}", self.tn(pty), self.tn(t)),
+                        b.pos,
+                    ).note("a slice parameter accepts an array, a List or a slice of the same element type"));
+                    return;
+                }
+                self.hoist_view_temp(b, t, before, params);
             }
             let Some(p) = self.place(b) else {
                 return;
@@ -3033,6 +3078,8 @@ impl<'a> Checker<'a> {
                 let mut d = diag(format!("String has no method '{}'", m), pos);
                 if in_text {
                     d = d.note(format!("help: `{m}` is a function of std.text: add `import std.text` and write `text.{m}(s, ..)`"));
+                } else if let Some(near) = nearest_name(m, STRING_METHODS) {
+                    d = d.note(format!("help: did you mean `{near}`?"));
                 }
                 self.err(d
                     .note("methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)")
@@ -3462,7 +3509,7 @@ impl<'a> Checker<'a> {
                         self.err(diag(
                             "print only accepts numbers, Char, Bool, Text or String",
                             args[0].pos,
-                        ));
+                        ).note("help: print a value inside a string: `print(\"{x}\")` (any type with Show)"));
                     }
                 }
                 return Ty::Unit;
@@ -6456,7 +6503,7 @@ impl<'a> Checker<'a> {
                                         .is_some_and(|(name, _)| name == "Map")
                                         && matches!(m, "get" | "get_or") =>
                                 {
-                                    note += "\nhelp: use `m.find(key)` and, if the index is nonnegative, borrow `m.vals.at(i)`; `m.take(key)` removes and returns an existing value";
+                                    note += "\nhelp: `import std.collections` and read it with `collections.map_with(m, key, |v: view V| ..)`, which returns an Option; or `m.take(key)` removes and returns the value";
                                 }
                                 _ => {}
                             }
@@ -8409,4 +8456,33 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
+
+/// Built-in String methods, for the "did you mean" hint of an unknown method.
+const STRING_METHODS: &[&str] = &[
+    "len", "push_str", "push_int", "push_char", "push_byte", "push_slice", "reserve", "eq", "byte", "char_at",
+    "char_size", "clear", "slice", "chars", "starts_with", "find", "contains", "trim", "clone",
+];
+
+/// The candidate closest to `m` (edit distance at most 2, and at most a third of its length), if any.
+fn nearest_name(m: &str, names: &[&str]) -> Option<String> {
+    let dist = |a: &str, b: &str| -> usize {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        for i in 1..=a.len() {
+            let mut cur = vec![i; b.len() + 1];
+            for j in 1..=b.len() {
+                let sub = prev[j - 1] + usize::from(a[i - 1] != b[j - 1]);
+                cur[j] = sub.min(prev[j] + 1).min(cur[j - 1] + 1);
+            }
+            prev = cur;
+        }
+        prev[b.len()]
+    };
+    names
+        .iter()
+        .map(|n| (dist(m, n), *n))
+        .filter(|(d, _)| *d <= 2 && *d * 3 <= m.chars().count().max(3))
+        .min()
+        .map(|(_, n)| n.to_string())
 }

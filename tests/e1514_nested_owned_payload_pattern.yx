@@ -1,0 +1,8 @@
+// Matching nested payloads directly is rejected for owned Results.
+import std.io
+fn main() {
+  match io.read_line() {
+    Ok(Some(_)) => { print("line") }
+    _ => {}
+  }
+}

@@ -1,0 +1,8 @@
+error: cannot move 'pair.0' out of its struct
+ --> tests/e1508_tuple_field_in_option.yx:6:18
+  |
+6 |       let want = pair.0
+  |                  ^^^^^^
+  = help: take the tuple apart instead: `let (x0, x1) = move pair` (each name then owns its element)
+
+1 error(s). Nothing was generated.
