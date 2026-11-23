@@ -61,18 +61,19 @@ for v in 1.0.0 1.2.0 1.10.0 2.0.0; do
 done
 cd "$T/app"
 "$Y" add gitlib --git "$T/gitlib" --version '^1' >/dev/null 2>"$T/err" || note "FAIL git add: $(cat "$T/err")"
-grep -q 'tag = "v1.10.0"' yerux.toml || note "FAIL git tag not v1.10.0: $(cat yerux.toml)"
+grep -q 'tag = "v1.10.0"' yerux.lock || note "FAIL git tag not v1.10.0: $(cat yerux.lock)"
+grep -q 'tag = ' yerux.toml && note "FAIL version-only dependency pinned a tag in the manifest"
 grep -q 'version = "\^1"' yerux.toml || note "FAIL requirement not recorded"
 grep -q 'version = "1.10.0"' yerux.lock || note "FAIL lock version for git dep: $(cat yerux.lock)"
 "$Y" add gitlib --git "$T/gitlib" --version '~1.2' >/dev/null 2>&1 || note "FAIL ~1.2"
-grep -q 'tag = "v1.2.0"' yerux.toml || note "FAIL ~1.2 should pick v1.2.0"
+grep -q 'tag = "v1.2.0"' yerux.lock || note "FAIL ~1.2 should pick v1.2.0"
 "$Y" add gitlib --git "$T/gitlib" >/dev/null 2>&1 || note "FAIL git add without requirement"
 grep -q 'tag = "v2.0.0"' yerux.toml || note "FAIL no requirement should pick the highest tag"
 "$Y" add gitlib --git "$T/gitlib" --version '^3' >/dev/null 2>&1 && note "FAIL ^3 accepted"
 "$Y" add gitlib --git "$T/gitlib" --tag v1.0.0 >/dev/null 2>&1 || note "FAIL explicit tag"
 grep -q 'tag = "v1.0.0"' yerux.toml && grep -q 'version = "1.0.0"' yerux.lock || note "FAIL explicit tag not pinned"
 "$Y" remove gitlib >/dev/null 2>&1 || note "FAIL remove gitlib"
-[ -d .yerux/git/gitlib ] && note "FAIL checkout of a removed git dependency left behind"
+grep -q 'gitlib' yerux.lock && note "FAIL removed git dependency still in lock"
 
 echo "add/remove checks: failures $fails"
 [ "$fails" = 0 ]

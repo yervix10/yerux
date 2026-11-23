@@ -17,6 +17,7 @@
 use crate::syntax::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 const FILE_SHIFT: usize = 20;
 const LINE_MASK: usize = (1 << FILE_SHIFT) - 1;
@@ -78,7 +79,8 @@ struct Module {
     toks: Vec<Token>,
 }
 
-struct Loader {
+struct Loader<'a> {
+    packages: Option<&'a crate::project::Graph>,
     root: PathBuf,
     mode: Mode,
     files: Vec<SourceFile>,
@@ -192,8 +194,39 @@ fn unpack_bind_ahead(toks: &[Token], j: usize) -> bool {
 fn mangle(key: &str, name: &str) -> String {
     if key.is_empty() {
         name.to_string()
+    } else if key.starts_with('#') {
+        format!("__pkg_{}__{name}", crate::hex(key.as_bytes()))
     } else {
         format!("{}__{}", key.replace('.', "__"), name)
+    }
+}
+
+fn display_key(key: &str) -> &str {
+    key.strip_prefix('#').unwrap_or(key)
+}
+
+fn module_name(key: &str) -> &str {
+    if let Some((_, path)) = key.strip_prefix('#').and_then(|key| key.split_once(':')) {
+        Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or(path)
+    } else {
+        key.rsplit('.').next().unwrap_or(key)
+    }
+}
+
+static PACKAGES: OnceLock<crate::project::Graph> = OnceLock::new();
+
+pub fn set_packages(graph: crate::project::Graph) {
+    assert!(PACKAGES.set(graph).is_ok());
+}
+
+fn package_key(graph: &crate::project::Graph, owner: Option<&str>, path: &Path) -> String {
+    if let Some(name) = owner {
+        let root = graph.package_root(Some(name));
+        let path = path.strip_prefix(root.join("src")).unwrap_or(path);
+        format!("#{name}:{}", path.display())
+    } else {
+        let path = path.strip_prefix(&graph.root).unwrap_or(path);
+        format!("#{}:{}", graph.manifest.name, path.display())
     }
 }
 
@@ -225,6 +258,10 @@ fn read_source(path: &str) -> std::io::Result<String> {
     std::fs::read_to_string(path)
 }
 
+fn source_exists(path: &Path) -> bool {
+    path.is_file() || overlay_get(&path.to_string_lossy()).is_some()
+}
+
 /// Load `entry` and everything it imports.
 pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
     load_with(entry, mode, false).0
@@ -233,7 +270,7 @@ pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
 /// Observe the module loader's symbol tables and name lookups before type checking.
 pub fn resolution_trace(entry: &str) -> (Vec<String>, bool) {
     let (loaded, trace) = load_with(entry, Mode::Normal, true);
-    let mut rows = trace.unwrap().rows;
+    let mut rows = trace.unwrap_or_default().rows;
     rows.sort_unstable();
     (rows, loaded.is_ok())
 }
@@ -253,7 +290,21 @@ fn load_with(
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
+    let discovered = if PACKAGES.get().is_none() {
+        match crate::project::for_entry(entry) {
+            Ok(graph) => graph,
+            Err(error) => return (Err(vec![format!("error: {error}")]), None),
+        }
+    } else {
+        None
+    };
+    let packages = PACKAGES.get().or(discovered.as_ref());
+    let key = packages.map_or(stem, |graph| {
+        let absolute = path.canonicalize().or_else(|_| std::path::absolute(path)).unwrap_or_else(|_| path.to_owned());
+        package_key(graph, None, &absolute)
+    });
     let mut l = Loader {
+        packages,
         root,
         mode,
         files: vec![],
@@ -270,7 +321,7 @@ fn load_with(
         trace: trace.then(ResolutionTrace::default),
     };
     // the entry module is known under its file name too, so `import main` from a dependency is a cycle
-    let complete = l.load_module(&stem, entry, true);
+    let complete = l.load_module(&key, entry, true, None);
     let trace = l.trace.take();
     if !complete || !l.errs.is_empty() {
         return (Err(l.errs), trace);
@@ -307,7 +358,47 @@ fn load_with(
     )
 }
 
-impl Loader {
+impl Loader<'_> {
+    fn import(
+        &self,
+        file: usize,
+        owner: Option<&str>,
+        segments: &[String],
+        local: &str,
+    ) -> (String, PathBuf, Option<String>) {
+        let rel = format!("{}.yx", segments.join("/"));
+        if crate::stdlib::source(local).is_some() {
+            return (
+                local.into(),
+                PathBuf::from(format!("<std>/{}", rel.trim_start_matches("std/"))),
+                None,
+            );
+        }
+        let Some(graph) = self.packages.filter(|_| !self.files[file].path.starts_with("<std>/")) else {
+            return (local.into(), self.root.join(&rel), None);
+        };
+        let (dest, path) = if let Some(root) = graph.dependency(owner, &segments[0]) {
+            let src = root.join("src");
+            let path = if segments.len() == 1 {
+                let named = src.join(format!("{}.yx", segments[0]));
+                if source_exists(&named) { named } else { src.join("lib.yx") }
+            } else {
+                src.join(format!("{}.yx", segments[1..].join("/")))
+            };
+            (Some(segments[0].as_str()), path)
+        } else {
+            let src = graph.package_root(owner).join("src");
+            let local = self.root.join(&rel);
+            let in_src = std::path::absolute(&self.files[file].path).is_ok_and(|path| path.starts_with(&src));
+            if owner.is_some() || in_src || !source_exists(&local) {
+                (owner, src.join(&rel))
+            } else {
+                (owner, std::path::absolute(&local).unwrap_or(local))
+            }
+        };
+        (package_key(graph, dest, &path), path, dest.map(str::to_owned))
+    }
+
     fn trace(&mut self, file: usize, tag: &str, fields: &[&str]) {
         if let Some(trace) = &mut self.trace {
             let mut row = format!("{tag}:{}", trace.owners[file]);
@@ -325,7 +416,7 @@ impl Loader {
     }
 
     /// Returns the module's key when it loaded.
-    fn load_module(&mut self, key: &str, path: &str, entry: bool) -> bool {
+    fn load_module(&mut self, key: &str, path: &str, entry: bool, owner: Option<&str>) -> bool {
         // modules of the standard library (`import std.io`) are embedded in the compiler
         let src = match crate::stdlib::source(key).filter(|_| !entry) {
             Some(s) => s.to_string(),
@@ -347,7 +438,7 @@ impl Loader {
         if let Some(trace) = &mut self.trace {
             trace
                 .owners
-                .push(if entry { "@".into() } else { key.into() });
+                .push(if entry { "@".into() } else { display_key(key).into() });
         }
         self.trace(file, "module", &[]);
         let lex_start = std::time::Instant::now();
@@ -365,7 +456,7 @@ impl Loader {
         self.by_key.insert(key.to_string(), None);
         self.stack.push(key.to_string());
         let resolve_start = std::time::Instant::now();
-        let ok = self.module_body(key, file, toks, entry);
+        let ok = self.module_body(key, file, toks, entry, owner);
         crate::profile_stage("module resolution", resolve_start);
         crate::profile_result("module resolution", ok);
         self.stack.pop();
@@ -374,7 +465,7 @@ impl Loader {
         ok
     }
 
-    fn module_body(&mut self, key: &str, file: usize, toks: Vec<Token>, entry: bool) -> bool {
+    fn module_body(&mut self, key: &str, file: usize, toks: Vec<Token>, entry: bool, owner: Option<&str>) -> bool {
         let ekey = if entry {
             String::new()
         } else {
@@ -423,24 +514,25 @@ impl Loader {
                 }
             }
             let mpos = span(ipos, toks[i - 1].pos);
-            let dep = segs.join(".");
+            let import = segs.join(".");
             if aliases.contains_key(&alias) {
-                self.trace(file, "error", &["duplicate-alias", &alias, &dep]);
+                self.trace(file, "error", &["duplicate-alias", &alias, &import]);
                 self.report(
                     file,
                     diag(format!("the name '{}' is imported twice", alias), mpos).note(format!(
                         "help: rename one of them: `import {} as other_name`",
-                        dep
+                        import
                     )),
                 );
                 continue;
             }
+            let (dep, p, dependency_owner) = self.import(file, owner, &segs, &import);
             if self.stack.contains(&dep) {
                 self.trace(file, "error", &["cycle", &dep]);
                 let mut chain: Vec<String> = self.stack.clone();
                 chain.push(dep.clone());
                 let from = chain.iter().position(|k| *k == dep).unwrap_or(0);
-                let shown: Vec<String> = chain[from..].iter().map(|k| k.to_string()).collect();
+                let shown: Vec<&str> = chain[from..].iter().map(|k| display_key(k)).collect();
                 self.report(
                     file,
                     diag(format!("import cycle: {}", shown.join(" -> ")), mpos)
@@ -450,35 +542,30 @@ impl Loader {
                 continue;
             }
             if !self.by_key.contains_key(&dep) {
-                let rel = format!("{}.yx", segs.join("/"));
-                let p = if crate::stdlib::source(&dep).is_some() {
-                    PathBuf::from(format!("<std>/{}", rel.trim_start_matches("std/")))
-                } else {
-                    self.root.join(&rel)
-                };
-                if !crate::stdlib::source(&dep).is_some() && !p.is_file() && overlay_get(&p.to_string_lossy()).is_none() {
-                    self.trace(file, "error", &["missing-module", &dep]);
-                    self.report(
-                        file,
-                        diag(format!("cannot find module '{}'", dep), mpos)
-                            .note(format!("looked for {}", p.display()))
-                            .note(format!(
-                                "help: `import {}` loads {} from the folder of the file you compile ({}); create it, or fix the name",
-                                dep,
-                                rel,
-                                self.root.display()
-                            )),
-                    );
+                if crate::stdlib::source(&dep).is_none() && !source_exists(&p) {
+                    self.trace(file, "error", &["missing-module", &import]);
+                    let mut error = diag(format!("cannot find module '{}'", import), mpos)
+                        .note(format!("looked for {}", p.display()));
+                    if self.packages.is_some() {
+                        error = error.note("help: imports can use local modules and directly declared dependencies");
+                    } else {
+                        let rel = format!("{}.yx", segs.join("/"));
+                        error = error.note(format!(
+                            "help: `import {}` loads {} from the folder of the file you compile ({}); create it, or fix the name",
+                            import, rel, self.root.display()
+                        ));
+                    }
+                    self.report(file, error);
                     continue;
                 }
                 let ps = p.to_string_lossy().to_string();
-                if !self.load_module(&dep, &ps, false) {
+                if !self.load_module(&dep, &ps, false, dependency_owner.as_deref()) {
                     continue;
                 }
             } else if self.by_key[&dep].is_none() {
                 continue; // failed earlier; already reported
             }
-            self.trace(file, "import", &[&alias, &dep]);
+            self.trace(file, "import", &[&alias, display_key(&dep)]);
             aliases.insert(alias.clone(), dep.clone());
             self.imports[file].push((alias, dep));
         }
@@ -547,7 +634,7 @@ impl Loader {
             for n in items.keys() {
                 self.names.push((
                     mangle(&ekey, n),
-                    format!("{}.{}", key.rsplit('.').next().unwrap_or(key), n),
+                    format!("{}.{}", module_name(key), n),
                 ));
             }
         }
@@ -1100,7 +1187,7 @@ impl Loaded {
                         if found {
                             notes.push(format!(
                                 "help: '{}' is defined in module '{}': write `{}.{}`",
-                                name, dep, alias, name
+                                name, display_key(dep), alias, name
                             ));
                         }
                     }
