@@ -40,6 +40,26 @@ fn load(root: &Path, mode: Mode) -> Result<Graph, String> {
     Ok(graph)
 }
 
+pub fn for_entry(entry: &str) -> Result<Option<Graph>, String> {
+    let path = Path::new(entry);
+    let path = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        root()?.join(path)
+    };
+    let Some(root) = path
+        .ancestors()
+        .skip(1)
+        .find(|dir| dir.join("yerux.toml").is_file())
+    else {
+        return Ok(None);
+    };
+    if Manifest::read(root)?.dependencies.is_empty() {
+        return Ok(None);
+    }
+    load(&canonical(root)?, Mode::Reuse).map(Some)
+}
+
 pub fn new_project(name: &str) -> Result<(), String> {
     let root = Path::new(name);
     let package_name = root.file_name().and_then(|s| s.to_str()).unwrap_or(name);
@@ -76,6 +96,7 @@ pub fn run(command: &str, locked: bool) -> Result<i32, String> {
     let root = root()?;
     let graph = load(&root, if locked { Mode::Locked } else { Mode::Reuse })?;
     let name = graph.manifest.name.clone();
+    crate::modules::set_packages(graph);
     if command == "test" {
         let dir = root.join("tests");
         let mut files: Vec<PathBuf> = fs::read_dir(&dir)

@@ -95,11 +95,25 @@ pub(super) struct Selected {
 
 #[derive(Clone)]
 pub struct Graph {
+    pub root: PathBuf,
     pub manifest: Manifest,
     packages: BTreeMap<String, Selected>,
 }
 
 impl Graph {
+    pub fn package_root(&self, owner: Option<&str>) -> &Path {
+        owner.map_or(&self.root, |name| &self.packages[name].root)
+    }
+
+    pub fn dependency(&self, owner: Option<&str>, name: &str) -> Option<&Path> {
+        let manifest = match owner {
+            Some(owner) => &self.packages.get(owner)?.manifest,
+            None => &self.manifest,
+        };
+        manifest.dependencies.get(name)?;
+        Some(&self.packages.get(name)?.root)
+    }
+
     pub fn tag(&self, name: &str) -> Option<&str> {
         self.packages.get(name)?.pin.tag.as_deref()
     }
@@ -158,6 +172,7 @@ pub(super) fn resolve(
     pending(&mut requests, root, &manifest, None, &[]);
     let packages = resolver.solve(BTreeMap::new(), requests)?;
     let graph = Graph {
+        root: root.to_owned(),
         manifest,
         packages,
     };
