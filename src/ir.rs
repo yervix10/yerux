@@ -238,7 +238,7 @@ pub enum Inst {
     Check(V, V),         // panic "index out of range" unless 0 <= idx < len
     CheckNonEmpty(V),    // panic "pop from an empty list" when len == 0
     Assert(V),           // panic "assertion failed" when the value is 0 (`assert`, `assert_eq`)
-    /// Raw Linux system call (x86-64 ELF only): d = syscall(args[0] = number, args[1..7] = arguments); the
+    /// Raw Linux system call: d = syscall(args[0] = number, args[1..7] = arguments); the
     /// raw kernel result (-errno on failure). Behaves like a call: may read and write any memory.
     Syscall(V, Vec<V>),
     /// Sequentially consistent access to an aligned 64-bit word. A full memory barrier in the optimizer.
@@ -4268,9 +4268,8 @@ pub fn dump(p: &IrProgram) -> String {
     s
 }
 
-/// The first function that uses a Linux-only runtime intrinsic, if any. Only the x86-64
-/// Linux backend implements them; the other targets report a compile-time error instead.
-pub fn os_intrinsics_error(p: &IrProgram) -> Option<String> {
+/// Reject OS intrinsics unavailable on the target. AArch64 validates its supported syscall numbers separately.
+pub fn os_intrinsics_error(p: &IrProgram, allow_syscalls: bool) -> Option<String> {
     for f in &p.funcs {
         for b in &f.blocks {
             for i in &b.insts {
@@ -4281,13 +4280,8 @@ pub fn os_intrinsics_error(p: &IrProgram) -> Option<String> {
                             f.name
                         ))
                     }
-                    Inst::Syscall(..) => {
-                        return Some(format!(
-                            "raw system calls (std.io, used by function '{}')",
-                            f.name
-                        ))
-                    }
-                    Inst::Global(..) => {
+                    Inst::Syscall(..) if allow_syscalls => {}
+                    Inst::Syscall(..) | Inst::Global(..) => {
                         return Some(format!(
                             "raw system calls (std.io, used by function '{}')",
                             f.name
