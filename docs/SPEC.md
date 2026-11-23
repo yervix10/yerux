@@ -658,13 +658,105 @@ should handle; use `panic` for bugs and impossible states.
 
 ---
 
-## 5. Modules
+## 5. Concurrency and memory model
 
-(Placeholder: section 5, to be written in its own commit.)
+Yerux threads are OS threads that share one address space. Data-race freedom is enforced by the
+checker, not by a runtime check. The design rationale is in [CONCURRENCY.md](CONCURRENCY.md); this
+section lists only what the tests fix. Anything not listed is **no especificado** (unspecified).
+
+### 5.1 Tasks and scopes
+
+- `spawn` is legal only inside a `scope { }` block; elsewhere it is an error
+  (tests/e745_spawn_requires_scope.yx).
+- The task body is a `move` closure; `spawn` without `move` is an error
+  (tests/e742_spawn_requires_move.yx). Both `spawn move { ... }` (tests/conc_sharing.yx) and
+  `spawn move || expr` (tests/e745_spawn_requires_scope.yx) appear in tests.
+- `handle.join()` consumes the handle and returns `Result<T, E>`. Tests check it with `is_ok()`,
+  `is_err()` and `unwrap()` (tests/conc_spawn.yx, tests/conc_sharing.yx,
+  tests/concurrency_channel.yx). The name and payload of the error type are **no especificado**.
+- A `JoinHandle` cannot be joined twice (tests/e744_join_twice.yx), cannot leave its scope through
+  `return` (tests/e740_join_escape.yx), and cannot be dropped at the end of a loop iteration, because
+  dropping it waits for its worker (tests/e1414_joinhandle_dropped_in_loop.yx). Handles may be
+  collected in a `List<JoinHandle<T>>` and joined later (tests/thread_handles_list.yx).
+- A panic inside a task does not end the process; it makes that task's `join()` return an error
+  (tests/conc_spawn.yx, tests/conc_sharing.yx). Whether the other tasks keep running after such a
+  panic is **no especificado**.
+
+### 5.2 Capture rules (checked at `spawn`)
+
+- A `view` (borrowed) value cannot be captured by a task (tests/e732_spawn_view_capture.yx).
+  A borrowed `mut` value cannot be captured either (tests/e733_spawn_mut_capture.yx). A borrowed
+  parameter cannot be moved into a task (tests/e730_thread_runtime_borrow.yx).
+- A value moved into a task cannot be used by the parent afterwards (tests/e735_spawn_use_after_move.yx).
+- A value whose type is bound to a thread (for example one that holds a `Window`) cannot be
+  transferred to a task (tests/e734_spawn_thread_bound.yx).
+- `Shared<T>` rejects content that is not thread-transferable (tests/e741_shared_thread_bound.yx),
+  and rejects a `mut` lend of its content (tests/e738_shared_mut_borrow.yx).
+- Captures that are only read by several tasks, or two tasks writing one variable, are accepted or
+  rejected by rules that are not fully fixed by tests. Only the cases listed above are specified.
+
+### 5.3 Parallel for
+
+- `parallel for` may not assign to a captured variable (tests/e736_parallel_assign.yx) and may not
+  mutate a list it only borrows (tests/e737_parallel_mut_list.yx).
+- Accepted bodies: `Atomic`/`Shared` updates, read-only iteration over a `List`, and integer ranges
+  including the `Int` maximum (tests/conc_parallel.yx).
+- Iteration order and the number of workers are **no especificado**. Tests use only results that
+  do not depend on them.
+
+### 5.4 Shared and locked values
+
+- `Shared<T>` gives read access from several tasks; `Shared.clone()` gives each task its own
+  handle (tests/conc_sharing.yx).
+- `Locked<T>` is accessed only through callbacks: `with(f)` (exclusive, may return an owned value)
+  and `with_view(f)` (tests/conc_sharing.yx). `take()` consumes the lock and returns the content
+  (tests/conc_sharing.yx).
+- Waiting on a task or channel, or acquiring another lock, inside a `with` callback is an error
+  (tests/e739_locked_wait.yx, tests/e743_locked_reentry.yx).
+- Poisoning: if a task panics inside a `with` callback, a later access from another task fails
+  (`join()` returns an error) instead of reading the content (tests/conc_sharing.yx).
+- `Mutex<T>` facade with `mutex_update` (tests/concurrency_mutex.yx). `RwLock<T>` with
+  `rwlock_read` and `rwlock_write` (tests/concurrency_rwlock.yx). Fairness between readers and
+  writers is **no especificado**.
+- `Atomic<Int>` and `Atomic<Bool>` provide `load`, `store`, `swap`, `compare_swap`, `add` and
+  `add_wrapping` (tests/conc_sharing.yx). Overflow behaviour of `add` is **no especificado**.
+
+### 5.5 Channels and pools
+
+- `Sender<T>.bounded(n)` and `Sender<T>.unbounded()` return `(sender, receiver)`. `send` returns
+  `Bool`; `recv` returns `Option<T>`; `close` stops new sends (tests/concurrency_channel.yx).
+- When the last sender is dropped the channel closes after queued values are drained
+  (tests/concurrency_channel.yx). A send after the receiver is dropped returns `false`
+  (tests/concurrency_channel.yx).
+- `recv_timeout(ms)` returns `None` on timeout; `select2(a, b, ms)` returns `(index, value)`
+  (tests/concurrency_channel.yx).
+- `thread_pool_new(n)`, `parallel_for`, `thread_pool_map` (ordered results) and `close()`
+  (tests/concurrency_thread_pool.yx).
+
+### 5.6 Memory model
+
+- Synchronisation is through the operations above: locks, atomics, channels, joins. Values that
+  tasks write into a `Locked` or `Atomic` are read by the parent after the scope ends with exact
+  totals (tests/conc_sharing.yx).
+- Atomic operations are the only accesses that may race. The memory ordering of `Atomic` and
+  `__atomic_*` operations is **no especificado** beyond the results the tests check
+  (tests/conc_runtime.yx). Sequential consistency is the stated design (CONCURRENCY.md) but no test
+  distinguishes it from a weaker ordering.
+- `print` output is written as whole lines: the golden output of tests/conc_print.yx contains no
+  split lines. The order of lines between tasks is **no especificado**.
+- Raw runtime intrinsics (reserved, not part of the stable API): `__thread_start(fn() -> Int) -> Int`,
+  `__thread_wait`, `__atomic_load`, `__atomic_store`, `__atomic_cmpxchg`, `__atomic_fetch_add`,
+  `__futex_park`, `__futex_wake` (tests/conc_runtime.yx). `__futex_park` returns `-11` (EAGAIN) when the
+  word does not match the expected value, and `__futex_wake` returns `0` (tests/conc_runtime.yx).
+  A raw worker must return `Int` (tests/e729_thread_runtime_signature.yx). The address argument must
+  be an `Int` (tests/e731_futex_address.yx).
+- Memory safety under concurrency: native allocation counters stay consistent under the stress
+  script (tests/threads_stress.sh). The C backend is clean under ThreadSanitizer for every
+  `tests/conc_*.yx` and `tests/concurrency*.yx` program (tests/tsan_concurrency.sh).
 
 ---
 
-## 6. Compile-time execution
+## 6. Modules
 
 (Placeholder: section 6, to be written in its own commit.)
 
@@ -676,6 +768,18 @@ should handle; use `panic` for bugs and impossible states.
 
 ---
 
-## 8. Pending decisions
+## 8. Compile-time execution
 
 (Placeholder: section 8, to be written in its own commit.)
+
+---
+
+## 9. Standard library contract
+
+(Placeholder: section 9, to be written in its own commit.)
+
+---
+
+## 10. Pending decisions
+
+(Placeholder: section 10, to be written in its own commit.)
