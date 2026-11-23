@@ -260,6 +260,9 @@ pub enum Inst {
 }
 
 /// Instructions that can panic (or call something that can) and so need a location marker in front of them.
+/// A location marker before every instruction (the native backend's DWARF line table): set by `--dwarf`/`--debug`.
+pub static ALL_LOCS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn needs_loc(i: &Inst) -> bool {
     match i {
         Inst::Bin(_, op, ..) => matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod),
@@ -691,7 +694,7 @@ impl<'a> L<'a> {
         self.blocks.len() - 1
     }
     fn emit(&mut self, i: Inst) {
-        let wants = match &i {
+        let wants = ALL_LOCS.load(std::sync::atomic::Ordering::Relaxed) || match &i {
             Inst::Call(_, id, _) => self.lib_fn.get(*id).copied().unwrap_or(false),
             Inst::CallInd(..) => false,
             other => needs_loc(other),
