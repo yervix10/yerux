@@ -323,14 +323,17 @@ the first one outside any nested literal (inside a nested literal braces still f
 (`selfhost/lexer.yx`, incl. its `print(".."{..}..)` detection); tests `interp_quotes`, `e1400_interp_unclosed_nested`,
 `tests/selfhost_lexer.sh` (622 files, 0 mismatches).
 
+### Fixed: hashing and encoding raw bytes
+
+`std.hash` provides `fnv1a32_bytes`, `crc32_bytes`, and `sha256_bytes` on `view [UInt8]`.
+`std.hex.encode_bytes` takes the same input and `std.hex.decode_bytes` decodes hex text to
+`List<UInt8>`. Sumtool passes the list from `fs.read_bytes` directly to the hash and hex functions.
+
 ### Still open
 
 - **A pair out of an `Option<(A, B)>` pattern is not movable field by field** (`let want = pair.0` fails with "cannot
   move 'pair._0' out of its struct"); `let (want, name) = move pair` works but the error text names the internal
   field `_0` and does not suggest it.
-- **`std.hash` / `std.hex` work on `String`**, so a binary file has to be turned into a String byte by byte
-  (`push_byte`) after `fs.read_bytes`; there is no `view [UInt8]` overload. It works (tested against `sha256sum`
-  on 300 KB of random bytes) but copies the data twice.
 - **Closures cannot be passed where a named function would do without a signature**: `each_file(files, sha_line)`
   needs `sha_line` declared with exactly `view String` parameters, and the nested-quote limitation made inline
   closures with interpolation impractical until the fix above.

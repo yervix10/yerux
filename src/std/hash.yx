@@ -50,25 +50,43 @@ fn add4(a: Int, b: Int, c: Int, d: Int) -> Int { return (a + b + c + d) % 429496
 
 fn add5(a: Int, b: Int, c: Int, d: Int, e: Int) -> Int { return (a + b + c + d + e) % 4294967296 }
 
+fn fnv1a32_step(h: Int, b: Int) -> Int {
+  return (xor32(h, b) * 16777619) % 4294967296
+}
+
 /// FNV-1a 32-bit hash of the UTF-8 bytes, returned as an unsigned value in Int.
 pub fn fnv1a32(s: view String) -> Int {
   var h = 2166136261
-  for i in 0..s.len() {
-    h = xor32(h, s.byte(i))
-    h = (h * 16777619) % 4294967296
-  }
+  for i in 0..s.len() { h = fnv1a32_step(h, s.byte(i)) }
   return h
+}
+
+/// FNV-1a 32-bit hash of raw bytes.
+pub fn fnv1a32_bytes(data: view [UInt8]) -> Int {
+  var h = 2166136261
+  for i in 0..data.len() { h = fnv1a32_step(h, data[i].to_int()) }
+  return h
+}
+
+fn crc32_step(c0: Int, b: Int) -> Int {
+  var c = xor32(c0, b)
+  for _ in 0..8 {
+    if c % 2 == 1 { c = xor32(c / 2, 3988292384) } else { c = c / 2 }
+  }
+  return c
 }
 
 /// CRC-32/ISO-HDLC (the standard ZIP/Ethernet CRC), returned as an unsigned value in Int.
 pub fn crc32(s: view String) -> Int {
   var c = 4294967295
-  for i in 0..s.len() {
-    c = xor32(c, s.byte(i))
-    for _ in 0..8 {
-      if c % 2 == 1 { c = xor32(c / 2, 3988292384) } else { c = c / 2 }
-    }
-  }
+  for i in 0..s.len() { c = crc32_step(c, s.byte(i)) }
+  return xor32(c, 4294967295)
+}
+
+/// CRC-32/ISO-HDLC of raw bytes.
+pub fn crc32_bytes(data: view [UInt8]) -> Int {
+  var c = 4294967295
+  for i in 0..data.len() { c = crc32_step(c, data[i].to_int()) }
   return xor32(c, 4294967295)
 }
 
@@ -76,12 +94,23 @@ fn k_at(k: [Int; 64], i: Int) -> Int { return k[i] }
 
 /// SHA-256 digest of the UTF-8 bytes, returned as 64 lower-case hexadecimal digits.
 pub fn sha256(s: view String) -> String {
-  let k = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298]
   var data = List<Int>.new()
   for i in 0..s.len() { data.push(s.byte(i)) }
+  return sha256_digest(data)
+}
+
+/// SHA-256 digest of raw bytes, returned as 64 lower-case hexadecimal digits.
+pub fn sha256_bytes(bytes: view [UInt8]) -> String {
+  var data = List<Int>.new()
+  for i in 0..bytes.len() { data.push(bytes[i].to_int()) }
+  return sha256_digest(data)
+}
+
+fn sha256_digest(data: mut List<Int>) -> String {
+  let k = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298]
+  let bits = data.len() * 8
   data.push(128)
   while data.len() % 64 != 56 { data.push(0) }
-  let bits = s.len() * 8
   for i in 0..8 {
     let shift = (7 - i) * 8
     data.push((bits / pow2(shift)) % 256)
