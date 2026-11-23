@@ -258,6 +258,10 @@ fn read_source(path: &str) -> std::io::Result<String> {
     std::fs::read_to_string(path)
 }
 
+fn source_exists(path: &Path) -> bool {
+    path.is_file() || overlay_get(&path.to_string_lossy()).is_some()
+}
+
 /// Load `entry` and everything it imports.
 pub fn load(entry: &str, mode: Mode) -> Result<Loaded, Vec<String>> {
     load_with(entry, mode, false).0
@@ -355,10 +359,20 @@ fn load_with(
 }
 
 impl Loader<'_> {
-    fn import(&self, file: usize, owner: Option<&str>, segments: &[String], local: &str) -> (String, PathBuf, Option<String>) {
+    fn import(
+        &self,
+        file: usize,
+        owner: Option<&str>,
+        segments: &[String],
+        local: &str,
+    ) -> (String, PathBuf, Option<String>) {
         let rel = format!("{}.yx", segments.join("/"));
         if crate::stdlib::source(local).is_some() {
-            return (local.into(), PathBuf::from(format!("<std>/{}", rel.trim_start_matches("std/"))), None);
+            return (
+                local.into(),
+                PathBuf::from(format!("<std>/{}", rel.trim_start_matches("std/"))),
+                None,
+            );
         }
         let Some(graph) = self.packages.filter(|_| !self.files[file].path.starts_with("<std>/")) else {
             return (local.into(), self.root.join(&rel), None);
@@ -367,7 +381,7 @@ impl Loader<'_> {
             let src = root.join("src");
             let path = if segments.len() == 1 {
                 let named = src.join(format!("{}.yx", segments[0]));
-                if named.is_file() || overlay_get(&named.to_string_lossy()).is_some() { named } else { src.join("lib.yx") }
+                if source_exists(&named) { named } else { src.join("lib.yx") }
             } else {
                 src.join(format!("{}.yx", segments[1..].join("/")))
             };
@@ -376,7 +390,7 @@ impl Loader<'_> {
             let src = graph.package_root(owner).join("src");
             let local = self.root.join(&rel);
             let in_src = std::path::absolute(&self.files[file].path).is_ok_and(|path| path.starts_with(&src));
-            if owner.is_some() || in_src || !(local.is_file() || overlay_get(&local.to_string_lossy()).is_some()) {
+            if owner.is_some() || in_src || !source_exists(&local) {
                 (owner, src.join(&rel))
             } else {
                 (owner, std::path::absolute(&local).unwrap_or(local))
@@ -528,20 +542,20 @@ impl Loader<'_> {
                 continue;
             }
             if !self.by_key.contains_key(&dep) {
-                let rel = format!("{}.yx", segs.join("/"));
-                if crate::stdlib::source(&dep).is_none() && !p.is_file() && overlay_get(&p.to_string_lossy()).is_none() {
+                if crate::stdlib::source(&dep).is_none() && !source_exists(&p) {
                     self.trace(file, "error", &["missing-module", &import]);
-                    self.report(
-                        file,
-                        diag(format!("cannot find module '{}'", import), mpos)
-                            .note(format!("looked for {}", p.display()))
-                            .note(format!(
-                                "help: `import {}` loads {} from the folder of the file you compile ({}); create it, or fix the name",
-                                import,
-                                rel,
-                                self.root.display()
-                            )),
-                    );
+                    let mut error = diag(format!("cannot find module '{}'", import), mpos)
+                        .note(format!("looked for {}", p.display()));
+                    if self.packages.is_some() {
+                        error = error.note("help: imports can use local modules and directly declared dependencies");
+                    } else {
+                        let rel = format!("{}.yx", segs.join("/"));
+                        error = error.note(format!(
+                            "help: `import {}` loads {} from the folder of the file you compile ({}); create it, or fix the name",
+                            import, rel, self.root.display()
+                        ));
+                    }
+                    self.report(file, error);
                     continue;
                 }
                 let ps = p.to_string_lossy().to_string();

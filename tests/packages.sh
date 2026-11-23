@@ -94,7 +94,10 @@ cd app
 reject 'missing or legacy yerux.lock' "$Y" build --locked
 printf '# Old lock format\n' >yerux.lock
 reject 'missing or legacy yerux.lock' "$Y" lock --locked
+"$Y" lock &
+lock_pid=$!
 "$Y" lock
+wait "$lock_pid"
 grep -q '^version = "1.1.0"$' yerux.lock
 grep -q '^tag = "v1.1.0"$' yerux.lock
 gitrev=$(git -C ../upstream rev-parse "v1.1.0^{commit}")
@@ -153,5 +156,14 @@ pkg ../loop_b loop_b 0.1.0
 printf 'loop_b = "../loop_b"\n' >>../loop_a/yerux.toml
 printf 'loop_a = "../loop_a"\n' >>../loop_b/yerux.toml
 reject 'loop_a -> loop_b -> loop_a' "$Y" add loop_a --path ../loop_a
+
+pkg ../untagged untagged 0.2.0
+git -C ../untagged init -q
+git -C ../untagged add yerux.toml
+git -C ../untagged -c user.email=pkg@example.test -c user.name=Test commit -qm initial
+"$Y" add untagged --git ../untagged | grep -q 'HEAD'
+untagged_rev=$(git -C ../untagged rev-parse HEAD)
+grep -q "^rev = \"$untagged_rev\"$" yerux.lock
+"$Y" lock --locked
 
 printf 'package graph, lock and imports passed\n'
