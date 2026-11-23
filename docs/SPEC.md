@@ -414,7 +414,119 @@ fn main() {
 
 ## 3. Ownership and borrows
 
-(Placeholder: section 3, to be written in its own commit.)
+Yerux has one owner per owned value. Ownership moves explicitly, and borrows are second-class:
+they exist only for the duration of a call, so the language has no lifetimes.
+
+### 3.1 Three ways to pass a value
+
+| Parameter | Call site | Meaning |
+|---|---|---|
+| `x: T` (owned) | `f(move a)` | the callee owns the value; the caller's variable is moved |
+| `x: view T` | `f(a)` | read-only borrow for the call; the caller keeps ownership |
+| `x: mut T` | `f(a)` | exclusive borrow for the call; the callee may modify the value |
+
+The mode is declared on the parameter. The call site never writes `view` or `mut`; the only
+marker is `move`, and only for owned parameters. `move` is required for an owned variable and
+for nothing else: a Copy value is copied, a `String` argument of a library method (`push_str`,
+`eq`, `concat`, `from`) is a borrow and must not be written with `move`.
+
+Owned parameters are mutable (`fn grow(l: List<Int>) -> List<Int> { l.push(7); return l }`
+is valid). `return x` moves `x` out implicitly. A `let` binding cannot be modified
+(`cannot modify 'l': it was declared with let`).
+
+### 3.2 Rules
+
+1. **Copy values are duplicated.** Numbers, `Bool`, `Char`, `Text`, and any type whose parts are
+   all Copy (section 2.2).
+2. **Owned values have one owner.** Using a moved variable is an error:
+   `cannot use 'a': it was already moved`, with the line of the move.
+3. **Handing over ownership is explicit:** `move x`. The only implicit move is `return x`.
+4. **Borrows are second-class.** A `view` or `mut` parameter cannot be stored in a variable
+   (`let w = v` where `v` is a `view` parameter is `'v' is a List and is not copied`), stored in
+   a struct field (`struct H { r: view List<Int> }` is rejected), or returned
+   (`-> view List<Int>` is rejected). These are parse errors today (section 8).
+5. **One call, one use per variable when mutation or move is involved.** A variable lent as
+   `mut` or moved may not appear again in the same call:
+   `both(a, a)` where the first parameter is `mut` is `'a' appears twice in the same call and one
+   use modifies or moves it`. Two `view` uses are fine.
+6. **Moves inside loops.** A variable declared outside a loop cannot be moved inside it unless it
+   is reassigned before the next iteration (`'l' is moved inside the loop and would be used again
+   on the next iteration`). Move it outside the loop, reassign it, or `break` right after the move.
+7. **Drop at scope end.** Each owned value is dropped when its scope ends, unless moved. A
+   conditional move uses a run-time drop flag, so the value is dropped exactly once on the paths
+   where it was not moved (verified: a move inside `if c > 2 { consume(move l) }` followed by
+   the end of `main`).
+8. **Frozen scrutinee.** While a `match` arm borrows an owned payload, the scrutinee cannot be
+   changed (`cannot change 'm' while a match arm is borrowing its payloads`) (section 3.4).
+9. **Iteration freezes the collection.** `for x in l` borrows each element; `l` cannot change in
+   the loop body (`cannot change 'l' while a loop is reading it`). `for mut x in l` borrows each
+   element mutably. `for x in move l` consumes the list.
+
+### 3.3 Temporaries and place borrows
+
+- **Temporaries for `view` parameters.** An owned value that is not a variable can be passed to
+  a `view` parameter: `sum(make())`, `sum([4, 5, 6][1..3])`. The compiler creates a hidden
+  variable for the call and drops it right after. A `mut` parameter needs a variable: `grow(List<Int>.new())`
+  is `pass a variable here (the function borrows it)`.
+- **Place borrows.** `l.at(i)` is a place that borrows an element. It can be used as a receiver
+  (`l.at(i).len()`), as a `view`/`mut` argument, or in `print`. It cannot be moved out, stored, or
+  assigned to (use `set`).
+- **Argument order.** By-value arguments are evaluated before place borrows are taken, so a
+  borrowed element is never invalidated by another argument (section 3.5).
+- **Text-or-String arguments.** For library methods that take text (`from`, `concat`, `push_str`,
+  `eq`), the argument is read during the call. A `String` argument must not overlap the
+  string being modified: `s.push_str(s)` is `cannot append 's' here: it may be the string being
+  modified`; copy first with `String.from`.
+
+Verified (output in comments):
+
+```yx
+fn consume(l: List<Int>) -> Int { return l.len() }
+fn grow(l: List<Int>) -> List<Int> { l.push(7); return l }   // owned parameter is mutable
+fn main() {
+  var a = List<Int>.new()
+  a.push(1)
+  print(consume(move a))          // 1
+  // print(a.len())               // error: cannot use 'a': it was already moved
+  let x = grow(List<Int>.new())   // owned temporary, moved in
+  print(x.at(0))                  // 7
+  var s = String.from("ab")
+  let r = String.from("c")
+  s.push_str(r)                   // borrowed String argument, no move
+  print(s)                        // abc
+}
+```
+
+### 3.4 Match and borrowed payloads
+
+- `match value` borrows an owned payload for the arm. `match mut value` borrows it mutably and can
+  change payloads. `match move value` consumes the enum and gives the arm ownership of its
+  bindings; unbound payloads are dropped.
+- While an arm borrows payloads, the scrutinee is frozen: it cannot be assigned, moved, lent as
+  `mut`, or changed through a method, because the bound names would dangle. Verified:
+  assigning `m = Msg.Quit` inside the `Text(s)` arm is rejected.
+- An arm that binds only Copy payloads, or nothing, does not freeze the scrutinee.
+
+### 3.5 Evaluation order and borrows
+
+Evaluation order is left to right (section 3.6), with one exception: a place borrow is taken
+after all by-value arguments of the same call. In `l.at(h()).push_str(g())`, `g` runs before `h`
+and the borrow is taken last, so `g` cannot invalidate the element.
+
+### 3.6 Evaluation order
+
+Left to right, in every backend. Function calls evaluate the receiver, then the arguments in
+source order, then call. Binary operators evaluate the left operand, the right operand, then the
+operation. Struct literals evaluate fields in the source order. Assignment `target = value`
+evaluates `value` first, then the target place. `&&` and `||` skip the right operand when the
+left decides the result. A panic stops evaluation at that point.
+
+### 3.7 Slices
+
+A slice type `[T]` appears only as a `view` or `mut` parameter type (or in a function type); it
+can never be a variable, field, element or result. `view [T]` accepts an array, a `List<T>`, a
+slice, a sub-range `a[from..to]`, or a temporary array or list kept alive for the call. Rules for
+arrays and slices are in the book (chapter 12) and in [ARRAYS.md](ARRAYS.md).
 
 ---
 
