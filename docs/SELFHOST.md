@@ -376,11 +376,13 @@ yet to be ported.
 The self-hosted compiler covers the sources required to rebuild its
 stages. Unbounded inherent generic impls, structural `derive Clone`, and
 iteration through a user type's `next(mut self) -> Option<T>` are supported.
-Full parity still requires threads and channels, slices as bindings, `extern`
-declarations, generic function items as values, method-syntax iterator
-adapters, `__comptime`, precise loans for nested calls and projections,
-recursive list layouts, full diagnostic spans and notes, and replacing the
-bootstrap C bindings with compiled standard-library implementations.
+Every corpus program compiles now (threads, channels, method-syntax iterator
+adapters, `__comptime` and recursive list layouts included). Full parity still
+requires the language surface the corpus does not exercise (slices as
+bindings, `extern` declarations, generic function items as values, precise
+loans for nested calls and projections), full diagnostic spans and notes, and
+replacing the bootstrap C bindings with compiled standard-library
+implementations.
 Done since the last revision: `Map`/`Set`/`Arena` (the Yerux preludes, injected
 by the driver), `derive Equal`/`Show` (expanded to source by the driver, like
 the Rust compiler), tuple patterns and tuple assignment, owned arrays,

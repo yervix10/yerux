@@ -72,32 +72,32 @@ Taken from the repository at the time of writing (re-measure with the commands s
 |---|---|---|
 | Rust compiler and tools | 43,866 lines in `src/` (`*.rs`, `syntax/`, `lsp/`) | `cat src/*.rs src/syntax/*.rs src/lsp/*.rs \| wc -l` |
 | Library written in Yerux | prelude 3,605 lines; 27 `std.*` modules, 7,781 lines | `src/prelude*.yx`, `src/std/*.yx` |
-| Self-hosted compiler | 10,021 lines in 11 files (`selfhost/`) | `cat selfhost/*.yx \| wc -l` |
-| Test programs | 594 `tests/*.yx`, 63 `examples/*.yx`, 1,182 expected outputs, 45 scripts, 12 fuzzers/checkers in Python | `ls` |
+| Self-hosted compiler | 10,616 lines in 12 files (`selfhost/`) | `cat selfhost/*.yx \| wc -l` |
+| Test programs | 598 `tests/*.yx`, 63 `examples/*.yx`, 1,188 expected outputs, 45 scripts, 12 fuzzers/checkers in Python | `ls` |
 | Doc-tests | every `yerux` block of the book, GUIDE.md and STDLIB.md | `bash tests/doctests.sh` |
 
-Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `tests/selfhost_*.sh`:
+Self-hosting parity, measured on every Git-tracked `.yx` file (934 files) by `tests/selfhost_*.sh` (2026-11-23):
 
 | Stage (`selfhost/`) | Result |
 |---|---|
-| lexer | 731 files compared, 0 mismatches |
-| parser (source AST) | 783 ASTs compared plus 7 lexical and 11 syntax rejections, 0 mismatches |
-| module resolution | 765 resolved, 18 module rejections, 18 source rejections, 0 mismatches |
-| lexical bindings, types, ownership | 5 typed fixtures, 21 type and 12 ownership rejections, 0 mismatches |
+| lexer | 858 files compared, 0 mismatches |
+| parser (source AST) | 915 ASTs compared plus 8 lexical and 11 syntax rejections, 0 mismatches |
+| module resolution | 895 resolved, 20 module rejections, 19 source rejections, 0 mismatches |
+| lexical bindings, types, ownership | 5 typed fixtures, 21 type rejections, 4 accepted and 13 rejected ownership fixtures, 0 mismatches |
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-The self-hosted code generator matches the Rust C backend on **431 of 447
-candidate programs (96.4%)** (2026-11-22; 82.1% on 2026-11-21), with 100 runtime
-panics reproduced exactly, 15 candidates outside the supported subset, one
-expected type rejection and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
+The self-hosted code generator matches the Rust C backend on **457 of 458
+candidate programs (99.8%)**, with 100 runtime panics reproduced exactly, **0
+candidates outside the supported subset**, one expected type rejection (the
+458th) and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
 fixpoint: the stages built by the driver rebuild themselves and generation 1
-and 2 emit byte-identical C. What is left before it can be called
-self-hosted (details and the list of the 31 programs in
-[SELFHOST.md](SELFHOST.md)): concurrency (13 programs), slices as bindings (5),
-`extern`/pointers (3), method-syntax iterator adapters and `context` (4),
-`__comptime` (2), a few layout/parser corners (4), the native backends and
-tools that exist only in the Rust binary, and diagnostics with spans.
+and 2 emit byte-identical C. Every program of the corpus, concurrency
+included, now compiles; what is left before it can be called self-hosted is
+language surface the corpus does not exercise (the closing list of
+[SELFHOST.md](SELFHOST.md): slices as bindings, `extern`, generic function items
+as values, precise loans for nested calls), the native backends and tools that
+exist only in the Rust binary, and diagnostics with spans.
 The milestone remains at 0.5 while the self-hosted compiler covers a subset
 of the language and standard library.
 
