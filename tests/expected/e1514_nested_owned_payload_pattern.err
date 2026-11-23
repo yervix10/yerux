@@ -1,0 +1,9 @@
+error: cannot look inside an owned payload in `match move`
+ --> tests/e1514_nested_owned_payload_pattern.yx:5:5
+  |
+5 |     Ok(Some(_)) => { print("line") }
+  |     ^^
+  = moving the payload out and testing its parts at the same time is not supported
+  = help: bind it to a name and `match` the name in the arm body, or use `match e { .. }` to borrow
+
+1 error(s). Nothing was generated.
