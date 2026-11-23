@@ -532,7 +532,129 @@ arrays and slices are in the book (chapter 12) and in [ARRAYS.md](ARRAYS.md).
 
 ## 4. Errors and `Result`
 
-(Placeholder: section 4, to be written in its own commit.)
+Yerux has no exceptions and no unwinding. A program reports failure in one of two ways:
+
+- **Recoverable failure** is a value: `Option<T>` or `Result<T, E>`. The caller decides.
+- **Unrecoverable failure** is a **panic**: the program writes `panic: <message>` to stderr and
+  exits with code **101** at once. Pending `defer` statements do **not** run.
+
+### 4.1 Option and Result
+
+Both are prelude enums (section 2.7):
+
+```
+enum Option<T> { Some(T), None }
+enum Result<T, E> { Ok(T), Err(E) }
+```
+
+Constructors may omit the enum name when the type is inferred (`Some(i)`, `Err(String.from(..))`).
+Prelude methods, verified:
+
+| Method | On | Result |
+|---|---|---|
+| `is_some()`, `is_none()` | `Option` | `Bool` |
+| `is_ok()`, `is_err()` | `Result` | `Bool` |
+| `unwrap_or(d)` | both | payload, or `d` |
+| `unwrap()` | both | payload; panics on `None` / `Err` |
+| `expect(msg)` | both | payload; panics with `msg` |
+| `or(alt)` | `Option` | the option, or `alt` when it is `None` |
+| `ok()`, `err()` | `Result` | `Option` of the success or failure payload |
+| `ok_or(opt, e)` | free function | `Option<T>` to `Result<T, E>` (not a method) |
+| `context(msg)` | `Option<T>` | `Result<T, String>`; `None` becomes `Err(msg)` |
+| `context(msg)` | `Result<T, E: Show>` | `Result<T, String>`; error text `"msg: cause"` |
+
+### 4.2 The `?` operator
+
+`value?` evaluates its operand once. On `Some` or `Ok` it yields the payload. On `None` or `Err`
+it returns from the enclosing function, running the same deferred statements and drops as a
+`return` (verified: `calculation(5)` prints `division attempted` then `13`; `calculation(0)` prints
+`division attempted` then `division by zero`).
+
+```yx
+fn divide(a: Int, b: Int) -> Result<Int, String> {
+  if b == 0 { return Err(String.from("division by zero")) }
+  return Ok(a / b)
+}
+fn calculation(b: Int) -> Result<Int, String> {
+  defer print("division attempted")
+  let n = divide(60, b)?
+  return Ok(n + 1)
+}
+```
+
+Rules:
+
+1. The enclosing function must return the same family: `Option` with `?` on an `Option`, `Result`
+   with `?` on a `Result`. `?` on an `Option` in a `Result` function is an error (verified:
+   `` `?` is used on Option<Int> but this function returns Result<Int, String> ``).
+2. **Error conversion.** For `Result`, the error type of the operand must match the function's
+   error type, or a conversion must exist. Two conversions are accepted, in order:
+   - a user-written function named `<target>_from_<source>`, for example
+     `fn parse_error_from_string(e: String) -> ParseError` (verified: `(move value)?` turns
+     `Err(String)` into `Err(ParseError)`, and `print(e.message)` prints `bad input`);
+   - in a function returning `Result<_, String>`, any error type that implements `Show` is
+     converted to its `show()` text (verified: `Result<Int, Int>` `?` in a `Result<Int, String>`
+     function type-checks).
+3. The success types may differ (`Result<String, E>` with `?` inside a `Result<Int, E>` function).
+4. **Ownership.** An owned operand is consumed; write `(move value)?` to propagate an owned local.
+   A borrowed operand (a `view` parameter or a `match` payload) is inspected with `match`, not `?`.
+5. `?` cannot appear inside a deferred statement.
+
+### 4.3 Inspecting results
+
+`match` is the general tool. `r.unwrap_or(d)`, `is_ok()` and similar methods cover the common
+cases. `r.context("while reading")` prefixes an error (`reading port: negative`, verified), and
+`opt.context("missing")?` turns a `None` into an error that `?` propagates.
+
+```yx
+fn parse(n: Int) -> Result<Int, String> {
+  if n < 0 { return Err("negative") }
+  return Ok(n)
+}
+fn ctx(n: Int) -> Result<Int, String> {
+  let p = parse(n).context("reading port")?
+  return Ok(p * 2)
+}
+fn main() {
+  match ctx(-1) {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }        // reading port: negative
+  }
+  print(ctx(4).unwrap())          // 8
+}
+```
+
+### 4.4 Panics
+
+Panics happen for runtime faults and for explicit `panic` calls. Verified cases:
+
+| Cause | Message (stderr, exit 101) |
+|---|---|
+| `unwrap()` on `Err` | `panic: called `Result.unwrap()` on an `Err` value: file missing` |
+| `expect(msg)` on `None` | `panic: need a value` |
+| `assert_eq(x, 4)` with `x == 3` | `panic: assertion failed` (with the source location) |
+| `pop()` on an empty list | `panic: pop from an empty list` |
+| integer overflow | `panic: integer overflow in addition` |
+| division by zero | `panic: division by zero` |
+| modulo by zero | `panic: modulo by zero` |
+| `Int<0..255>.from(300)` | `panic: integer conversion out of range: 300 not in 0..255` |
+| explicit `panic(msg)` | `panic: <msg>` (`Text`, `String`, or an interpolated string) |
+
+Explicit panics with an interpolated message are allowed (`panic("negative input: {n}")`). The
+`Err` payload of `unwrap` must implement `Show` so the message can include it. Verified: a panic
+skips the pending `defer print("deferred")` of `main` (it does not print).
+
+The rule of thumb is part of the design: use `Option` or `Result` for failures that callers
+should handle; use `panic` for bugs and impossible states.
+
+### 4.5 Guarantees
+
+- Every failure path is either a value the type system forces the caller to handle, or a panic
+  with exit code 101.
+- Panics are never undefined behaviour. Integer overflow, out-of-range indexing, and division by
+  zero are always checked (section 2.1).
+- Threads: a panic in a spawned task is returned as `Err(ThreadPanic)` from `join()`, and the
+  task's `defer` statements are skipped (see [CONCURRENCY.md](CONCURRENCY.md)).
 
 ---
 
