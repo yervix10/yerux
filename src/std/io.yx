@@ -155,6 +155,9 @@ fn errno_text(e: Int) -> Text {
     if e == 122 {
         return "Disk quota exceeded"
     }
+    if e == 110 {
+        return "Connection timed out"
+    }
     if e == 16 {
         return "Device or resource busy"
     }

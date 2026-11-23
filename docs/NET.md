@@ -4,8 +4,8 @@
 native backend and through `syscall(2)` on the C backend. Import it with
 `import std.net`; its `IoError` is `std.io.IoError`.
 
-`address(ip, port)` accepts numeric IPv4 dotted quads and the IPv6 loopback
-literal `::1`. Names are not resolved (DNS is not implemented). `listen(addr)`,
+`address(ip, port)` accepts numeric IPv4 dotted quads and IPv6 hexadecimal
+groups, including `::1` and compressed forms. DNS lookup is unavailable. `listen(addr)`,
 `accept(listener)`, `connect(addr)`, `read(stream, limit)`, `write(stream, data)`,
 `close_stream` and `close_listener` report failures as `Result` values. Reads
 return at most `limit` bytes; empty data denotes EOF. `read_into(stream, buf)`
@@ -14,8 +14,44 @@ and caps a read at 1 MiB. Use it for binary input or text spanning TCP reads.
 `write(stream, data)` and `write_bytes(stream, data)` send all the bytes or
 return an error. `write_bytes` takes a read-only byte slice. Interrupted reads
 and writes are retried, and broken socket writes are reported as errors
-without raising SIGPIPE. Calls block; poll/epoll and nonblocking modes are
-not provided.
+without raising SIGPIPE.
+
+## Timeouts and addresses
+
+`connect(addr)`, stream reads and writes, and `accept(listener)` default to
+five seconds. Use `connect_timeout(addr, ms)` to change the connection timeout
+for one attempt. The connected stream starts with the default read and write
+timeouts. Use `set_read_timeout(stream, ms)` and `set_write_timeout(stream, ms)`
+to change those independently. All three functions take milliseconds and
+return `InvalidInput` for negative values. Zero removes the library timeout
+and lets the OS govern the wait. Expired connections, reads and writes return
+an `IoError` with code 110 (`ETIMEDOUT`).
+
+The I/O timeout applies to each blocking kernel call. A write-all operation
+can take longer if it makes partial progress, and a write that returns an
+error may already have sent bytes.
+
+`listener_local_addr(listener)` returns the bound address, including the
+kernel-assigned port when binding to port 0. `local_addr(stream)` and
+`peer_addr(stream)` return the two ends of a connected stream. Each returns
+`Result<SocketAddr, io.IoError>`. IPv6 addresses are written out as eight
+four-digit hexadecimal groups. `SocketAddr` contains only the numeric IP
+and port, so it cannot represent an IPv6 scope ID.
+
+```yerux
+import std.net
+
+fn main() {
+  let loopback = net.address("127.0.0.1", 0).unwrap()
+  let listener = net.listen(loopback).unwrap()
+  let bound = net.listener_local_addr(listener).unwrap()
+  let client = net.connect_timeout(bound, 1000).unwrap()
+  let server = net.accept(listener).unwrap()
+  let timeout = net.set_read_timeout(client, 250).unwrap()
+  let peer = net.peer_addr(server).unwrap()
+  print(peer.port)
+}
+```
 
 ## Socket ownership and close
 
