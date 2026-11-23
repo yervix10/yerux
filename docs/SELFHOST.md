@@ -257,12 +257,12 @@ seven stages and keeps their C with `--keep-c`), generation 1 builds it again
 (`cmp`), and generation 2 still compiles and runs a program. None of this
 uses the Rust compiler after the seed.
 
-The first diagnostic for each of the 14 programs outside the supported subset
+The first diagnostic for each of the 2 programs outside the supported subset
 comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`.
 
 | Group | Programs | What is missing |
 |---|---|---|
-| Concurrency and synchronization (12) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx`, `thread_handles_list.yx` | The remaining cases depend on linking the rest of the threads prelude, including `Shared` refcounting, lock-guard cleanup, channels and thread pools. |
+| Concurrency and synchronization (0) | - | (All 12 programs compile and match Rust: the driver links `prelude_sync.yx`, the channel/`Shared`/`Locked`/`Mutex`/`RwLock`/pool part of `prelude_threads.yx`, built by `selfhost/bootstrap.sh`. `Shared` drops by refcount, `LockGuard` unlocks on drop, `Locked.take` unboxes through `__locked_unbox`, `Box.from_runtime_word` and `__check_shared_content` are lowered, and `Atomic.new` picks its single-instance impl by argument type.) |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
 | Enum equality (1) | `tests/enum_implicit_equal.yx` | The checker lacks implicit `Equal` for payload-free enums. |
 | Arrays and ownership (1) | `tests/own_deep_scc_drop.yx` | Recursive by-value struct `Dir` (`List<Dir>` inside `Dir`). (`arr_eq_show` now compiles.) |
@@ -279,7 +279,7 @@ and itself without the Rust compiler (`--stage2`), and reproduces itself
 byte for byte. It builds `examples/project` and matches 441 programs in the corpus.
 Replacing the default compiler requires closing these gaps.
 
-1. the 14 programs above (concurrency is the biggest block), plus native
+1. the 2 programs above, plus native
    x86-64/aarch64/PE backends, `--check-ranges`, `yerux fmt/lsp/doctor` and
    the package manager, which exist only in the Rust binary;
 2. diagnostics: the self-hosted stages print their own messages and no spans;
