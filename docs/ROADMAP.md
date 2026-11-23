@@ -76,30 +76,25 @@ Taken from the repository at the time of writing (re-measure with the commands s
 | Test programs | 594 `tests/*.yx`, 63 `examples/*.yx`, 1,182 expected outputs, 45 scripts, 12 fuzzers/checkers in Python | `ls` |
 | Doc-tests | every `yerux` block of the book, GUIDE.md and STDLIB.md | `bash tests/doctests.sh` |
 
-Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `tests/selfhost_*.sh`:
+Self-hosting parity measured by `tests/selfhost_*.sh`:
 
 | Stage (`selfhost/`) | Result |
 |---|---|
-| lexer | 731 files compared, 0 mismatches |
-| parser (source AST) | 783 ASTs compared plus 7 lexical and 11 syntax rejections, 0 mismatches |
-| module resolution | 765 resolved, 18 module rejections, 18 source rejections, 0 mismatches |
-| lexical bindings, types, ownership | 5 typed fixtures, 21 type and 12 ownership rejections, 0 mismatches |
+| lexer | 859 files compared, 0 mismatches |
+| parser (source AST) | 916 ASTs compared plus 8 lexical and 11 syntax rejections, 0 mismatches |
+| module resolution | 896 resolved, 20 module rejections, 19 source rejections, 0 mismatches |
+| lexical bindings, types, ownership | 916 lexical snapshots, 5 typed and 4 ownership fixtures, 21 type and 13 ownership rejections, 0 mismatches |
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-The self-hosted code generator matches the Rust C backend on **431 of 447
-candidate programs (96.4%)** (2026-11-22; 82.1% on 2026-11-21), with 100 runtime
-panics reproduced exactly, 15 candidates outside the supported subset, one
-expected type rejection and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
-fixpoint: the stages built by the driver rebuild themselves and generation 1
-and 2 emit byte-identical C. What is left before it can be called
-self-hosted (details and the list of the 31 programs in
-[SELFHOST.md](SELFHOST.md)): concurrency (13 programs), slices as bindings (5),
-`extern`/pointers (3), method-syntax iterator adapters and `context` (4),
-`__comptime` (2), a few layout/parser corners (4), the native backends and
-tools that exist only in the Rust binary, and diagnostics with spans.
-The milestone remains at 0.5 while the self-hosted compiler covers a subset
-of the language and standard library.
+The self-hosted compiler matched the Rust C backend's stdout, stderr and
+exit status for **458 of 459 candidates**, including all 14 required
+concurrency cases and 101 runtime panics. The run had one expected type
+rejection, zero candidates outside the subset and **zero execution
+mismatches**. All seven stages rebuilt with byte-identical C between
+self-hosted generations. The generated C from Rust and Yerux differed in
+all 14 concurrency cases. The remaining work to switch the default compiler
+is tracked in [SELFHOST.md](SELFHOST.md).
 
 **Cumulative effort estimate (serial): about 135-205 pm (11-17 years of one person).** Shipping product thresholds: **M6** = usable Linux toy toolkit (about 30-45 pm in); **M9** = two-OS toolkit (about 60-90 pm); **M11** = serious toolkit; M12 = Flutter-class reach.
 
