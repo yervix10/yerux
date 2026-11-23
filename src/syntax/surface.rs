@@ -126,7 +126,20 @@ impl Parser {
     pub(super) fn source_length(&mut self) -> PR<i64> {
         let length = match self.peek() {
             Tok::Num(n) => node("Int", [n.to_string()]),
-            Tok::Id(n) if !KW.contains(&n.as_str()) => node("Var", [name(n)]),
+            Tok::Id(n) if !KW.contains(&n.as_str()) => {
+                // `module.CONST`
+                if matches!(self.peek_at(1), Tok::Sym(".")) && matches!(self.peek_at(2), Tok::Id(_)) {
+                    let (first, second) = (n.clone(), match self.peek_at(2) {
+                        Tok::Id(m) => m.clone(),
+                        _ => unreachable!(),
+                    });
+                    self.bump();
+                    self.bump();
+                    node("Field", [node("Var", [name(&first)]), name(&second)])
+                } else {
+                    node("Var", [name(n)])
+                }
+            }
             _ => return Err(diag("expected an array length", self.pos())),
         };
         self.bump();

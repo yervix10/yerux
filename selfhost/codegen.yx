@@ -132,7 +132,7 @@ fn parameter_names(tree: view List<ast.AstNode>, params: Int) -> List<String> {
   var names = List<String>.new()
   var at = params + 1
   while at < tree.at(params).end {
-    if tree.at(at).tag != "Generic" { unsupported("non-type generic parameters") }
+    if tree.at(at).tag != "Generic" && tree.at(at).tag != "ConstParam" { unsupported("non-type generic parameters") }
     names.push(ast.name_at(tree, at, 0))
     at = tree.at(at).end
   }
@@ -348,6 +348,7 @@ fn declared_type_inner(tree: view List<ast.AstNode>, node: Int, aliases: mut Lis
     let size = ast.child(tree, node, 1)
     if tree.at(size).tag == "_" { return type_terms.bracket(elem, String.from("_")) }
     let length = ast.fold_const(tree, size, 0)
+    if length.len() == 0 && tree.at(size).tag == "Var" { return type_terms.bracket(elem, ast.name_at(tree, size, 0)) }
     if length.len() == 0 { unsupported("nonliteral array length") }
     return type_terms.bracket(elem, length)
   }
@@ -2310,6 +2311,9 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
     if gen.locals.identities.at(node) < 0 {
       let name = ast.name_at(tree, node, 0)
       if name == "None" { return construct_variant(gen, tree, ty, name, -1) }
+      let bound = gen.sub.names.index_of(name)
+      // a `const K: Int` generic parameter used as a value: the length it was bound to
+      if bound >= 0 && ty == "Int" { return Value { ty: String.from("Int"), code: String.from(gen.sub.values.at(bound)) } }
       let fun = find_named(tree, gen.functions, name)
       if fun >= 0 {
         let params = type_parameters(tree, fun)

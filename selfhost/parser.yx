@@ -162,7 +162,13 @@ fn mode(p: mut Parser) -> String {
 
 fn length(p: mut Parser) -> String {
   if kind(p, "Num") { return node1("Int", bump(p)) }
-  return node1("Var", ident(p))
+  let first = ident(p)
+  // `module.CONST`
+  if sym(p, ".") && is_name(p, 1) {
+    p.i = p.i + 1
+    return node2("Field", node1("Var", first), ident(p))
+  }
+  return node1("Var", first)
 }
 
 fn int_bound(p: mut Parser) -> String {

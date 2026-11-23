@@ -232,6 +232,10 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
     if tree.at(size).tag == "_" { return type_terms.bracket(item, String.from("_")) }
     let length = ast.fold_const(tree, size, 0)
     if length.len() > 0 { return type_terms.bracket(item, length) }
+    // `[T; K]` with a `const K: Int` generic parameter: the length is the parameter's name until it is bound
+    if tree.at(size).tag == "Var" && types.generics.contains(ast.name_at(tree, size, 0)) {
+      return type_terms.bracket(item, ast.name_at(tree, size, 0))
+    }
     return unknown()
   }
   if tree.at(index).tag == "Type" {
@@ -1573,6 +1577,8 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     if tag == "Var" {
       let found = const_type(types, tree, n)
       if found != "?" { return found }
+      // a `const K: Int` generic parameter is an Int value
+      if types.generics.contains(n) { return String.from("Int") }
     }
     return unknown()
   }
@@ -1639,9 +1645,10 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     var expected = type_terms.element(hint)
     if tag == "ArrayFill" {
       let len = ast.child(tree, index, 1)
-      if tree.at(len).tag != "Int" { return unknown() }
+      let folded = ast.fold_const(tree, len, 0)
+      if folded.len() == 0 { return unknown() }
       let value = infer(types, tree, ast.child(tree, index, 0), expected)
-      return type_terms.bracket(value, tree.at(ast.child(tree, len, 0)).tag)
+      return type_terms.bracket(value, folded)
     }
     let items = ast.child(tree, index, 0)
     var i = items + 1

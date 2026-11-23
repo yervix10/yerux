@@ -222,7 +222,7 @@ as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
 2026-11-22 run matched **402 of 430 candidates (93.5%)**, with 100 runtime
-panics reproduced exactly, 26 candidates outside the supported subset, one
+panics reproduced exactly, 23 candidates outside the supported subset, one
 expected type rejection and zero mismatches. The corpus now includes five
 additional `json_edge_*` programs. (82.1% on 2026-11-21 before the
 codegen/front-end work of that day; the history is in `git log selfhost/`.)
@@ -241,11 +241,11 @@ The 24 current rejections, by group (first diagnostic from
 | Group | Programs | What is missing |
 |---|---|---|
 | Concurrency and synchronization (13) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_runtime.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx`, `std_sync.yx` | Unresolved local bindings in concurrency lowering; generic `Sender.unbounded`/`Sender.bounded`; `__atomic_store`; unsupported `Atomic<Int>`. Runtime/threading features and closures crossing threads remain unsupported. |
-| Iterators and errors (1) | `tests/arr_const.yx` | Cannot infer type parameter `K` of `total`. (`iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
+| Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
 | Compile-time (1) | `tests/comptime_arrays.yx` | Codegen receives unresolved type `?`; compile-time array evaluation is unsupported. |
 | Arrays and ownership (2) | `tests/arr_eq_show.yx`, `own_deep_scc_drop.yx` | List search for `Array<Int, 2>`; recursive by-value struct `Dir`. |
 | JSON (5) | `tests/json_edge_deep.yx`, `json_edge_empty.yx`, `json_edge_escapes.yx`, `json_edge_numbers.yx`, `json_edge_utf8.yx` | Codegen does not support `Map<String, Int>`, used by these `std.json` tests. |
-| Source syntax (1) | `tests/mod_ok/consts_types/main.yx` | Parser reports `SyntaxError:16`; `pub const` forms are not accepted. (Trait default methods work: the parser keeps the body in the trait and `ast.decode_linked` copies it into each impl that does not define it.) |
+| Source syntax (0) | - | (`consts_types` compiles: `[Int; geo.SIDES]` lengths are parsed as `Field(Var(geo),SIDES)`. Trait default methods work: the parser keeps the body in the trait and `ast.decode_linked` copies it into each impl that does not define it.) |
 
 Set `SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
 and category for each unsupported file.
