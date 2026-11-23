@@ -888,7 +888,59 @@ listed in section 10.
 
 ## 8. Compile-time execution
 
-(Placeholder: section 8, to be written in its own commit.)
+Compile-time evaluation has two forms: `const` items, and `comptime` expressions and assertions
+inside functions. Both use the language's own semantics; the compiler evaluates them. The design
+(serialised constants, comptime allocators, generics over values) is in
+[COMPTIME.md](COMPTIME.md). Only the forms below are fixed by tests. Anything else is
+**no especificado**.
+
+### 8.1 `comptime` expressions
+
+- `comptime expr` evaluates `expr` during compilation. Its value must be `Int`, `Char` or `Bool`;
+  other types are rejected with E-K3 (tests/e966_comptime_string.yx, tests/e1028_comptime_array_result.yx).
+- Inside the evaluated code, recursion, `while` loops and calls to ordinary functions are allowed
+  (tests/comptime_basic.yx: `fib`, `fact`, `is_prime`). No `comptime fn` keyword appears in tests;
+  whether it exists is **no especificado**.
+- Arrays may be built and indexed inside comptime code, including array parameters and results
+  (tests/comptime_arrays.yx). An array returned from `comptime` to runtime is not allowed (see above).
+- `comptime assert(cond)` and `assert_eq(comptime f(), v)` are accepted (tests/comptime_basic.yx,
+  tests/comptime_arrays.yx).
+- A panic while evaluating at compile time is a compile error, not a runtime exit: an out-of-range
+  index is reported as E-K6 (tests/e1027_comptime_array_oob.yx), and the message says the code was
+  being evaluated by the compiler.
+- A `comptime` expression may appear inside a runtime expression (tests/comptime_basic.yx:
+  `print(i + comptime 10)`). Using runtime values inside a `comptime` expression is **no especificado**
+  by the tests.
+
+### 8.2 `const` items
+
+- `const NAME = expr` and `const NAME: T = expr`. Constants may use literals, other constants and
+  arithmetic, including `&&`, `!` and comparisons (tests/arr_const.yx, tests/const_item_basic.yx).
+- A constant may have type `Char`, `Bool`, `Int` or a range type such as `Int<0..9>`
+  (tests/arr_const.yx, tests/const_item_basic.yx).
+- A constant may be used as an array length, for example in `[Int; M]` and in `type Table = [Int; SIZE]`
+  (tests/arr_const.yx, tests/const_item_basic.yx).
+- A constant may not refer to a constant defined later (tests/e1350_const_forward_use.yx).
+- A constant's initializer may not call a function; the diagnostic points to
+  `let x = comptime f(..)` inside a function (tests/e1022_const_not_constant.yx,
+  tests/e1351_const_not_constant.yx).
+- A constant's value must match its declared type (tests/e1352_const_type_mismatch.yx).
+- A constant whose computation overflows is an error (tests/e1024_const_overflow.yx).
+
+### 8.3 Const generic parameters
+
+- `fn f<const K: Int>(a: [Int; K], b: [Int; K])` binds `K` from the first argument; two arguments of
+  different lengths are rejected (tests/e1023_const_generic_lengths.yx).
+- Constant generic parameters are used in array types, and array lengths are checked against them
+  (tests/arr_const.yx).
+
+### 8.4 Not specified
+
+- Step or memory budgets for compile-time evaluation.
+- `comptime for`, `comptime if`, reflection (`size_of`, `fields_of`), and comptime allocators.
+- Serialisation of constant values in the data section.
+- Eligibility rules for calling ordinary functions in `const` initializers (the test only shows
+  that a plain call is rejected).
 
 ---
 
