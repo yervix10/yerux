@@ -1,0 +1,23 @@
+none fs: true fs: no file system access was granted
+none fs write: true fs: no file system access was granted
+none net: true net: no network access was granted
+none process: true process: no permission to start programs was granted
+none env: true env: no environment access was granted
+inside
+4
+read-only write: true fs: write access to 'new.txt' was not granted
+read-only remove: true fs: write access to 'inside.txt' was not granted
+widen to writable: true fs: cannot narrow to a writable root: this grant is read-only
+widen the root: true
+symlink escape: true
+env read: true env: variable 'YERUX_CAPS_SECRET' is not readable under this grant
+env write: true env: variable 'YERUX_CAPS_OPEN' is not writable under this grant
+1
+cwd: true env: current_dir needs an unrestricted Env
+env regrant: true
+other program: true process: program '/bin/true' is not in the granted list (use its absolute path)
+PATH search: true process: program 'echo' is not in the granted list (use its absolute path)
+set_dir: true process: a restricted Process cannot change the working directory of a child
+net other port: true net: address '127.0.0.1:10' is not in the granted list
+net other host: true net: address '10.0.0.1:9' is not in the granted list
+done
