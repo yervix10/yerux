@@ -10,6 +10,26 @@ struct Cell { n: Int, more: List<Box<Cell>> }
 struct Left { v: Int, rest: List<Right> }
 struct Right { w: Int, back: Option<Box<Left>> }
 
+struct DropTag { id: Int }
+impl Drop for DropTag {
+  fn drop(mut self) { print(self.id) }
+}
+
+struct Branch { before: DropTag, kids: List<Box<Branch>>, after: DropTag }
+
+fn branch(id: Int) -> Branch {
+  return Branch { before: DropTag { id: id }, kids: List<Box<Branch>>.new(), after: DropTag { id: id + 10 } }
+}
+
+fn drop_order() {
+  var root = branch(0)
+  var child = branch(1)
+  child.kids.push(Box.new(branch(2)))
+  root.kids.push(Box.new(move child))
+  root.kids.push(Box.new(branch(3)))
+  root.kids.clear()
+}
+
 // node counts are multiples of scale() (tests/a64_emu.py shrinks it: the emulator is slow)
 fn scale() -> Int { return 1000000 }
 
@@ -122,5 +142,7 @@ fn main() {
     print(depth_probe(moved))
   }
   flag = false
+  // observable destructors within and outside a mixed list/box component
+  drop_order()
   print("done")
 }

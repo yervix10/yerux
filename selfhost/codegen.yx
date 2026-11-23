@@ -9,7 +9,7 @@ import type_terms
 
 struct Value { ty: String, code: String }
 struct Variant { name: String, payload: List<String> }
-struct EnumLayout { ty: String, variants: List<Variant>, owned: Bool }
+struct EnumLayout { ty: String, variants: List<Variant>, owned: Bool, ready: Bool }
 struct StructLayout { ty: String, owned: Bool, ready: Bool, destructor: Bool }
 struct Method { owner: String, node: Int, params: Int, trait_name: String }
 struct Instance { node: Int, owner: String, sub: type_terms.Substitution, key: String }
@@ -36,6 +36,10 @@ struct Generator {
   wrappers: String,
   functions: List<Int>,
   collections: List<String>,
+  collection_ready: List<Bool>,
+  pending_lists: List<Int>,
+  box_payloads: List<String>,
+  layout_path: List<String>,
   sorted_elements: List<String>,
   globals: String,
   references: List<Bool>,
@@ -84,35 +88,276 @@ fn collection_name(gen: view Generator, ty: view String) -> String {
   return String.new()
 }
 
-fn prepare_type(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String) {
-  let item = type_terms.element(ty)
-  if item != "?" && !gen.collections.contains(ty) {
-    if item.starts_with("Slice<") { unsupported("slice stored inside a sequence") }
-    prepare_type(gen, tree, item)
-    let c = c_type(gen, tree, item)
-    let id = gen.collections.len()
-    let name = type_terms.base(ty)
-    gen.collections.push(String.from(ty))
-    if name == "Array" {
-      let args = type_terms.arguments(ty)
-      let element_drop = drop_fn(gen, tree, item)
-      if element_drop.len() != 0 { global(gen, "SC_ARRAY_OWNED(A{id}, {c}, {args.at(1)}, {element_drop})") }
-      else { global(gen, "SC_ARRAY(A{id}, {c}, {args.at(1)})") }
-    } else if name == "Slice" {
-      global(gen, "SC_SLICE(A{id}, {c})")
-    } else {
-      var drop = drop_fn(gen, tree, item)
-      if drop == "" { drop = String.from("SC_COPY_ELEMENT") }
-      global(gen, "SC_LIST(A{id}, {c}, {drop})")
-      if item == "String" { global(gen, "SC_STRING_LIST(A{id})") }
-    }
-  }
+// Lists need only the spelling of their element type for the pointer in the header.
+fn reserve_type(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String) {
   let base = type_terms.base(ty)
-  if base == "Option" || base == "Result" || find_named(tree, gen.enums, base) >= 0 {
-    prepare_enum(gen, tree, ty, base)
+  let item = type_terms.element(ty)
+  if item != "?" {
+    if !gen.collections.contains(ty) {
+      let id = gen.collections.len()
+      gen.collections.push(String.from(ty))
+      gen.collection_ready.push(false)
+      global(gen, "typedef struct A{id} A{id};")
+    }
+  } else if base == "Option" || base == "Result" || find_named(tree, gen.enums, base) >= 0 {
+    if enum_index(gen, ty) < 0 {
+      let id = gen.enum_layouts.len()
+      gen.enum_layouts.push(EnumLayout { ty: String.from(ty), variants: List<Variant>.new(), owned: false, ready: false })
+      global(gen, "typedef struct E{id} E{id};")
+    }
+  } else if find_named(tree, gen.structs, base) >= 0 && struct_index(gen, ty) < 0 {
+    let id = gen.struct_layouts.len()
+    let destructor = trait_method(gen, tree, ty, String.from("Drop"), String.from("drop"))
+    gen.struct_layouts.push(StructLayout {
+      ty: String.from(ty), owned: false, ready: false, destructor: destructor >= 0,
+    })
+    global(gen, "typedef struct S{id} S{id};")
+  } else if base == "Ptr" {
+    let args = type_terms.arguments(ty)
+    reserve_type(gen, tree, args.at(0))
   }
+}
+
+fn prepare_layout(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String) {
+  if gen.layout_path.contains(ty) { unsupported("recursive by-value type {ty}") }
+  reserve_type(gen, tree, ty)
+  let base = type_terms.base(ty)
+  gen.layout_path.push(String.from(ty))
+  let id = gen.collections.index_of(ty)
+  if id >= 0 && !gen.collection_ready.at(id) {
+    let item = type_terms.element(ty)
+    if item.starts_with("Slice<") { unsupported("slice stored inside a sequence") }
+    if base == "List" {
+      reserve_type(gen, tree, item)
+      global(gen, "SC_LIST_LAYOUT(A{id}, {c_type(gen, tree, item)})")
+      gen.pending_lists.push(id)
+    } else {
+      prepare_layout(gen, tree, item)
+      let c = c_type(gen, tree, item)
+      if base == "Array" {
+        let args = type_terms.arguments(ty)
+        let element_drop = drop_fn(gen, tree, item)
+        if element_drop != "" { global(gen, "SC_ARRAY_OWNED(A{id}, {c}, {args.at(1)}, {element_drop})") }
+        else { global(gen, "SC_ARRAY(A{id}, {c}, {args.at(1)})") }
+      } else { global(gen, "SC_SLICE(A{id}, {c})") }
+    }
+    gen.collection_ready.set(id, true)
+  }
+  if enum_index(gen, ty) >= 0 { prepare_enum(gen, tree, ty, base) }
   let structure = find_named(tree, gen.structs, base)
   if structure >= 0 { emit_struct(gen, tree, structure, ty) }
+  let finished = gen.layout_path.pop()
+}
+
+fn emit_list_helpers(gen: mut Generator, tree: view List<ast.AstNode>, id: Int) {
+  let item = type_terms.element(gen.collections.at(id))
+  prepare_layout(gen, tree, item)
+  let c = c_type(gen, tree, item)
+  var drop = drop_fn(gen, tree, item)
+  if drop == "" { drop = String.from("SC_COPY_ELEMENT") }
+  global(gen, "SC_LIST_HELPERS(A{id}, {c}, {drop})")
+  if item == "String" { global(gen, "SC_STRING_LIST(A{id})") }
+}
+
+fn prepare_type(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String) {
+  prepare_layout(gen, tree, ty)
+  // Complete the elements once their containing layouts are available.
+  var list = 0
+  while list < gen.pending_lists.len() {
+    let id = gen.pending_lists.at(list)
+    emit_list_helpers(gen, tree, id)
+    list = list + 1
+  }
+  gen.pending_lists.clear()
+}
+
+struct DropField { ty: String, address: String, tag: Int }
+
+fn drop_fields(gen: view Generator, tree: view List<ast.AstNode>, ty: view String) -> List<DropField> {
+  var fields = List<DropField>.new()
+  let base = type_terms.base(ty)
+  let structure = find_named(tree, gen.structs, base)
+  if structure >= 0 && trait_method(gen, tree, ty, "Drop", "drop") < 0 {
+    let sub = nominal_sub(tree, structure, ty)
+    let list = ast.child(tree, structure, 2)
+    var at = list + 1
+    while at < tree.at(list).end {
+      let field = declared_for(tree, ast.child(tree, at, 1), sub)
+      let name = String.from(tree.at(ast.child(tree, at, 0)).tag)
+      fields.push(DropField { ty: move field, address: "m{name}", tag: 0 })
+      at = tree.at(at).end
+    }
+  } else if base == "Option" || base == "Result" || find_named(tree, gen.enums, base) >= 0 {
+    let cases = enum_variants(gen, tree, ty, base)
+    for i in 0..cases.len() {
+      let tag = i + 1
+      for j in 0..cases.at(i).payload.len() {
+        fields.push(DropField { ty: String.from(cases.at(i).payload.at(j)), address: "v{tag}.p{j}", tag: tag })
+      }
+    }
+  }
+  return move fields
+}
+
+fn heap_payload(gen: view Generator, ty: view String) -> String {
+  if !gen.user_box && ty.starts_with("Box<") {
+    let item = type_terms.box_payload(ty)
+    if !item.starts_with("$dyn<") { return item }
+  }
+  if ty == "List" || ty.starts_with("List<") { return type_terms.element(ty) }
+  return String.from("?")
+}
+
+// Only ordinary nominal fields are transparent. A user's Drop method and
+// dynamic indirections retain their own synchronous cleanup, as in the seed.
+fn find_drop_nodes(gen: view Generator, tree: view List<ast.AstNode>, ty: view String,
+    nodes: mut List<String>, path: mut List<String>) {
+  let item = heap_payload(gen, ty)
+  if item != "?" {
+    if !nodes.contains(ty) { nodes.push(String.from(ty)) }
+    return
+  }
+  if path.contains(ty) { unsupported("recursive by-value type {ty}") }
+  path.push(String.from(ty))
+  for field in drop_fields(gen, tree, ty) { find_drop_nodes(gen, tree, field.ty, nodes, path) }
+  let finished = path.pop()
+}
+
+fn direct_drop_nodes(gen: view Generator, tree: view List<ast.AstNode>, ty: view String,
+    nodes: mut List<String>) {
+  var path = List<String>.new()
+  find_drop_nodes(gen, tree, ty, nodes, path)
+}
+
+fn drop_reachable(gen: view Generator, tree: view List<ast.AstNode>, root: view String) -> List<String> {
+  var nodes = List<String>.new()
+  direct_drop_nodes(gen, tree, heap_payload(gen, root), nodes)
+  var i = 0
+  while i < nodes.len() {
+    let item = heap_payload(gen, nodes.at(i))
+    direct_drop_nodes(gen, tree, item, nodes)
+    i = i + 1
+  }
+  return move nodes
+}
+
+fn drop_component(gen: view Generator, tree: view List<ast.AstNode>, root: view String) -> List<String> {
+  var members = List<String>.new()
+  let reachable = drop_reachable(gen, tree, root)
+  if reachable.contains(root) {
+    for node in reachable {
+      let successors = drop_reachable(gen, tree, node)
+      if successors.contains(root) { members.push(String.from(node)) }
+    }
+  }
+  return move members
+}
+
+// Follow the seed's declaration order within a component, enqueueing only
+// members of that component. All other destructors run at the call site.
+fn component_drop(gen: view Generator, tree: view List<ast.AstNode>, members: view List<String>,
+    ty: view String, address: view String) -> String {
+  let id = members.index_of(ty)
+  if id >= 0 {
+    if type_terms.base(ty).eq("Box") { return "sc_drop_push(&work, {id}, *({address}), 0);" }
+    return "sc_drop_push(&work, {id}, ({address})->d, ({address})->len);"
+  }
+  var nodes = List<String>.new()
+  direct_drop_nodes(gen, tree, ty, nodes)
+  for node in nodes {
+    if !members.contains(node) { continue }
+    var out = String.new()
+    for field in drop_fields(gen, tree, ty) {
+      let pointer = "&({address})->{field.address}"
+      let action = component_drop(gen, tree, members, field.ty, pointer)
+      if action == "" { continue }
+      if field.tag > 0 { out.push_str("if (({address})->tag == {field.tag}) {{ {action} }} ") }
+      else { out.push_str("{action} ") }
+    }
+    return out
+  }
+  let drop = drop_fn(gen, tree, ty)
+  if drop != "" { return "{drop}({address});" }
+  return String.new()
+}
+
+fn emit_drop_component(gen: mut Generator, tree: view List<ast.AstNode>,
+    members: view List<String>, id: Int) {
+  global(gen, "static void sc_component_{id}(int tag, void *data, int64_t len) {{")
+  global(gen, "ScDropWorklist work = {{0}}; sc_drop_push(&work, tag, data, len);")
+  global(gen, "while (work.len) {{ ScDropItem item = work.items[--work.len]; switch (item.tag) {{")
+  for i in 0..members.len() {
+    let node = members.at(i)
+    let item = heap_payload(gen, node)
+    let c = c_type(gen, tree, item)
+    if type_terms.base(node).eq("Box") {
+      let drop = component_drop(gen, tree, members, item, "value")
+      global(gen, "case {i}: {{ {c} *value = ({c} *)((ScBox)item.data)->data; {drop} break; }}")
+    } else {
+      let drop = component_drop(gen, tree, members, item, "&values[j]")
+      global(gen, "case {i}: {{ {c} *values = item.data; for (int64_t j = 0; j < item.len; ++j) {{ {drop} }} break; }}")
+    }
+  }
+  global(gen, "}} free(item.data); }} free(work.items); }}")
+}
+
+fn emit_heap_drops(gen: mut Generator, tree: view List<ast.AstNode>, first_instance: Int) {
+  var components = List<List<String>>.new()
+  var collections = List<Int>.new()
+  var list = 0
+  var instance = first_instance
+  // Complete component payloads encountered through a Box even if the box is never allocated.
+  while list < gen.collections.len() || instance < gen.instances.len() {
+    if list < gen.collections.len() {
+      let ty = String.from(gen.collections.at(list))
+      var id = -1
+      if type_terms.base(ty).eq("List") {
+        for i in 0..components.len() {
+          if components.at(i).contains(ty) { id = i; break }
+        }
+        if id < 0 {
+          let members = drop_component(gen, tree, ty)
+          if members.len() > 0 {
+            for member in members { prepare_type(gen, tree, heap_payload(gen, member)) }
+            id = components.len()
+            components.push(move members)
+          }
+        }
+      }
+      collections.push(id)
+      list = list + 1
+    } else {
+      emit_function(gen, tree, instance)
+      instance = instance + 1
+    }
+  }
+  for i in 0..components.len() { emit_drop_component(gen, tree, components.at(i), i) }
+  for i in 0..gen.collections.len() {
+    let ty = String.from(gen.collections.at(i))
+    if !type_terms.base(ty).eq("List") { continue }
+    let id = collections.at(i)
+    if id < 0 { global(gen, "SC_LIST_DROP(A{i})") }
+    else {
+      let slot = components.at(id).index_of(ty)
+      global(gen, "SC_LIST_COMPONENT_DROP(A{i}, sc_component_{id}, {slot})")
+    }
+  }
+  for i in 0..gen.box_payloads.len() {
+    let item = String.from(gen.box_payloads.at(i))
+    let node = "Box<{item}>"
+    let c = c_type(gen, tree, item)
+    let drop = heap_drop(gen, tree, item)
+    var entry = String.from("NULL")
+    for j in 0..components.len() {
+      let slot = components.at(j).index_of(node)
+      if slot >= 0 {
+        entry = "sc_box_component_{i}"
+        global(gen, "static void {entry}(ScBox cell) {{ sc_component_{j}({slot}, cell, 0); }}")
+        break
+      }
+    }
+    global(gen, "static ScBox sc_make_box_{i}(void) {{ ScBox cell = sc_box_new(sizeof({c}), {drop}); cell->component = {entry}; return cell; }}")
+  }
 }
 
 fn enum_index(gen: view Generator, ty: view String) -> Int {
@@ -186,11 +431,9 @@ fn enum_variants(gen: view Generator, tree: view List<ast.AstNode>, ty: view Str
 }
 
 fn prepare_enum(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String, base: view String) {
-  if enum_index(gen, ty) >= 0 { return }
+  let id = enum_index(gen, ty)
+  if gen.enum_layouts.at(id).ready { return }
   let cases = enum_variants(gen, tree, ty, base)
-  let id = gen.enum_layouts.len()
-  // Reserve the identity before visiting payload types.
-  gen.enum_layouts.push(EnumLayout { ty: String.from(ty), variants: List<Variant>.new(), owned: false })
   var fields = List<String>.new()
   var discard = List<String>.new()
   for i in 0..cases.len() {
@@ -198,7 +441,7 @@ fn prepare_enum(gen: mut Generator, tree: view List<ast.AstNode>, ty: view Strin
     if cases.at(i).payload.len() > 0 { fields.push(String.from("struct {{")) }
     for j in 0..cases.at(i).payload.len() {
       let inner = String.from(cases.at(i).payload.at(j))
-      prepare_type(gen, tree, inner)
+      prepare_layout(gen, tree, inner)
       let c = c_type(gen, tree, inner)
       fields.push("{c} p{j};")
       let drop = drop_fn(gen, tree, inner)
@@ -206,9 +449,9 @@ fn prepare_enum(gen: mut Generator, tree: view List<ast.AstNode>, ty: view Strin
     }
     if cases.at(i).payload.len() > 0 { fields.push("}} v{slot};") }
   }
-  global(gen, "typedef struct {{ unsigned tag;")
+  global(gen, "struct E{id} {{ unsigned tag;")
   for field in fields { global(gen, field) }
-  global(gen, "}} E{id};")
+  global(gen, "}};")
   if discard.len() > 0 {
     global(gen, "static inline void sc_drop_E{id}(E{id} *value) {{")
     for drop in discard { global(gen, drop) }
@@ -218,6 +461,7 @@ fn prepare_enum(gen: mut Generator, tree: view List<ast.AstNode>, ty: view Strin
     gen.enum_layouts.at(id).owned = true
   }
   gen.enum_layouts.at(id).variants = move cases
+  gen.enum_layouts.at(id).ready = true
 }
 
 fn floating_c(ty: view String) -> String {
@@ -304,15 +548,9 @@ fn c_type(gen: view Generator, tree: view List<ast.AstNode>, ty: view String) ->
   let collection = collection_name(gen, ty)
   if collection != "" { return collection }
   let layout = enum_index(gen, ty)
-  if layout >= 0 {
-    if gen.enum_layouts.at(layout).variants.len() == 0 { unsupported("recursive or empty enum {ty}") }
-    return "E{layout}"
-  }
+  if layout >= 0 { return "E{layout}" }
   let structure = struct_index(gen, ty)
-  if structure >= 0 {
-    if !gen.struct_layouts.at(structure).ready { unsupported("recursive by-value struct {ty}") }
-    return "S{structure}"
-  }
+  if structure >= 0 { return "S{structure}" }
   unsupported("type {ty}")
   return String.new()
 }
@@ -967,7 +1205,6 @@ fn function_value(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, ty
 }
 
 fn closure(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
-  if tree.at(ast.child(tree, node, 2)).tag == "true" { unsupported("parallel Closure") }
   let worker = tree.at(ast.child(tree, node, 3)).tag == "true"
   let instance = schedule(gen, node, ty, type_terms.copy(gen.sub))
   var entry = "F{instance}"
@@ -1075,6 +1312,20 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
   }
   let fun = find_named(tree, gen.functions, name)
   if fun < 0 {
+    if name == "__box_address" {
+      let box = expression(gen, tree, args + 1)
+      return temp(gen, tree, ty, "((int64_t)(intptr_t)({box.code})->data)")
+    }
+    if name == "__parallel_address" {
+      let body = local_place(gen, args + 1)
+      return temp(gen, tree, ty, "((int64_t)(intptr_t)&({body.code}))")
+    }
+    if name == "__parallel_call" {
+      let body = expression(gen, tree, args + 1)
+      let address = temp(gen, tree, body.ty, body.code)
+      let index = expression(gen, tree, tree.at(args + 1).end)
+      return temp(gen, tree, ty, "nx_parallel_call({address.code}, {index.code})")
+    }
     if name == "__spawn_owned" && ty.starts_with("JoinHandle<") {
       let entry = expression(gen, tree, args + 1)
       return temp(gen, tree, ty, "nx_thread_start({transfer(gen, tree, entry)}, true)")
@@ -1834,10 +2085,15 @@ fn box_new(gen: mut Generator, tree: view List<ast.AstNode>, args: Int, ty: view
   if concrete.starts_with("Slice<") || concrete == "nothing" { unsupported("Box payload {concrete}") }
   prepare_type(gen, tree, concrete)
   let c = c_type(gen, tree, concrete)
-  let cleanup = heap_drop(gen, tree, concrete)
+  var factory = gen.box_payloads.index_of(concrete)
+  if factory < 0 {
+    factory = gen.box_payloads.len()
+    gen.box_payloads.push(String.from(concrete))
+    global(gen, "static ScBox sc_make_box_{factory}(void);")
+  }
   let id = gen.temp
   gen.temp = gen.temp + 1
-  line(gen, "ScBox b{id} = sc_box_new(sizeof({c}), {cleanup});")
+  line(gen, "ScBox b{id} = sc_make_box_{factory}();")
   line(gen, "*({c} *)b{id}->data = {transfer(gen, tree, value)};")
   if trait_name != "" {
     let table = dyn_table(gen, tree, trait_name, concrete)
@@ -3048,9 +3304,16 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     }
     assign_place(gen, tree, target, move saved_value)
   } else if tag == "Expr" {
+    let expr = ast.child(tree, node, 0)
+    if gen.value_target == "" && tree.at(expr).tag == "Call" && ast.name_at(tree, expr, 0).eq("__spawn_owned") &&
+        gen.checked.expressions.at(expr).starts_with("JoinHandle<") {
+      // A bare spawn owns its handle until the enclosing block exits.
+      let worker = expression(gen, tree, expr)
+      return
+    }
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
-    let value = expression(gen, tree, ast.child(tree, node, 0))
+    let value = expression(gen, tree, expr)
     if value.ty != "nothing" && gen.value_target != "" {
       let wanted = String.from(gen.value_type)
       let assigned = coerce(gen, tree, move value, wanted)
@@ -3122,12 +3385,9 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
 }
 
 fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) {
-  if struct_index(gen, ty) >= 0 { return }
-  let id = gen.struct_layouts.len()
+  let id = struct_index(gen, ty)
+  if gen.struct_layouts.at(id).ready { return }
   let destructor = trait_method(gen, tree, ty, String.from("Drop"), String.from("drop"))
-  gen.struct_layouts.push(StructLayout {
-    ty: String.from(ty), owned: false, ready: false, destructor: destructor >= 0,
-  })
   let sub = nominal_sub(tree, node, ty)
   let fields = ast.child(tree, node, 2)
   var drops = List<String>.new()
@@ -3135,7 +3395,7 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
   while at < tree.at(fields).end {
     let ty = declared_for(tree, ast.child(tree, at, 1), sub)
     if ty.starts_with("Slice<") { unsupported("slice stored in a struct") }
-    prepare_type(gen, tree, ty)
+    prepare_layout(gen, tree, ty)
     let drop = drop_fn(gen, tree, ty)
     if drop != "" {
       let name = String.from(tree.at(ast.child(tree, at, 0)).tag)
@@ -3143,7 +3403,7 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
     }
     at = tree.at(at).end
   }
-  global(gen, "typedef struct {{")
+  global(gen, "struct S{id} {{")
   if destructor >= 0 { global(gen, String.from("bool sc_live;")) }
   at = fields + 1
   if at == tree.at(fields).end { global(gen, String.from("char empty;")) }
@@ -3153,7 +3413,7 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
     global(gen, "{c_type(gen, tree, ty)} m{name};")
     at = tree.at(at).end
   }
-  global(gen, "}} S{id};")
+  global(gen, "}};")
   if drops.len() != 0 || destructor >= 0 {
     gen.struct_layouts.at(id).owned = true
     var method = -1
@@ -3476,6 +3736,7 @@ fn generate(gen: mut Generator, tree: view List<ast.AstNode>) {
     emit_function(gen, tree, instance)
     instance = instance + 1
   }
+  emit_heap_drops(gen, tree, instance)
   line(gen, "int main(int argc, char **argv) {{")
   line(gen, "  sc_argc = argc; sc_argv = argv;")
   line(gen, "  int ne = 0; while (environ && environ[ne]) ne++;")
@@ -3509,7 +3770,8 @@ fn main() {
       }
       var gen = Generator {
         checked: move checked, locals: move bindings, structs: List<Int>.new(), functions: List<Int>.new(),
-        collections: List<String>.new(), sorted_elements: List<String>.new(), globals: String.new(),
+        collections: List<String>.new(), collection_ready: List<Bool>.new(), pending_lists: List<Int>.new(),
+        layout_path: List<String>.new(), box_payloads: List<String>.new(), sorted_elements: List<String>.new(), globals: String.new(),
         enums: List<Int>.new(), enum_layouts: List<EnumLayout>.new(),
         traits: List<Int>.new(), heap_drops: List<String>.new(), dyn_tables: List<String>.new(),
         struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(), constants: List<Int>.new(), externs: List<Int>.new(),

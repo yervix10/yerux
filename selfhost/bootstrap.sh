@@ -36,7 +36,7 @@ compile_selfhost() {
       return 1
     fi
   done
-  cp src/c_runtime.h src/c_selfhost_*.h "$output/runtime/"
+  cp src/c_runtime.h src/c_selfhost_*.h src/prelude_{atomic,parallel}.yx "$output/runtime/"
   cp -R src/std "$output/runtime/"
   { printf 'trait Hash { fn hash(view self) -> Int }\n'; cat src/prelude_map.yx; } >"$output/runtime/prelude_map.yx"
   cp src/prelude_arena.yx src/prelude_iter.yx src/prelude_error.yx "$output/runtime/"
