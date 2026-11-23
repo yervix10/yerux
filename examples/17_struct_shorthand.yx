@@ -1,0 +1,73 @@
+// Struct literal shorthand: `Point { x, y }` means `Point { x: x, y: y }`.
+// It works with nested structs, generic structs and explicit fields side by side.
+
+struct Point { x: Int, y: Int }
+struct Segment { a: Point, b: Point }
+struct Pair<A, B> { first: A, second: B }
+struct Label { text: String, at: Point }
+
+fn midpoint(s: view Segment) -> Point {
+  let x = (s.a.x + s.b.x) / 2
+  let y = (s.a.y + s.b.y) / 2
+  return Point { x, y }
+}
+
+fn shift(p: view Point, dx: Int, dy: Int) -> Point {
+  let x = p.x + dx
+  let y = p.y + dy
+  return Point { x, y }
+}
+
+fn manhattan(p: Point) -> Int {
+  return match (p.x, p.y) {
+    (0, 0) => 0,
+    (x, y) if x == 0 => if y < 0 { -y } else { y },
+    (x, y) if y == 0 => if x < 0 { -x } else { x },
+    (x, y) => (if x < 0 { -x } else { x }) + (if y < 0 { -y } else { y }),
+  }
+}
+
+fn main() {
+  let ax = 0
+  let ay = 0
+  let a = Point { x: ax, y: ay }
+  let bx = 10
+  let by = 6
+  let b = Point { x: bx, y: by }
+  let s = Segment { a, b }
+  let mid = midpoint(s)
+  print("{mid.x},{mid.y}")
+  print(manhattan(mid))
+
+  // Mixed shorthand and explicit fields, with an owned String moved in.
+  let text = String.from(r#"segment "A""#)
+  let at = shift(mid, 1, -1)
+  let label = Label { text: move text, at }
+  print("{label.text} @ {label.at.x},{label.at.y}")
+
+  // The same shorthand works for a generic struct.
+  let first = 7
+  let last = String.from(r"C:\left")
+  let pair = Pair { first, second: move last }
+  print("{pair.first} {pair.second}")
+
+  // Raw fragments assembled into a document, then read back with lines().
+  var report = String.from(r"a=0,0")
+  report.push_str("\n")
+  report.push_str(r"b=10,6")
+  report.push_str("\n")
+  report.push_str(r"mid=5,3")
+  let lines = report.lines()
+  var pts = 0
+  for line in lines {
+    let eq = line.find("=")
+    let name = line.slice(0, eq)
+    let kind = match name.len() {
+      1 => "one-letter",
+      _ => "named",
+    }
+    print("{name}: {kind}")
+    pts = pts + 1
+  }
+  print(pts)
+}
