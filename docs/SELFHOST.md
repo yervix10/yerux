@@ -190,23 +190,40 @@ when their dependencies and constructs are supported.
 
 ### The `yerux-self` driver
 
-From the repository root, build and install the self-hosted binaries on Linux.
+From the repository root, bootstrap the self-hosted compiler on Linux and select
+it from the normal CLI.
 
 ```bash
 bash selfhost/bootstrap.sh target/selfhost
-target/selfhost/yerux-self build examples/12_modules/main.yx -o /tmp/hello
-/tmp/hello
-target/selfhost/yerux-self build examples/project
-examples/project/target/hello-project
+target/debug/yerux --selfhost check examples/12_modules/main.yx
+target/debug/yerux c examples/12_modules/main.yx --selfhost > /tmp/hello.c
+target/debug/yerux --selfhost build examples/12_modules/main.yx -o /tmp/hello
+target/debug/yerux --selfhost run examples/project
 ```
 
-The installed driver invokes its sibling `lexer`, `parser`, `resolve`, and
-`codegen` binaries, then invokes `cc` and publishes the executable when the
-build succeeds. The resolver loads local imports relative to the entry file's
-directory and standard modules from the installed `runtime` directory. Pass
-`--runtime DIRECTORY` to use another runtime directory, or `--emit-ast` to
-write the linked AST. The driver uses the Linux process and filesystem
-environment and expects `cc`, `mkdir`, `mktemp`, `mv`, and `rm` on PATH.
+`--selfhost` selects the installed Yerux driver before Rust loads any source.
+The CLI uses the executable in `YERUX_SELFHOST` if set, looks for
+`yerux-self` or `selfhost/yerux-self` beside itself, tries `target/selfhost`
+for Cargo's debug and release binaries, then searches PATH. Selection errors
+and selfhost diagnostics are returned directly. Keep the driver, its sibling
+stage binaries, and `runtime/` together when moving an installation.
+
+`yerux-self` drives its sibling `lexer`, `parser`, `resolve`, and `codegen`
+binaries from the original source through checking and C generation.
+`check` verifies that this pipeline succeeds. `c` writes a standalone C
+translation unit to stdout or to `-o FILE`. Both work without a C toolchain.
+`build` compiles the generated C with `cc` (or `YERUX_CC`), accepts
+`YERUX_CC_FLAGS`, `--no-opt`, and `--debug`, and publishes the executable
+when compilation succeeds. `run` uses the same build pipeline and keeps the
+program's standard streams and exit status. Arguments after `--` go to
+the program. These commands use Linux and the standard filesystem utilities
+(`mkdir`, `mktemp`, `mv`, `rm`, and `cp` for bootstrapping or `--keep-c`).
+
+The resolver loads local imports relative to the entry file's directory
+and standard modules from the installed `runtime` directory. Pass
+`--runtime DIRECTORY` to use another runtime directory, or use
+`build --emit-ast` to write the linked AST. To run without the Rust CLI,
+use `target/selfhost/yerux-self build FILE.yx` and execute the output.
 
 File builds default to the source filename with its `.yx` suffix removed.
 Project builds accept the project directory or its `yerux.toml` and default
@@ -256,13 +273,13 @@ and join before the enclosing code resumes. A bare `spawn move` keeps its
 handle alive until the enclosing block exits, including on an early return.
 `tests/selfhost_codegen.sh` compares these cases with the Rust C backend.
 
-`bash tests/selfhost_stage2.sh` (part of `tests/run_all.sh`) checks the
-fixpoint of the driver itself: the bootstrap stages build the compiler with
-`yerux-self --stage2` (generation 1, `--stage2 [--sources DIR] [-o DIR]` rebuilds all
-seven stages and keeps their C with `--keep-c`), generation 1 builds it again
-(generation 2), and the generated C of the two generations is byte-identical
-(`cmp`), and generation 2 still compiles and runs a program. None of this
-uses the Rust compiler after the seed.
+`bash tests/selfhost_stage2.sh` runs on Linux for pull requests and pushes to
+main through the fast and full CI suites. It builds generation 1 through
+`yerux --selfhost --stage2`, then calls generation 1 directly to build
+generation 2. CI compares the emitted C, all seven executables, and the
+installed runtime between those generations on the same toolchain. It also
+checks that generation 2 handles source and project builds, checking, C
+output, program arguments and exit status, and compile failures.
 
 No program is outside the supported subset now. The first diagnostic for any future rejection
 comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`.
@@ -279,20 +296,24 @@ comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.
 Set `SELFHOST_REJECTIONS=/tmp/rejections.tsv` to retain the first diagnostic
 and category for each unsupported file.
 
-### Is `yerux-self` ready to be the default compiler?
+### Migration to the default compiler
 
-As of 2026-11-23, the driver compiles all seven `selfhost/*.yx` stages
-and itself without the Rust compiler (`--stage2`), and reproduces itself
-byte for byte. It builds `examples/project` and matches 455 programs in the corpus.
-Replacing the default compiler requires closing these gaps.
-
-1. native
-   x86-64/aarch64/PE backends, `--check-ranges`, `yerux fmt/lsp/doctor` and
-   the package manager, which exist only in the Rust binary;
-2. diagnostics: the self-hosted stages print their own messages and no spans;
-3. the stages still need `cc` and the C headers in `runtime/`;
-4. the seed: a fresh checkout needs the Rust compiler once to build the
-   first generation.
+1. Keep the Rust compiler as a bootstrap seed and use `--selfhost` for the
+   Linux C pipeline. Run `YERUX_SEED=/path/to/yerux bash selfhost/bootstrap.sh
+   target/selfhost` with a compatible seed binary to bootstrap without Cargo.
+   Omitting `YERUX_SEED` builds the seed from Rust.
+2. Use the installed compiler to build the next generation with
+   `target/selfhost/yerux-self --stage2 -o target/stage2`. The command rebuilds
+   all seven stages and retains their C, and takes `--sources DIR` to use
+   another source directory. CI checks the next generation against a
+   further rebuild. After the first generation, these rebuilds need the
+   installed runtime and C toolchain.
+3. Before switching the default, ship the verified installation with
+   releases, measure parity on diagnostics and programs beyond the current
+   corpus, and cover the commands still provided by the Rust CLI. Those
+   include project dependency resolution and `--locked`, unit-test and
+   benchmark harnesses, formatter and LSP integration, module objects,
+   and the x86-64, aarch64 and PE native backends and IR options.
 
 ### Compile time
 
