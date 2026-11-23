@@ -23,6 +23,7 @@ mod modules;
 mod numeric;
 mod opt;
 mod project;
+mod selfhost;
 mod regalloc;
 mod sroa;
 mod stdlib;
@@ -247,6 +248,7 @@ fn native_build(
 }
 
 const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--obj mod.yxo] [--no-opt] [--native-debug-alloc]
+       yerux --selfhost <check|c|build|run|--stage2> ...
        yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
@@ -452,6 +454,9 @@ fn doctor() -> i32 {
 
 fn real_main() {
     let args: Vec<String> = env::args().collect();
+    if let Some(code) = selfhost::dispatch(&args[1..]) {
+        exit(code);
+    }
     if args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V" | "version") {
         println!("yerux {}", VERSION);
         return;
