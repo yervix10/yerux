@@ -8,6 +8,11 @@ count=0
 for source in tests/conc_*.yx tests/concurrency*.yx tests/thread_pool.yx; do
   [ -f "$source" ] || continue
   name=$(basename "$source" .yx)
+  # A fatal panic terminates the process immediately, including unjoined workers.
+  # Those fixtures are checked by the C/native golden and selfhost parity suites.
+  if [[ -f tests/expected/$name.code && $(<"tests/expected/$name.code") == 101 ]]; then
+    continue
+  fi
   "$Y" c "$source" >"$tmp/$name.c"
   cc -g -O1 -w -fsanitize=thread -fno-omit-frame-pointer -fno-math-errno \
     -ffp-contract=off -pthread -o "$tmp/$name" "$tmp/$name.c" -lm
