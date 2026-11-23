@@ -237,11 +237,10 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-22 run matched **431 of 447 candidates (96.4%)**, with 100 runtime
-panics reproduced exactly, 15 candidates outside the supported subset, one
-expected type rejection and zero mismatches. The corpus now includes five
-additional `json_edge_*` programs. (82.1% on 2026-11-21 before the
-codegen/front-end work of that day; the history is in `git log selfhost/`.)
+2026-11-23 run matched **441 of 456 candidates (96.7%)**, with 100 runtime
+panics reproduced exactly, 14 candidates outside the supported subset, one
+expected type rejection and zero mismatches. The previous run matched 431
+of 447 candidates (96.4%).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
@@ -258,14 +257,14 @@ seven stages and keeps their C with `--keep-c`), generation 1 builds it again
 (`cmp`), and generation 2 still compiles and runs a program. None of this
 uses the Rust compiler after the seed.
 
-The 16 current rejections, by group (first diagnostic from
-`SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`):
+The first diagnostic for each of the 14 programs outside the supported subset
+comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`.
 
 | Group | Programs | What is missing |
 |---|---|---|
-| Concurrency and synchronization (11) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx` | The remaining cases depend on linking the rest of the threads prelude, including `Shared` refcounting, lock-guard cleanup, channels and thread pools. |
+| Concurrency and synchronization (12) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx`, `thread_handles_list.yx` | The remaining cases depend on linking the rest of the threads prelude, including `Shared` refcounting, lock-guard cleanup, channels and thread pools. |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
-| Compile-time (1) | `tests/comptime_arrays.yx` | Codegen receives unresolved type `?`; compile-time array evaluation is unsupported. |
+| Enum equality (1) | `tests/enum_implicit_equal.yx` | The checker lacks implicit `Equal` for payload-free enums. |
 | Arrays and ownership (1) | `tests/own_deep_scc_drop.yx` | Recursive by-value struct `Dir` (`List<Dir>` inside `Dir`). (`arr_eq_show` now compiles.) |
 | JSON (0) | - | (`json_edge_*` compile: the driver links the preludes the imported modules use.) |
 | Source syntax (0) | - | (`consts_types` compiles: `[Int; geo.SIDES]` lengths are parsed as `Field(Var(geo),SIDES)`. Trait default methods work: the parser keeps the body in the trait and `ast.decode_linked` copies it into each impl that does not define it.) |
@@ -275,12 +274,12 @@ and category for each unsupported file.
 
 ### Is `yerux-self` ready to be the default compiler?
 
-Measured on 2026-11-22: the driver compiles all seven `selfhost/*.yx` stages
+As of 2026-11-23, the driver compiles all seven `selfhost/*.yx` stages
 and itself without the Rust compiler (`--stage2`), and reproduces itself
-byte for byte. It builds `examples/project` and every program of the corpus
-except the 16 above. What stops it from replacing `yerux build`:
+byte for byte. It builds `examples/project` and matches 441 programs in the corpus.
+Replacing the default compiler requires closing these gaps.
 
-1. the 16 programs above (concurrency is the biggest block), plus native
+1. the 14 programs above (concurrency is the biggest block), plus native
    x86-64/aarch64/PE backends, `--check-ranges`, `yerux fmt/lsp/doctor` and
    the package manager, which exist only in the Rust binary;
 2. diagnostics: the self-hosted stages print their own messages and no spans;
