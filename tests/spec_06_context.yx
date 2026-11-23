@@ -1,0 +1,15 @@
+fn parse(n: Int) -> Result<Int, String> {
+  if n < 0 { return Err("negative") }
+  return Ok(n)
+}
+fn ctx(n: Int) -> Result<Int, String> {
+  let p = parse(n).context("reading port")?
+  return Ok(p * 2)
+}
+fn main() {
+  match ctx(-1) {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e) }        // reading port: negative
+  }
+  print(ctx(4).unwrap())          // 8
+}
