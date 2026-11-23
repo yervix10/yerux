@@ -295,6 +295,22 @@ fn uses(text: view String, needle: view String) -> Bool {
   return text.split(needle).len() > 1
 }
 
+fn name_byte(byte: Int) -> Bool {
+  return byte == 95 || (byte >= 48 && byte <= 57) ||
+    (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122)
+}
+
+fn uses_word(text: view String, word: view String) -> Bool {
+  var start = text.find(word)
+  while start >= 0 {
+    let end = start + word.len()
+    if (start == 0 || !name_byte(text.byte(start - 1))) &&
+        (end == text.len() || !name_byte(text.byte(end))) { return true }
+    start = text.find_from(word, end)
+  }
+  return false
+}
+
 fn read_text(file: view String) -> String {
   match fs.read_to_string(file) {
     Err(error) => { return String.new() }
@@ -365,7 +381,7 @@ fn with_prelude(build: view Build, source: view String) -> String {
   let text = read_text(source)
   let scan = "{text}\n{imported_text(build, text, 0)}"
   var head = String.new()
-  if uses(scan, "Atomic<") || uses(scan, "Atomic.") {
+  if uses_word(scan, "Atomic") {
     head.push_str(read_text(path.join(build.runtime, "prelude_atomic.yx")))
   }
   if uses(scan, "parallel") {
@@ -387,7 +403,7 @@ fn with_prelude(build: view Build, source: view String) -> String {
     if uses(scan, word) { synchronized = true }
   }
   if synchronized { head.push_str(read_text(path.join(build.runtime, "prelude_sync.yx"))) }
-  if uses(scan, "spawn ") || uses(scan, "JoinHandle") {
+  if uses_word(scan, "spawn") || uses_word(scan, "JoinHandle") || uses_word(scan, "ThreadPanic") {
     head.push_str(read_text(path.join(build.runtime, "prelude_spawn.yx")))
   }
   if uses(scan, "Arena") {

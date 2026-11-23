@@ -43,7 +43,7 @@ tuple literals and parallel loops, and are reflected in both dumps.
 Run `bash tests/selfhost_parser.sh`. It compares positioned token streams and
 ASTs for every Git-tracked `.yx` file, including benchmarks, the prelude, the
 standard library, and the self-hosted sources themselves. The current run
-matches 783 ASTs across 801 files with zero mismatches, 7 lexical
+matches 916 ASTs across 935 files with zero mismatches, 8 lexical
 rejections, and 11 syntax rejections. Lexical rejections compare the
 complete diagnostic rows. Syntax
 rejections compare exit status and source line. The script also compares the
@@ -77,8 +77,8 @@ Each cached file contains the output of `parser` on the positioned token
 stream. Exit status is 0 for a resolved module graph, 1 for module errors,
 and 2 for an unreadable or malformed AST artifact.
 
-At this milestone the test covered **657 files** with 624 matching resolution
-snapshots, 18 matching module rejections, and 15 source rejections that
+The test covered **935 files** with 896 matching resolution snapshots,
+20 matching module rejections, and 19 source rejections that
 cannot reach resolution. Some module fixtures require a specific entry
 directory when compiling, so invoking each dependency directly can produce
 a module rejection. `tests/run_all.sh` runs the comparison.
@@ -127,8 +127,8 @@ for type and ownership errors. The input comes from the self-hosted parser
 using positioned tokens. `yerux types-file file.yx` exposes the production
 Rust checker's binding types before compile-time evaluation.
 `tests/selfhost_types.sh` compares sorted binding rows on 5 accepted type
-fixtures and 3 accepted ownership fixtures, and principal diagnostic
-messages on 21 type rejections and 12 ownership rejections.
+fixtures and 4 accepted ownership fixtures, and principal diagnostic
+messages on 21 type rejections and 13 ownership rejections.
 `tests/run_all.sh` includes the harness.
 
 ## C code generation
@@ -260,18 +260,26 @@ type parity suites. The harness also compares formatter output against
 the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
-The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-23 run matched **457 of 458 candidates (99.8%)**, with 100 runtime
-panics reproduced exactly, no candidates outside the supported subset, one
-expected type rejection and zero mismatches. The previous run matched 455 of 456 (99.8%); before it, 441 of 456 (96.7%); before it, 431
-of 447 candidates (96.4%).
+The bootstrap rebuilt 7 of 7 executables with byte-identical C. The
+2026-11-23 run matched **458 of 459 candidates**, including 101 runtime
+panics. It reported zero candidates outside the supported subset, one
+expected type rejection and zero mismatches. The previous run matched
+457 of 458 candidates with 100 matching runtime panics.
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
 integer ranges and lists. Parallel iterations borrow captures for reading
 and join before the enclosing code resumes. A bare `spawn move` keeps its
 handle alive until the enclosing block exits, including on an early return.
-`tests/selfhost_codegen.sh` compares these cases with the Rust C backend.
+Spaces around `Atomic` and a newline between `spawn` and `move` are
+accepted. The regression `conc_channel_worker_panic.yx` covers draining a
+bounded channel, reporting a recoverable worker panic through `join()`,
+and a fatal parallel-worker panic with its source location and exit code.
+
+The Rust and Yerux emitters produced different C translation units for all
+14 concurrency cases when comparing the output of their `c` commands.
+Byte identity is verified between self-hosted generations. The comparison
+against Rust checks the compiled programs' stdout, stderr, and exit status.
 
 `bash tests/selfhost_stage2.sh` runs on Linux for pull requests and pushes to
 main through the fast and full CI suites. It builds generation 1 through
@@ -286,7 +294,7 @@ comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.
 
 | Group | Programs | What is missing |
 |---|---|---|
-| Concurrency and synchronization (0) | - | (All 12 programs compile and match Rust: the driver links `prelude_sync.yx`, the channel/`Shared`/`Locked`/`Mutex`/`RwLock`/pool part of `prelude_threads.yx`, built by `selfhost/bootstrap.sh`. `Shared` drops by refcount, `LockGuard` unlocks on drop, `Locked.take` unboxes through `__locked_unbox`, `Box.from_runtime_word` and `__check_shared_content` are lowered, and `Atomic.new` picks its single-instance impl by argument type.) |
+| Concurrency and synchronization (0) | - | (All 14 required programs compile and match the Rust C backend's execution. The driver links `prelude_sync.yx` for channels, `Shared`, `Locked`, `Mutex`, `RwLock` and thread pools.) |
 | Enum equality, deep recursive drops (0) | - | (`enum_implicit_equal` and `own_deep_scc_drop` compile now: payload-free enums derive equality and recursive list layouts get heap drops.) |
 | Ownership of names borrowed from lists (0) | - | (`let x = l.at(i)` of an owned element freezes `l` until the end of the block, as in the Rust checker; `bad_let_borrow_change.yx` and `let_borrow_scope.yx` cover both sides.) |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
@@ -300,7 +308,7 @@ and category for each unsupported file.
 
 As of 2026-11-23, the driver compiles all seven `selfhost/*.yx` stages
 and itself without the Rust compiler (`--stage2`), and reproduces itself
-byte for byte. It builds `examples/project` and matches 457 programs in the corpus.
+byte for byte. It builds `examples/project` and matches 458 program executions in the corpus.
 Replacing the default compiler requires closing these gaps.
 
 1. native

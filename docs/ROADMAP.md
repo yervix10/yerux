@@ -76,23 +76,26 @@ Taken from the repository at the time of writing (re-measure with the commands s
 | Test programs | 598 `tests/*.yx`, 63 `examples/*.yx`, 1,188 expected outputs, 45 scripts, 12 fuzzers/checkers in Python | `ls` |
 | Doc-tests | every `yerux` block of the book, GUIDE.md and STDLIB.md | `bash tests/doctests.sh` |
 
-Self-hosting parity, measured on every Git-tracked `.yx` file (934 files) by `tests/selfhost_*.sh` (2026-11-23):
+Self-hosting parity measured by `tests/selfhost_*.sh`:
 
 | Stage (`selfhost/`) | Result |
 |---|---|
-| lexer | 858 files compared, 0 mismatches |
-| parser (source AST) | 915 ASTs compared plus 8 lexical and 11 syntax rejections, 0 mismatches |
-| module resolution | 895 resolved, 20 module rejections, 19 source rejections, 0 mismatches |
-| lexical bindings, types, ownership | 5 typed fixtures, 21 type rejections, 4 accepted and 13 rejected ownership fixtures, 0 mismatches |
+| lexer | 859 files compared, 0 mismatches |
+| parser (source AST) | 916 ASTs compared plus 8 lexical and 11 syntax rejections, 0 mismatches |
+| module resolution | 896 resolved, 20 module rejections, 19 source rejections, 0 mismatches |
+| lexical bindings, types, ownership | 916 lexical snapshots, 5 typed and 4 ownership fixtures, 21 type and 13 ownership rejections, 0 mismatches |
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-The self-hosted code generator matches the Rust C backend on **457 of 458
-candidate programs (99.8%)**, with 100 runtime panics reproduced exactly, **0
-candidates outside the supported subset**, one expected type rejection (the
-458th) and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
-fixpoint: the stages built by the driver rebuild themselves and generation 1
-and 2 emit byte-identical C. Every program of the corpus, concurrency
+The self-hosted compiler matched the Rust C backend's stdout, stderr and
+exit status for **458 of 459 candidates**, including all 14 required
+concurrency cases and 101 runtime panics. The run had one expected type
+rejection, zero candidates outside the subset and **zero execution
+mismatches**. All seven stages rebuilt with byte-identical C between
+self-hosted generations. The generated C from Rust and Yerux differed in
+all 14 concurrency cases. The remaining work to switch the default compiler
+is tracked in [SELFHOST.md](SELFHOST.md).
+Every program of the corpus, concurrency
 included, now compiles; what is left before it can be called self-hosted is
 language surface the corpus does not exercise (the closing list of
 [SELFHOST.md](SELFHOST.md): slices as bindings, `extern`, generic function items

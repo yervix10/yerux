@@ -1,0 +1,27 @@
+fn send_once(sender: Sender<String>) {
+  sender.send(String.from("sent"))
+}
+
+fn main() {
+  let count = Shared.new(Atomic . new(0))
+  let (tx, rx) = Sender<String>.bounded(1)
+  scope {
+    let shared = count.clone()
+    let worker = spawn
+    move {
+      send_once(move tx)
+      shared.add(1)
+      panic("recoverable worker panic")
+    }
+    print(rx.recv().unwrap())
+    match worker.join() {
+      Ok(_) => { panic("expected worker panic") }
+      Err(error) => { print(error.show()) }
+    }
+  }
+  assert(rx.recv().is_none())
+  assert(count.load() == 1)
+  parallel for i in 0..8 {
+    if i == 1 { panic("parallel worker panic") }
+  }
+}
