@@ -139,11 +139,29 @@ fn child_total(tree: view List<ast.AstNode>, list: Int) -> Int {
 
 fn derive_source(tree: view List<ast.AstNode>) -> String {
   var out = String.new()
+  var explicit_equal = List<String>.new()
+  var implicit_equal = List<Int>.new()
   let items = ast.child(tree, 0, 0)
   var at = items + 1
   while at < tree.at(items).end {
     let item = ast.child(tree, at, 2)
-    if tree.at(item).tag == "Derive" {
+    let tag = String.from(tree.at(item).tag)
+    if tag == "Enum" && child_total(tree, ast.child(tree, item, 1)) == 0 {
+      let variants = ast.child(tree, item, 2)
+      var variant = variants + 1
+      while variant < tree.at(variants).end && tree.at(variant).tag == "VariantDef" &&
+          child_total(tree, ast.child(tree, variant, 1)) == 0 {
+        variant = tree.at(variant).end
+      }
+      if variant > variants + 1 && variant == tree.at(variants).end { implicit_equal.push(item) }
+    } else if tag == "Impl" {
+      let trait_type = ast.child(tree, item, 1)
+      let owner = ast.child(tree, item, 2)
+      if tree.at(trait_type).tag == "Type" && ast.name_at(tree, trait_type, 0).eq("Equal") &&
+          tree.at(owner).tag == "Type" {
+        explicit_equal.push(ast.name_at(tree, owner, 0))
+      }
+    } else if tag == "Derive" {
       let target = ast.name_at(tree, item, 0)
       var definition = -1
       var scan = items + 1
@@ -160,6 +178,7 @@ fn derive_source(tree: view List<ast.AstNode>) -> String {
       var trait_at = traits + 1
       while trait_at < tree.at(traits).end {
         let kind = ast.decoded_name(tree, trait_at)
+        if kind == "Equal" { explicit_equal.push(String.from(target)) }
         if definition >= 0 && (kind == "Equal" || kind == "Show") {
           out.push_str(derive_one(tree, definition, target, kind))
         }
@@ -168,13 +187,19 @@ fn derive_source(tree: view List<ast.AstNode>) -> String {
     }
     at = tree.at(at).end
   }
+  for def in implicit_equal {
+    let name = ast.name_at(tree, def, 0)
+    if !explicit_equal.contains(name) { out.push_str(derive_one(tree, def, name, "Equal")) }
+  }
   return out
 }
 
 // Source text for `source` with the derived impls appended, or "" when it derives nothing here.
 fn derived_source(build: view Build, source: view String, key: view String) -> String {
   let text = read_text(source)
-  if !uses(text, "derive ") || !(uses(text, "Equal") || uses(text, "Show")) { return String.new() }
+  if !uses(text, "enum") && !(uses(text, "derive ") && (uses(text, "Equal") || uses(text, "Show"))) {
+    return String.new()
+  }
   let tokens_path = path.join(build.work, "derive-tokens")
   var args = List<String>.new()
   args.push(String.from(source))

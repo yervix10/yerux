@@ -94,6 +94,19 @@ for file in tests/e736_parallel_assign.yx tests/e737_parallel_mut_list.yx; do
   grep -q 'only borrowed for reading' "$tmp/parallel.err"
 done
 
+cat >"$tmp/enum-empty-args.yx" <<'SOURCE'
+enum Kind { Empty(), Word }
+fn main() {
+  let word = Kind.Word
+  print(word == Kind.Word)
+}
+SOURCE
+if "$driver" "$tmp/enum-empty-args.yx" -o "$tmp/invalid" 2>"$tmp/enum-empty-args.err"; then
+  printf 'selfhost derived implicit Equal for a parenthesized variant\n' >&2
+  exit 1
+fi
+grep -q 'cannot compare values of type Kind' "$tmp/enum-empty-args.err"
+
 source_ast() {
   : >"$tmp/source.err"
   "$tmp/rebuilt/lexer" "$1" --positioned --columns >"$tmp/tokens" 2>"$tmp/source.err" || return
@@ -101,7 +114,9 @@ source_ast() {
     cp "$tmp/ast" "$tmp/source.err"
     return 1
   }
-  if [[ $(<"$tmp/ast") == *',Import('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\bparallel\b' "$1"; then
+  local parsed
+  parsed=$(<"$tmp/ast")
+  if [[ $parsed == *',Import('* || $parsed == *',Enum('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\bparallel\b' "$1"; then
     "$tmp/rebuilt/yerux-self" --emit-ast "$1" -o "$tmp/ast" 2>"$tmp/source.err"
   fi
 }
@@ -122,7 +137,7 @@ required() {
     tests/gen_types.yx|tests/own_deep_box_drop.yx|tests/t912_box_tree.yx|tests/dyn_call_order.yx|tests/dyn_handlers.yx|\
     tests/hard2_dyn_generic_impls.yx|tests/hard2_dyn_holders.yx|tests/hard2_dyn_nested_drop.yx|\
     tests/conc_print.yx|tests/drop_worker.yx|tests/drop_double_panic.yx|tests/drop_panic.yx|\
-    tests/net_loopback.yx|tests/std_http_client.yx|tests/std_sync.yx) return 0 ;;
+    tests/net_loopback.yx|tests/std_http_client.yx|tests/std_sync.yx|tests/enum_implicit_equal.yx) return 0 ;;
     *) return 1 ;;
   esac
 }

@@ -955,8 +955,12 @@ fn aggregate(p: mut Parser, is_struct: Bool) -> String {
       append(entries, node2("FieldDef", entry, parse_type(p)))
     } else {
       var payload = empty_list()
-      if eat(p, "(") { payload = types(p, ")") }
-      append(entries, node2("VariantDef", entry, payload))
+      var tag: Text = "VariantDef"
+      if eat(p, "(") {
+        payload = types(p, ")")
+        if payload == "[]" { tag = "VariantDefEmptyArgs" }
+      }
+      append(entries, node2(tag, entry, payload))
     }
     if !eat(p, ",") { break }
   }
