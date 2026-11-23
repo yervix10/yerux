@@ -540,6 +540,107 @@ fn slot(v: V) -> u32 {
 
 // ───────────────────────── Compiler ─────────────────────────
 
+/// Imported modules include all their functions. Keep function IDs stable while
+/// dropping code that cannot be called, including unsupported OS APIs.
+pub fn discard_unused_functions(ir: &mut IrProgram) {
+    let mut reachable = vec![false; ir.funcs.len()];
+    let mut pending = vec![ir.main];
+    while let Some(fid) = pending.pop() {
+        if std::mem::replace(&mut reachable[fid], true) {
+            continue;
+        }
+        for inst in ir.funcs[fid].blocks.iter().flat_map(|b| &b.insts) {
+            match inst {
+                Inst::Call(_, callee, _) | Inst::FnAddr(_, callee) => pending.push(*callee),
+                Inst::VTableAddr(_, table) => pending.extend(&ir.vtables[*table]),
+                _ => {}
+            }
+        }
+    }
+    for (f, used) in ir.funcs.iter_mut().zip(reachable) {
+        if !used {
+            f.nparams = 0;
+            f.nvregs = 0;
+            f.slots.clear();
+            f.blocks = vec![Block {
+                insts: vec![],
+                term: Term::Unreachable,
+            }];
+        }
+    }
+}
+
+/// Translate the x86-64 numbers used by the raw syscall intrinsic before A64 code generation.
+pub fn translate_syscalls(ir: &mut IrProgram) -> Result<(), String> {
+    for f in &mut ir.funcs {
+        if !f
+            .blocks
+            .iter()
+            .flat_map(|b| &b.insts)
+            .any(|i| matches!(i, Inst::Syscall(..)))
+        {
+            continue;
+        }
+        // Accept only a single-definition constant. A first argument computed at runtime
+        // could otherwise accidentally invoke a different AArch64 syscall.
+        let mut defined = vec![false; f.nvregs];
+        let mut constants = vec![None; f.nvregs];
+        defined[..f.nparams].fill(true);
+        for inst in f.blocks.iter().flat_map(|b| &b.insts) {
+            if let Some(d) = crate::opt::def(inst) {
+                constants[d] = match inst {
+                    Inst::Const(_, n) if !defined[d] => Some(*n),
+                    _ => None,
+                };
+                defined[d] = true;
+            }
+        }
+        for block in &mut f.blocks {
+            let mut translated = Vec::with_capacity(block.insts.len());
+            for mut inst in std::mem::take(&mut block.insts) {
+                if let Inst::Syscall(_, args) = &mut inst {
+                    let number = constants[args[0]];
+                    let Some(a64) = number.and_then(linux_syscall_number) else {
+                        let number =
+                            number.map_or_else(|| "dynamic number".to_string(), |n| n.to_string());
+                        return Err(format!(
+                            "raw system calls ({} in function '{}')",
+                            number, f.name
+                        ));
+                    };
+                    args[0] = f.nvregs;
+                    f.nvregs += 1;
+                    translated.push(Inst::Const(args[0], a64));
+                }
+                translated.push(inst);
+            }
+            block.insts = translated;
+        }
+    }
+    Ok(())
+}
+
+fn linux_syscall_number(x64: i64) -> Option<i64> {
+    Some(match x64 {
+        // These Linux calls share argument layouts and return conventions on both targets.
+        0 => 63,    // read
+        1 => 64,    // write
+        3 => 57,    // close
+        41 => 198,  // socket
+        42 => 203,  // connect
+        43 => 202,  // accept
+        44 => 206,  // sendto
+        49 => 200,  // bind
+        50 => 201,  // listen
+        51 => 204,  // getsockname
+        52 => 205,  // getpeername
+        54 => 208,  // setsockopt
+        228 => 113, // clock_gettime
+        271 => 73,  // ppoll
+        _ => return None,
+    })
+}
+
 pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let mut a = Asm::new();
 
@@ -1165,8 +1266,17 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                 let cl = flocs[bi][ii];
                 match ins {
                     Inst::Loc(_) => {}
-                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Syscall(..) | Inst::Global(..) => {
+                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Global(..) => {
                         unreachable!("rejected by os_intrinsics_error")
+                    }
+                    Inst::Syscall(d, args) => {
+                        // Linux AArch64 kernel ABI: x8 = number, x0..x5 = arguments.
+                        a.ldr(X8, SP, slot(args[0]));
+                        for (reg, arg) in [X0, X1, X2, X3, X4, X5].into_iter().zip(&args[1..]) {
+                            a.ldr(reg, SP, slot(*arg));
+                        }
+                        a.svc();
+                        a.str(X0, SP, slot(*d));
                     }
                     Inst::Const(d, n) => {
                         a.mov_imm(X0, *n);

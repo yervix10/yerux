@@ -115,6 +115,7 @@ AUX=(
   "sumtool|bash tests/sumtool.sh"
   "minimake_errors|bash tests/minimake_errors.sh"
   "io_targets|bash tests/io_targets.sh"
+  "a64_net|python3 tests/a64_emu.py --network -j 1"
   "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
   "lsp_vscode|bash tests/lsp_vscode.sh"
   "doctests|bash tests/doctests.sh"

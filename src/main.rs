@@ -215,7 +215,15 @@ fn native_build(
         profile_stage("native optimization", start);
     }
     if !target.is_empty() && target != "linux" {
-        if let Some(what) = ir::os_intrinsics_error(&ir) {
+        let aarch64 = target == "aarch64";
+        if aarch64 {
+            a64::discard_unused_functions(&mut ir);
+        }
+        let mut unsupported = ir::os_intrinsics_error(&ir, aarch64);
+        if aarch64 && unsupported.is_none() {
+            unsupported = a64::translate_syscalls(&mut ir).err();
+        }
+        if let Some(what) = unsupported {
             eprintln!("error: native backend: {} is not supported on the {} target yet (available on x86-64 Linux)", what, target);
             exit(1);
         }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# std.io only exists on x86-64 Linux (and the C oracle): the other targets must refuse it at compile time
-# with a clear message, and programs that do not import it must still build everywhere.
+# Check that Windows and AArch64 reject the OS APIs they lack with a clear message
+# and still build an ordinary program.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 2

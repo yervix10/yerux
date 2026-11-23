@@ -237,14 +237,15 @@ fn endpoint(fd: Int, peer: Bool) -> Result<SocketAddr, io.IoError> {
   defer __free(buf)
   let len = buf + 32
   __store64(len, 32)
-  var nr = 51 // getsockname
-  var op = "getsockname"
-  if peer {
-    nr = 52 // getpeername
-    op = "getpeername"
+  let r = if peer {
+    __syscall(52, fd, buf, len, 0, 0, 0) // getpeername
+  } else {
+    __syscall(51, fd, buf, len, 0, 0, 0) // getsockname
   }
-  let r = __syscall(nr, fd, buf, len, 0, 0, 0)
-  if r < 0 { return Err(io.os_error(op, "socket", 0 - r)) }
+  if r < 0 {
+    let op = if peer { "getpeername" } else { "getsockname" }
+    return Err(io.os_error(op, "socket", 0 - r))
+  }
 
   let size = __load64(len)
   if size < 4 || size > 32 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "net: invalid socket address length")) }

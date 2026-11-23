@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Emulate `yerux --target aarch64` output with Unicorn and compare it with the goldens / the x86-64 backend.
+"""Emulate `yerux --target aarch64` output and compare it with the goldens / the x86-64 backend.
 
-usage: python3 tests/a64_emu.py [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
+usage: python3 tests/a64_emu.py [--network] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
   default: every examples/*.yx and tests/*.yx that the native backend accepts (the e*.yx error programs are
   skipped). Per program the emulated aarch64 build must match tests/expected/<name>.out/.code (stdout, exit code)
   and the x86-64 native build's stderr; every code word must also decode in capstone.
+  --network : run just the socket tests, using qemu-aarch64 for real Linux TCP.
   --debug-alloc : build with --native-debug-alloc and compare stderr (allocs/frees/live) with the x86-64 build.
-Needs: pip install unicorn capstone   (run `cargo build --release` first)"""
-import argparse, os, struct, subprocess, sys, tempfile
+Needs: `cargo build --release` first. The socket tests need qemu-aarch64 on PATH.
+Other tests need `pip install unicorn capstone`."""
+import argparse, os, shutil, struct, subprocess, sys, tempfile
 from concurrent.futures import ProcessPoolExecutor
-from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_INTR, UcError
-from unicorn.arm64_const import *
-from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 YERUX = os.path.join(ROOT, "target/release/yerux")
 STACK = 0x7F000000
 MMAP_BASE = 0x10000000
 MAX_INSNS = 400_000_000
+NETWORK = ("net_errors", "net_hostile_address", "net_read_timeout", "net_timeouts")
 SHRINK = {"02_fast": ("100000000", "20000"), "own_deep_box_drop": ("return 1000000", "return 2000"), "own_deep_scc_drop": ("return 1000000", "return 2000"), "own_deep_closure_drop": ("return 1000000", "return 2000")}  # loops too long for emulation
 
 
@@ -35,6 +35,8 @@ def load_elf(elf):
 
 def disasm_check(elf, entry, segs):
     """Every word of the code region must decode; the data blobs follow the code (first segment)."""
+    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+
     vaddr, seg, _, _ = segs[0]
     md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
     code_end = seg.index(b"panic: ") & ~15
@@ -49,6 +51,12 @@ def disasm_check(elf, entry, segs):
 
 
 def emulate(elf, max_insns=MAX_INSNS):
+    from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_INTR, UcError
+    from unicorn.arm64_const import (
+        UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_X0, UC_ARM64_REG_X1,
+        UC_ARM64_REG_X2, UC_ARM64_REG_X3, UC_ARM64_REG_X8,
+    )
+
     entry, segs = load_elf(elf)
     uc = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     for vaddr, data, memsz, _ in segs:
@@ -127,12 +135,18 @@ def run_x64(src, tmp, extra):
     return r.returncode, r.stdout, r.stderr
 
 
-def a64_run(src, tmp, extra, check_decode=True):
+def a64_run(src, tmp, extra, check_decode=True, qemu=None):
     """Build `src` for aarch64 and emulate it. Returns (code, stdout, stderr, err, decode_report)."""
     path = os.path.join(tmp, "out.a64")
     p = build(src, path, ["--target", "aarch64"] + extra)
     if p.returncode != 0:
         return None, b"", p.stderr, "aarch64 build failed: " + p.stderr.decode(errors="replace")[:300], None
+    if qemu:
+        try:
+            r = subprocess.run([qemu, path], capture_output=True, stdin=subprocess.DEVNULL, timeout=45)
+        except subprocess.TimeoutExpired:
+            return None, b"", b"", "QEMU timed out", None
+        return r.returncode, r.stdout, r.stderr, None, None
     elf = open(path, "rb").read()
     rep = None
     if check_decode:
@@ -145,6 +159,10 @@ def a64_run(src, tmp, extra, check_decode=True):
 def check_one(args):
     f, debug = args
     name = os.path.basename(f)[:-3]
+    network = name in NETWORK
+    qemu = shutil.which("qemu-aarch64") if network else None
+    if network and qemu is None:
+        return f, "SKIP", "qemu-aarch64 unavailable"
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(ROOT, f)
         if name in SHRINK:
@@ -154,16 +172,21 @@ def check_one(args):
         extra = ["--native-debug-alloc"] if debug else []
         x = run_x64(src, tmp, extra)
         if x is None:
+            if network:
+                return f, "FAIL", "x86-64 build failed"
             return f, "SKIP", "native backend rejects it"
-        ec, so, se, err, rep = a64_run(src, tmp, extra)
+        ec, so, se, err, rep = a64_run(src, tmp, extra, qemu=qemu)
         xc, xo, xe = x
-        if err and "is not supported on the aarch64 target yet" in str(err):
+        if err and not network and "is not supported on the aarch64 target yet" in err:
             return f, "SKIP", "aarch64 target rejects it (documented limitation)"
         if err:
             return f, "FAIL", err
-        n, bad = rep
-        if bad:
-            return f, "FAIL", f"{len(bad)} undecodable words, first {bad[:3]}"
+        detail = "QEMU"
+        if rep:
+            n, bad = rep
+            if bad:
+                return f, "FAIL", f"{len(bad)} undecodable words, first {bad[:3]}"
+            detail = f"{n} insns decoded"
         if debug:
             gold_o, gold_c = xo, xc
         else:
@@ -176,17 +199,20 @@ def check_one(args):
         if ec != gold_c: why.append(f"exit {ec} != {gold_c}")
         if so != gold_o: why.append("stdout differs")
         if se != xe: why.append(f"stderr differs: a64={se[:80]!r} x64={xe[:80]!r}")
-        return f, ("FAIL" if why else "PASS"), "; ".join(why) or f"{n} insns decoded"
+        if network and (xo, xc) != (gold_o, gold_c):
+            why.append("x86-64 differs from golden")
+        return f, ("FAIL" if why else "PASS"), "; ".join(why) or detail
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
+    ap.add_argument("--network", action="store_true", help="run socket tests under QEMU")
     ap.add_argument("--debug-alloc", action="store_true")
     ap.add_argument("-j", type=int, default=os.cpu_count() or 4)
     ap.add_argument("-k", default="")
     a = ap.parse_args()
-    files = a.files
+    files = [f"tests/{name}.yx" for name in NETWORK] if a.network else a.files
     if not files:
         for d in ("examples", "tests"):
             for fn in sorted(os.listdir(os.path.join(ROOT, d))):
@@ -197,11 +223,11 @@ def main():
         res = list(ex.map(check_one, [(f, a.debug_alloc) for f in files]))
     fails = 0
     for f, st, msg in res:
-        if st != "SKIP" or "-v" in sys.argv:
+        if st != "SKIP" or a.network:
             print(f"{st:5} {f}: {msg}")
         fails += st == "FAIL"
     cnt = {s: sum(1 for r in res if r[1] == s) for s in ("PASS", "FAIL", "SKIP")}
-    print(f"a64 emulation: {cnt['PASS']} pass, {cnt['FAIL']} fail, {cnt['SKIP']} skipped (native rejects)")
+    print(f"a64 emulation: {cnt['PASS']} pass, {cnt['FAIL']} fail, {cnt['SKIP']} skipped")
     sys.exit(1 if fails else 0)
 
 
