@@ -18,14 +18,26 @@ pub fn compress(input: view String) -> String {
 
 pub fn decompress(input: view String) -> Result<String, String> {
     if input.len() % 2 != 0 { return Err(String.from("invalid RLE data")) }
+
+    // Validate the decoded size before allocating or expanding any runs. This
+    // rejects hostile inputs without doing work proportional to the claimed
+    // output (which can be much larger than the compressed input).
+    var total = 0
+    var scan = 0
+    while scan < input.len() {
+        let count = input.byte(scan)
+        if count == 0 { return Err(String.from("invalid RLE run length")) }
+        if count > 16777216 - total {
+            return Err(String.from("decompressed output exceeds 16 MiB limit"))
+        }
+        total = total + count
+        scan = scan + 2
+    }
+
     var out = String.new()
     var i = 0
     while i < input.len() {
         let count = input.byte(i)
-        if count == 0 { return Err(String.from("invalid RLE run length")) }
-        if count > 16777216 - out.len() {
-            return Err(String.from("decompressed output exceeds 16 MiB limit"))
-        }
         var j = 0
         while j < count {
             out.push_byte(input.byte(i + 1))
