@@ -2,13 +2,14 @@
 
 Status: **draft**. Describes the language as implemented by `yerux` 0.5.0. Where the
 implementation and this text disagree, the text is the target and the difference is recorded in
-section 8 (Pending decisions). Sources: [GUIDE.md](GUIDE.md), [DESIGN.md](DESIGN.md), the
+section 10 (Pending decisions). Sources: [GUIDE.md](GUIDE.md), [DESIGN.md](DESIGN.md), the
 [book](book/README.md), and the feature specs linked from each section. Every `yx` example in
 this document was compiled and run against the `yerux` binary; examples marked `(verified)`
 produced the stated output on the C backend and on `--native`.
 
 Sections: 1 Lexical structure and grammar · 2 Types · 3 Ownership and borrows · 4 Errors and
-`Result` · 5 Modules · 6 Compile-time execution · 7 FFI and ABI · 8 Pending decisions.
+`Result` · 5 Concurrency and memory model · 6 Modules · 7 FFI and ABI · 8 Compile-time execution ·
+9 Standard library contract · 10 Pending decisions.
 
 ---
 
@@ -17,7 +18,7 @@ Sections: 1 Lexical structure and grammar · 2 Types · 3 Ownership and borrows 
 ### 1.1 Source text
 
 - Source files are UTF-8 text with the extension `.yx`. The entry file of a program is compiled
-  with the folder it lives in as the module root (section 5).
+  with the folder it lives in as the module root (section 6).
 - Line comments start with `//` and run to the end of the line. **Block comments are not
   part of the language.** `/* ... */` is rejected (`expected an expression`).
 - Statements are separated by newlines. A `;` is accepted as a separator
@@ -42,7 +43,7 @@ Contextual words: `import`, `pub`, `as`, `const`, `type`, `test`, `derive`, `ext
 `parallel` and `unsafe` may not (`let scope = 3` is `expected a name`).
 
 Note: `let import = 1` is currently reported as `` `import` must come before every other
-declaration``, which is a misleading message; the name is reserved in practice (section 8).
+declaration``, which is a misleading message; the name is reserved in practice (section 10).
 
 Built-in names (`print`, `assert`, `assert_eq`, `panic`, `Some`, `None`, `Ok`, `Err`, `sqrt`,
 ...) are ordinary functions or prelude items, not keywords. They can be shadowed by a
@@ -178,7 +179,7 @@ Notes on the grammar:
 
 - Generic arguments are written only on types and constructors (`List<Int>.new()`,
   `Maybe.Some(i)`). Type arguments of function calls are inferred; explicit type arguments on
-  calls are not implemented (section 8).
+  calls are not implemented (section 10).
 - `view` and `mut` are parameter-mode keywords in parameter and function-type positions and
   borrow markers on values (`mut m` in `match mut`). They are not reference types.
 - Enum variants are named with the enum in expressions (`Shape.Rect(4, 5)`) and without it in
@@ -263,7 +264,7 @@ Rules, all verified:
   with their own shortest form (`let f: Float32 = 1.1` prints `1.1`; `1.1f32 * 3.0f32` prints
   `3.3000002`).
 - **Sized values as types only.** `UInt8.from(0)` is rejected: `UInt8` is a type, use `0u8` or
-  `n.to_uint8()` (section 8 for the message).
+  `n.to_uint8()` (section 10 for the message).
 - **Char** literals are single scalars: `'a'`, `'\n'`, `'\u{1F600}'`. `Char.from_int(65)` is `A`;
   `c.to_int()` is the code point; `c.utf8_len()` is 1 to 4.
 - **Text and String** are UTF-8 byte strings. `len()` counts bytes. Characters are walked with
@@ -339,7 +340,7 @@ enum Name { Variant, Variant(Type, ...), ... }
 - **Generic bodies** are checked once against their bounds. Inside, a `T` value is moved unless
   `T: Copy` is declared.
 - **Not yet:** explicit type arguments on calls, bounds on struct and enum parameters, generic
-  methods (`fn map<U>(..)` inside an `impl`). See section 8.
+  methods (`fn map<U>(..)` inside an `impl`). See section 10.
 
 ### 2.6 Range integers
 
@@ -444,7 +445,7 @@ is valid). `return x` moves `x` out implicitly. A `let` binding cannot be modifi
 4. **Borrows are second-class.** A `view` or `mut` parameter cannot be stored in a variable
    (`let w = v` where `v` is a `view` parameter is `'v' is a List and is not copied`), stored in
    a struct field (`struct H { r: view List<Int> }` is rejected), or returned
-   (`-> view List<Int>` is rejected). These are parse errors today (section 8).
+   (`-> view List<Int>` is rejected). These are parse errors today (section 10).
 5. **One call, one use per variable when mutation or move is involved.** A variable lent as
    `mut` or moved may not appear again in the same call:
    `both(a, a)` where the first parameter is `mut` is `'a' appears twice in the same call and one
@@ -1003,4 +1004,30 @@ that no test calls is **no especificado** even if the reference lists it.
 
 ## 10. Pending decisions
 
-(Placeholder: section 10, to be written in its own commit.)
+Each item is a difference between a design document and the implemented language, or an
+unfixed point that no test pins down. The implemented behaviour in sections 1-9 is the contract.
+
+1. **Concurrency surface.** CONCURRENCY.md sections 3-12 describe `spawn { }` without `move`,
+   `Task<T>`, `Channel<T>.new`, `Locked.new_ordered`, `l.with(mut n => ...)`,
+   `Runtime.spawn_detached`, `parallel map`/`reduce`, `split_at_mut`/`chunks_mut`, actors, cancellation
+   and lint W-C1. The implemented forms are in section 5. The rest is pending.
+2. **Capture diagnostics.** The error codes E-C1..E-C9 in CONCURRENCY.md are not printed by the
+   compiler; diagnostics are plain messages (section 5.2). The full read/write capture matrix is pending.
+3. **Memory ordering.** Only sequential consistency is the stated design. No test distinguishes it
+   from weaker orderings, and weaker orderings are not exposed (section 5.6).
+4. **Raw runtime surface.** The `__thread_*`, `__atomic_*` and `__futex_*` intrinsics are reserved;
+   their stability is pending (section 5.6).
+5. **FFI syntax.** FFI.md section 6 proposes `extern "C" from <os> "lib"`, `optional`, `@c struct`,
+   `@link_name`, `CStr` and `Ptr` fields. The implemented form is `link "lib"` plus `extern "C"`
+   (section 7). The proposal is pending.
+6. **FFI safety and callbacks.** The `ffi` capability, `#![forbid(unsafe)]`, C-to-Yerux callbacks,
+   and `Ptr` drop rules are pending (section 7.5).
+7. **FFI on other targets.** aarch64 and Windows reject `extern "C"` (section 7.4). Their ABIs are pending.
+8. **Compile-time surface.** `comptime fn`, `comptime for`, `comptime if`, reflection, comptime
+   allocators (COMPTIME.md part B) and serialised constants of other types are pending (section 8).
+9. **Compile-time budgets.** COMPTIME.md proposes a step limit of 10^8 with a 256 MiB memory limit.
+   No test in `tests/` fixes a limit; `examples/e53_comptime_budget.yx` uses a different one. Pending.
+10. **Module search order.** Whether `src/<name>.yx` or `src/lib.yx` is tried first for a package
+    import (PACKAGES.md) is not tested. Pending.
+11. **Standard library coverage.** STDLIB.md lists APIs that no test calls, and `prelude_parallel.yx`
+    has no test that names `parallel map`/`reduce`. Those APIs are pending until tested.
