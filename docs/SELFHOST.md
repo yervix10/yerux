@@ -237,8 +237,8 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-22 run matched **402 of 430 candidates (93.5%)**, with 100 runtime
-panics reproduced exactly, 16 candidates outside the supported subset, one
+2026-11-22 run matched **431 of 447 candidates (96.4%)**, with 100 runtime
+panics reproduced exactly, 15 candidates outside the supported subset, one
 expected type rejection and zero mismatches. The corpus now includes five
 additional `json_edge_*` programs. (82.1% on 2026-11-21 before the
 codegen/front-end work of that day; the history is in `git log selfhost/`.)
