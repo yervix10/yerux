@@ -143,7 +143,7 @@ The module is written in Yerux over eight builtin functions and two `String` met
 
 | Intrinsic | Meaning |
 |---|---|
-| `__syscall(nr, a1, a2, a3, a4, a5, a6) -> Int` | Linux x86-64 system call. Always seven `Int`s (unused ones are 0). Returns the raw kernel result: `>= 0` on success, `-errno` on failure (never sets any global `errno`). |
+| `__syscall(nr, a1, a2, a3, a4, a5, a6) -> Int` | Linux system call specified by its x86-64 number. Takes seven `Int`s (unused arguments are 0). Returns the raw kernel result, including `-errno` on failure. |
 | `__global(i) -> Int` | Address of global cell `i` (a literal `0..63`): 8 zero-initialised bytes that live as long as the program. Cell 0 holds the initial stack pointer (`argc`, `argv[..]`, `0`, `envp[..]`, `0`); cells 1..3 are the stdin buffer. |
 | `__alloc(n) -> Int`, `__free(p)` | Heap block from the runtime allocator (same one as `String`/`List`). |
 | `__load8(a)`, `__load64(a) -> Int`; `__store8(a, v)`, `__store64(a, v)` | Raw memory access (`__load8` zero-extends, `__store8` keeps the low byte). |
@@ -157,7 +157,8 @@ All arguments are plain `Int`s, so the checker needs nothing special beyond arit
 - **IR.** Two new instructions: `Syscall(dst, [nr, a1..a6])` and `Global(dst, n)`. The raw memory intrinsics reuse `Load`, `Load8`, `Store`, `Store8`, `Alloc`, `Free`; `push_raw` is a call of the existing string-append helper; `raw_addr` is a header load. `Syscall` counts as a call everywhere: it clobbers all caller-saved registers (the kernel also clobbers `rcx`/`r11`), invalidates cached loads (`memopt`, redundant-load elimination), and is never deleted or reordered (its result is used or not, the effect stays).
 - **x86-64 native.** `Syscall` pushes its seven values, then pops them into `r9 r8 r10 rdx rsi rdi rax` (so an argument living in one of those registers cannot be overwritten before it is read) and executes `syscall`. `Global(n)` is the constant address `0x600000 + 256 + 8n` in the writable runtime segment; when a program uses any `Global`, `_start` additionally stores the initial `rsp` into cell 0. Programs without it get byte-identical start-up code.
 - **C backend (oracle).** `__syscall` is libc `syscall()` with `errno` converted to `-errno` and a `fflush(stdout)` first; `__global` is a static array whose cell 0 points at a heap image of `argc/argv/envp` built in `main`; `__alloc/__free` are `malloc/free`.
-- **Other targets.** `--target windows` and `--target aarch64` stop at compile time: `error: native backend: raw system calls (std.io, used by function 'std__io__fill') is not supported on the windows target yet (the std.io raw syscalls only exist on x86-64 Linux)`. The Windows port would implement the same module on `kernel32` (`ReadFile`, `CreateFileW`, `GetCommandLineW`, `QueryPerformanceCounter`, ...) behind the same API, and aarch64 needs its own syscall numbers (`openat`, `clock_gettime` = 113, ...) and a `svc #0` instruction; both are mechanical.
+- **AArch64 native.** The compiler follows calls, function addresses and vtables from `main` before checking which APIs it needs. It translates the constant syscall numbers used by [`std.net`](NET.md), including socket I/O and timeouts, to Linux AArch64 numbers in `x8`, loads arguments into `x0`–`x5` and issues `svc #0`. Reachable code that uses `__global`, a runtime syscall number or a syscall outside the supported set produces a compile-time error.
+- **Windows native.** Raw system calls and `__global` produce a compile-time error.
 
 ## Tests
 
@@ -165,7 +166,7 @@ All arguments are plain `Int`s, so the checker needs nothing special beyond arit
 
 ## Not done yet
 
-Non-blocking I/O and `epoll`, sockets, threads and a lock around the stdin buffer, time zones, a Windows and an aarch64 implementation. (File handles, binary data, links, `chmod`, `env.set` and `Duration` are done: [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md).)
+Non-blocking I/O and `epoll`, threads and a lock around the stdin buffer, time zones, a Windows port and the remaining filesystem and process APIs on AArch64. See [NET.md](NET.md) for blocking TCP.
 
 ## Ending the process: `exit`, `exit_clean`, `run_status`
 

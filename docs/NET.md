@@ -1,8 +1,14 @@
 # std.net
 
 `std.net` provides blocking TCP sockets over raw Linux system calls on the x86-64
-native backend and through `syscall(2)` on the C backend. Import it with
-`import std.net`; its `IoError` is `std.io.IoError`.
+and AArch64 native backends and through `syscall(2)` on the C backend. Import it
+with `import std.net`. Its `IoError` is `std.io.IoError`.
+
+Build an AArch64 Linux executable with `yerux build app.yx --target aarch64`.
+With `qemu-aarch64` on `PATH`, `python3 tests/a64_emu.py --network` checks
+real loopback sockets, including IPv4 and IPv6 addresses and TCP timeouts,
+against the same golden files used by the x86-64 suite. The worker-based
+network fixtures run on C and x86-64.
 
 `address(ip, port)` accepts numeric IPv4 dotted quads and IPv6 hexadecimal
 groups, including `::1` and compressed forms. DNS lookup is unavailable. `listen(addr)`,

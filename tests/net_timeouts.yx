@@ -67,10 +67,13 @@ fn check_connect_timeout(ip: view net.SocketAddr) {
   // On Linux a zero backlog holds one completed connection.
   assert_eq(__syscall(50, listener.fd, 0, 0, 0, 0, 0), 0)
   let queued = net.connect_timeout(bound, 1000).unwrap()
-  let poll_fd = __alloc(8)
+  let poll_fd = __alloc(24)
   __store64(poll_fd, listener.fd)
   __store8(poll_fd + 4, 1) // POLLIN: the accept queue contains the connection.
-  let ready = __syscall(7, poll_fd, 1, 1000, 0, 0, 0)
+  let wait = poll_fd + 8
+  __store64(wait, 1)
+  __store64(wait + 8, 0)
+  let ready = __syscall(271, poll_fd, 1, wait, 0, 0, 0) // ppoll, with a one-second timespec
   __free(poll_fd)
   assert_eq(ready, 1)
   let start = time.monotonic_ns()
