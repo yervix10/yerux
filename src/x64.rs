@@ -68,7 +68,7 @@ const IMP_SETCONSOLEOUTPUTCP: usize = 5;
 
 // ───────────────────────── Assembler ─────────────────────────
 
-/// Emit DWARF line/frame information for the native Linux backend (`--dwarf`, `--debug`).
+/// Emit DWARF source, frame and variable information for the native Linux backend (`--dwarf`, `--debug`).
 pub static DWARF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 struct Asm {
@@ -2112,7 +2112,13 @@ impl<'a> G<'a> {
     }
 }
 
-fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
+fn gen_func(
+    a: &mut Asm,
+    rt: &Rt,
+    f: &IrFunc,
+    cold_fn: &[bool],
+    debug_scopes: &[usize],
+) -> (Vec<i32>, Vec<(usize, usize)>) {
     let (laid, cold) = if std::env::var_os("YERUX_NO_COLD").is_some() {
         (None, vec![false; f.blocks.len()])
     } else {
@@ -2174,7 +2180,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
     let frameless = frame == 0 && f.nparams <= ARG_REGS.len() && !has_extern && !has_call;
     let callee: Vec<u8> = al.callee_used.clone();
     let nb = f.blocks.len();
-    let early = if frameless || std::env::var_os("YERUX_NO_SHRINKWRAP").is_some() {
+    let early = if frameless || f.debug_bindings || std::env::var_os("YERUX_NO_SHRINKWRAP").is_some() {
         vec![false; nb]
     } else {
         early_blocks(f, &al)
@@ -2339,6 +2345,15 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         }
     }
     let mut last_loc = 0u32;
+    let mut scopes = vec![];
+    let mut record_scope = |offset, loc| {
+        if f.debug_bindings {
+            let scope = debug_scopes.get(loc as usize).copied().unwrap_or(0);
+            if !scopes.last().is_some_and(|&(_, last)| last == scope) {
+                scopes.push((offset, scope));
+            }
+        }
+    };
     for (bi, b) in f.blocks.iter().enumerate() {
         if skipped[bi] {
             continue;
@@ -2386,6 +2401,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
                     g.a.lines.push((at, l));
                     last_loc = l;
                 }
+                record_scope(g.a.code.len(), l);
             }
             if fused && ii + 1 == b.insts.len() {
                 match ins {
@@ -2397,6 +2413,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
                 g.inst(ins, false);
             }
         }
+        record_scope(g.a.code.len(), g.locs[bi][b.insts.len()]);
         match &b.term {
             Term::Jmp(t) => {
                 if !next(*t) {
@@ -2434,6 +2451,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
                         if g.a.dwarf {
                             let at = g.a.code.len();
                             g.a.cfi.push((at + 1, crate::dwarf::CFA_ENTRY)); // after `leave` the return address is on top
+                            record_scope(at + 1, 0);
                         }
                         g.a.raw(&[0xC9, 0xC3]); // leave; ret
                     }
@@ -2447,6 +2465,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             }
         }
     }
+    record_scope(g.a.code.len(), 0); // the cold panic stubs have no source scope
     for t in 0..nb {
         if let Some(l) = tramp[t] {
             g.a.bind(l);
@@ -2491,6 +2510,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             g.a.sites.push((at, loc));
         }
     }
+    (g.slot_off, scopes)
 }
 
 fn succs_of(t: &Term) -> Vec<usize> {
@@ -2656,7 +2676,7 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
             all.extend_from_slice(&b.blob);
             let mut elf = elf64(&all, b.entry);
             if b.dbg.funcs.len() > 0 {
-                crate::dwarf::append(&mut elf, &b.dbg, &ir.locs, &ir.files, BASE + HDR, HDR, code_len);
+                crate::dwarf::append(&mut elf, &b.dbg, ir, BASE + HDR, HDR, code_len);
             }
             elf
         }
@@ -3911,6 +3931,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     };
     let cold_fn: Vec<bool> = ir.funcs.iter().map(|f| f.name == "__list_grow").collect();
     let mut dbg_info = crate::dwarf::DebugInfo::default();
+    let debug_scopes = ir.debug.as_ref().map_or(&[][..], |debug| debug.scopes.as_slice());
     for (fi, f) in ir.funcs.iter().enumerate() {
         // functions start on 16 bytes (strbuild: -15% CPU time; padding is never executed)
         if std::env::var_os("YERUX_NO_FALIGN").is_none() {
@@ -3918,14 +3939,25 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         a.bind(l_funcs[fi]);
         let start = a.code.len();
+        let decl_loc = ir
+            .debug
+            .as_ref()
+            .and_then(|debug| debug.functions.get(fi))
+            .map_or(0, |bindings| bindings.decl_loc);
+        if decl_loc != 0 {
+            a.lines.push((start, decl_loc));
+        }
         a.cfi.clear();
-        gen_func(&mut a, &rt, f, &cold_fn);
+        let (slot_off, scopes) = gen_func(&mut a, &rt, f, &cold_fn, debug_scopes);
         if a.dwarf {
             dbg_info.funcs.push(crate::dwarf::FuncInfo {
                 name: f.name.clone(),
                 start,
                 end: a.code.len(),
                 cfi: std::mem::take(&mut a.cfi),
+                slot_off,
+                scopes,
+                decl_loc,
             });
         }
     }

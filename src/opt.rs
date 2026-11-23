@@ -23,7 +23,7 @@ pub fn run(p: &mut IrProgram) {
     for f in &mut p.funcs {
         opt_func(f);
     }
-    if std::env::var_os("YERUX_NO_INLINE").is_none() && !pass_off("inline") {
+    if p.debug.is_none() && std::env::var_os("YERUX_NO_INLINE").is_none() && !pass_off("inline") {
         crate::inline::run(p, &mut opt_func);
     }
     for f in &mut p.funcs {
@@ -104,7 +104,7 @@ fn opt_func_inner(f: &mut IrFunc, range_analysis: bool) {
             profile_pass("rangeopt", &f.name, start);
             ranged = true;
         }
-        if !pass_off("sroa") {
+        if !f.debug_bindings && !pass_off("sroa") {
             let start = Instant::now();
             crate::sroa::run(f);
             profile_pass("sroa", &f.name, start);
@@ -148,6 +148,9 @@ fn opt_func_inner(f: &mut IrFunc, range_analysis: bool) {
 /// that can panic (or call) before the next marker or the end of its block. A block that only held such markers
 /// becomes empty again, so the CFG clean-up can remove it.
 fn clean_locs(f: &mut IrFunc) {
+    if f.debug_bindings {
+        return; // scope changes can apply even to the terminator alone
+    }
     for b in &mut f.blocks {
         if !b.insts.iter().any(|i| matches!(i, Inst::Loc(_))) {
             continue;

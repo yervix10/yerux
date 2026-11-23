@@ -1,0 +1,22 @@
+struct Point { x: Int, ok: Bool }
+enum State { Idle, Busy }
+enum Reading { Missing, Found(Point, Float32) }
+
+fn inspect(n: Int, point: view Point, changed: mut Int, state: State, ratio: Float, byte: UInt8) {
+  var total = n + point.x
+  total = total + 2
+  changed = total
+  let reading = Reading.Found(Point { x: total, ok: point.ok }, 1.25f32)
+  if point.ok {
+    let inside = total + 10
+    print(inside)
+  }
+  print(total)
+}
+
+fn main() {
+  let point = Point { x: 10, ok: true }
+  var changed = 0
+  inspect(5, point, changed, State.Busy, 2.5, 231u8)
+  print(changed)
+}

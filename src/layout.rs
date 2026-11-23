@@ -39,6 +39,7 @@ pub fn rotate_loops(f: &IrFunc) -> IrFunc {
     IrFunc {
         name: f.name.clone(),
         lib: f.lib,
+        debug_bindings: f.debug_bindings,
         nparams: f.nparams,
         vranges: f.vranges.clone(),
         nvregs: f.nvregs,
@@ -73,6 +74,7 @@ pub fn cold_to_end(f: &IrFunc, cold_fn: &[bool]) -> (IrFunc, Vec<bool>) {
             IrFunc {
                 name: f.name.clone(),
                 lib: f.lib,
+                debug_bindings: f.debug_bindings,
                 nparams: f.nparams,
                 vranges: f.vranges.clone(),
                 nvregs: f.nvregs,
@@ -112,6 +114,7 @@ pub fn cold_to_end(f: &IrFunc, cold_fn: &[bool]) -> (IrFunc, Vec<bool>) {
         IrFunc {
             name: f.name.clone(),
             lib: f.lib,
+            debug_bindings: f.debug_bindings,
             nparams: f.nparams,
             vranges: f.vranges.clone(),
             nvregs: f.nvregs,
@@ -226,6 +229,7 @@ pub fn chain_layout(f: &IrFunc, cold: &[bool]) -> (IrFunc, Vec<bool>) {
         IrFunc {
             name: f.name.clone(),
             lib: f.lib,
+            debug_bindings: f.debug_bindings,
             nparams: f.nparams,
             vranges: f.vranges.clone(),
             nvregs: f.nvregs,

@@ -200,7 +200,10 @@ fn native_build(
         exit(1);
     }
     let start = Instant::now();
-    let mut ir = ir::lower(prog).unwrap_or_else(|e| {
+    let dwarf = matches!(target, "" | "linux")
+        && prog.externs.is_empty()
+        && x64::DWARF.load(std::sync::atomic::Ordering::Relaxed);
+    let mut ir = ir::lower_with_debug(prog, dwarf).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         exit(1)
     });
@@ -546,7 +549,7 @@ fn real_main() {
     }
     let no_opt = args.iter().any(|a| a == "--no-opt") || debug;
     if debug || args.iter().any(|a| a == "--dwarf") {
-        // native Linux: symbols + DWARF line/frame tables for gdb (docs/PANIC_DIAGNOSTICS.md)
+        // native Linux: symbols + DWARF source, frame and variable information for gdb (docs/PANIC_DIAGNOSTICS.md)
         ir::ALL_LOCS.store(true, std::sync::atomic::Ordering::Relaxed);
         x64::DWARF.store(true, std::sync::atomic::Ordering::Relaxed);
     }
