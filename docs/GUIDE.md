@@ -1309,7 +1309,7 @@ targets reject them at compile time.
 
 Beyond the prelude (`String`, `List`, `Map`, `Option`, `Iter`, ...), `import std.<name>` gives: `text`, `fmt`, `math`,
 `rand`, `sort`, `iter`, `collections`, `hash`, `hex`, `base64`, `regex`, `csv`, `toml`, `args`, `env`, `io`, `fs`, `path`,
-`process`, `time`, `net`, `http`, `log`, `kv`, `compress`, `unicode` and `sync`.
+`process`, `time`, `net`, `http`, `log`, `kv`, `compress`, `unicode`, `sync` and `caps`.
 
 `std.net` blocks on connect, read, write and accept after five seconds; `connect_timeout(addr, ms)`,
 `set_read_timeout(stream, ms)` and `set_write_timeout(stream, ms)` change one of them (milliseconds, `0` leaves the
@@ -1331,6 +1331,52 @@ fn main() {
   print(hex.encode_bytes([104u8, 105u8])) // 6869
 }
 ```
+
+### Capabilities: `std.caps`
+
+`std.fs`, `std.net`, `std.process` and `std.env` can be called from any module. `std.caps` is the opt-in layer
+that makes that authority a value: `caps.all()` is the full grant (what a program has today), `caps.none()` grants
+nothing, and a value can only be narrowed. Code that is handed only a narrow value cannot do more than it allows.
+Every refusal is an `IoError` of kind `PermissionDenied` that names the capability and the refused value.
+
+```yerux
+import std.caps
+import std.io
+
+fn describe(r: view Result<String, io.IoError>) {
+  match r {
+    Ok(text) => { print("read {text.len()} bytes") }
+    Err(e) => { print(e.show()) }
+  }
+}
+
+fn main() {
+  let granted = caps.all()
+  let nothing = caps.none()
+  describe(nothing.fs.read_to_string("/etc/hostname"))
+  // below ./data only, and not writable: `..`, absolute paths and symbolic links that leave it are refused
+  let data = granted.fs.narrow("data", false).unwrap()
+  match data.read_to_string("../secret.txt") {
+    Ok(t) => { print("escaped") }
+    Err(e) => { print(e.kind == io.IoErrorKind.PermissionDenied) }
+  }
+  match data.narrow("more", true) {
+    Ok(f) => { print("widened") }
+    Err(e) => { print(e.show()) }
+  }
+}
+```
+```output
+fs: no file system access was granted
+true
+fs: cannot narrow to a writable root: this grant is read-only
+```
+
+`Fs.narrow(root, write)` / `Fs.read_only()`, `Net.restrict(hosts)` (`"ip:port"` entries or `"loopback"`),
+`Process.restrict(programs)` (absolute program paths; a restricted `Process` also refuses `set_dir`) and
+`Env.restrict(names, write)` narrow a value; the file, socket, process and environment calls are methods of the
+value (`data.read_to_string(p)`, `net.connect(ip, port)`, `runner.run(program, args)`, `vars.get(name)`).
+Design, limits and what is still to come: [CAPABILITIES.md](CAPABILITIES.md).
 
 Reference: docs/STDLIB.md; the tour by area is chapter 14 of the book.
 

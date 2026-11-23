@@ -1,0 +1,513 @@
+// std.caps: capability values for the outside world (docs/CAPABILITIES.md).
+//
+//   import std.caps
+//   let granted = caps.all()                              // what a program has today: everything
+//   let sandbox = granted.fs.narrow("data", true)?        // a narrower Fs: only below ./data, writable
+//   let text = sandbox.read_to_string("notes.txt")?       // checked: "../x", "/etc/passwd", symlinks are refused
+//
+// A capability is a plain value (`Fs`, `Net`, `Process`, `Env`). Code that is handed only a narrow value cannot
+// do more than that value allows, and a value can only be narrowed, never widened. Every refusal is an
+// `io.IoError` of kind `PermissionDenied` whose message names the capability and the refused value. The
+// modules std.fs, std.net, std.process and std.env stay as they are (ungated); this layer sits on top of them.
+import std.io
+import std.path
+import std.fs
+import std.net
+import std.process
+import std.env
+
+/// Everything the program was granted, one value per capability.
+pub struct Caps {
+    fs: Fs,
+    net: Net,
+    process: Process,
+    env: Env,
+}
+
+/// Files and directories. `root` is empty for the whole file system; otherwise every path is resolved below it.
+pub struct Fs {
+    allowed: Bool,
+    root: String,
+    write: Bool,
+}
+
+/// TCP. `any` allows every address; otherwise `hosts` holds "ip:port" entries and/or "loopback".
+pub struct Net {
+    allowed: Bool,
+    any: Bool,
+    hosts: List<String>,
+}
+
+/// Child processes. `any` allows every program; otherwise `programs` holds absolute program paths.
+pub struct Process {
+    allowed: Bool,
+    any: Bool,
+    programs: List<String>,
+}
+
+/// Environment variables (and, when unrestricted, the working directory, the executable path and `exit`).
+pub struct Env {
+    allowed: Bool,
+    any: Bool,
+    read: List<String>,
+    write: List<String>,
+}
+
+fn denied(capability: Text, detail: view String) -> io.IoError {
+    var m = String.from(capability)
+    m.push_str(": ")
+    m.push_str(detail)
+    return io.IoError { kind: io.IoErrorKind.PermissionDenied, code: 0, message: move m }
+}
+
+/// The full grant: what every program has when it does not narrow anything.
+pub fn all() -> Caps {
+    return Caps {
+        fs: Fs { allowed: true, root: String.new(), write: true },
+        net: Net { allowed: true, any: true, hosts: List<String>.new() },
+        process: Process { allowed: true, any: true, programs: List<String>.new() },
+        env: Env { allowed: true, any: true, read: List<String>.new(), write: List<String>.new() },
+    }
+}
+
+/// No authority at all: every call through these values is refused.
+pub fn none() -> Caps {
+    return Caps {
+        fs: Fs { allowed: false, root: String.new(), write: false },
+        net: Net { allowed: false, any: false, hosts: List<String>.new() },
+        process: Process { allowed: false, any: false, programs: List<String>.new() },
+        env: Env { allowed: false, any: false, read: List<String>.new(), write: List<String>.new() },
+    }
+}
+
+// ───────────────────────── fs ─────────────────────────
+
+fn under(root: view String, candidate: view String) -> Bool {
+    if root.eq("/") {
+        return true
+    }
+    if candidate.eq(root) {
+        return true
+    }
+    var prefix = String.from(root)
+    prefix.push_str("/")
+    return candidate.starts_with(prefix)
+}
+
+// The path to use for `path` under the grant, or the refusal. Lexical containment (`..` cannot climb out) plus a
+// refusal of any symbolic link below the root, because a link can point anywhere.
+fn resolve(f: view Fs, target: view String, writing: Bool) -> Result<String, io.IoError> {
+    if !f.allowed {
+        return Err(denied("fs", "no file system access was granted"))
+    }
+    if writing && !f.write {
+        var m = String.from("write access to '")
+        m.push_str(target)
+        m.push_str("' was not granted")
+        return Err(denied("fs", m))
+    }
+    if f.root.len() == 0 {
+        return Ok(String.from(target))
+    }
+    let root = path_normalize(f.root)
+    let joined = path.join(root, target)
+    let flat = path.normalize(joined)
+    if !under(root, flat) {
+        var m = String.from("path '")
+        m.push_str(target)
+        m.push_str("' is outside the root '")
+        m.push_str(f.root)
+        m.push_str("'")
+        return Err(denied("fs", m))
+    }
+    // every existing component below the root must be a plain directory or file, not a link
+    var at = root.len()
+    var current = String.from(root)
+    let rest = flat.slice(at, flat.len())
+    for part in rest.split("/") {
+        if part.len() == 0 {
+            continue
+        }
+        current = path.join(current, part)
+        if fs.is_symlink(current) {
+            var m = String.from("path '")
+            m.push_str(target)
+            m.push_str("' goes through the symbolic link '")
+            m.push_str(current)
+            m.push_str("'")
+            return Err(denied("fs", m))
+        }
+    }
+    return Ok(move flat)
+}
+
+fn path_normalize(p: view String) -> String {
+    return path.normalize(p)
+}
+
+impl Fs {
+    /// A narrower grant: only below `root` (relative to this grant's root), and writable only if `write` and this
+    /// grant is writable. Asking for more than this value has returns `PermissionDenied`.
+    fn narrow(view self, root: view String, write: Bool) -> Result<Fs, io.IoError> {
+        if write && !self.write {
+            return Err(denied("fs", "cannot narrow to a writable root: this grant is read-only"))
+        }
+        let inside = resolve(self, root, false)?
+        return Ok(Fs { allowed: true, root: path.normalize(inside), write: write })
+    }
+
+    /// The same root, without write access.
+    fn read_only(view self) -> Fs {
+        return Fs { allowed: self.allowed, root: String.from(self.root), write: false }
+    }
+
+    fn exists(view self, p: view String) -> Result<Bool, io.IoError> {
+        let q = resolve(self, p, false)?
+        return Ok(fs.exists(q))
+    }
+
+    fn is_file(view self, p: view String) -> Result<Bool, io.IoError> {
+        let q = resolve(self, p, false)?
+        return Ok(fs.is_file(q))
+    }
+
+    fn is_dir(view self, p: view String) -> Result<Bool, io.IoError> {
+        let q = resolve(self, p, false)?
+        return Ok(fs.is_dir(q))
+    }
+
+    fn file_size(view self, p: view String) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, false)?
+        return fs.file_size(q)
+    }
+
+    fn read_to_string(view self, p: view String) -> Result<String, io.IoError> {
+        let q = resolve(self, p, false)?
+        return fs.read_to_string(q)
+    }
+
+    fn read_lines(view self, p: view String) -> Result<List<String>, io.IoError> {
+        let q = resolve(self, p, false)?
+        return fs.read_lines(q)
+    }
+
+    fn read_bytes(view self, p: view String) -> Result<List<UInt8>, io.IoError> {
+        let q = resolve(self, p, false)?
+        return fs.read_bytes(q)
+    }
+
+    fn read_dir(view self, p: view String) -> Result<List<String>, io.IoError> {
+        let q = resolve(self, p, false)?
+        return fs.read_dir(q)
+    }
+
+    fn open(view self, p: view String) -> Result<fs.File, io.IoError> {
+        let q = resolve(self, p, false)?
+        return fs.open(q)
+    }
+
+    fn write(view self, p: view String, data: view String) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.write(q, data)
+    }
+
+    fn write_bytes(view self, p: view String, data: view [UInt8]) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.write_bytes(q, data)
+    }
+
+    fn append(view self, p: view String, data: view String) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.append(q, data)
+    }
+
+    fn create(view self, p: view String) -> Result<fs.File, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.create(q)
+    }
+
+    fn create_dir(view self, p: view String) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.create_dir(q)
+    }
+
+    fn create_dir_all(view self, p: view String) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.create_dir_all(q)
+    }
+
+    fn remove_file(view self, p: view String) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.remove_file(q)
+    }
+
+    fn remove_dir(view self, p: view String) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.remove_dir(q)
+    }
+
+    fn rename(view self, from: view String, to: view String) -> Result<Int, io.IoError> {
+        let a = resolve(self, from, true)?
+        let b = resolve(self, to, true)?
+        return fs.rename(a, b)
+    }
+
+    fn copy(view self, from: view String, to: view String) -> Result<Int, io.IoError> {
+        let a = resolve(self, from, false)?
+        let b = resolve(self, to, true)?
+        return fs.copy(a, b)
+    }
+
+    fn set_permissions(view self, p: view String, mode: Int) -> Result<Int, io.IoError> {
+        let q = resolve(self, p, true)?
+        return fs.set_permissions(q, mode)
+    }
+}
+
+// ───────────────────────── net ─────────────────────────
+
+fn loopback(ip: view String) -> Bool {
+    return ip.starts_with("127.") || ip.eq("::1") || ip.eq("localhost")
+}
+
+fn net_check(n: view Net, ip: view String, port: Int) -> Result<Int, io.IoError> {
+    if !n.allowed {
+        return Err(denied("net", "no network access was granted"))
+    }
+    if n.any {
+        return Ok(0)
+    }
+    var entry = String.from(ip)
+    entry.push_str(":")
+    entry.push_int(port)
+    if n.hosts.contains(entry) {
+        return Ok(0)
+    }
+    if n.hosts.contains("loopback") && loopback(ip) {
+        return Ok(0)
+    }
+    var m = String.from("address '")
+    m.push_str(entry)
+    m.push_str("' is not in the granted list")
+    return Err(denied("net", m))
+}
+
+impl Net {
+    /// Only these "ip:port" entries (or "loopback" for any loopback address). Narrows: an entry this grant does
+    /// not already allow is dropped, so the result never allows more than `self`.
+    fn restrict(view self, hosts: view List<String>) -> Net {
+        var kept = List<String>.new()
+        if !self.allowed {
+            return Net { allowed: false, any: false, hosts: move kept }
+        }
+        for h in hosts {
+            if self.any || self.hosts.contains(h) {
+                kept.push(String.from(h))
+            }
+        }
+        return Net { allowed: true, any: false, hosts: move kept }
+    }
+
+    fn connect(view self, ip: Text, port: Int) -> Result<net.TcpStream, io.IoError> {
+        let name = String.from(ip)
+        let ok = net_check(self, name, port)?
+        let a = net.address(ip, port)?
+        return net.connect(a)
+    }
+
+    fn connect_timeout(view self, ip: Text, port: Int, timeout_ms: Int) -> Result<net.TcpStream, io.IoError> {
+        let name = String.from(ip)
+        let ok = net_check(self, name, port)?
+        let a = net.address(ip, port)?
+        return net.connect_timeout(a, timeout_ms)
+    }
+
+    fn listen(view self, ip: Text, port: Int) -> Result<net.TcpListener, io.IoError> {
+        let name = String.from(ip)
+        let ok = net_check(self, name, port)?
+        let a = net.address(ip, port)?
+        return net.listen(a)
+    }
+}
+
+// ───────────────────────── process ─────────────────────────
+
+fn process_check(p: view Process, program: view String) -> Result<Int, io.IoError> {
+    if !p.allowed {
+        return Err(denied("process", "no permission to start programs was granted"))
+    }
+    if p.any {
+        return Ok(0)
+    }
+    if p.programs.contains(program) {
+        return Ok(0)
+    }
+    var m = String.from("program '")
+    m.push_str(program)
+    m.push_str("' is not in the granted list (use its absolute path)")
+    return Err(denied("process", m))
+}
+
+impl Process {
+    /// Only these absolute program paths. The result never allows more than `self`.
+    fn restrict(view self, programs: view List<String>) -> Process {
+        var kept = List<String>.new()
+        if !self.allowed {
+            return Process { allowed: false, any: false, programs: move kept }
+        }
+        for p in programs {
+            if self.any || self.programs.contains(p) {
+                kept.push(String.from(p))
+            }
+        }
+        return Process { allowed: true, any: false, programs: move kept }
+    }
+
+    fn run(view self, program: view String, args: view List<String>) -> Result<process.Output, io.IoError> {
+        let ok = process_check(self, program)?
+        return process.run(program, args)
+    }
+
+    fn run_timeout(view self, program: view String, args: view List<String>, timeout_ms: Int) -> Result<Option<process.Output>, io.IoError> {
+        let ok = process_check(self, program)?
+        return process.run_timeout(program, args, timeout_ms)
+    }
+
+    fn run_command(view self, c: view process.Command) -> Result<process.Output, io.IoError> {
+        let ok = command_check(self, c)?
+        return process.run_command(c)
+    }
+
+    fn start(view self, c: view process.Command) -> Result<process.Child, io.IoError> {
+        let ok = command_check(self, c)?
+        return process.start(c)
+    }
+}
+
+// A restricted Process also refuses `set_dir`: the child's working directory would let it leave an Fs root.
+fn command_check(p: view Process, c: view process.Command) -> Result<Int, io.IoError> {
+    let ok = process_check(p, c.program)?
+    if !p.any && c.has_dir {
+        return Err(denied("process", "a restricted Process cannot change the working directory of a child"))
+    }
+    return Ok(0)
+}
+
+// ───────────────────────── env ─────────────────────────
+
+fn env_check(e: view Env, name: view String, writing: Bool) -> Result<Int, io.IoError> {
+    if !e.allowed {
+        return Err(denied("env", "no environment access was granted"))
+    }
+    if e.any {
+        return Ok(0)
+    }
+    if writing {
+        if e.write.contains(name) {
+            return Ok(0)
+        }
+    } else if e.read.contains(name) || e.write.contains(name) {
+        return Ok(0)
+    }
+    var m = String.from("variable '")
+    m.push_str(name)
+    if writing {
+        m.push_str("' is not writable under this grant")
+    } else {
+        m.push_str("' is not readable under this grant")
+    }
+    return Err(denied("env", m))
+}
+
+fn env_whole(e: view Env, what: Text) -> Result<Int, io.IoError> {
+    if !e.allowed {
+        return Err(denied("env", "no environment access was granted"))
+    }
+    if !e.any {
+        var m = String.from(what)
+        m.push_str(" needs an unrestricted Env")
+        return Err(denied("env", m))
+    }
+    return Ok(0)
+}
+
+impl Env {
+    /// Only these variable names for reading; with `write`, also for `set` / `remove`. Names this grant does not
+    /// already allow are dropped.
+    fn restrict(view self, names: view List<String>, write: Bool) -> Env {
+        var read = List<String>.new()
+        var writable = List<String>.new()
+        if !self.allowed {
+            return Env { allowed: false, any: false, read: move read, write: move writable }
+        }
+        for n in names {
+            let may_read = self.any || self.read.contains(n) || self.write.contains(n)
+            let may_write = self.any || self.write.contains(n)
+            if write && may_write {
+                writable.push(String.from(n))
+            } else if may_read {
+                read.push(String.from(n))
+            }
+        }
+        return Env { allowed: true, any: false, read: move read, write: move writable }
+    }
+
+    fn get(view self, name: view String) -> Result<Option<String>, io.IoError> {
+        let ok = env_check(self, name, false)?
+        return Ok(env.get(name))
+    }
+
+    fn get_or(view self, name: view String, default: view String) -> Result<String, io.IoError> {
+        let ok = env_check(self, name, false)?
+        return Ok(env.get_or(name, default))
+    }
+
+    fn has(view self, name: view String) -> Result<Bool, io.IoError> {
+        let ok = env_check(self, name, false)?
+        return Ok(env.has(name))
+    }
+
+    fn require(view self, name: view String) -> Result<String, io.IoError> {
+        let ok = env_check(self, name, false)?
+        return env.require(name)
+    }
+
+    /// Only the variables this grant may read.
+    fn vars(view self) -> Result<List<(String, String)>, io.IoError> {
+        if !self.allowed {
+            return Err(denied("env", "no environment access was granted"))
+        }
+        var out = List<(String, String)>.new()
+        for pair in env.vars() {
+            if self.any || self.read.contains(pair.0) || self.write.contains(pair.0) {
+                out.push((String.from(pair.0), String.from(pair.1)))
+            }
+        }
+        return Ok(move out)
+    }
+
+    fn set(view self, name: view String, value: view String) -> Result<Int, io.IoError> {
+        let ok = env_check(self, name, true)?
+        return env.set(name, value)
+    }
+
+    fn remove(view self, name: view String) -> Result<Int, io.IoError> {
+        let ok = env_check(self, name, true)?
+        return env.remove(name)
+    }
+
+    fn current_dir(view self) -> Result<String, io.IoError> {
+        let ok = env_whole(self, "current_dir")?
+        return env.current_dir()
+    }
+
+    fn set_current_dir(view self, p: view String) -> Result<Int, io.IoError> {
+        let ok = env_whole(self, "set_current_dir")?
+        return env.set_current_dir(p)
+    }
+
+    fn current_exe(view self) -> Result<String, io.IoError> {
+        let ok = env_whole(self, "current_exe")?
+        return env.current_exe()
+    }
+}

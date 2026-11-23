@@ -1,0 +1,153 @@
+// std.caps: what a grant refuses. Every refusal is an IoError of kind PermissionDenied naming the capability.
+import std.caps
+import std.fs
+import std.env
+import std.io
+import std.net
+import std.process
+
+fn denied(e: view io.IoError) -> Bool {
+  return e.kind == io.IoErrorKind.PermissionDenied
+}
+
+fn check_text(label: Text, r: view Result<String, io.IoError>) {
+  match r {
+    Ok(t) => { print("{label}: allowed") }
+    Err(e) => { print("{label}: {denied(e)} {e.show()}") }
+  }
+}
+
+fn check_int(label: Text, r: view Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => { print("{label}: allowed") }
+    Err(e) => { print("{label}: {denied(e)} {e.show()}") }
+  }
+}
+
+fn main() {
+  let granted = caps.all()
+  var base = env.temp_dir()
+  base.push_str("/yerux_caps_deny_")
+  base.push_int(env.pid())
+  assert(fs.create_dir_all(base).is_ok())
+  assert(fs.write("{base}/inside.txt", "inside").is_ok())
+  assert(fs.write("{base}/../yerux_caps_outside_{env.pid()}.txt", "outside").is_ok())
+
+  // nothing granted
+  let none = caps.none()
+  check_text("none fs", none.fs.read_to_string("inside.txt"))
+  check_int("none fs write", none.fs.write("x.txt", "x"))
+  match none.net.connect("127.0.0.1", 9) {
+    Ok(s) => { print("none net: allowed") }
+    Err(e) => { print("none net: {denied(e)} {e.show()}") }
+  }
+  var nothing = List<String>.new()
+  match none.process.run("/bin/true", nothing) {
+    Ok(o) => { print("none process: allowed") }
+    Err(e) => { print("none process: {denied(e)} {e.show()}") }
+  }
+  match none.env.get("HOME") {
+    Ok(v) => { print("none env: allowed") }
+    Err(e) => { print("none env: {denied(e)} {e.show()}") }
+  }
+
+  // fs root: anything that leaves it is refused, wherever the attempt comes from
+  let sandbox = granted.fs.narrow(base, false).unwrap()
+  print(sandbox.read_to_string("inside.txt").unwrap())
+  var outside = 0
+  for attempt in ["../yerux_caps_outside_{env.pid()}.txt", "/etc/hostname", "a/../../x", "{base}/../x"] {
+    match sandbox.read_to_string(attempt) {
+      Ok(t) => { print("escape allowed: {attempt}") }
+      Err(e) => { if denied(e) { outside = outside + 1 } }
+    }
+  }
+  print(outside)
+  check_int("read-only write", sandbox.write("new.txt", "x"))
+  check_int("read-only remove", sandbox.remove_file("inside.txt"))
+  match granted.fs.narrow(base, false) {
+    Ok(f) => {
+      match f.narrow("sub", true) {
+        Ok(g) => { print("widened: allowed") }
+        Err(e) => { print("widen to writable: {denied(e)} {e.show()}") }
+      }
+      match f.narrow("../elsewhere", false) {
+        Ok(g) => { print("widened root: allowed") }
+        Err(e) => { print("widen the root: {denied(e)}") }
+      }
+    }
+    Err(e) => { print("narrow failed") }
+  }
+
+  // a link inside the root that points out of it
+  assert(fs.symlink("/etc", "{base}/link").is_ok())
+  match sandbox.read_to_string("link/hostname") {
+    Ok(t) => { print("symlink escape: allowed") }
+    Err(e) => { print("symlink escape: {denied(e)}") }
+  }
+
+  // env
+  assert(env.set("YERUX_CAPS_SECRET", "s").is_ok())
+  assert(env.set("YERUX_CAPS_OPEN", "o").is_ok())
+  var open = List<String>.new()
+  open.push(String.from("YERUX_CAPS_OPEN"))
+  let narrow_env = granted.env.restrict(open, false)
+  match narrow_env.get("YERUX_CAPS_SECRET") {
+    Ok(v) => { print("env read: allowed") }
+    Err(e) => { print("env read: {denied(e)} {e.show()}") }
+  }
+  match narrow_env.set("YERUX_CAPS_OPEN", "x") {
+    Ok(v) => { print("env write: allowed") }
+    Err(e) => { print("env write: {denied(e)} {e.show()}") }
+  }
+  print(narrow_env.vars().unwrap().len())
+  match narrow_env.current_dir() {
+    Ok(v) => { print("cwd: allowed") }
+    Err(e) => { print("cwd: {denied(e)} {e.show()}") }
+  }
+  // a narrower request cannot add names the grant does not have
+  var more = List<String>.new()
+  more.push(String.from("YERUX_CAPS_SECRET"))
+  let again = narrow_env.restrict(more, true)
+  match again.get("YERUX_CAPS_SECRET") {
+    Ok(v) => { print("env regrant: allowed") }
+    Err(e) => { print("env regrant: {denied(e)}") }
+  }
+
+  // process
+  var programs = List<String>.new()
+  programs.push(String.from("/bin/echo"))
+  let runner = granted.process.restrict(programs)
+  var args = List<String>.new()
+  match runner.run("/bin/true", args) {
+    Ok(o) => { print("other program: allowed") }
+    Err(e) => { print("other program: {denied(e)} {e.show()}") }
+  }
+  match runner.run("echo", args) {
+    Ok(o) => { print("PATH search: allowed") }
+    Err(e) => { print("PATH search: {denied(e)} {e.show()}") }
+  }
+  var command = process.command("/bin/echo")
+  command.set_dir(base)
+  match runner.run_command(command) {
+    Ok(o) => { print("set_dir: allowed") }
+    Err(e) => { print("set_dir: {denied(e)} {e.show()}") }
+  }
+
+  // net
+  var hosts = List<String>.new()
+  hosts.push(String.from("127.0.0.1:9"))
+  let one = granted.net.restrict(hosts)
+  match one.connect("127.0.0.1", 10) {
+    Ok(s) => { print("net other port: allowed") }
+    Err(e) => { print("net other port: {denied(e)} {e.show()}") }
+  }
+  match one.listen("10.0.0.1", 9) {
+    Ok(s) => { print("net other host: allowed") }
+    Err(e) => { print("net other host: {denied(e)} {e.show()}") }
+  }
+
+  assert(fs.remove_file("{base}/link").is_ok())
+  assert(fs.remove_file("{base}/../yerux_caps_outside_{env.pid()}.txt").is_ok())
+  assert(fs.remove_dir_all(base).is_ok())
+  print("done")
+}

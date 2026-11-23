@@ -1,0 +1,77 @@
+// std.caps: what a grant allows. A narrowed Fs sees only its root, an Env only its names, a Process only its
+// programs and a Net only its addresses; everything inside the grant works exactly like the plain std module.
+import std.caps
+import std.fs
+import std.env
+import std.io
+import std.net
+import std.process
+
+fn main() {
+  let granted = caps.all()
+  var base = env.temp_dir()
+  base.push_str("/yerux_caps_grant_")
+  base.push_int(env.pid())
+  let made = fs.create_dir_all(base)
+  assert(made.is_ok())
+
+  // fs: a writable root
+  let sandbox = granted.fs.narrow(base, true).unwrap()
+  assert(sandbox.create_dir_all("notes/deep").is_ok())
+  assert(sandbox.write("notes/a.txt", "alpha\nbeta\n").is_ok())
+  assert(sandbox.append("notes/a.txt", "gamma\n").is_ok())
+  print(sandbox.read_to_string("notes/a.txt").unwrap())
+  print(sandbox.read_lines("notes/a.txt").unwrap().len())
+  print(sandbox.exists("notes/a.txt").unwrap())
+  print(sandbox.is_dir("notes/deep").unwrap())
+  print(sandbox.file_size("notes/a.txt").unwrap())
+  assert(sandbox.copy("notes/a.txt", "notes/b.txt").is_ok())
+  assert(sandbox.rename("notes/b.txt", "notes/c.txt").is_ok())
+  print(sandbox.read_dir("notes").unwrap().len())
+  // a path that goes up and comes back down inside the root is fine
+  print(sandbox.read_to_string("notes/deep/../a.txt").unwrap().len())
+  // narrowing again, read-only
+  let notes = sandbox.narrow("notes", false).unwrap()
+  print(notes.read_to_string("c.txt").unwrap().len())
+  let viewer = sandbox.read_only()
+  print(viewer.exists("notes").unwrap())
+  assert(sandbox.remove_file("notes/c.txt").is_ok())
+  print(sandbox.exists("notes/c.txt").unwrap())
+
+  // env: two names, one of them writable
+  assert(env.set("YERUX_CAPS_A", "one").is_ok())
+  var list = List<String>.new()
+  list.push(String.from("YERUX_CAPS_A"))
+  let reader = granted.env.restrict(list, false)
+  print(reader.get("YERUX_CAPS_A").unwrap().unwrap())
+  print(reader.has("YERUX_CAPS_A").unwrap())
+  print(reader.vars().unwrap().len())
+  let writer = granted.env.restrict(list, true)
+  assert(writer.set("YERUX_CAPS_A", "two").is_ok())
+  print(writer.get_or("YERUX_CAPS_A", "none").unwrap())
+  assert(writer.remove("YERUX_CAPS_A").is_ok())
+  print(writer.has("YERUX_CAPS_A").unwrap())
+
+  // process: one absolute program
+  var programs = List<String>.new()
+  programs.push(String.from("/bin/echo"))
+  let runner = granted.process.restrict(programs)
+  var args = List<String>.new()
+  args.push(String.from("granted"))
+  let out = runner.run("/bin/echo", args).unwrap()
+  print(out.stdout.len())
+
+  // net: loopback only
+  var hosts = List<String>.new()
+  hosts.push(String.from("loopback"))
+  let local = granted.net.restrict(hosts)
+  let listener = local.listen("127.0.0.1", 0).unwrap()
+  let address = net.listener_local_addr(listener).unwrap()
+  let stream = local.connect("127.0.0.1", address.port).unwrap()
+  print(net.close_stream(move stream).is_ok())
+  print(net.close_listener(move listener).is_ok())
+
+  let removed = fs.remove_dir_all(base)
+  assert(removed.is_ok())
+  print("done")
+}

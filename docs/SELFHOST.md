@@ -244,9 +244,9 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-23 run matched **455 of 456 candidates (99.8%)**, with 100 runtime
+2026-11-23 run matched **457 of 458 candidates (99.8%)**, with 100 runtime
 panics reproduced exactly, no candidates outside the supported subset, one
-expected type rejection and zero mismatches. The previous run matched 441 of 456 (96.7%); before it, 431
+expected type rejection and zero mismatches. The previous run matched 455 of 456 (99.8%); before it, 441 of 456 (96.7%); before it, 431
 of 447 candidates (96.4%).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
@@ -283,7 +283,7 @@ and category for each unsupported file.
 
 As of 2026-11-23, the driver compiles all seven `selfhost/*.yx` stages
 and itself without the Rust compiler (`--stage2`), and reproduces itself
-byte for byte. It builds `examples/project` and matches 455 programs in the corpus.
+byte for byte. It builds `examples/project` and matches 457 programs in the corpus.
 Replacing the default compiler requires closing these gaps.
 
 1. native
