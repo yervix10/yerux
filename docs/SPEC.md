@@ -758,7 +758,77 @@ section lists only what the tests fix. Anything not listed is **no especificado*
 
 ## 6. Modules
 
-(Placeholder: section 6, to be written in its own commit.)
+A program is a set of files, each one a module. Module behaviour below is fixed by the
+`tests/mod_ok/`, `tests/mod_err/` and `tests/modobj/` fixtures, run by `tests/modules.sh`, and by
+`tests/packages.sh`. Anything not listed is **no especificado**.
+
+### 6.1 Imports and names
+
+- `import` declarations must come before every other declaration in a file
+  (tests/mod_err/late_import/main.yx).
+- Imported items are used qualified: `lib.item`. Using a bare name that comes from another module
+  is an error (tests/mod_err/unqualified/main.yx).
+- A module name is not a value: `lib` alone is an error (tests/mod_err/module_as_value/main.yx).
+- A module's item that does not exist is an error (tests/mod_err/missing_item/main.yx). A missing
+  module is an error (tests/mod_err/missing_module/main.yx: `utils.maths`).
+- A dotted path names a nested module: `import engine.util` (tests/packages.sh).
+- A module name imported twice under one name is an error (tests/mod_err/dup_alias/main.yx).
+- Import cycles are errors, reported as the full chain `a -> b -> a` (tests/mod_err/cycle/main.yx).
+- A local variable, parameter or loop variable may have the name of an imported module. Inside its
+  scope the name refers to the variable (tests/mod_ok/shadow_module/main.yx).
+- Aliases with `import ... as ...` are used in tests/mod_ok/ fixtures; their exact rules beyond the
+  duplicate-name error are **no especificado**.
+
+### 6.2 Visibility
+
+- Items are private to their module unless marked `pub`. Using a private item from another module
+  is an error (tests/mod_err/private/main.yx, tests/mod_err/private_const/main.yx).
+- Private helpers of the standard library are not reachable from user code
+  (tests/e981_fs_private_helper.yx: `std.fs`; tests/e1303_process_private_helper.yx: `std.process`).
+- A `pub const` must state its type explicitly (tests/mod_err/pub_const_untyped/main.yx).
+- Constants are evaluated in dependency order. A const that depends on itself through another
+  module is an error (tests/mod_err/const_cycle/main.yx). Use before definition in one file is an
+  error (tests/e1350_const_forward_use.yx).
+- Types, generic bounds and moves cross module boundaries with the same rules as inside one file:
+  tests/mod_err/type_in_dep/main.yx, tests/mod_err/generic_bound/main.yx (a `T` used for `biggest`
+  must satisfy `Ordered`), tests/mod_err/moved_in_dep/main.yx (use after move).
+- Methods on imported types and generic implementations work across modules
+  (tests/mod_ok/generic_impls, tests/mod_ok/types, tests/mod_ok/dyn).
+
+### 6.3 Module objects
+
+- `yerux obj build` compiles a module to an object file (`.yxo`). An application can be built from
+  the object alone, without the module sources, on both backends (tests/modobj.sh; the same script
+  checks that the interface printed by `yerux obj info` matches the source).
+- `yerux obj check` reports a stale object when the source body changes, and fails when the
+  interface changes (tests/modobj.sh). Corrupt or conflicting objects are rejected (tests/modobj.sh).
+- Without the object, the import fails with `cannot find module` (tests/modobj.sh).
+
+### 6.4 Packages
+
+- The manifest is `yerux.toml`, with `[package]` (name, version) and `[dependencies]`
+  (tests/packages.sh).
+- A dependency may be a path or a Git repository. A Git dependency with a version requirement
+  selects the highest matching SemVer tag, with or without a `v` prefix (tests/packages.sh).
+  Pre-release versions are selected only when the requirement names the same `major.minor.patch`
+  (tests/packages.sh: `=1.3.0-rc.1`).
+- A Git dependency without a selector records the `HEAD` revision (tests/packages.sh).
+- `yerux.lock` records `name`, `version`, `tag` and `rev`. `build --locked` and `lock --locked`
+  fail when the lock is missing or out of date, and `lock --update` moves it to newer compatible
+  tags (tests/packages.sh).
+- Transitive dependencies are resolved. Two requirements that cannot both hold are a
+  `dependency conflict` (tests/packages.sh). Dependency cycles are errors, reported as the chain
+  (tests/packages.sh: `loop_a -> loop_b -> loop_a`).
+- A module can import only the packages declared directly in its own manifest. A dependency of a
+  dependency is not visible to the application (tests/packages.sh: `cannot find module 'engine'`).
+- The search order for `src/<name>.yx` and `src/lib.yx` in PACKAGES.md is not fixed by a test;
+  it is **no especificado**.
+
+---
+
+## 7. FFI and ABI
+
+(Placeholder: section 7, to be written in its own commit.)
 
 ---
 
