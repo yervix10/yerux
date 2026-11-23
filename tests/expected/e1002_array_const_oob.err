@@ -4,6 +4,7 @@ error: index 4 is out of bounds for the array [Int; 4]
 3 |   a[4] = 5
   |     ^
   = valid indexes are 0 to 3
+  = help: keep the index between 0 and 3; `a.len()` gives the length
 
 error: index -1 is out of bounds for the array [Int; 4]
  --> tests/e1002_array_const_oob.yx:4:11
@@ -11,5 +12,6 @@ error: index -1 is out of bounds for the array [Int; 4]
 4 |   print(a[-1])
   |           ^^
   = valid indexes are 0 to 3
+  = help: keep the index between 0 and 3; `a.len()` gives the length
 
 2 error(s). Nothing was generated.
