@@ -437,6 +437,18 @@ fn root_place(types: view Types, tree: view List<ast.AstNode>, node: Int) -> Int
   return -1
 }
 
+fn through_lock(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  var at = node
+  while tree.at(at).tag == "Method" || tree.at(at).tag == "Field" || tree.at(at).tag == "Slice" {
+    if tree.at(at).tag == "Method" {
+      let member = ast.name_at(tree, at, 1)
+      if member == "locked_value" { return true }
+    }
+    at = ast.child(tree, at, 0)
+  }
+  return false
+}
+
 fn place_name(tree: view List<ast.AstNode>, node: Int) -> String {
   if tree.at(node).tag == "Slice" {
     let base = place_name(tree, ast.child(tree, node, 0))
@@ -549,7 +561,9 @@ fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<o
   let name = place_name(tree, root)
   if implicit { move_binding(types, id, name) }
   if mode == "Mut" {
-    let why = immutable_reason(types, tree, id)
+    var why = immutable_reason(types, tree, id)
+    // a lock hands out its value to `view` holders: `lock.locked_value()` is mutable interior state
+    if through_lock(tree, node) { why = String.new() }
     let place = place_name(tree, node)
     check_frozen(types, id, place, true)
     if why != "" {
@@ -1013,6 +1027,25 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     var loans = List<ownership.Loan>.new()
     record_loan(types, tree, loans, receiver, String.from("Mut"), owner, true)
     return unit()
+  }
+  if receiver >= 0 {
+    // runtime handles: `shared.get()` is the cell's value, `locked.locked_value()` the protected value, and a
+    // Shared forwards the methods it does not have to the value it holds
+    let family = type_terms.base(owner)
+    if family == "Shared" && child_count(tree, args) == 0 && name == "get" { return type_terms.first_argument(owner) }
+    if family == "Locked" && child_count(tree, args) == 0 && name == "locked_value" { return type_terms.first_argument(owner) }
+    if family == "Locked" && (name == "with" || name == "with_view") {
+      let lock_fn = signature_index(types, "__locked_{name}", false)
+      if lock_fn >= 0 {
+        types.lead = receiver
+        types.lead_type = String.from(owner)
+        return call_args(types, tree, args, name, lock_fn, "?", -1)
+      }
+    }
+    if family == "Shared" && name != "clone" && name != "new" {
+      let held = type_terms.first_argument(owner)
+      return member(types, tree, held, name, args, receiver, hint)
+    }
   }
   if receiver >= 0 && name != "into_iter" && name != "next" {
     // a user iterator (`next` plus the generated `into_iter`) uses the adapters of Iter: `it.map(f)` is
@@ -1693,6 +1726,10 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     let args = ast.child(tree, index, 2)
     if owner != "?" { return member(types, tree, owner, name, args, -1, hint) }
     let receiver = infer(types, tree, node, unknown())
+    let handle = type_terms.base(receiver)
+    if (name == "get" || name == "locked_value") && (handle == "Shared" || handle == "Locked") {
+      types.box_places.set(index, true)
+    }
     if name == "get" && receiver.starts_with("Box<") && shape_index(types, receiver) < 0 {
       types.box_places.set(index, true)
     }

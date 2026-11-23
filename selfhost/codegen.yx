@@ -1902,6 +1902,31 @@ fn dyn_call(gen: mut Generator, tree: view List<ast.AstNode>, receiver: Int, tra
   return temp(gen, tree, ty, "(({c} (*)({c_types.join(", ")}))d{id}->table[{slot}])({values.join(", ")})")
 }
 
+fn hex_text(text: view String) -> String {
+  let digits = String.from("0123456789abcdef")
+  var out = String.new()
+  for i in 0..text.len() {
+    out.push_byte(digits.byte(text.byte(i) / 16))
+    out.push_byte(digits.byte(text.byte(i) % 16))
+  }
+  return out
+}
+
+// The place of the value inside a runtime handle: `shared.get()` (the cell's value) or `locked.locked_value()`
+// (what the lock protects).
+fn handle_value(gen: mut Generator, tree: view List<ast.AstNode>, handle: view Value, family: view String,
+    payload: view String) -> Value {
+  prepare_type(gen, tree, payload)
+  let c = c_type(gen, tree, payload)
+  if family == "Locked" {
+    return Value { ty: String.from(payload), code: "(*({c} *)(({handle.code}).m{hex_text("value")})->data)" }
+  }
+  let cell = "SharedCell<{payload}>"
+  prepare_type(gen, tree, cell)
+  let cell_c = c_type(gen, tree, cell)
+  return Value { ty: String.from(payload), code: "((*({cell_c} *)(({handle.code}).m{hex_text("cell")})->data).m{hex_text("value")})" }
+}
+
 fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
   let recv = ast.child(tree, node, 0)
   let name = ast.name_at(tree, node, 1)
@@ -1946,6 +1971,27 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
     line(gen, "free(b{id});")
     return move taken
   }
+  let family = type_terms.base(receiver_type)
+  if !is_static && !gen.user_box && (family == "Shared" || family == "Locked") && tree.at(args).end == args + 1 &&
+      ((family == "Shared" && name == "get") || (family == "Locked" && name == "locked_value")) {
+    let handle = expression(gen, tree, recv)
+    let held = type_terms.first_argument(receiver_type)
+    return handle_value(gen, tree, handle, family, held)
+  }
+  if !is_static && family == "Shared" && name != "clone" && match_method(gen, tree, receiver_type, name, true) < 0 {
+    // a Shared forwards the methods it does not have to the value it holds
+    let handle = expression(gen, tree, recv)
+    let held = type_terms.first_argument(receiver_type)
+    let cell = handle_value(gen, tree, handle, family, held)
+    gen.override_node = recv
+    gen.override_ty = String.from(held)
+    gen.override_code = String.from(cell.code)
+    let before = String.from(gen.checked.expressions.at(recv))
+    gen.checked.expressions.set(recv, String.from(held))
+    let forwarded = string_method(gen, tree, node, ty)
+    gen.checked.expressions.set(recv, move before)
+    return move forwarded
+  }
   var trait_name = type_terms.dyn_trait(receiver_type)
   if inner != "?" { trait_name = type_terms.dyn_trait(inner) }
   if !is_static && trait_name != "" { return dyn_call(gen, tree, recv, trait_name, name, args, ty) }
@@ -1985,6 +2031,12 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
     }
   }
   var method = match_method(gen, tree, receiver_type, name, !is_static)
+  let result_family = type_terms.base(ty)
+  if method < 0 && is_static && result_family == owner {
+    // `Atomic.new(0)`: the impl is for one instance (`Atomic<Int>`), which the result type names
+    receiver_type = String.from(ty)
+    method = match_method(gen, tree, receiver_type, name, false)
+  }
   if method < 0 && !is_static && name != "into_iter" && name != "next" {
     // a user iterator uses the Iter adapters through its `into_iter`: `it.map(f)` is `it.into_iter().map(f)`
     let into = match_method(gen, tree, receiver_type, "into_iter", true)
@@ -2007,6 +2059,10 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
       gen.checked.expressions.set(recv, move before)
       return move adapted
     }
+  }
+  if method < 0 && !is_static && family == "Locked" && (name == "with" || name == "with_view") {
+    let locked = find_named(tree, gen.functions, "__locked_{name}")
+    if locked >= 0 { return emit_call(gen, tree, locked, String.new(), args, recv, ty) }
   }
   if method < 0 && !is_static {
     let free = find_named(tree, gen.functions, "std__iter_{name}")

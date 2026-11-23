@@ -43,6 +43,13 @@ pub fn arguments(ty: view String) -> List<String> {
   return split_types(ty, name.len() + 1, ty.len() - 1)
 }
 
+// The first type argument: Shared<T> and Locked<T> hold a T.
+pub fn first_argument(ty: view String) -> String {
+  let args = arguments(ty)
+  if args.len() == 0 { return String.from("?") }
+  return String.from(args.at(0))
+}
+
 pub fn box_payload(ty: view String) -> String {
   if !ty.starts_with("Box<") { return String.from("?") }
   return ty.slice(4, ty.len() - 1)
