@@ -192,6 +192,9 @@ fn main() {
 5. In one call, a variable lent as `mut` or moved cannot appear twice.
 6. Values are freed automatically at the end of their scope unless moved (runtime drop flags for conditional moves).
 7. `let` = immutable, `var` = mutable. Owned parameters are mutable.
+8. A borrowed temporary lives only for the call: a slice of a literal or of a function result
+   (`sum([4, 5, 6][1..3])`, `sum(make()[0..2])`) can be passed to a `view [T]` parameter. A `mut [T]` parameter
+   needs a variable — the error is "pass a variable here (the function borrows it)".
 
 ```yx
 fn consume(items: List) { }
@@ -406,7 +409,7 @@ fn main() {
 
 **Creation**: `String.new()`, `String.from(text_or_string)`, `String.concat(a, b)`.
 
-**Methods**: `len()`, `is_empty()`, `push_str(x)`, `push_int(n)`, `push_byte(b)`, `push_char(c)`, `eq(x)`, `byte(i)`, `clear()`, `slice(from, to)`, `split(sep)`, `trim()`, `to_upper()`, `to_lower()`, `replace(from, to)`, `repeat(n)`, `find(p)`, `starts_with(p)`, `ends_with(p)`, `contains(p)`, `parse_int(out)`. See STDLIB.md for the full list.
+**Methods**: `len()`, `is_empty()`, `push_str(x)`, `push_int(n)`, `push_byte(b)`, `push_char(c)`, `eq(x)`, `byte(i)`, `clear()`, `slice(from, to)`, `split(sep)`, `trim()`, `to_upper()`, `to_lower()`, `replace(from, to)`, `repeat(n)`, `find(p)`, `starts_with(p)`, `ends_with(p)`, `contains(p)`, `parse_int(out)`. See STDLIB.md for the full list. An unknown method close to a built-in one gets a suggestion: `s.lenn()` fails with ``help: did you mean `len`?`` and the list above.
 
 **Interpolation** (produces a `String`):
 ```yx
@@ -427,7 +430,7 @@ fn main() {
 - A literal with `{expr}` is a `String`; without one it stays `Text`. `{{` and `}}` are literal braces.
 - `{expr}` is one expression (variable, field, `l.at(i)`, method call, arithmetic). It cannot contain a quote or a brace.
 - The value's type needs `Show` (numbers, `Bool`, `Char`, `Text`, `String`, `List`, `Map`, `Set`, `Option`, `Result`, and your own `impl Show`).
-- `print` accepts numbers, `Char`, `Bool`, `Text`, `String` and `String` temporaries. To print any other `Show` value (a list, a map, an `Option`, your own type), interpolate it: `print("{x}")`.
+- `print` accepts numbers, `Char`, `Bool`, `Text`, `String` and `String` temporaries. To print any other `Show` value (a list, a map, an `Option`, your own type), interpolate it: `print("{x}")`. Passing the value directly (`print(p)` on a struct) is rejected with a help line showing exactly this.
 - Escapes in literals: `\n \t \r \" \\`.
 
 ---
@@ -505,6 +508,8 @@ fn main() {
 ## 10. Map and Set
 
 ```yx
+import std.collections
+
 struct Point { x: Int, y: Int }
 
 impl Show for Point {
@@ -544,6 +549,8 @@ fn main() {
     }
     i = i + 1
   }
+  let size = collections.map_with(groups, 1, |v: view List<String>| -> Int { return v.len() })
+  print(size.unwrap())                        // 2 (borrowed read: the list stays in the map)
   let moved = groups.take(1)               // removes the entry, moves the list out
   print("{moved}")                           // [n1, n4]
 
@@ -559,6 +566,9 @@ fn main() {
 - `insert(k, v)` moves key and value in; replaces the value if the key exists
 - `find(k)` returns the entry index or -1 (borrow the value with `vals.at(e)`)
 - `get(k)`, `get_or(k, d)` copy the value (need `V: Copy`); `get` panics on a missing key
+- `collections.map_with(m, k, f)` (in `std.collections`) reads a value you cannot copy: `f` receives `view V` and
+  the call returns `Option<R>` (`None` when the key is missing); the map keeps the value. A refused
+  `get` on an owned `V` suggests it first
 - `take(k)` moves the value out and removes the entry (panics if missing)
 - `remove(k)` drops key and value and returns a `Bool`
 - `contains(k)`, `clear()`
@@ -966,6 +976,7 @@ fn main() {
 - Tuple types `(A, B)` have 2 to 6 elements.
 - Fields are `.0`, `.1`, ...; `t.1.len()` borrows an owned element.
 - `let (a, b) = e` consumes the tuple (use `move t` for an owned tuple variable). `_` discards an element, which is still freed.
+- Moving a single element out of an owned tuple binding (`let want = pair.0`) is refused; the help says to take the tuple apart: `let (x0, x1) = move pair`, so each name owns its element.
 - A tuple is Copy when all elements are Copy and owned when any element is owned.
 - Tuples have no `==`, `<` or `Show` (`print("{t}")` is an error): compare or show the elements. A tuple has **2 to 6** elements: the compiler rejects `(1,)` ("a tuple needs at least two elements") and a 7-tuple ("a tuple has at most 6 elements", use a struct).
 
@@ -1198,7 +1209,7 @@ fn main() {
 - Wrapping variants (`wrapping_add`, `truncate_uint8`, ...) never panic.
 - Floats follow IEEE 754: `nan` and `inf` are defined, nothing traps, and there is no float `%`.
 - Math functions (`sqrt`, `sin`, `cos`, `exp`, `ln`, `pow`, `abs`, `min`, `max`, ...) are usable as functions or methods.
-- A literal suffix (`250u8`, `1.5f32`) fixes the type; otherwise it comes from context, defaulting to `Int` / `Float`.
+- A literal suffix (`250u8`, `1.5f32`) fixes the type; otherwise it comes from context, defaulting to `Int` / `Float`. A sized type written as a value (`UInt8.from(0)`) is rejected; the help says `UInt8` is a type and shows `0u8` or `n.to_uint8()`.
 
 ---
 
@@ -1300,13 +1311,24 @@ Beyond the prelude (`String`, `List`, `Map`, `Option`, `Iter`, ...), `import std
 `rand`, `sort`, `iter`, `collections`, `hash`, `hex`, `base64`, `regex`, `csv`, `toml`, `args`, `env`, `io`, `fs`, `path`,
 `process`, `time`, `net`, `http`, `log`, `kv`, `compress`, `unicode` and `sync`.
 
+`std.net` blocks on connect, read, write and accept after five seconds; `connect_timeout(addr, ms)`,
+`set_read_timeout(stream, ms)` and `set_write_timeout(stream, ms)` change one of them (milliseconds, `0` leaves the
+wait to the OS, an expired call is an `IoError` with code 110), and `listener_local_addr(l)`, `local_addr(s)` and
+`peer_addr(s)` report the bound address (with the kernel-assigned port) and both ends of a connected stream.
+
+`std.hash` and `std.hex` also work on raw bytes: `hash.fnv1a32_bytes` / `crc32_bytes` / `sha256_bytes` take a
+`view [UInt8]` (`List<UInt8>`, array or slice), `hex.encode_bytes` encodes bytes and `hex.decode_bytes` returns
+`Result<List<UInt8>, String>`.
+
 ```yx
 import std.text
 import std.hash
+import std.hex
 
 fn main() {
   print(text.split_ws("a  b c").len())   // 3
   print(hash.crc32("123456789"))         // 3421780262
+  print(hex.encode_bytes([104u8, 105u8])) // 6869
 }
 ```
 

@@ -87,6 +87,28 @@ b=2
 2
 ```
 
+To read a value you cannot copy (`V` is owned), use `collections.map_with(m, key, f)`: `f` receives the value as
+`view V` and the result is `Some(f(v))`, or `None` when the key is missing. The map keeps the value, so there is
+no entry index and no `-1` to check:
+
+```yerux
+import std.collections
+
+struct Item { name: String, qty: Int }
+
+fn main() {
+  var items = Map<Int, Item>.new()
+  items.insert(7, Item { name: String.from("nut"), qty: 3 })
+  print(collections.map_with(items, 7, |it: view Item| -> Int { return it.qty * 2 }).unwrap())
+  print(collections.map_with(items, 8, |it: view Item| -> Int { return it.qty }).unwrap_or(-1))
+}
+```
+
+```output
+6
+-1
+```
+
 `std.collections` also has a double-ended queue (`vecdeque_*`), a binary heap (`heap_push`/`heap_pop`) and an
 ordered map over a sorted list (`btree_*`), all implemented over `List`.
 
@@ -102,10 +124,20 @@ fn sum(xs: view [Int]) -> Int {
   return t
 }
 
+fn make() -> List<Int> {
+  var l = List<Int>.new()
+  l.push(7)
+  l.push(8)
+  l.push(9)
+  return l
+}
+
 fn main() {
   let a = [10, 20, 30, 40]
   print(sum(a))
   print(sum(a[1..3]))
+  print(sum([4, 5, 6][1..3]))
+  print(sum(make()[0..2]))
   var grid = [0; 5]
   grid[2] = 7
   print(grid[2] + grid.len())
@@ -115,7 +147,18 @@ fn main() {
 ```output
 100
 50
+11
+15
 12
+```
+
+A slice of a temporary needs no local variable: `sum([4, 5, 6][1..3])` and `sum(make()[0..2])` keep the temporary
+in a hidden variable until the call returns. A `mut [T]`
+parameter still needs a variable — a borrowed temporary could be modified and thrown away:
+
+```yerux error=pass a variable here
+fn bump(xs: mut [Int]) { xs[0] = xs[0] + 100 }
+fn main() { bump([1, 2][0..1]) }
 ```
 
 See [ARRAYS.md](../ARRAYS.md) for the rules (owned elements, `const N: Int` generics, chunks and windows).

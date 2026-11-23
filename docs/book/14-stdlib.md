@@ -150,6 +150,34 @@ Yerux!
 true
 ```
 
+The same functions take raw bytes: `hash.fnv1a32_bytes(data)`, `hash.crc32_bytes(data)` and `hash.sha256_bytes(data)`
+hash a `view [UInt8]`, `hex.encode_bytes(data)` encodes one, and `hex.decode_bytes(text)` returns
+`Result<List<UInt8>, String>` with the same validation as `decode`. The input can be a `List<UInt8>` (from
+`fs.read_bytes`), an array or any slice:
+
+```yerux
+import std.hash
+import std.hex
+
+fn main() {
+  let hi = [104u8, 105u8]              // "hi" as raw bytes
+  print(hex.encode_bytes(hi))
+  print(hash.crc32_bytes(hi) == hash.crc32("hi"))
+  print(hash.fnv1a32_bytes(hi) == hash.fnv1a32("hi"))
+  match hex.decode_bytes("6869") {
+    Ok(data) => { print(data.len()) }
+    Err(e) => { print(e) }
+  }
+}
+```
+
+```output
+6869
+true
+true
+2
+```
+
 ## Regex, CSV, TOML
 
 `std.regex` is a bounded ASCII matcher (literals, `.`, classes, groups, `^ $`, `* + ?`; every match step is
@@ -322,16 +350,34 @@ true
 `std.net` has blocking TCP sockets (IPv4/IPv6 literals, no DNS) with `Drop`-closed handles, and `std.http` is a small
 blocking HTTP/1.1 client over it (`http.get(addr, host, path, headers)`, `http.post_json(..)` returning a `Response`).
 The repository also has real programs built on sockets in `examples/real/`: an HTTP/1.1 server and client
-([HTTP.md](../HTTP.md)) and a JSON parser/formatter ([JSON.md](../JSON.md)). Sockets need the network, so the book
-does not run this block:
+([HTTP.md](../HTTP.md)) and a JSON parser/formatter ([JSON.md](../JSON.md)).
 
-```yerux ignore
+Connects, reads, writes and `accept` time out after five seconds. `connect_timeout(addr, ms)`,
+`set_read_timeout(stream, ms)` and `set_write_timeout(stream, ms)` change one of them (milliseconds; a negative
+value is `InvalidInput`, `0` leaves the wait to the OS) and an expired call returns an `IoError` with code 110
+(`ETIMEDOUT`). `listener_local_addr(listener)` is the bound address — including the kernel-assigned port when you
+listen on port 0 — and `local_addr(stream)` / `peer_addr(stream)` are the two ends of a connected stream, each a
+`Result<SocketAddr, io.IoError>`.
+
+Sockets need the network at run time, so the book only type-checks this block:
+
+```yerux check
 import std.net
 import std.http
 
 fn main() {
-  // see docs/NET.md and docs/HTTP.md: net.address / net.listen / accept, http.get
+  let loopback = net.address("127.0.0.1", 0).unwrap()
+  let listener = net.listen(loopback).unwrap()
+  let bound = net.listener_local_addr(listener).unwrap()
+  let client = net.connect_timeout(bound, 1000).unwrap()
+  let server = net.accept(listener).unwrap()
+  let old = net.set_read_timeout(client, 250).unwrap()
+  let local = net.local_addr(client).unwrap()
+  let peer = net.peer_addr(server).unwrap()
+  print(peer.port)
 }
 ```
+
+The details, the timeout semantics per kernel call and `tests/net_timeouts.yx` are in [NET.md](../NET.md).
 
 Next: [concurrency](15-concurrency.md).
