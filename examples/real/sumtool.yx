@@ -41,14 +41,13 @@ fn fail(code: Int, msg: view String) -> Int {
   return code
 }
 
-// The exact bytes of a file as a String (not validated as UTF-8: hashes work on bytes).
-fn read_bytes_string(file: view String) -> Result<String, io.IoError> {
-  let bytes = fs.read_bytes(file)?
+// Preserve arbitrary file bytes for the String-based base64 API.
+fn bytes_string(bytes: view List<UInt8>) -> String {
   var s = String.new()
   for b in bytes {
     s.push_byte(b.to_int())
   }
-  return Ok(move s)
+  return move s
 }
 
 fn report_unreadable(file: view String, e: view io.IoError) {
@@ -56,10 +55,10 @@ fn report_unreadable(file: view String, e: view io.IoError) {
 }
 
 // One line per file with `f(content, file)`; the status is 1 when any file could not be read.
-fn each_file(files: view List<String>, f: view fn(view String, view String) -> String) -> Int {
+fn each_file(files: view List<String>, f: view fn(view List<UInt8>, view String) -> String) -> Int {
   var status = 0
   for file in files {
-    match read_bytes_string(file) {
+    match fs.read_bytes(file) {
       Ok(data) => {
         print(f(data, file))
       }
@@ -72,12 +71,12 @@ fn each_file(files: view List<String>, f: view fn(view String, view String) -> S
   return status
 }
 
-fn sha_line(d: view String, name: view String) -> String {
-  let digest = hash.sha256(d)
+fn sha_line(d: view List<UInt8>, name: view String) -> String {
+  let digest = hash.sha256_bytes(d)
   return "{digest}  {name}"
 }
 
-fn crc_line(d: view String, name: view String) -> String {
+fn crc_line(d: view List<UInt8>, name: view String) -> String {
   let crc = crc_hex(d)
   let n = d.len()
   let ns = n.show()
@@ -85,8 +84,8 @@ fn crc_line(d: view String, name: view String) -> String {
   return "{crc} {size} {name}"
 }
 
-fn fnv_line(d: view String, name: view String) -> String {
-  let h = fmt.hex_padded(hash.fnv1a32(d), 8)
+fn fnv_line(d: view List<UInt8>, name: view String) -> String {
+  let h = fmt.hex_padded(hash.fnv1a32_bytes(d), 8)
   return "{h}  {name}"
 }
 
@@ -98,8 +97,8 @@ fn need_files(p: view args.Parsed, cmd: Text) -> Bool {
   return true
 }
 
-fn crc_hex(data: view String) -> String {
-  return fmt.hex_padded(hash.crc32(data), 8)
+fn crc_hex(data: view List<UInt8>) -> String {
+  return fmt.hex_padded(hash.crc32_bytes(data), 8)
 }
 
 // `digest  name` lines
@@ -116,9 +115,9 @@ fn check(sumfile: view String, quiet: Bool) -> Int {
         match text.split_once(line, "  ") {
           Some(pair) => {
             let (want, name) = move pair
-            match read_bytes_string(name) {
+            match fs.read_bytes(name) {
               Ok(data) => {
-                let got = hash.sha256(data)
+                let got = hash.sha256_bytes(data)
                 if got == want {
                   ok = ok + 1
                   if !quiet {
@@ -162,7 +161,7 @@ fn stat_table(files: view List<String>) -> Int {
   var rows = List < (String, String, String) >.new()
   var name_w = 4
   for file in files {
-    match read_bytes_string(file) {
+    match fs.read_bytes(file) {
       Ok(data) => {
         let name = path.file_name(file)
         if name.char_count() > name_w {
@@ -231,12 +230,13 @@ fn run() -> Int {
     if p.positionals.len() != 1 {
       return fail(2, "{p.subcommand} takes exactly one FILE")
     }
-    match read_bytes_string(p.positionals.at(0)) {
-      Ok(data) => {
+    match fs.read_bytes(p.positionals.at(0)) {
+      Ok(bytes) => {
         if p.subcommand == "hex" {
-          print(hex.encode(data))
+          print(hex.encode_bytes(bytes))
           return 0
         }
+        let data = bytes_string(bytes)
         if args.has_flag(p, "decode") {
           match base64.decode(data.trim()) {
             Ok(raw) => {

@@ -1,0 +1,36 @@
+import std.hash
+import std.hex
+
+fn show_digest(data: view [UInt8]) {
+  print(hash.fnv1a32_bytes(data))
+  print(hash.crc32_bytes(data))
+  print(hash.sha256_bytes(data))
+}
+
+fn show_decoded(s: view String) {
+  match hex.decode_bytes(s) {
+    Ok(data) => { print(hex.encode_bytes(data)) }
+    Err(msg) => { print(msg) }
+  }
+}
+
+fn main() {
+  let bytes = [0u8, 255u8, 128u8, 65u8, 10u8]
+  show_digest(bytes)
+  show_digest(bytes[1..4])
+  show_digest(bytes[0..0])
+  print(hex.encode_bytes(bytes))
+  print(hex.encode_bytes(bytes[1..4]))
+  show_decoded("00fF80410A")
+  show_decoded("")
+  show_decoded("00f")
+  show_decoded("00fg")
+
+  let utf8 = [195u8, 169u8]
+  let encoded = hex.encode_bytes(utf8)
+  let digest = hash.sha256_bytes(utf8)
+  print(encoded == hex.encode("é"))
+  print(hash.fnv1a32_bytes(utf8) == hash.fnv1a32("é"))
+  print(hash.crc32_bytes(utf8) == hash.crc32("é"))
+  print(digest == hash.sha256("é"))
+}

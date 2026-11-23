@@ -677,14 +677,19 @@ fn main() {
 
 ### `std.hex`, `std.base64`, and `std.hash`
 
-`std.hex.encode(s)` encodes the UTF-8 bytes of a string as lowercase hexadecimal; `decode(s)` returns
-`Result<String, String>` and rejects odd lengths or non-hex digits. `std.base64.encode(s)` and
-`decode(s)` use the RFC 4648 standard alphabet and padded form; decode validates padding and returns
+`std.hex.encode(s)` encodes the UTF-8 bytes of a string as lowercase hexadecimal. `encode_bytes(data: view [UInt8])`
+encodes raw bytes the same way. `decode(s)` returns `Result<String, String>` and `decode_bytes(s: view String)`
+returns `Result<List<UInt8>, String>`. Both decoders reject odd lengths or non-hex digits.
+
+`std.base64.encode(s)` and `decode(s)` use the RFC 4648 standard alphabet and padded form. Decode validates padding and returns
 errors for malformed input. The decoded bytes are returned in a Yerux `String`.
 
 `std.hash.fnv1a32(s)` and `crc32(s)` return unsigned 32-bit results represented by non-negative
 `Int` values. CRC is CRC-32/ISO-HDLC (the ZIP/Ethernet variant). `std.hash.sha256(s)` returns the
 standard SHA-256 digest as 64 lowercase hexadecimal characters. All three hash the UTF-8 bytes.
+`fnv1a32_bytes(data)`, `crc32_bytes(data)`, and `sha256_bytes(data)` take `data: view [UInt8]`
+and return the same result types. Pass a `List<UInt8>` (for example from `fs.read_bytes`), an array,
+or a slice to any of these functions or to `hex.encode_bytes`.
 
 ### `std.rand`
 
