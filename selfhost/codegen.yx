@@ -3014,8 +3014,9 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     if place.ty.starts_with("Slice<") { unsupported("slice binding") }
     let value = expression(gen, tree, ast.child(tree, node, 2))
     let id = id_at(gen, node)
+    let borrowed_drop = drop_fn(gen, tree, place.ty)
     if tree.at(ast.child(tree, node, 2)).tag == "Method" && is_place(gen, tree, ast.child(tree, node, 2)) &&
-        drop_fn(gen, tree, place.ty) != "" {
+        borrowed_drop != "" {
       // `let x = list.at(i)` on an owned element: a borrowed reference
       prepare_type(gen, tree, place.ty)
       gen.references.set(id, true)
