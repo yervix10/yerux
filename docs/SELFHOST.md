@@ -22,6 +22,13 @@ Expression parsing handles precedence, calls, fields, indexing, slicing,
 struct literals and casts. The original unpositioned fragment input remains
 available alongside `yerux ast-expr` and `yerux ast-stmt`.
 
+`if` and `match` also parse where a value is wanted (`let x = if c { a } else
+{ b }`, `return match v { P => e, .. }`, as an operand). They give `IfExpr(cond,
+Block, Block)` and `MatchExpr(value, [Arm])`; a bare expression after `=>` is
+wrapped as `Block([Expr(e)])`, an `else if` becomes `Block([If(..)])`, and an
+`if` used as a value without `else` is a syntax rejection on the `if` line. The
+Rust source dump (`ast-file`, `locals-file`) emits the same nodes.
+
 `yerux ast-file file.yx` emits the Rust comparison AST for one source file.
 It reuses the compiler's expression, statement, block and pattern parser.
 Source mode preserves declarations, imports, type spellings and named array
@@ -143,6 +150,15 @@ integer and sequence `for` loops, `break`, and `continue`. The emitter also
 handles sized integer arithmetic and comparisons, string interpolation
 of scalar and text values, moves, `view` and `mut` parameters, field
 replacement, and scope cleanup.
+
+A value `if`/`match` is checked like the statement form: the last line of each
+branch is its value (`Returns.want`), the first branch fixes the type and the
+others must match, branches that exit (`return`, `panic`, `break`) give none,
+and moves join as for `if`. Codegen declares a zero-initialised temporary
+with the type's drop, assigns each branch's last line to it
+(`gen.value_target`) and uses it as the expression's value. `let x = l.at(i)`
+on an owned element borrows it (the binding is `View` and lowers to a pointer
+into the list), as the Rust checker does; for `Copy` elements it still copies.
 
 Function values use the same code and environment representation as the
 Rust C backend. Stored closures copy Copy captures and take ownership of
