@@ -1041,6 +1041,12 @@ fn sequence_member(types: mut Types, tree: view List<ast.AstNode>, owner: view S
   let integer_type = String.from("Int")
   if name == "clone" && owner.starts_with("Array<") && child_count(tree, args) == 0 { return String.from(owner) }
   if name == "show" && child_count(tree, args) == 0 { return String.from("String") }
+  if (name == "eq" || name == "cmp") && child_count(tree, args) == 1 {
+    // element-wise comparison with another sequence
+    let other = infer(types, tree, args + 1, owner)
+    if name == "eq" { return String.from("Bool") }
+    return integer_type
+  }
   var count = 1
   if name == "len" { count = 0 }
   else if name == "set" || name == "swap" { count = 2 }

@@ -565,11 +565,21 @@ fn sequence_compare(gen: mut Generator, tree: view List<ast.AstNode>, op: view S
   } else if integer_c(item).len() != 0 || floating_c(item).len() != 0 || item == "Bool" {
     less = "({left.code}).d[i{id}] < ({right.code}).d[i{id}]"
     greater = "({left.code}).d[i{id}] > ({right.code}).d[i{id}]"
+  } else if item.starts_with("Array<") && (simple_elements(item) || floating_c(type_terms.element(item)).len() != 0) {
+    // fixed arrays as elements: lexicographic over their cells
+    let dims = type_terms.arguments(item)
+    let cells = String.from(dims.at(1))
+    let x = "({left.code}).d[i{id}]"
+    let y = "({right.code}).d[i{id}]"
+    let order_code = "({{ int64_t c_ = 0; for (int64_t k_ = 0; k_ < {cells} && c_ == 0; ++k_) {{ c_ = ({x}.d[k_] < {y}.d[k_]) ? -1 : ({x}.d[k_] > {y}.d[k_]) ? 1 : 0; }} c_; }})"
+    less = "{order_code} < 0"
+    greater = "{order_code} > 0"
   } else { unsupported("comparison of sequences of {item}") }
   line(gen, "for (int64_t i{id} = 0; i{id} < {a.code} && i{id} < {b.code}; ++i{id}) {{")
   line(gen, "if ({less}) {{ {order.code} = -1; break; }}")
   line(gen, "if ({greater}) {{ {order.code} = 1; break; }} }}")
   line(gen, "if ({order.code} == 0) {order.code} = ({a.code} > {b.code}) - ({a.code} < {b.code});")
+  if op == "cmp" { return temp(gen, tree, ty, "{order.code}") }
   return temp(gen, tree, ty, "({order.code} {op} 0)")
 }
 
@@ -1574,6 +1584,11 @@ fn sequence_method(gen: mut Generator, tree: view List<ast.AstNode>, receiver: v
     var compare = String.new()
     if elem == "String" { compare = "sc_compare(nx_str_view(&({receiver.code}).d[i{id}]), {text_view(arg)}) == 0" }
     else if integer_c(elem).len() != 0 || elem == "Bool" { compare = "({receiver.code}).d[i{id}] == {arg.code}" }
+    else if elem.starts_with("Array<") && simple_elements(elem) {
+      // fixed arrays of integers have no padding: compare the bytes
+      let wanted = temp(gen, tree, arg.ty, arg.code)
+      compare = "memcmp(&({receiver.code}).d[i{id}], &{wanted.code}, sizeof({wanted.code})) == 0"
+    }
     else { unsupported("list search for {elem}") }
     line(gen, "for (int64_t i{id} = 0; i{id} < ({receiver.code}).len; ++i{id}) {{")
     line(gen, "if ({compare}) {{ {found.code} = i{id}; break; }} }}")
@@ -1583,6 +1598,12 @@ fn sequence_method(gen: mut Generator, tree: view List<ast.AstNode>, receiver: v
   if list && name == "push" && tree.at(first).end == end {
     let value = coerce(gen, tree, move arg, elem)
     return temp(gen, tree, ty, "sc_push_{c}({addr}, {transfer(gen, tree, value)})")
+  }
+  let arg_element = type_terms.element(arg.ty)
+  if (name == "eq" || name == "cmp") && arg_element != "?" {
+    var op = String.from("==")
+    if name == "cmp" { op = String.from("cmp") }
+    return sequence_compare(gen, tree, op, receiver, arg, elem, ty)
   }
   if !type_terms.compatible(arg.ty, String.from("Int")) { unsupported("non-Int sequence index") }
   if list && name == "truncate" && tree.at(first).end == end {
@@ -2297,6 +2318,12 @@ fn located(gen: mut Generator, value: Value, mark: Int, loc: Int) -> Value {
   }
   gen.out = "{head}{text}"
   return move value
+}
+
+// A fixed array whose elements are integers or Bool (no padding, so bytes compare like values).
+fn simple_elements(array: view String) -> Bool {
+  let inner = type_terms.element(array)
+  return integer_c(inner).len() != 0 || inner == "Bool"
 }
 
 fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Value {
