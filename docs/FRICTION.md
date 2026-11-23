@@ -425,3 +425,60 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 9. **Fixed: no cascade after the `==` error** (test `e1504_eq_no_cascade`). Was: The cascade after the `==` error. The fixed message is followed by a second error about the right operand
     ("'word' is a String and is not copied") that is a consequence of the first.
 
+
+# Round 3: CSV report, word counter and mini echo
+
+Written as `examples/19_csv_parser.yx`, `examples/20_word_count.yx` and `examples/21_mini_echo.yx`.
+
+## Open
+
+### Updating a map value through `vals.at` needs a read and a `set`
+
+```yx
+let entry = counts.find(word)
+if entry >= 0 {
+  counts.vals.at(entry) = counts.vals.at(entry) + 1
+}
+```
+
+The checker rejects the assignment ("cannot assign to 'counts.vals.at(..)' directly") and suggests
+`l.set(i, value)`. The word counter spells the update as `let next = counts.vals.at(entry) + 1` followed
+by `counts.vals.set(entry, next)`. This is the ordinary increment idiom, so the diagnostic could name the
+`counts.vals.set(entry, next)` form for a map.
+
+### `split_ws` is a free function while the other token helpers are methods
+
+```yx
+for token in line.split_ws() { print(token) }        // no method 'split_ws'
+for token in text.split_ws(line) { print(token) }    // needs `import std.text`
+```
+
+`line.lines()` and `line.trim()` are methods, but splitting on arbitrary whitespace requires importing
+`std.text` for one call. The word counter mixes the two styles because of this.
+
+### `read_line`'s `Result<Option<String>, IoError>` needs two nested matches
+
+```yx
+match io.read_line() {
+  Ok(Some(line)) => { print(line) }
+  Ok(None) => { print("eof") }
+  Err(e) => { print("{e.message}") }
+}
+```
+
+The combined pattern is rejected: "cannot look inside an owned payload in `match move`". The echo loops
+through `match io.read_line() { Ok(line) => match line { Some(body) => .., None => break }, Err(e) => .. }`.
+The help says to bind and match the name, which is exactly the extra level of nesting.
+
+### `std.csv` reports no parse error
+
+```yx
+let rows = csv.parse(String.from("\"unterminated,field\n"))
+// rows.len() == 1, rows.at(0).at(0) == "unterminated,field"
+```
+
+`parse` returns `List<List<String>>`, so an unbalanced quote is accepted as field data and an oversized
+input (over 16 MiB or 100000 cells) silently becomes an empty list. The report cannot tell malformed CSV
+from an empty file. A `Result` or at least a parsed/error flag would let a real importer explain the problem.
+Also, `csv.write` always ends every record with CRLF, including the last one, so a write→parse round-trip
+returns the data but not the exact input text.
