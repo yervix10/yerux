@@ -254,6 +254,8 @@ const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned
        (run: `yerux run file.yx [flags] -- ARGS...` passes ARGS to the program)
        yerux add NAME --path DIR | --git URL [--tag T | --version REQ]   (dependency in yerux.toml; updates yerux.lock)
        yerux remove NAME
+       yerux lock [--locked | --update]
+       yerux build|run|test [--locked]   (current project)
        yerux doc [--html] [-o DIR] [dir|file.yx ...]
        yerux bench [file.yx|dir ...] [--native] [--no-opt] [--filter text] [--runs N]";
 
@@ -506,12 +508,23 @@ fn real_main() {
         }
         return;
     }
-    if args.len() == 2 && matches!(args[1].as_str(), "build" | "run" | "test") {
-        match project::run(&args[1]) {
+    if args.get(1).is_some_and(|cmd| matches!(cmd.as_str(), "build" | "run" | "test"))
+        && (args.len() == 2 || (args.len() == 3 && args[2] == "--locked"))
+    {
+        match project::run(&args[1], args.len() == 3) {
             Ok(code) => exit(code),
             Err(e) => {
                 eprintln!("{e}");
                 exit(1);
+            }
+        }
+    }
+    if args.get(1).is_some_and(|cmd| cmd == "lock") {
+        match project::lock(&args[2..]) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("{e}");
+                exit(if e.starts_with("usage") { 2 } else { 1 });
             }
         }
     }
@@ -548,6 +561,10 @@ fn real_main() {
     if args.len() >= 2 && args[1] == "test" {
         exit(run_tests(&args[2..]));
     }
+    compile_file(&args);
+}
+
+fn compile_file(args: &[String]) {
     if args.len() < 3 {
         eprintln!("{}", USAGE);
         exit(2);
