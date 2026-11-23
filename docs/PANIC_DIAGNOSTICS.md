@@ -43,7 +43,11 @@ failing operation (overflow, index, slice, unwrap/expect, division, explicit `pa
   return address in a site table; the runtime reports by walking the rbp chain.
   Functions that call are no longer frameless. Active only when the program has user markers:
   hello world 3301 -> 3327 bytes.
-* Limits: aarch64 ignores markers (no location line); Windows prints no locations;
+* aarch64: the `at file:line:col` line is printed too (no `YERUX_BACKTRACE`): each failure site is a small stub
+  `mov x17, loc; b <shared panic>`, a call into a library function sets `x17` to the caller's position first, and the
+  shared stubs call an `at` routine that reads the location and file tables (checked under emulation by
+  `tests/a64_emu.py`, which compares the stderr with the x86-64 build).
+* Limits: Windows prints no locations (the report routine is Linux-syscall based and cannot be tested here);
   programs built by the selfhost compiler print the location of the same sites as the plain C release build (see below).
 
 ## DWARF / gdb for the native backend (x86-64 Linux)
