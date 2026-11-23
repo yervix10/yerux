@@ -2,13 +2,14 @@
 
 Status: **draft**. Describes the language as implemented by `yerux` 0.5.0. Where the
 implementation and this text disagree, the text is the target and the difference is recorded in
-section 8 (Pending decisions). Sources: [GUIDE.md](GUIDE.md), [DESIGN.md](DESIGN.md), the
+section 10 (Pending decisions). Sources: [GUIDE.md](GUIDE.md), [DESIGN.md](DESIGN.md), the
 [book](book/README.md), and the feature specs linked from each section. Every `yx` example in
 this document was compiled and run against the `yerux` binary; examples marked `(verified)`
 produced the stated output on the C backend and on `--native`.
 
 Sections: 1 Lexical structure and grammar · 2 Types · 3 Ownership and borrows · 4 Errors and
-`Result` · 5 Modules · 6 Compile-time execution · 7 FFI and ABI · 8 Pending decisions.
+`Result` · 5 Concurrency and memory model · 6 Modules · 7 FFI and ABI · 8 Compile-time execution ·
+9 Standard library contract · 10 Pending decisions.
 
 ---
 
@@ -17,7 +18,7 @@ Sections: 1 Lexical structure and grammar · 2 Types · 3 Ownership and borrows 
 ### 1.1 Source text
 
 - Source files are UTF-8 text with the extension `.yx`. The entry file of a program is compiled
-  with the folder it lives in as the module root (section 5).
+  with the folder it lives in as the module root (section 6).
 - Line comments start with `//` and run to the end of the line. **Block comments are not
   part of the language.** `/* ... */` is rejected (`expected an expression`).
 - Statements are separated by newlines. A `;` is accepted as a separator
@@ -42,7 +43,7 @@ Contextual words: `import`, `pub`, `as`, `const`, `type`, `test`, `derive`, `ext
 `parallel` and `unsafe` may not (`let scope = 3` is `expected a name`).
 
 Note: `let import = 1` is currently reported as `` `import` must come before every other
-declaration``, which is a misleading message; the name is reserved in practice (section 8).
+declaration``, which is a misleading message; the name is reserved in practice (section 10).
 
 Built-in names (`print`, `assert`, `assert_eq`, `panic`, `Some`, `None`, `Ok`, `Err`, `sqrt`,
 ...) are ordinary functions or prelude items, not keywords. They can be shadowed by a
@@ -178,7 +179,7 @@ Notes on the grammar:
 
 - Generic arguments are written only on types and constructors (`List<Int>.new()`,
   `Maybe.Some(i)`). Type arguments of function calls are inferred; explicit type arguments on
-  calls are not implemented (section 8).
+  calls are not implemented (section 10).
 - `view` and `mut` are parameter-mode keywords in parameter and function-type positions and
   borrow markers on values (`mut m` in `match mut`). They are not reference types.
 - Enum variants are named with the enum in expressions (`Shape.Rect(4, 5)`) and without it in
@@ -263,7 +264,7 @@ Rules, all verified:
   with their own shortest form (`let f: Float32 = 1.1` prints `1.1`; `1.1f32 * 3.0f32` prints
   `3.3000002`).
 - **Sized values as types only.** `UInt8.from(0)` is rejected: `UInt8` is a type, use `0u8` or
-  `n.to_uint8()` (section 8 for the message).
+  `n.to_uint8()` (section 10 for the message).
 - **Char** literals are single scalars: `'a'`, `'\n'`, `'\u{1F600}'`. `Char.from_int(65)` is `A`;
   `c.to_int()` is the code point; `c.utf8_len()` is 1 to 4.
 - **Text and String** are UTF-8 byte strings. `len()` counts bytes. Characters are walked with
@@ -339,7 +340,7 @@ enum Name { Variant, Variant(Type, ...), ... }
 - **Generic bodies** are checked once against their bounds. Inside, a `T` value is moved unless
   `T: Copy` is declared.
 - **Not yet:** explicit type arguments on calls, bounds on struct and enum parameters, generic
-  methods (`fn map<U>(..)` inside an `impl`). See section 8.
+  methods (`fn map<U>(..)` inside an `impl`). See section 10.
 
 ### 2.6 Range integers
 
@@ -444,7 +445,7 @@ is valid). `return x` moves `x` out implicitly. A `let` binding cannot be modifi
 4. **Borrows are second-class.** A `view` or `mut` parameter cannot be stored in a variable
    (`let w = v` where `v` is a `view` parameter is `'v' is a List and is not copied`), stored in
    a struct field (`struct H { r: view List<Int> }` is rejected), or returned
-   (`-> view List<Int>` is rejected). These are parse errors today (section 8).
+   (`-> view List<Int>` is rejected). These are parse errors today (section 10).
 5. **One call, one use per variable when mutation or move is involved.** A variable lent as
    `mut` or moved may not appear again in the same call:
    `both(a, a)` where the first parameter is `mut` is `'a' appears twice in the same call and one
@@ -658,24 +659,375 @@ should handle; use `panic` for bugs and impossible states.
 
 ---
 
-## 5. Modules
+## 5. Concurrency and memory model
 
-(Placeholder: section 5, to be written in its own commit.)
+Yerux threads are OS threads that share one address space. Data-race freedom is enforced by the
+checker, not by a runtime check. The design rationale is in [CONCURRENCY.md](CONCURRENCY.md); this
+section lists only what the tests fix. Anything not listed is **no especificado** (unspecified).
+
+### 5.1 Tasks and scopes
+
+- `spawn` is legal only inside a `scope { }` block; elsewhere it is an error
+  (tests/e745_spawn_requires_scope.yx).
+- The task body is a `move` closure; `spawn` without `move` is an error
+  (tests/e742_spawn_requires_move.yx). Both `spawn move { ... }` (tests/conc_sharing.yx) and
+  `spawn move || expr` (tests/e745_spawn_requires_scope.yx) appear in tests.
+- `handle.join()` consumes the handle and returns `Result<T, E>`. Tests check it with `is_ok()`,
+  `is_err()` and `unwrap()` (tests/conc_spawn.yx, tests/conc_sharing.yx,
+  tests/concurrency_channel.yx). The name and payload of the error type are **no especificado**.
+- A `JoinHandle` cannot be joined twice (tests/e744_join_twice.yx), cannot leave its scope through
+  `return` (tests/e740_join_escape.yx), and cannot be dropped at the end of a loop iteration, because
+  dropping it waits for its worker (tests/e1414_joinhandle_dropped_in_loop.yx). Handles may be
+  collected in a `List<JoinHandle<T>>` and joined later (tests/thread_handles_list.yx).
+- A panic inside a task does not end the process; it makes that task's `join()` return an error
+  (tests/conc_spawn.yx, tests/conc_sharing.yx). Whether the other tasks keep running after such a
+  panic is **no especificado**.
+
+### 5.2 Capture rules (checked at `spawn`)
+
+- A `view` (borrowed) value cannot be captured by a task (tests/e732_spawn_view_capture.yx).
+  A borrowed `mut` value cannot be captured either (tests/e733_spawn_mut_capture.yx). A borrowed
+  parameter cannot be moved into a task (tests/e730_thread_runtime_borrow.yx).
+- A value moved into a task cannot be used by the parent afterwards (tests/e735_spawn_use_after_move.yx).
+- A value whose type is bound to a thread (for example one that holds a `Window`) cannot be
+  transferred to a task (tests/e734_spawn_thread_bound.yx).
+- `Shared<T>` rejects content that is not thread-transferable (tests/e741_shared_thread_bound.yx),
+  and rejects a `mut` lend of its content (tests/e738_shared_mut_borrow.yx).
+- Captures that are only read by several tasks, or two tasks writing one variable, are accepted or
+  rejected by rules that are not fully fixed by tests. Only the cases listed above are specified.
+
+### 5.3 Parallel for
+
+- `parallel for` may not assign to a captured variable (tests/e736_parallel_assign.yx) and may not
+  mutate a list it only borrows (tests/e737_parallel_mut_list.yx).
+- Accepted bodies: `Atomic`/`Shared` updates, read-only iteration over a `List`, and integer ranges
+  including the `Int` maximum (tests/conc_parallel.yx).
+- Iteration order and the number of workers are **no especificado**. Tests use only results that
+  do not depend on them.
+
+### 5.4 Shared and locked values
+
+- `Shared<T>` gives read access from several tasks; `Shared.clone()` gives each task its own
+  handle (tests/conc_sharing.yx).
+- `Locked<T>` is accessed only through callbacks: `with(f)` (exclusive, may return an owned value)
+  and `with_view(f)` (tests/conc_sharing.yx). `take()` consumes the lock and returns the content
+  (tests/conc_sharing.yx).
+- Waiting on a task or channel, or acquiring another lock, inside a `with` callback is an error
+  (tests/e739_locked_wait.yx, tests/e743_locked_reentry.yx).
+- Poisoning: if a task panics inside a `with` callback, a later access from another task fails
+  (`join()` returns an error) instead of reading the content (tests/conc_sharing.yx).
+- `Mutex<T>` facade with `mutex_update` (tests/concurrency_mutex.yx). `RwLock<T>` with
+  `rwlock_read` and `rwlock_write` (tests/concurrency_rwlock.yx). Fairness between readers and
+  writers is **no especificado**.
+- `Atomic<Int>` and `Atomic<Bool>` provide `load`, `store`, `swap`, `compare_swap`, `add` and
+  `add_wrapping` (tests/conc_sharing.yx). Overflow behaviour of `add` is **no especificado**.
+
+### 5.5 Channels and pools
+
+- `Sender<T>.bounded(n)` and `Sender<T>.unbounded()` return `(sender, receiver)`. `send` returns
+  `Bool`; `recv` returns `Option<T>`; `close` stops new sends (tests/concurrency_channel.yx).
+- When the last sender is dropped the channel closes after queued values are drained
+  (tests/concurrency_channel.yx). A send after the receiver is dropped returns `false`
+  (tests/concurrency_channel.yx).
+- `recv_timeout(ms)` returns `None` on timeout; `select2(a, b, ms)` returns `(index, value)`
+  (tests/concurrency_channel.yx).
+- `thread_pool_new(n)`, `parallel_for`, `thread_pool_map` (ordered results) and `close()`
+  (tests/concurrency_thread_pool.yx).
+
+### 5.6 Memory model
+
+- Synchronisation is through the operations above: locks, atomics, channels, joins. Values that
+  tasks write into a `Locked` or `Atomic` are read by the parent after the scope ends with exact
+  totals (tests/conc_sharing.yx).
+- Atomic operations are the only accesses that may race. The memory ordering of `Atomic` and
+  `__atomic_*` operations is **no especificado** beyond the results the tests check
+  (tests/conc_runtime.yx). Sequential consistency is the stated design (CONCURRENCY.md) but no test
+  distinguishes it from a weaker ordering.
+- `print` output is written as whole lines: the golden output of tests/conc_print.yx contains no
+  split lines. The order of lines between tasks is **no especificado**.
+- Raw runtime intrinsics (reserved, not part of the stable API): `__thread_start(fn() -> Int) -> Int`,
+  `__thread_wait`, `__atomic_load`, `__atomic_store`, `__atomic_cmpxchg`, `__atomic_fetch_add`,
+  `__futex_park`, `__futex_wake` (tests/conc_runtime.yx). `__futex_park` returns `-11` (EAGAIN) when the
+  word does not match the expected value, and `__futex_wake` returns `0` (tests/conc_runtime.yx).
+  A raw worker must return `Int` (tests/e729_thread_runtime_signature.yx). The address argument must
+  be an `Int` (tests/e731_futex_address.yx).
+- Memory safety under concurrency: native allocation counters stay consistent under the stress
+  script (tests/threads_stress.sh). The C backend is clean under ThreadSanitizer for every
+  `tests/conc_*.yx` and `tests/concurrency*.yx` program (tests/tsan_concurrency.sh).
 
 ---
 
-## 6. Compile-time execution
+## 6. Modules
 
-(Placeholder: section 6, to be written in its own commit.)
+A program is a set of files, each one a module. Module behaviour below is fixed by the
+`tests/mod_ok/`, `tests/mod_err/` and `tests/modobj/` fixtures, run by `tests/modules.sh`, and by
+`tests/packages.sh`. Anything not listed is **no especificado**.
+
+### 6.1 Imports and names
+
+- `import` declarations must come before every other declaration in a file
+  (tests/mod_err/late_import/main.yx).
+- Imported items are used qualified: `lib.item`. Using a bare name that comes from another module
+  is an error (tests/mod_err/unqualified/main.yx).
+- A module name is not a value: `lib` alone is an error (tests/mod_err/module_as_value/main.yx).
+- A module's item that does not exist is an error (tests/mod_err/missing_item/main.yx). A missing
+  module is an error (tests/mod_err/missing_module/main.yx: `utils.maths`).
+- A dotted path names a nested module: `import engine.util` (tests/packages.sh).
+- A module name imported twice under one name is an error (tests/mod_err/dup_alias/main.yx).
+- Import cycles are errors, reported as the full chain `a -> b -> a` (tests/mod_err/cycle/main.yx).
+- A local variable, parameter or loop variable may have the name of an imported module. Inside its
+  scope the name refers to the variable (tests/mod_ok/shadow_module/main.yx).
+- Aliases with `import ... as ...` are used in tests/mod_ok/ fixtures; their exact rules beyond the
+  duplicate-name error are **no especificado**.
+
+### 6.2 Visibility
+
+- Items are private to their module unless marked `pub`. Using a private item from another module
+  is an error (tests/mod_err/private/main.yx, tests/mod_err/private_const/main.yx).
+- Private helpers of the standard library are not reachable from user code
+  (tests/e981_fs_private_helper.yx: `std.fs`; tests/e1303_process_private_helper.yx: `std.process`).
+- A `pub const` must state its type explicitly (tests/mod_err/pub_const_untyped/main.yx).
+- Constants are evaluated in dependency order. A const that depends on itself through another
+  module is an error (tests/mod_err/const_cycle/main.yx). Use before definition in one file is an
+  error (tests/e1350_const_forward_use.yx).
+- Types, generic bounds and moves cross module boundaries with the same rules as inside one file:
+  tests/mod_err/type_in_dep/main.yx, tests/mod_err/generic_bound/main.yx (a `T` used for `biggest`
+  must satisfy `Ordered`), tests/mod_err/moved_in_dep/main.yx (use after move).
+- Methods on imported types and generic implementations work across modules
+  (tests/mod_ok/generic_impls, tests/mod_ok/types, tests/mod_ok/dyn).
+
+### 6.3 Module objects
+
+- `yerux obj build` compiles a module to an object file (`.yxo`). An application can be built from
+  the object alone, without the module sources, on both backends (tests/modobj.sh; the same script
+  checks that the interface printed by `yerux obj info` matches the source).
+- `yerux obj check` reports a stale object when the source body changes, and fails when the
+  interface changes (tests/modobj.sh). Corrupt or conflicting objects are rejected (tests/modobj.sh).
+- Without the object, the import fails with `cannot find module` (tests/modobj.sh).
+
+### 6.4 Packages
+
+- The manifest is `yerux.toml`, with `[package]` (name, version) and `[dependencies]`
+  (tests/packages.sh).
+- A dependency may be a path or a Git repository. A Git dependency with a version requirement
+  selects the highest matching SemVer tag, with or without a `v` prefix (tests/packages.sh).
+  Pre-release versions are selected only when the requirement names the same `major.minor.patch`
+  (tests/packages.sh: `=1.3.0-rc.1`).
+- A Git dependency without a selector records the `HEAD` revision (tests/packages.sh).
+- `yerux.lock` records `name`, `version`, `tag` and `rev`. `build --locked` and `lock --locked`
+  fail when the lock is missing or out of date, and `lock --update` moves it to newer compatible
+  tags (tests/packages.sh).
+- Transitive dependencies are resolved. Two requirements that cannot both hold are a
+  `dependency conflict` (tests/packages.sh). Dependency cycles are errors, reported as the chain
+  (tests/packages.sh: `loop_a -> loop_b -> loop_a`).
+- A module can import only the packages declared directly in its own manifest. A dependency of a
+  dependency is not visible to the application (tests/packages.sh: `cannot find module 'engine'`).
+- The search order for `src/<name>.yx` and `src/lib.yx` in PACKAGES.md is not fixed by a test;
+  it is **no especificado**.
 
 ---
 
 ## 7. FFI and ABI
 
-(Placeholder: section 7, to be written in its own commit.)
+Foreign functions are declared in `extern "C" { ... }` blocks, with the library given by a
+`link "<name>"` directive (tests/ffi_basic.yx, tests/ffi_native.sh). The implemented ABI is
+**System V x86-64 on Linux**, with ELF dynamic imports for `--native` builds. Anything not listed
+here is **no especificado**. The syntax of [FFI.md](FFI.md) section 6 (`from <os>`, `optional`,
+`@c struct`, `@link_name`, `CStr`) is a proposal with no test; it is **no especificado** and is
+listed in section 10.
+
+### 7.1 Declarations and calls
+
+- A call to an `extern` function must be inside an `unsafe` block (tests/e40_ffi_unsafe.yx).
+- Argument and result types are checked against the declaration. A wrong argument count is an
+  error (tests/e53_ffi_variadic_plain.yx).
+- Types used in the fixtures: `Int` (64-bit), `Int32`, `UInt8`, `UInt64`, `Float`, `Text` and
+  `Ptr<T>` (tests/ffi_basic.yx, tests/ffi_variadic.yx, tests/ffi_native.sh).
+- A `Text` argument is passed as a NUL-terminated C string: `strlen("hello")` returns `5`
+  (tests/ffi_basic.yx).
+- `Ptr<T>.null()` needs no `unsafe` block; `Ptr<T>.alloc(n)` and `p.free()` are language-provided
+  (tests/ptr_construct.yx). `Ptr<T>` values returned by an extern function can be passed to another
+  extern function (tests/ffi_native.sh: `ffi_identity` then `strlen`).
+
+### 7.2 Calling convention
+
+- Integer and floating-point arguments follow System V: the first six integer arguments and the
+  first eight `Float` arguments go in registers, the rest on the stack. Tests with eight integer
+  arguments and nine `Float` arguments check the boundary (tests/ffi_native.sh: `ffi_stack8` returns
+  `36`, `ffi_float9` returns `45.0`).
+- Variadic calls set the number of vector registers used in `%al` as System V requires. Observable
+  through correct `%f` output of `printf`/`snprintf` (tests/ffi_variadic.yx, expected output in
+  tests/expected/ffi_variadic.out).
+
+### 7.3 Variadic functions
+
+- `...` must be the last parameter and the declaration needs at least one fixed parameter
+  (tests/e52_ffi_variadic_pos.yx, tests/e51_ffi_variadic_few.yx).
+- Each variadic argument must be an integer, `Bool`, `Char`, `Float`, `Text` or `Ptr<T>`. A struct
+  is rejected (tests/e50_ffi_variadic_arg.yx).
+- `Float32` arguments are promoted to `Float` (tests/ffi_variadic.yx: `%.2f` of a `Float32` prints
+  `0.25`). Narrow integers are passed as 64-bit values (tests/ffi_variadic.yx: a `UInt8` printed with
+  `%u`).
+
+### 7.4 Libraries and targets
+
+- `link "libyeruxffi.so"` loads a shared library at run time; `LD_LIBRARY_PATH` locates it
+  (tests/ffi_native.sh).
+- Native ELF output for x86-64 Linux has no executable-and-writable segment and marks the stack
+  non-executable (tests/ffi_native.sh checks `GNU_STACK` as RW and two `LOAD` segments).
+- On the aarch64 and Windows native targets, any `extern "C"` declaration is rejected with
+  `extern C is not supported on the <target> target yet` (tests/ffi_native.sh).
+
+### 7.5 Not specified
+
+- Callbacks from C into Yerux (taking the address of an `extern "C" fn`).
+- `@c struct` layout, `Ptr` dereference rules, and the mapping of `Ptr` to drop glue.
+- The `ffi` capability and any package-level permission for FFI.
+- Error conversion of C return codes.
 
 ---
 
-## 8. Pending decisions
+## 8. Compile-time execution
 
-(Placeholder: section 8, to be written in its own commit.)
+Compile-time evaluation has two forms: `const` items, and `comptime` expressions and assertions
+inside functions. Both use the language's own semantics; the compiler evaluates them. The design
+(serialised constants, comptime allocators, generics over values) is in
+[COMPTIME.md](COMPTIME.md). Only the forms below are fixed by tests. Anything else is
+**no especificado**.
+
+### 8.1 `comptime` expressions
+
+- `comptime expr` evaluates `expr` during compilation. Its value must be `Int`, `Char` or `Bool`;
+  other types are rejected with E-K3 (tests/e966_comptime_string.yx, tests/e1028_comptime_array_result.yx).
+- Inside the evaluated code, recursion, `while` loops and calls to ordinary functions are allowed
+  (tests/comptime_basic.yx: `fib`, `fact`, `is_prime`). No `comptime fn` keyword appears in tests;
+  whether it exists is **no especificado**.
+- Arrays may be built and indexed inside comptime code, including array parameters and results
+  (tests/comptime_arrays.yx). An array returned from `comptime` to runtime is not allowed (see above).
+- `comptime assert(cond)` and `assert_eq(comptime f(), v)` are accepted (tests/comptime_basic.yx,
+  tests/comptime_arrays.yx).
+- A panic while evaluating at compile time is a compile error, not a runtime exit: an out-of-range
+  index is reported as E-K6 (tests/e1027_comptime_array_oob.yx), and the message says the code was
+  being evaluated by the compiler.
+- A `comptime` expression may appear inside a runtime expression (tests/comptime_basic.yx:
+  `print(i + comptime 10)`). Using runtime values inside a `comptime` expression is **no especificado**
+  by the tests.
+
+### 8.2 `const` items
+
+- `const NAME = expr` and `const NAME: T = expr`. Constants may use literals, other constants and
+  arithmetic, including `&&`, `!` and comparisons (tests/arr_const.yx, tests/const_item_basic.yx).
+- A constant may have type `Char`, `Bool`, `Int` or a range type such as `Int<0..9>`
+  (tests/arr_const.yx, tests/const_item_basic.yx).
+- A constant may be used as an array length, for example in `[Int; M]` and in `type Table = [Int; SIZE]`
+  (tests/arr_const.yx, tests/const_item_basic.yx).
+- A constant may not refer to a constant defined later (tests/e1350_const_forward_use.yx).
+- A constant's initializer may not call a function; the diagnostic points to
+  `let x = comptime f(..)` inside a function (tests/e1022_const_not_constant.yx,
+  tests/e1351_const_not_constant.yx).
+- A constant's value must match its declared type (tests/e1352_const_type_mismatch.yx).
+- A constant whose computation overflows is an error (tests/e1024_const_overflow.yx).
+
+### 8.3 Const generic parameters
+
+- `fn f<const K: Int>(a: [Int; K], b: [Int; K])` binds `K` from the first argument; two arguments of
+  different lengths are rejected (tests/e1023_const_generic_lengths.yx).
+- Constant generic parameters are used in array types, and array lengths are checked against them
+  (tests/arr_const.yx).
+
+### 8.4 Not specified
+
+- Step or memory budgets for compile-time evaluation.
+- `comptime for`, `comptime if`, reflection (`size_of`, `fields_of`), and comptime allocators.
+- Serialisation of constant values in the data section.
+- Eligibility rules for calling ordinary functions in `const` initializers (the test only shows
+  that a plain call is rejected).
+
+---
+
+## 9. Standard library contract
+
+The standard library is two things: **prelude** types and methods, available without an import, and
+**`std.*` modules**, written in Yerux and embedded in the compiler (27 files in `src/std/`). The
+reference is [STDLIB.md](STDLIB.md). This section fixes only what the tests pin down. A function
+that no test calls is **no especificado** even if the reference lists it.
+
+### 9.1 Modules and imports
+
+- `import std.<name>` makes the module available under its last path segment, for example
+  `import std.hash` then `hash.fnv1a32("")` (tests/std_hash.yx).
+- Private helpers of a `std` module are not visible to the user (tests/e981_fs_private_helper.yx,
+  tests/e1303_process_private_helper.yx). An unknown item is an error (tests/e1502_unknown_module_item.yx).
+- Every module in `src/std/` is imported by at least one test in `tests/`.
+
+### 9.2 Panics and bounds
+
+- Out-of-range `List` slices panic with exit code 101 (tests/panic_list_slice_past_end.yx).
+- A `String` slice end that is not on a character boundary panics with exit code 101
+  (tests/panic_string_slice_end.yx). A valid boundary succeeds (tests/edge_string_utf8_boundaries.yx).
+- `String.push_byte` outside `0..255` panics with exit code 101 (tests/panic_push_byte_neg.yx).
+- Empty-collection and edge-case behaviour of `List`, `String`, `Map`, `Set` and `Option`/`Result`
+  is fixed by tests/edge_list_*.yx, tests/edge_string_*.yx, tests/edge_map_set.yx and
+  tests/edge_option_result.yx.
+
+### 9.3 Modules with fixed behaviour
+
+- `std.hash`: FNV-1a, CRC-32 and SHA-256 known answers (tests/std_hash.yx); hex and byte
+  conversions (tests/std_hash_hex_bytes.yx); base64 and hex encoding (tests/std_encoding.yx).
+- `std.rand`: two generators with the same seed produce the same sequence, and `next` returns values
+  in `0..2^32` (tests/std_rand.yx).
+- `std.compress`: run-length encoding. Decompressing output larger than 16 MiB returns
+  `Err` with the message `decompressed output exceeds 16 MiB limit` (tests/std_compress_hostile.yx).
+  Round trips are in tests/std_compress.yx. The module is not gzip or deflate.
+- `std.kv`, `std.csv`, `std.toml`, `std.regex`: normal and malformed input are covered by
+  tests/std_kv.yx, tests/std_csv.yx, tests/std_toml.yx, tests/std_regex.yx and their `*_hostile`
+  companions. The accepted grammar is described in [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md); behaviour
+  outside it is **no especificado**.
+- `std.collections`: ordered maps, heaps and deques (tests/std_btreemap.yx, tests/std_heap.yx,
+  tests/std_vecdeque.yx).
+- `std.sort`: tests/std_sort.yx. `std.iter`: tests/std_iter.yx. `std.path`: tests/std_path_complete.yx.
+- `std.log`: tests/std_log.yx. `std.args`: tests/std_args.yx, tests/std_args_schema.yx.
+- `std.sync`: tests/std_sync.yx (see section 5 for the thread primitives).
+- `std.fs`, `std.env`, `std.time`, `std.process`, `std.net`, `std.http`: tests/std_fs_metadata.yx,
+  tests/std_env_typed.yx, tests/std_time_calendar.yx, tests/time_duration.yx,
+  tests/process_*.yx, tests/net_loopback.yx, tests/std_http_client.yx. Network and process behaviour
+  beyond these tests is **no especificado**.
+
+### 9.4 Not specified
+
+- Output formats of `std.fmt` and number printing beyond the golden outputs of the tests.
+- Performance, memory use and allocation pattern of any function.
+- Any function not called by a test in `tests/`.
+- Whether an API listed in STDLIB.md but absent from `src/std/` is removed or renamed.
+
+---
+
+## 10. Pending decisions
+
+Each item is a difference between a design document and the implemented language, or an
+unfixed point that no test pins down. The implemented behaviour in sections 1-9 is the contract.
+
+1. **Concurrency surface.** CONCURRENCY.md sections 3-12 describe `spawn { }` without `move`,
+   `Task<T>`, `Channel<T>.new`, `Locked.new_ordered`, `l.with(mut n => ...)`,
+   `Runtime.spawn_detached`, `parallel map`/`reduce`, `split_at_mut`/`chunks_mut`, actors, cancellation
+   and lint W-C1. The implemented forms are in section 5. The rest is pending.
+2. **Capture diagnostics.** The error codes E-C1..E-C9 in CONCURRENCY.md are not printed by the
+   compiler; diagnostics are plain messages (section 5.2). The full read/write capture matrix is pending.
+3. **Memory ordering.** Only sequential consistency is the stated design. No test distinguishes it
+   from weaker orderings, and weaker orderings are not exposed (section 5.6).
+4. **Raw runtime surface.** The `__thread_*`, `__atomic_*` and `__futex_*` intrinsics are reserved;
+   their stability is pending (section 5.6).
+5. **FFI syntax.** FFI.md section 6 proposes `extern "C" from <os> "lib"`, `optional`, `@c struct`,
+   `@link_name`, `CStr` and `Ptr` fields. The implemented form is `link "lib"` plus `extern "C"`
+   (section 7). The proposal is pending.
+6. **FFI safety and callbacks.** The `ffi` capability, `#![forbid(unsafe)]`, C-to-Yerux callbacks,
+   and `Ptr` drop rules are pending (section 7.5).
+7. **FFI on other targets.** aarch64 and Windows reject `extern "C"` (section 7.4). Their ABIs are pending.
+8. **Compile-time surface.** `comptime fn`, `comptime for`, `comptime if`, reflection, comptime
+   allocators (COMPTIME.md part B) and serialised constants of other types are pending (section 8).
+9. **Compile-time budgets.** COMPTIME.md proposes a step limit of 10^8 with a 256 MiB memory limit.
+   No test in `tests/` fixes a limit; `examples/e53_comptime_budget.yx` uses a different one. Pending.
+10. **Module search order.** Whether `src/<name>.yx` or `src/lib.yx` is tried first for a package
+    import (PACKAGES.md) is not tested. Pending.
+11. **Standard library coverage.** STDLIB.md lists APIs that no test calls, and `prelude_parallel.yx`
+    has no test that names `parallel map`/`reduce`. Those APIs are pending until tested.
