@@ -338,6 +338,9 @@ fn with_prelude(build: view Build, source: view String) -> String {
   let text = read_text(source)
   let scan = "{text}\n{imported_text(build, text, 0)}"
   var head = String.new()
+  if uses(scan, "Atomic<") || uses(scan, "Atomic.") {
+    head.push_str(read_text(path.join(build.runtime, "prelude_atomic.yx")))
+  }
   if uses(scan, "parallel") {
     head.push_str(read_text(path.join(build.runtime, "prelude_parallel.yx")))
   }

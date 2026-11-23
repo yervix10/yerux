@@ -1458,6 +1458,14 @@ pub fn raw_arity(name: view String) -> Int {
 }
 
 fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view String, args: Int) -> String {
+  if name == "__box_address" && child_count(tree, args) == 1 {
+    let box = infer(types, tree, args + 1, unknown())
+    let payload = type_terms.box_payload(box)
+    if payload == "?" || payload.starts_with("$dyn<") || shape_index(types, box) >= 0 {
+      issue(types, "expected a builtin Box for __box_address, got {box}")
+    }
+    return String.from("Int")
+  }
   if name == "__parallel_address" && child_count(tree, args) == 1 {
     let expected = String.from("fn(Int)")
     let actual = infer(types, tree, args + 1, expected)

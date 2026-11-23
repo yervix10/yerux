@@ -1074,6 +1074,10 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
   }
   let fun = find_named(tree, gen.functions, name)
   if fun < 0 {
+    if name == "__box_address" {
+      let box = expression(gen, tree, args + 1)
+      return temp(gen, tree, ty, "((int64_t)(intptr_t)({box.code})->data)")
+    }
     if name == "__parallel_address" {
       let body = local_place(gen, args + 1)
       return temp(gen, tree, ty, "((int64_t)(intptr_t)&({body.code}))")
