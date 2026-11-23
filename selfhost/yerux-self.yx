@@ -311,21 +311,45 @@ fn iterator_impls(text: view String) -> String {
   return out
 }
 
+// The text of the modules `text` imports (recursively): the prelude a module needs (Map, Iter, ..) is linked
+// for the whole program.
+fn imported_text(build: view Build, text: view String, depth: Int) -> String {
+  var out = String.new()
+  if depth > 8 { return out }
+  for line in text.split("\n") {
+    let t = line.trim()
+    if !t.starts_with("import ") { continue }
+    var name = String.from(t.slice(7, t.len()).trim())
+    let space = name.find(" ")
+    if space > 0 { name = String.from(name.slice(0, space)) }
+    let file = "{name.replace(".", "/")}.yx"
+    var location = path.join(build.root, file)
+    if name.starts_with("std.") { location = path.join(build.runtime, file) }
+    if !fs.is_file(location) { continue }
+    let module = read_text(location)
+    out.push_str(module)
+    out.push_str("\n")
+    out.push_str(imported_text(build, module, depth + 1))
+  }
+  return out
+}
+
 fn with_prelude(build: view Build, source: view String) -> String {
   let text = read_text(source)
+  let scan = "{text}\n{imported_text(build, text, 0)}"
   var head = String.new()
-  let iterates = uses(text, "Iter<") || uses(text, "Iter.") || uses(text, ".into_iter(") || uses(text, "fn next(mut self) -> Option<")
+  let iterates = uses(scan, "Iter<") || uses(scan, "Iter.") || uses(scan, ".into_iter(") || uses(scan, "fn next(mut self) -> Option<")
   // the iterator prelude has to_set / to_map, which need Set and Map
-  if iterates || uses(text, "Map<") || uses(text, "Set<") || uses(text, "Map.") || uses(text, "Set.") {
+  if iterates || uses(scan, "Map<") || uses(scan, "Set<") || uses(scan, "Map.") || uses(scan, "Set.") {
     head.push_str(read_text(path.join(build.runtime, "prelude_map.yx")))
   }
   if iterates {
     head.push_str(read_text(path.join(build.runtime, "prelude_iter.yx")))
   }
-  if uses(text, ".context(") || uses(text, ".with_context(") || uses(text, ".wrap(") {
+  if uses(scan, ".context(") || uses(scan, ".with_context(") || uses(scan, ".wrap(") {
     head.push_str(read_text(path.join(build.runtime, "prelude_error.yx")))
   }
-  if uses(text, "Arena") {
+  if uses(scan, "Arena") {
     head.push_str(read_text(path.join(build.runtime, "prelude_arena.yx")))
   }
   var tail = String.new()
