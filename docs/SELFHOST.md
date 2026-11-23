@@ -237,9 +237,9 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-23 run matched **441 of 456 candidates (96.7%)**, with 100 runtime
-panics reproduced exactly, 14 candidates outside the supported subset, one
-expected type rejection and zero mismatches. The previous run matched 431
+2026-11-23 run matched **453 of 456 candidates (99.3%)**, with 100 runtime
+panics reproduced exactly, 2 candidates outside the supported subset, one
+expected type rejection and zero mismatches. The previous run matched 441 of 456 (96.7%); before it, 431
 of 447 candidates (96.4%).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
