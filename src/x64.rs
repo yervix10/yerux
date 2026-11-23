@@ -2214,7 +2214,7 @@ fn ifconv(f: &IrFunc) -> Option<IrFunc> {
         let mut dsts: Vec<V> = vec![];
         let mut next = g.nvregs;
         let mut prep: Vec<Inst> = vec![];
-        let mut src_of = |i: &Inst, prep: &mut Vec<Inst>, next: &mut usize| -> (V, V) {
+        let src_of = |i: &Inst, prep: &mut Vec<Inst>, next: &mut usize| -> (V, V) {
             match i {
                 Inst::Mov(d, s) => (*d, *s),
                 Inst::Const(d, k) => {
