@@ -1,9 +1,51 @@
 # Capabilities for the standard library
 
-Status: **proposal**. Nothing in this document is implemented. Today `std.fs`, `std.net`,
-`std.process` and `std.env` (src/std/*.yx) are callable from any module with no check. The
-v0.6 item in SPEC.md ("no network/disk access without permission") and the `ffi` / `threads`
-capabilities mentioned in docs/FFI.md and docs/CONCURRENCY.md are the places this design fits.
+Status: **stage 3 of section 10 is implemented as a library** (`std.caps`, src/std/caps.yx); the manifest
+syntax (stage 1), the compile-time checks (stage 2) and `ffi` gating (stage 4) are still a proposal. Today
+`std.fs`, `std.net`, `std.process` and `std.env` (src/std/*.yx) remain callable from any module with no check:
+`std.caps` is an opt-in layer on top of them, so nothing existing changes. The v0.6 item in SPEC.md ("no
+network/disk access without permission") and the `ffi` / `threads` capabilities mentioned in docs/FFI.md and
+docs/CONCURRENCY.md are the places this design fits.
+
+## 0. What exists today (`std.caps`)
+
+```
+import std.caps
+let granted = caps.all()                                 // Caps { fs, net, process, env }: the full grant
+let data = granted.fs.narrow("data", false)?             // Fs below ./data, read-only
+let text = data.read_to_string("notes.txt")?             // PermissionDenied for "../x", "/etc/passwd", links
+```
+
+- `caps.all()` is what every program has today; `caps.none()` refuses everything.
+- `Fs.narrow(root, write)` (root relative to the current root; errors with `PermissionDenied` if it would
+  widen), `Fs.read_only()`, `Net.restrict(hosts)`, `Process.restrict(programs)`, `Env.restrict(names, write)`.
+  `restrict` keeps only the entries the receiver already allows, so a value is never widened.
+- `Fs` methods mirror std.fs (`read_to_string`, `read_lines`, `read_bytes`, `read_dir`, `exists`, `is_file`,
+  `is_dir`, `file_size`, `open`, `write`, `write_bytes`, `append`, `create`, `create_dir`, `create_dir_all`,
+  `remove_file`, `remove_dir`, `rename`, `copy`, `set_permissions`); `Net` has `connect`, `connect_timeout`,
+  `listen`; `Process` has `run`, `run_timeout`, `run_command`, `start`; `Env` has `get`, `get_or`, `has`,
+  `require`, `vars`, `set`, `remove`, `current_dir`, `set_current_dir`, `current_exe`.
+- Tests: tests/caps_grant.yx (what a grant allows) and tests/caps_deny.yx (every refusal and its message).
+
+Corrections to the design that the implementation forced (the sections below are updated to match):
+
+1. **No `canonicalize` in the stdlib**, so containment is *lexical* (`path.normalize` of root + path must stay
+   under the root, `..` cannot climb out) **plus a refusal of any symbolic link on the way below the root**.
+   Links inside a root are therefore unusable under a narrowed `Fs`; this is conservative on purpose.
+2. **One module, not `std.fs.safe` / `std.net.safe`**: the second layer is `std.caps`, because a method on a
+   value (`data.read_to_string(p)`) reads better than a parallel set of functions and needs no new names.
+3. **`Caps` is obtained with `caps.all()`**, not as a parameter of `main` (open question 1): changing the entry
+   point needs compiler work that belongs to stage 2.
+4. **Open question 4 is answered conservatively**: a restricted `Process` refuses any `Command` that uses
+   `set_dir`, because the child could otherwise leave an `Fs` root. An unrestricted `Process` allows it.
+5. **`Env` splits in two**: variable access (`get`, `set`, `vars`, ...) obeys the name lists; the working
+   directory, `current_exe` and `exit` are whole-process authority and need an unrestricted `Env`. `vars()` returns
+   only the readable variables.
+6. **Handles are not re-checked**: a `File` or `TcpStream` returned by a checked call carries its own authority;
+   what the grant controls is how one is obtained. Hand a handle to untrusted code only if that is intended.
+7. **Without compile-time checks the layer is advisory**: code can still `import std.fs` directly. It is a
+   real boundary only for code that is given a value instead of the modules (stage 2 makes the direct import
+   an error for packages that were not granted it).
 
 ## 1. Problem
 
@@ -110,7 +152,7 @@ the capability and the value that was refused, for example:
 
 Two layers, both cheap because the checker already tracks ownership:
 
-1. **Compile time.** A call to a stdlib function that needs a capability is rejected if no
+1. **Compile time.** (Not implemented yet.) A call to a stdlib function that needs a capability is rejected if no
    `Fs`/`Net`/`Process`/`Env` value of the right kind is in scope. This catches a dependency
    that reaches for a file without being handed one.
 2. **Run time.** The narrowing checks (root containment, host list, program list, variable
@@ -140,7 +182,7 @@ is a deliberate exclusion and should be revisited only if a use case needs it.
   `yerux build --caps=none` runs the new checks; the default stays permissive until a major
   version.
 - **Stdlib modules.** The modules in `src/std/*.yx` keep their current signatures. The
-  capability parameters are added as a second layer (`std.fs.safe`, `std.net.safe`, ...), so
+  capability layer is `std.caps` (section 0), so
   code that imports `std.fs` directly is unchanged. This also avoids changing the golden
   outputs in `tests/expected/`.
 - **Tests.** `tests/` programs run as the root and get the full grant. A new test category
@@ -153,19 +195,20 @@ is a deliberate exclusion and should be revisited only if a use case needs it.
 ## 9. Open questions
 
 1. Whether `Caps` is one value passed to `main`, or each capability comes from a
-   `caps.request(...)` call that the runtime resolves from the manifest.
+   `caps.request(...)` call that the runtime resolves from the manifest. (Today: `caps.all()`.)
 2. Whether narrowing is also checked at compile time when the path is a literal.
 3. Whether `env` reads should be grouped with `process` (the child inherits the environment).
 4. How `fs` interacts with `std.process` child working directories (`set_dir`): a child started
-   with `Process` must not escape the `fs` root through `set_dir`.
+   with `Process` must not escape the `fs` root through `set_dir`. (Answered in section 0, point 4.)
 5. Whether a capability can be revoked after a value has been handed out. Proposed answer: no;
    use a narrower value instead.
 
 ## 10. Staging
 
 1. Manifest syntax and the root grant table, with a build error for missing grants (no runtime
-   checks yet).
+   checks yet). *Not started.*
 2. Capability values (`Caps`, `Fs`, `Net`, `Process`, `Env`) and compile-time checks for the
-   stdlib entry points.
-3. Narrowing with runtime checks, starting with `fs.root` and `process` program lists.
+   stdlib entry points. *Values done (`std.caps`); compile-time checks not started.*
+3. Narrowing with runtime checks, starting with `fs.root` and `process` program lists. *Done, for all four
+   capabilities.*
 4. `ffi` gating for `extern` and `unsafe`, after the FFI work in docs/FFI.md lands.
