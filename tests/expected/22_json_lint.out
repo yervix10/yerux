@@ -1,0 +1,6 @@
+profile: valid, objects=2 arrays=2 strings=10 numbers=2 literals=1 depth=3
+events: valid, objects=3 arrays=1 strings=8 numbers=3 literals=3 depth=2
+escaped: valid, objects=1 arrays=0 strings=7 numbers=1 literals=0 depth=1
+broken-key: invalid, object member name must be a string at byte 1
+broken-tail: invalid, trailing data at byte 12
+broken-number: invalid, expected a digit after '.' at byte 11
