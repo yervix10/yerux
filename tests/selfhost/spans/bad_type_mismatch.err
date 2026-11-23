@@ -1,0 +1,5 @@
+error: expected Int but this is Text
+ --> tests/selfhost/spans/bad_type_mismatch.yx:2:16
+  |
+2 |   let x: Int = "text"
+  |                ^^^^^^

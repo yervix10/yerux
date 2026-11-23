@@ -131,7 +131,17 @@ fn unary(p: view Parser, op: view String, value: view String) -> String {
 // `,Pos(line,col)` of token `at` when building with columns (the driver): where a panic of that node is reported
 fn pos_of(p: view Parser, at: Int) -> String {
   if !p.build || p.tokens.at(at).col == 0 { return String.new() }
-  return ",Pos({p.tokens.at(at).line},{p.tokens.at(at).col})"
+  var size = p.tokens.at(at).value.len() / 2
+  if p.tokens.at(at).kind == "Num" { size = p.tokens.at(at).value.len() }
+  if p.tokens.at(at).kind == "Str" { size = size + 2 }
+  return ",Pos({p.tokens.at(at).line},{p.tokens.at(at).col},{size})"
+}
+
+// `node` with the position of token `at` as its last child (columns mode only): diagnostics point there
+fn positioned(p: view Parser, node: String, at: Int) -> String {
+  if !p.build || p.tokens.at(at).col == 0 { return node }
+  let mark = pos_of(p, at)
+  return "{node.slice(0, node.len() - 1)}{mark})"
 }
 
 fn call(p: view Parser, name: view String, args: view String) -> String {
@@ -356,7 +366,7 @@ fn after_name(p: mut Parser, name: view String) -> String {
     }
     return call(p, name, values)
   }
-  return node1("Var", name)
+  return positioned(p, node1("Var", name), start - 1)
 }
 
 fn tuple_or_group(p: mut Parser) -> String {
@@ -444,7 +454,11 @@ fn closure(p: mut Parser, moved: Bool, worker: Bool) -> String {
 
 fn primary(p: mut Parser) -> String {
   if p.failed { return String.new() }
-  if kind(p, "Num") { return node1("Int", bump(p)) }
+  if kind(p, "Num") {
+    let at = p.i
+    return positioned(p, node1("Int", bump(p)), at)
+  }
+
   if kind(p, "NumT") {
     let raw = bump(p)
     let split = raw.find(":")
@@ -457,10 +471,24 @@ fn primary(p: mut Parser) -> String {
     if p.legacy { return node1("Float", value) }
     return node2("Float", value, raw.slice(split + 1, raw.len()))
   }
-  if kind(p, "Str") { return node1("Text", bump(p)) }
-  if kind(p, "Char") { return node1("Char", bump(p)) }
-  if eat_kw(p, "true") { return String.from("Bool(true)") }
-  if eat_kw(p, "false") { return String.from("Bool(false)") }
+  if kind(p, "Str") {
+    let at = p.i
+    return positioned(p, node1("Text", bump(p)), at)
+  }
+  if kind(p, "Char") {
+    let at = p.i
+    return positioned(p, node1("Char", bump(p)), at)
+  }
+  if kw(p, "true") {
+    let at = p.i
+    p.i = p.i + 1
+    return positioned(p, String.from("Bool(true)"), at)
+  }
+  if kw(p, "false") {
+    let at = p.i
+    p.i = p.i + 1
+    return positioned(p, String.from("Bool(false)"), at)
+  }
   if eat(p, "(") { return tuple_or_group(p) }
   if eat(p, "[") { return array(p) }
   if sym(p, "|") || sym(p, "||") { return closure(p, false, false) }

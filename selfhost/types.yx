@@ -45,6 +45,7 @@ struct Types {
   deferred: List<Int>,
   defer_floor: Int,
   frozen: List<Frozen>,
+  site_span: String,
   trace: Bool,
   expressions: List<String>,
   borrowed_closures: List<Bool>,
@@ -62,8 +63,20 @@ struct Returns { expected: String, inferred: String, want: Bool, hint: String, v
 fn unknown() -> String { return String.from("?") }
 fn unit() -> String { return String.from("nothing") }
 
+// The `Pos(line,col,length)` child of node `index`, as "line:col:length" ("" when the node has none)
+fn span_of(tree: view List<ast.AstNode>, index: Int) -> String {
+  var at = index + 1
+  while at < tree.at(index).end {
+    if tree.at(at).tag == "Pos" { return "{tree.at(at + 1).tag}:{tree.at(at + 2).tag}:{tree.at(at + 3).tag}" }
+    at = tree.at(at).end
+  }
+  return String.new()
+}
+
 fn issue(types: mut Types, message: view String) {
   types.messages.push("error: {message}")
+  // where it happened: the last expression with a position that the checker finished (codegen draws it)
+  if types.site_span != "" { types.messages.push("span:{types.site_span}") }
   types.errors = types.errors + 1
 }
 
@@ -1477,6 +1490,8 @@ fn const_type(types: mut Types, tree: view List<ast.AstNode>, name: view String)
 
 fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
   let ty = infer_expr(types, tree, index, hint)
+  let here = span_of(tree, index)
+  if here != "" { types.site_span = move here }
   if !types.trace { types.expressions.set(index, String.from(ty)) }
   return ty
 }
@@ -2351,6 +2366,7 @@ fn borrows_element(types: view Types, tree: view List<ast.AstNode>, node: Int, t
 
 fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
   let tag = String.from(tree.at(index).tag)
+  types.site_span = String.new()
   if tag == "Let" {
     let initializer = ast.child(tree, index, 2)
     var ty = infer(types, tree, initializer, unknown())
@@ -2750,7 +2766,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     function_params: -1, impl_params: -1, return_type: unknown(),
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
-    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(),
+    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(),
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),

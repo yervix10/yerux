@@ -1,0 +1,6 @@
+fn label() -> String {
+  return 42
+}
+fn main() {
+  print(label())
+}

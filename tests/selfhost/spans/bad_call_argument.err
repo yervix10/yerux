@@ -1,0 +1,5 @@
+error: expected Int but this is Bool
+ --> tests/selfhost/spans/bad_call_argument.yx:3:16
+  |
+3 |   print(double(true))
+  |                ^^^^

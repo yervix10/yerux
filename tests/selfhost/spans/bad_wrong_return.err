@@ -1,0 +1,5 @@
+error: expected String but this is Int
+ --> tests/selfhost/spans/bad_wrong_return.yx:2:10
+  |
+2 |   return 42
+  |          ^^

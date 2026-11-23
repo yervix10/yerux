@@ -22,6 +22,21 @@ printf 'selfhost bootstrap: %d/%d executables rebuilt with byte-identical C and 
   "${#selfhost_stages[@]}" "${#selfhost_stages[@]}"
 
 driver="$tmp/rebuilt/yerux-self"
+# diagnostics with spans: the driver draws `-->`, the source line and the underline (expected text next to each file)
+spans=0
+for file in tests/selfhost/spans/bad_*.yx; do
+  want="${file%.yx}.err"
+  status=0
+  "$driver" "$file" -o "$tmp/span-out" >/dev/null 2>"$tmp/span.err" || status=$?
+  grep -v '^yerux-self:' "$tmp/span.err" >"$tmp/span.got" || true
+  if [[ $status == 0 ]] || ! cmp -s "$want" "$tmp/span.got"; then
+    printf 'selfhost spans: %s differs from %s (exit %s)\n' "$file" "$want" "$status" >&2
+    diff -u "$want" "$tmp/span.got" | head -n 20 >&2 || true
+    exit 1
+  fi
+  spans=$((spans + 1))
+done
+printf 'selfhost spans: %d diagnostics drawn with line, column and underline\n' "$spans"
 cp -R examples/project "$tmp/project"
 "$driver" "$tmp/project/yerux.toml"
 "$tmp/project/target/hello-project" >"$tmp/project.out"
