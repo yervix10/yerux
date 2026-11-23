@@ -1013,6 +1013,28 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
   }
   var method_owner = String.from(owner)
   if receiver >= 0 && owner.starts_with("Int<") { method_owner = String.from("Int") }
+  if receiver < 0 && !owner.contains("<") {
+    // `Atomic.new(0)`: impls for single instances (`impl Atomic<Int>`, `impl Atomic<Bool>`); the first argument picks one
+    var chosen = -1
+    var count = 0
+    for i in 0..types.signatures.len() {
+      let formal = String.from(types.signatures.at(i).owner)
+      let base = type_terms.base(formal)
+      if base == owner && formal != owner && types.signatures.at(i).name == name && types.signatures.at(i).receiver == "" &&
+          types.signatures.at(i).generics.len() == 0 && types.signatures.at(i).required_trait == "" {
+        count = count + 1
+        if chosen < 0 { chosen = i }
+        if count > 1 && child_count(tree, args) > 0 && types.signatures.at(i).args.len() > 0 {
+          let seen = infer(types, tree, args + 1, unknown())
+          if types.signatures.at(i).args.at(0).ty == seen { chosen = i }
+        }
+      }
+    }
+    if chosen >= 0 {
+      let formal = String.from(types.signatures.at(chosen).owner)
+      return call_args(types, tree, args, name, chosen, formal, receiver)
+    }
+  }
   for i in 0..types.signatures.len() {
     let formal = String.from(types.signatures.at(i).owner)
     let mode = String.from(types.signatures.at(i).receiver)
