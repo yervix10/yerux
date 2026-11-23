@@ -243,6 +243,13 @@ expected type rejection and zero mismatches. The corpus now includes five
 additional `json_edge_*` programs. (82.1% on 2026-11-21 before the
 codegen/front-end work of that day; the history is in `git log selfhost/`.)
 
+The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
+build `std.sync`. It also links the four-lane `parallel for` scheduler for
+integer ranges and lists. Parallel iterations borrow captures for reading
+and join before the enclosing code resumes. A bare `spawn move` keeps its
+handle alive until the enclosing block exits, including on an early return.
+`tests/selfhost_codegen.sh` compares these cases with the Rust C backend.
+
 `bash tests/selfhost_stage2.sh` (part of `tests/run_all.sh`) checks the
 fixpoint of the driver itself: the bootstrap stages build the compiler with
 `yerux-self --stage2` (generation 1, `--stage2 [--sources DIR] [-o DIR]` rebuilds all
@@ -256,7 +263,7 @@ The 16 current rejections, by group (first diagnostic from
 
 | Group | Programs | What is missing |
 |---|---|---|
-| Concurrency and synchronization (12) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx`, `std_sync.yx` | Raw atomics, futex and `__thread_start/__thread_wait` work (`conc_runtime`), but `prelude_threads.yx` is not linked yet: the compiler-level members `Shared.get()` and `Locked.locked_value()`, the `Shared` refcount drop and the lock-guard unlock are missing, plus unresolved local bindings in `scope` lowering and `Sender.unbounded`/`Sender.bounded`. |
+| Concurrency and synchronization (11) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx` | The remaining cases depend on linking the rest of the threads prelude, including `Shared` refcounting, lock-guard cleanup, channels and thread pools. |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
 | Compile-time (1) | `tests/comptime_arrays.yx` | Codegen receives unresolved type `?`; compile-time array evaluation is unsupported. |
 | Arrays and ownership (1) | `tests/own_deep_scc_drop.yx` | Recursive by-value struct `Dir` (`List<Dir>` inside `Dir`). (`arr_eq_show` now compiles.) |

@@ -3061,9 +3061,16 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     }
     assign_place(gen, tree, target, move saved_value)
   } else if tag == "Expr" {
+    let expr = ast.child(tree, node, 0)
+    if gen.value_target == "" && tree.at(expr).tag == "Call" && ast.name_at(tree, expr, 0).eq("__spawn_owned") &&
+        gen.checked.expressions.at(expr).starts_with("JoinHandle<") {
+      // A bare spawn owns its handle until the enclosing block exits.
+      let worker = expression(gen, tree, expr)
+      return
+    }
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
-    let value = expression(gen, tree, ast.child(tree, node, 0))
+    let value = expression(gen, tree, expr)
     if value.ty != "nothing" && gen.value_target != "" {
       let wanted = String.from(gen.value_type)
       let assigned = coerce(gen, tree, move value, wanted)
