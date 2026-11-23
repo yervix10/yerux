@@ -19,6 +19,9 @@ typedef struct ScHeapDropFrame {
 
 static _Thread_local ScHeapDropFrame *sc_heap_drop;
 
+// the Box of a payload address (`__box_address` and back)
+#define sc_box_of(address) ((ScBox)((unsigned char *)(intptr_t)(address) - offsetof(struct ScHeapCell, data)))
+
 static inline ScBox sc_box_new(size_t size, ScHeapDrop drop) {
     ScBox box = malloc(sizeof(*box) + size);
     if (!box) nx_panic("out of memory");

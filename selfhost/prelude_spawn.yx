@@ -1,0 +1,4 @@
+// What `scope`/`spawn` programs need from the prelude: the error of a worker that panicked can be shown.
+impl Show for ThreadPanic {
+  fn show(view self) -> String { return String.from("worker panicked") }
+}

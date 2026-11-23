@@ -244,11 +244,10 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-23 run matched **443 of 456 candidates (97.1%)** with zero mismatches,
-including 100 identical panics. Twelve concurrency cases remain outside the
-supported subset. The harness expects the type checker to reject
-`tests/selfhost/codegen/rejected_types.yx`. The previous run matched 441 of
-456 candidates (96.7%).
+2026-11-23 run matched **453 of 456 candidates (99.3%)**, with 100 runtime
+panics reproduced exactly, 2 candidates outside the supported subset, one
+expected type rejection and zero mismatches. The previous run matched 441 of 456 (96.7%); before it, 431
+of 447 candidates (96.4%).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
@@ -265,14 +264,12 @@ seven stages and keeps their C with `--keep-c`), generation 1 builds it again
 (`cmp`), and generation 2 still compiles and runs a program. None of this
 uses the Rust compiler after the seed.
 
-The first diagnostic for each of the 12 programs outside the supported subset
+The first diagnostic for each of the 2 programs outside the supported subset
 comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`.
 
 | Group | Programs | What is missing |
 |---|---|---|
-| Shared cells and locks (7) | `examples/concurrency.yx`; `tests/conc_parallel.yx`, `tests/conc_sharing.yx`, `tests/conc_spawn.yx`, `tests/concurrency_mutex.yx`, `tests/concurrency_rwlock.yx`, `tests/net_drop.yx` | Unresolved bindings for the remaining threads prelude, including `Shared` and lock guards. |
-| Channels (3) | `examples/concurrency_channels.yx`; `tests/concurrency_channel.yx`, `tests/thread_handles_list.yx` | Generic lowering for `Sender.bounded` and `Sender.unbounded`. |
-| Thread pools (2) | `examples/thread_pool.yx`, `tests/concurrency_thread_pool.yx` | Unresolved threads-prelude bindings for shared state and pools. |
+| Concurrency and synchronization (0) | - | (All 12 programs compile and match Rust: the driver links `prelude_sync.yx`, the channel/`Shared`/`Locked`/`Mutex`/`RwLock`/pool part of `prelude_threads.yx`, built by `selfhost/bootstrap.sh`. `Shared` drops by refcount, `LockGuard` unlocks on drop, `Locked.take` unboxes through `__locked_unbox`, `Box.from_runtime_word` and `__check_shared_content` are lowered, and `Atomic.new` picks its single-instance impl by argument type.) |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
 | JSON (0) | - | (`json_edge_*` compile: the driver links the preludes the imported modules use.) |
 | Source syntax (0) | - | (`consts_types` compiles: `[Int; geo.SIDES]` lengths are parsed as `Field(Var(geo),SIDES)`. Trait default methods work: the parser keeps the body in the trait and `ast.decode_linked` copies it into each impl that does not define it.) |
@@ -287,7 +284,7 @@ and itself without the Rust compiler (`--stage2`), and reproduces itself
 byte for byte. It builds `examples/project` and matches 441 programs in the corpus.
 Replacing the default compiler requires closing these gaps.
 
-1. the 14 programs above (concurrency is the biggest block), plus native
+1. the 2 programs above, plus native
    x86-64/aarch64/PE backends, `--check-ranges`, `yerux fmt/lsp/doctor` and
    the package manager, which exist only in the Rust binary;
 2. diagnostics: the self-hosted stages print their own messages and no spans;

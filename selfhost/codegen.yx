@@ -1316,6 +1316,13 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
       let box = expression(gen, tree, args + 1)
       return temp(gen, tree, ty, "((int64_t)(intptr_t)({box.code})->data)")
     }
+    if name == "__check_shared_content" { return temp(gen, tree, ty, String.from("0")) }
+    if name == "__locked_unbox" {
+      let lock = expression(gen, tree, args + 1)
+      let held = temp(gen, tree, lock.ty, transfer(gen, tree, lock))
+      line(gen, "sc_drop_ScBox(&{held.code}.m{hex_text("mutex")});")
+      return temp(gen, tree, ty, "sc_take_ScBox(&{held.code}.m{hex_text("value")})")
+    }
     if name == "__parallel_address" {
       let body = local_place(gen, args + 1)
       return temp(gen, tree, ty, "((int64_t)(intptr_t)&({body.code}))")
@@ -2160,6 +2167,31 @@ fn dyn_call(gen: mut Generator, tree: view List<ast.AstNode>, receiver: Int, tra
   return temp(gen, tree, ty, "(({c} (*)({c_types.join(", ")}))d{id}->table[{slot}])({values.join(", ")})")
 }
 
+fn hex_text(text: view String) -> String {
+  let digits = String.from("0123456789abcdef")
+  var out = String.new()
+  for i in 0..text.len() {
+    out.push_byte(digits.byte(text.byte(i) / 16))
+    out.push_byte(digits.byte(text.byte(i) % 16))
+  }
+  return out
+}
+
+// The place of the value inside a runtime handle: `shared.get()` (the cell's value) or `locked.locked_value()`
+// (what the lock protects).
+fn handle_value(gen: mut Generator, tree: view List<ast.AstNode>, handle: view Value, family: view String,
+    payload: view String) -> Value {
+  prepare_type(gen, tree, payload)
+  let c = c_type(gen, tree, payload)
+  if family == "Locked" {
+    return Value { ty: String.from(payload), code: "(*({c} *)(({handle.code}).m{hex_text("value")})->data)" }
+  }
+  let cell = "SharedCell<{payload}>"
+  prepare_type(gen, tree, cell)
+  let cell_c = c_type(gen, tree, cell)
+  return Value { ty: String.from(payload), code: "((*({cell_c} *)(({handle.code}).m{hex_text("cell")})->data).m{hex_text("value")})" }
+}
+
 fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
   let recv = ast.child(tree, node, 0)
   let name = ast.name_at(tree, node, 1)
@@ -2204,6 +2236,27 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
     line(gen, "free(b{id});")
     return move taken
   }
+  let family = type_terms.base(receiver_type)
+  if !is_static && !gen.user_box && (family == "Shared" || family == "Locked") && tree.at(args).end == args + 1 &&
+      ((family == "Shared" && name == "get") || (family == "Locked" && name == "locked_value")) {
+    let handle = expression(gen, tree, recv)
+    let held = type_terms.first_argument(receiver_type)
+    return handle_value(gen, tree, handle, family, held)
+  }
+  if !is_static && family == "Shared" && name != "clone" && match_method(gen, tree, receiver_type, name, true) < 0 {
+    // a Shared forwards the methods it does not have to the value it holds
+    let handle = expression(gen, tree, recv)
+    let held = type_terms.first_argument(receiver_type)
+    let cell = handle_value(gen, tree, handle, family, held)
+    gen.override_node = recv
+    gen.override_ty = String.from(held)
+    gen.override_code = String.from(cell.code)
+    let before = String.from(gen.checked.expressions.at(recv))
+    gen.checked.expressions.set(recv, String.from(held))
+    let forwarded = string_method(gen, tree, node, ty)
+    gen.checked.expressions.set(recv, move before)
+    return move forwarded
+  }
   var trait_name = type_terms.dyn_trait(receiver_type)
   if inner != "?" { trait_name = type_terms.dyn_trait(inner) }
   if !is_static && trait_name != "" { return dyn_call(gen, tree, recv, trait_name, name, args, ty) }
@@ -2243,6 +2296,12 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
     }
   }
   var method = match_method(gen, tree, receiver_type, name, !is_static)
+  let result_family = type_terms.base(ty)
+  if method < 0 && is_static && result_family == owner {
+    // `Atomic.new(0)`: the impl is for one instance (`Atomic<Int>`), which the result type names
+    receiver_type = String.from(ty)
+    method = match_method(gen, tree, receiver_type, name, false)
+  }
   if method < 0 && !is_static && name != "into_iter" && name != "next" {
     // a user iterator uses the Iter adapters through its `into_iter`: `it.map(f)` is `it.into_iter().map(f)`
     let into = match_method(gen, tree, receiver_type, "into_iter", true)
@@ -2265,6 +2324,10 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
       gen.checked.expressions.set(recv, move before)
       return move adapted
     }
+  }
+  if method < 0 && !is_static && family == "Locked" && (name == "with" || name == "with_view") {
+    let locked = find_named(tree, gen.functions, "__locked_{name}")
+    if locked >= 0 { return emit_call(gen, tree, locked, String.new(), args, recv, ty) }
   }
   if method < 0 && !is_static {
     let free = find_named(tree, gen.functions, "std__iter_{name}")
@@ -2707,6 +2770,10 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
     if owner == "Int" && (member == "from" || member == "try_from") {
       let range = ast.range_type(tree, ast.child(tree, node, 1))
       return range_conversion(gen, tree, ast.child(tree, node, 3) + 1, range, ty, -1)
+    }
+    if owner == "Box" && member == "from_runtime_word" && !gen.user_box {
+      let word = expression(gen, tree, ast.child(tree, node, 3) + 1)
+      return temp(gen, tree, ty, "sc_box_of({word.code})")
     }
     if owner == "Ptr" && member == "null" { return temp(gen, tree, ty, "(({c_type(gen, tree, ty)})0)") }
     if owner == "Ptr" && member == "alloc" {
@@ -3327,6 +3394,13 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     if tree.at(arg).tag == "_" { emit_return(gen, tree, String.from("nothing"), String.new()) }
     else {
       let expected = String.from(gen.result)
+      let produced = type_terms.substitute(gen.checked.expressions.at(arg), gen.sub)
+      if expected == "nothing" && produced == "nothing" {
+        // `return body(x)` in a generic function whose result is the unit type
+        let ignored = expression(gen, tree, arg)
+        emit_return(gen, tree, String.from("nothing"), String.new())
+        return
+      }
       if expected == "nothing" { unsupported("return value in a function without a result type") }
       let value = expression(gen, tree, arg)
       let result = coerce(gen, tree, move value, expected)
@@ -3391,6 +3465,11 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
   let sub = nominal_sub(tree, node, ty)
   let fields = ast.child(tree, node, 2)
   var drops = List<String>.new()
+  let family = type_terms.base(ty)
+  let is_shared = family == "Shared" && !gen.user_box
+  if family == "LockGuard" && !gen.user_box {
+    drops.push("if (value->m{hex_text("address")}) nx_unlock(value->m{hex_text("address")});")
+  }
   var at = fields + 1
   while at < tree.at(fields).end {
     let ty = declared_for(tree, ast.child(tree, at, 1), sub)
@@ -3399,7 +3478,11 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
     let drop = drop_fn(gen, tree, ty)
     if drop != "" {
       let name = String.from(tree.at(ast.child(tree, at, 0)).tag)
-      drops.push("{drop}(&value->m{name});")
+      let field_family = type_terms.base(ty)
+      if field_family == "Box" && is_shared && name == hex_text("cell") {
+        // the last Shared handle drops the cell: every clone points at the same box
+        drops.push("if (value->m{name}) {{ if (nx_atomic_fetch_add((int64_t)(intptr_t)value->m{name}->data, -1) == 1) sc_drop_ScBox(&value->m{name}); else value->m{name} = NULL; }}")
+      } else { drops.push("{drop}(&value->m{name});") }
     }
     at = tree.at(at).end
   }
@@ -3459,6 +3542,15 @@ fn breaks_out(tree: view List<ast.AstNode>, node: Int, nested: Bool) -> Bool {
 fn returns_value(tree: view List<ast.AstNode>, node: Int) -> Bool {
   let tag = String.from(tree.at(node).tag)
   if tag == "Return" { return tree.at(ast.child(tree, node, 0)).tag != "_" }
+  if tag == "Expr" {
+    // a call to panic never returns
+    let call = ast.child(tree, node, 0)
+    if tree.at(call).tag == "Call" {
+      let callee = ast.name_at(tree, call, 0)
+      return callee == "panic"
+    }
+    return false
+  }
   if tag == "While" {
     let condition = ast.child(tree, node, 1)
     if tree.at(condition).tag != "Bool" || tree.at(ast.child(tree, condition, 0)).tag != "true" {

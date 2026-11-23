@@ -116,7 +116,7 @@ source_ast() {
   }
   local parsed
   parsed=$(<"$tmp/ast")
-  if [[ $parsed == *',Import('* || $parsed == *',Enum('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\bparallel\b' "$1"; then
+  if [[ $parsed == *',Import('* || $parsed == *',Enum('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\bparallel\b|\b(Atomic|Shared|Locked|Mutex|RwLock|Sender|Receiver)\b|thread_pool|select2' "$1"; then
     "$tmp/rebuilt/yerux-self" --emit-ast "$1" -o "$tmp/ast" 2>"$tmp/source.err"
   fi
 }
@@ -264,4 +264,4 @@ if ((skipped > 0)); then
     printf '%4d  %s\n' "${reasons[$category]}" "$category"
   done | sort -k1,1nr -k2
 fi
-[[ $identical -ge 431 && $panics -ge 2 && $rejections == 1 && $failures == 0 ]]
+[[ $identical -ge 453 && $panics -ge 2 && $rejections == 1 && $failures == 0 ]]

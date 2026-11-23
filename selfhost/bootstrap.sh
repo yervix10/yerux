@@ -39,7 +39,9 @@ compile_selfhost() {
   cp src/c_runtime.h src/c_selfhost_*.h src/prelude_{atomic,parallel}.yx "$output/runtime/"
   cp -R src/std "$output/runtime/"
   { printf 'trait Hash { fn hash(view self) -> Int }\n'; cat src/prelude_map.yx; } >"$output/runtime/prelude_map.yx"
-  cp src/prelude_arena.yx src/prelude_iter.yx src/prelude_error.yx "$output/runtime/"
+  cp src/prelude_arena.yx src/prelude_iter.yx src/prelude_error.yx selfhost/prelude_spawn.yx "$output/runtime/"
+  # the selfhost knows JoinHandle/ThreadPanic/ThreadDone itself: link the rest (channels, Shared, locks, pool)
+  sed -n '/^\/\/ Typed MPSC queue/,$p' src/prelude_threads.yx >"$output/runtime/prelude_sync.yx"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
