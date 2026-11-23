@@ -152,17 +152,20 @@ operator. Both backends report `panic: integer overflow in negation` with
 exit status 101. In-range literal negations still participate in static
 index checking.
 
-### Open: a slice range needs a named array or list
+### Fixed: a slice range over a temporary array or List
 
 ```yx
 fn first(xs: view [Int]) -> Int { return xs[0] }
 fn main() { print(first([4, 5][0..1])) }
 ```
 
-The compiler accepts `first([4, 5])` and rejects the explicit range with
-“cannot take a slice of a temporary.” The lexer binds its fixed keyword
-array before taking a slice. Slices themselves are parameter-only, so the
-parser and evaluator pass slices through their helpers.
+Previously `[4, 5][0..1]` was rejected with "cannot take a slice of a
+temporary". Now a temporary array or List in a slice range is kept alive in a
+hidden variable for the call, the same way `first([4, 5])` already worked, so
+`make()[0..2]` and `[1, 2, 3][2..]` are accepted for `view [T]` parameters.
+`mut [T]` parameters still need a variable (e1507: the temporary would be
+modified and thrown away). Slices remain parameter-only. Test:
+`slice_temp_array`.
 
 ### Fixed: payload-free enums need no explicit equality implementation
 

@@ -1,0 +1,8 @@
+error: pass a variable here (the function borrows it)
+ --> tests/e1507_slice_temp_mut.yx:2:18
+  |
+2 | fn main() { bump([1, 2][0..1]) }
+  |                  ^^^^^^
+  = a temporary would be modified and thrown away
+
+1 error(s). Nothing was generated.

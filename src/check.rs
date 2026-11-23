@@ -2825,10 +2825,27 @@ impl<'a> Checker<'a> {
                 self.expect(t, Ty::Int, x.pos);
             }
             if !self.isp(b) {
-                self.err(diag("cannot take a slice of a temporary", b.pos).note(
-                    "help: store the array or List in a variable first, then slice the variable",
-                ));
-                return;
+                // a temporary array or List (`first([4, 5][0..1])`): it lives in a hidden variable for the call
+                if mode == Mode::Mut {
+                    self.err(
+                        diag("pass a variable here (the function borrows it)", b.pos)
+                            .note("a temporary would be modified and thrown away"),
+                    );
+                    return;
+                }
+                self.hint = Some(pty);
+                let t = self.expr(b);
+                if t == Ty::Err {
+                    return;
+                }
+                if self.types.seq_elem(t) != Some(selem) {
+                    self.err(diag(
+                        format!("expected {} but this is {}", self.tn(pty), self.tn(t)),
+                        b.pos,
+                    ).note("a slice parameter accepts an array, a List or a slice of the same element type"));
+                    return;
+                }
+                self.hoist_view_temp(b, t, before, params);
             }
             let Some(p) = self.place(b) else {
                 return;
