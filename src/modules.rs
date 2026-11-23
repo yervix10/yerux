@@ -205,9 +205,22 @@ pub fn set_overlay(files: Vec<(String, String)>) {
     *OVERLAY.lock().unwrap() = files;
 }
 
+/// Add sources (path, text) to the overlay without dropping the ones already there (module objects).
+pub fn add_overlay(files: Vec<(String, String)>) {
+    OVERLAY.lock().unwrap().extend(files);
+}
+
+fn norm(p: &str) -> &str {
+    p.trim_start_matches("./")
+}
+
+fn overlay_get(path: &str) -> Option<String> {
+    OVERLAY.lock().unwrap().iter().find(|(p, _)| norm(p) == norm(path)).map(|(_, t)| t.clone())
+}
+
 fn read_source(path: &str) -> std::io::Result<String> {
-    if let Some((_, text)) = OVERLAY.lock().unwrap().iter().find(|(p, _)| p == path) {
-        return Ok(text.clone());
+    if let Some(text) = overlay_get(path) {
+        return Ok(text);
     }
     std::fs::read_to_string(path)
 }
@@ -443,7 +456,7 @@ impl Loader {
                 } else {
                     self.root.join(&rel)
                 };
-                if !crate::stdlib::source(&dep).is_some() && !p.is_file() {
+                if !crate::stdlib::source(&dep).is_some() && !p.is_file() && overlay_get(&p.to_string_lossy()).is_none() {
                     self.trace(file, "error", &["missing-module", &dep]);
                     self.report(
                         file,
