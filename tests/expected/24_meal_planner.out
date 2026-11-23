@@ -1,0 +1,16 @@
+menu:
+  Margherita pizza  $12.50  serves 2
+  Chicken bowl  $14.95  serves 1
+  Garlic bread  $4.50  serves 4
+  Minestrone soup  $8.75  serves 2
+  skipped: bad price 'abc'
+4 dishes, subtotal via trait: $40.70
+coupon: 15% off
+subtotal:  $40.70
+discount: -$6.10
+tax 8.25%: $2.85
+total:     $37.45
+per serving (9 servings): $4.16
+fixed coupon: $7.50 off, total would be $33.20
+half-off total: $20.35
+no coupon: none
