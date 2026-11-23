@@ -2230,17 +2230,24 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
   return exits
 }
 
+fn borrows_element(types: view Types, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Bool {
+  if tree.at(node).tag != "Method" || tree.at(ast.child(tree, node, 1)).tag != "6174" { return false }
+  return owns_value(types, ty) && root_place(types, tree, node) >= 0
+}
+
 fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
   let tag = String.from(tree.at(index).tag)
   if tag == "Let" {
     let initializer = ast.child(tree, index, 2)
     var ty = infer(types, tree, initializer, unknown())
-    require_value(types, tree, initializer, ty)
+    // `let x = list.at(i)` borrows the element
+    let id = types.identities.at(index)
+    if borrows_element(types, tree, initializer, ty) { types.modes.set(id, String.from("View")) }
+    else { require_value(types, tree, initializer, ty) }
     if ty == "nothing" {
       issue(types, String.from("this expression produces no value"))
       ty = unknown()
     }
-    let id = types.identities.at(index)
     types.bindings.set(id, String.from(ty))
     if types.trace && ty != "?" {
       let name = ast.name_at(tree, index, 0)

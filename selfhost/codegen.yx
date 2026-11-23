@@ -3013,6 +3013,15 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     let place = local_place(gen, node)
     if place.ty.starts_with("Slice<") { unsupported("slice binding") }
     let value = expression(gen, tree, ast.child(tree, node, 2))
+    let id = id_at(gen, node)
+    if tree.at(ast.child(tree, node, 2)).tag == "Method" && is_place(gen, tree, ast.child(tree, node, 2)) &&
+        drop_fn(gen, tree, place.ty) != "" {
+      // `let x = list.at(i)` on an owned element: a borrowed reference
+      prepare_type(gen, tree, place.ty)
+      gen.references.set(id, true)
+      line(gen, "{c_type(gen, tree, place.ty)} *v{id} = &({value.code});")
+      return
+    }
     let init = coerce(gen, tree, move value, place.ty)
     let initial = transfer(gen, tree, init)
     declare_local(gen, tree, place.ty, place.code, initial)
