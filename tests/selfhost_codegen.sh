@@ -241,4 +241,4 @@ if ((skipped > 0)); then
     printf '%4d  %s\n' "${reasons[$category]}" "$category"
   done | sort -k1,1nr -k2
 fi
-[[ $identical -ge 223 && $panics -ge 2 && $rejections == 1 && $failures == 0 ]]
+[[ $identical -ge 431 && $panics -ge 2 && $rejections == 1 && $failures == 0 ]]

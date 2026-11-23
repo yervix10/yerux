@@ -477,6 +477,8 @@ fn primary(p: mut Parser) -> String {
     } else { worker = closure(p, true, true) }
     return "Call(5f5f737061776e5f6f776e6564,[{worker}])"
   }
+  if kw(p, "if") { return if_expr(p) }
+  if kw(p, "match") { return match_value(p) }
   if is_name(p, 0) {
     let name = ident(p)
     return after_name(p, name)
@@ -765,7 +767,35 @@ fn loop_stmt(p: mut Parser, label: view String, is_parallel: Bool) -> String {
   return "For({label},{n},{mutable},{iter},{step},{body})"
 }
 
+// `if c { .. v } else { .. w }` where a value is wanted: both branches are required.
+fn if_expr(p: mut Parser) -> String {
+  let line = p.tokens.at(p.i).line
+  p.i = p.i + 1
+  let cond = parse_expr(p)
+  let yes = block(p)
+  if !eat_kw(p, "else") {
+    if !p.failed { p.error_line = line }
+    p.failed = true
+    return String.new()
+  }
+  var no = String.new()
+  if eat_kw(p, "if") {
+    let inner = if_stmt(p)
+    no = "Block([{inner}])"
+  } else { no = block(p) }
+  return node3("IfExpr", cond, yes, no)
+}
+
+fn match_value(p: mut Parser) -> String {
+  p.i = p.i + 1
+  return match_arms(p, "MatchExpr", true)
+}
+
 fn match_stmt(p: mut Parser) -> String {
+  return match_arms(p, "Match", false)
+}
+
+fn match_arms(p: mut Parser, tag: Text, as_value: Bool) -> String {
   let mutable = eat_kw(p, "mut")
   var value = parse_expr(p)
   if mutable { value = node2("Un", String.from("6d7574"), value) }
@@ -776,13 +806,17 @@ fn match_stmt(p: mut Parser) -> String {
     var guard = missing()
     if eat_kw(p, "if") { guard = parse_expr(p) }
     expect(p, "=>")
-    let body = block(p)
+    var body = String.new()
+    if as_value && !sym(p, "{{") {
+      let value = parse_expr(p)
+      body = "Block([Expr({value})])"
+    } else { body = block(p) }
     append(arms, node3("Arm", pat, guard, body))
     let comma = eat(p, ",")
   }
   expect(p, "}}")
   finish(arms)
-  return node2("Match", value, arms)
+  return node2(tag, value, arms)
 }
 
 fn statement(p: mut Parser) -> String {

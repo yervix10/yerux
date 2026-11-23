@@ -612,31 +612,39 @@ impl Parser {
             SK::Block(b, _) => node("Scope", [block(b)]),
             SK::Unsafe(b) => node("Unsafe", [block(b)]),
             SK::Return(e) => node("Return", [optional(e.as_ref(), expr)]),
-            SK::Match(e, arms) => node(
-                "Match",
-                [
-                    expr(e),
-                    list(arms.iter().map(|a| {
-                        node(
-                            "Arm",
-                            [
-                                source_pat(a.pat.as_ref().expect("surface match pattern")),
-                                optional(a.guard.as_ref(), expr),
-                                block(&a.body),
-                            ],
-                        )
-                    })),
-                ],
-            ),
+            SK::Match(e, arms) => self.source_match("Match", e, arms),
             SK::Defer(s) => node("Defer", [self.source_stmt(s)]),
             SK::Bind(..) => unreachable!("checker-only statement"),
         }
+    }
+
+    fn source_match(&self, tag: &str, e: &Expr, arms: &[Arm]) -> String {
+        node(
+            tag,
+            [
+                self.source_expr(e),
+                list(arms.iter().map(|a| {
+                    node(
+                        "Arm",
+                        [
+                            source_pat(a.pat.as_ref().expect("surface match pattern")),
+                            optional(a.guard.as_ref(), |g| self.source_expr(g)),
+                            self.source_block(&a.body),
+                        ],
+                    )
+                })),
+            ],
+        )
     }
 
     fn source_expr(&self, e: &Expr) -> String {
         let expr = |x: &Expr| self.source_expr(x);
         let args = |items: &[Expr]| list(items.iter().map(expr));
         match &e.k {
+            EK::IfExpr(c, yes, no) => {
+                node("IfExpr", [expr(c), self.source_block(yes), self.source_block(no)])
+            }
+            EK::MatchExpr(x, arms) => self.source_match("MatchExpr", x, arms),
             EK::Ascribe(x) => node("Ascribe", [self.source_ty_text(e.ty), expr(x)]),
             EK::AsElse(x, b) => node(
                 "Cast",

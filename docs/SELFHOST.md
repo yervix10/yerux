@@ -22,6 +22,13 @@ Expression parsing handles precedence, calls, fields, indexing, slicing,
 struct literals and casts. The original unpositioned fragment input remains
 available alongside `yerux ast-expr` and `yerux ast-stmt`.
 
+`if` and `match` also parse where a value is wanted (`let x = if c { a } else
+{ b }`, `return match v { P => e, .. }`, as an operand). They give `IfExpr(cond,
+Block, Block)` and `MatchExpr(value, [Arm])`; a bare expression after `=>` is
+wrapped as `Block([Expr(e)])`, an `else if` becomes `Block([If(..)])`, and an
+`if` used as a value without `else` is a syntax rejection on the `if` line. The
+Rust source dump (`ast-file`, `locals-file`) emits the same nodes.
+
 `yerux ast-file file.yx` emits the Rust comparison AST for one source file.
 It reuses the compiler's expression, statement, block and pattern parser.
 Source mode preserves declarations, imports, type spellings and named array
@@ -144,6 +151,15 @@ handles sized integer arithmetic and comparisons, string interpolation
 of scalar and text values, moves, `view` and `mut` parameters, field
 replacement, and scope cleanup.
 
+A value `if`/`match` is checked like the statement form: the last line of each
+branch is its value (`Returns.want`), the first branch fixes the type and the
+others must match, branches that exit (`return`, `panic`, `break`) give none,
+and moves join as for `if`. Codegen declares a zero-initialised temporary
+with the type's drop, assigns each branch's last line to it
+(`gen.value_target`) and uses it as the expression's value. `let x = l.at(i)`
+on an owned element borrows it (the binding is `View` and lowers to a pointer
+into the list), as the Rust checker does; for `Copy` elements it still copies.
+
 Function values use the same code and environment representation as the
 Rust C backend. Stored closures copy Copy captures and take ownership of
 moved captures. A closure passed directly to a `view fn` or `mut fn`
@@ -221,8 +237,8 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-22 run matched **402 of 430 candidates (93.5%)**, with 100 runtime
-panics reproduced exactly, 16 candidates outside the supported subset, one
+2026-11-22 run matched **431 of 447 candidates (96.4%)**, with 100 runtime
+panics reproduced exactly, 15 candidates outside the supported subset, one
 expected type rejection and zero mismatches. The corpus now includes five
 additional `json_edge_*` programs. (82.1% on 2026-11-21 before the
 codegen/front-end work of that day; the history is in `git log selfhost/`.)

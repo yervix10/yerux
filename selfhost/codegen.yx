@@ -57,6 +57,8 @@ struct Generator {
   override_ty: String,
   override_code: String,
   no_args: Bool,
+  value_target: String,
+  value_type: String,
 }
 
 fn unsupported(message: view String) {
@@ -2340,6 +2342,22 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
   }
   let tag = String.from(tree.at(node).tag)
   let ty = type_terms.substitute(gen.checked.expressions.at(node), gen.sub)
+  if tag == "IfExpr" || tag == "MatchExpr" {
+    if ty == "?" || ty == "nothing" { unsupported("value of {tag}") }
+    prepare_type(gen, tree, ty)
+    let id = gen.temp
+    gen.temp = id + 1
+    let name = "t{id}"
+    declare_local(gen, tree, ty, name, "({c_type(gen, tree, ty)}){{0}}")
+    let saved_target = String.from(gen.value_target)
+    let saved_type = String.from(gen.value_type)
+    gen.value_target = String.from(name)
+    gen.value_type = String.from(ty)
+    statement(gen, tree, node)
+    gen.value_target = move saved_target
+    gen.value_type = move saved_type
+    return Value { ty: String.from(ty), code: move name }
+  }
   if tag == "Var" {
     if gen.locals.identities.at(node) < 0 {
       let name = ast.name_at(tree, node, 0)
@@ -2946,20 +2964,37 @@ fn assign_tuple(gen: mut Generator, tree: view List<ast.AstNode>, target: Int, w
   }
 }
 
+// While `gen.value_target` is set, the last line of a branch is assigned to it (an `if`/`match` used as a value).
 fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
+  let target = String.from(gen.value_target)
+  if target != "" {
+    let tag = String.from(tree.at(node).tag)
+    if tag != "Block" && tag != "[" && tag != "If" && tag != "IfExpr" && tag != "Match" && tag != "MatchExpr" && tag != "Expr" {
+      gen.value_target = String.new()
+    }
+  }
+  lower_statement(gen, tree, node)
+  gen.value_target = move target
+}
+
+fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
   let tag = String.from(tree.at(node).tag)
   if tag == "Block" || tag == "[" || tag == "Scope" || tag == "Unsafe" {
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
     let deferred = gen.deferred.len()
+    let tail = String.from(gen.value_target)
     var at = node + 1
     while at < tree.at(node).end {
+      if tree.at(at).end == tree.at(node).end { gen.value_target = String.from(tail) }
+      else { gen.value_target = String.new() }
       statement(gen, tree, at)
       // the type stage does not look at code after a statement that always exits
       let tag = String.from(tree.at(at).tag)
       if tag == "Return" || tag == "Break" || tag == "Continue" || returns_value(tree, at) { break }
       at = tree.at(at).end
     }
+    gen.value_target = String.from(tail)
     emit_defers(gen, tree, deferred)
     while gen.deferred.len() > deferred { let unused = gen.deferred.pop() }
     gen.indent = gen.indent - 1
@@ -2978,6 +3013,16 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     let place = local_place(gen, node)
     if place.ty.starts_with("Slice<") { unsupported("slice binding") }
     let value = expression(gen, tree, ast.child(tree, node, 2))
+    let id = id_at(gen, node)
+    let borrowed_drop = drop_fn(gen, tree, place.ty)
+    if tree.at(ast.child(tree, node, 2)).tag == "Method" && is_place(gen, tree, ast.child(tree, node, 2)) &&
+        borrowed_drop != "" {
+      // `let x = list.at(i)` on an owned element: a borrowed reference
+      prepare_type(gen, tree, place.ty)
+      gen.references.set(id, true)
+      line(gen, "{c_type(gen, tree, place.ty)} *v{id} = &({value.code});")
+      return
+    }
     let init = coerce(gen, tree, move value, place.ty)
     let initial = transfer(gen, tree, init)
     declare_local(gen, tree, place.ty, place.code, initial)
@@ -3006,7 +3051,12 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
     let value = expression(gen, tree, ast.child(tree, node, 0))
-    if value.ty != "nothing" { line(gen, "(void)({value.code});") }
+    if value.ty != "nothing" && gen.value_target != "" {
+      let wanted = String.from(gen.value_type)
+      let assigned = coerce(gen, tree, move value, wanted)
+      let moved = transfer(gen, tree, assigned)
+      line(gen, "{gen.value_target} = {moved};")
+    } else if value.ty != "nothing" { line(gen, "(void)({value.code});") }
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
   } else if tag == "Return" {
@@ -3019,7 +3069,7 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
       let result = coerce(gen, tree, move value, expected)
       emit_return(gen, tree, expected, transfer(gen, tree, result))
     }
-  } else if tag == "If" {
+  } else if tag == "If" || tag == "IfExpr" {
     let condition = expression(gen, tree, ast.child(tree, node, 0))
     if condition.ty != "Bool" { unsupported("if condition type") }
     line(gen, "if ({condition.code})")
@@ -3032,7 +3082,7 @@ fn statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) {
       gen.indent = gen.indent - 1
       line(gen, String.from("}}"))
     }
-  } else if tag == "Match" {
+  } else if tag == "Match" || tag == "MatchExpr" {
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
     emit_match(gen, tree, node)
@@ -3467,7 +3517,7 @@ fn main() {
         function_values: List<Int>.new(), closure_envs: List<Int>.new(), wrappers: String.new(),
         references: List<Bool>.new(), out: String.new(),
         indent: 0, temp: 0, loops: List<Loop>.new(), deferred: List<Int>.new(), result: String.new(),
-        worker_cleanup: false, user_box: false, at_file: String.new(), user_lines: 0, locs: List<Int>.new(), last_line: 0, slice_node: -1, site: 0, override_node: -1, override_ty: String.new(), override_code: String.new(), no_args: false,
+        worker_cleanup: false, user_box: false, at_file: String.new(), user_lines: 0, locs: List<Int>.new(), last_line: 0, slice_node: -1, site: 0, override_node: -1, override_ty: String.new(), override_code: String.new(), no_args: false, value_target: String.new(), value_type: String.new(),
       }
       for i in 0..gen.locals.bindings.len() { gen.references.push(false) }
       if args.len() == 4 {
