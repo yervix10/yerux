@@ -1399,7 +1399,24 @@ impl<'a> Checker<'a> {
                             _ => false,
                         };
                         if tuple {
-                            d.note("help: take the whole tuple apart instead: `let (a, b) = move t` (each name then owns its element), or borrow the element (call a method on it, or pass it to a `view`/`mut` parameter)")
+                            // name the real variable and its arity: `let (x0, x1) = move pair`
+                            let whole = match &e.k {
+                                EK::Field(b, _) if matches!(b.k, EK::Var(..)) => {
+                                    let arity = self.tuple_elems(b.ty).map_or(0, |v| v.len());
+                                    (arity > 0).then(|| (place_str(b), arity))
+                                }
+                                _ => None,
+                            };
+                            match whole {
+                                Some((v, n)) => {
+                                    let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+                                    d.note(format!(
+                                        "help: take the tuple apart instead: `let ({}) = move {}` (each name then owns its element)",
+                                        names.join(", "), v
+                                    ))
+                                }
+                                None => d.note("help: take the whole tuple apart instead: `let (a, b) = move t` (each name then owns its element), or borrow the element (call a method on it, or pass it to a `view`/`mut` parameter)"),
+                            }
                         } else {
                             d.note("help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct")
                         }

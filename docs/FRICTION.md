@@ -340,9 +340,10 @@ the first one outside any nested literal (inside a nested literal braces still f
 
 ### Still open
 
-- **A pair out of an `Option<(A, B)>` pattern is not movable field by field** (`let want = pair.0` fails with "cannot
-  move 'pair._0' out of its struct"); `let (want, name) = move pair` works but the error text names the internal
-  field `_0` and does not suggest it.
+- **A pair out of an `Option<(A, B)>` pattern is not movable field by field**: `let want = pair.0` still fails (its
+  error now names `pair.0` and suggests `let (x0, x1) = move pair`, test `e1508_tuple_field_in_option`). Work around it
+  with `match move o { Some(pair) => { let (want, name) = move pair } .. }` (test `match_move_option_tuple`): a plain
+  `match o` binds `pair` as a borrow, so `move pair` is refused ("only borrows").
 - **Closures cannot be passed where a named function would do without a signature**: `each_file(files, sha_line)`
   needs `sha_line` declared with exactly `view String` parameters, and the nested-quote limitation made inline
   closures with interpolation impractical until the fix above.

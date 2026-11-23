@@ -1,0 +1,12 @@
+// `match move o` hands the payload to the binding, so the tuple inside an Option can be taken apart.
+fn main() {
+  let o: Option<(String, Int)> = Option.Some((String.from("a"), 2))
+  match move o {
+    Some(pair) => {
+      let (want, n) = move pair
+      print(want)
+      print(n)
+    }
+    None => {}
+  }
+}
