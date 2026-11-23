@@ -18,6 +18,7 @@ mod layout;
 mod loopopt;
 mod lsp;
 mod memopt;
+mod modobj;
 mod modules;
 mod numeric;
 mod opt;
@@ -245,7 +246,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--obj mod.yxo] [--no-opt] [--native-debug-alloc]
        yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
@@ -528,6 +529,19 @@ fn real_main() {
     if args.len() >= 2 && args[1] == "doc" {
         exit(doc::run_cli(&args[2..]));
     }
+    if args.len() >= 2 && args[1] == "obj" {
+        if args.len() >= 4 && args[2] == "build" {
+            // a module is only packed once it type-checks
+            // (a library module has no `main`: that is the only error that does not count)
+            if let Err(msgs) = checked_frontend(&args[3], modules::Mode::Normal) {
+                let real: Vec<String> = msgs.into_iter().filter(|m| !m.starts_with("error: missing `fn main()`")).collect();
+                if !real.is_empty() {
+                    report_errors(&real);
+                }
+            }
+        }
+        exit(modobj::run_cli(&args[2..]));
+    }
     if args.len() >= 2 && args[1] == "bench" {
         exit(bench::run_cli(&args[2..]));
     }
@@ -542,6 +556,11 @@ fn real_main() {
     if let Err(e) = fs::metadata(file) {
         eprintln!("could not read {}: {}", file, e);
         exit(2);
+    }
+    let objs: Vec<String> = args.windows(2).filter(|w| w[0] == "--obj").map(|w| w[1].clone()).collect();
+    if let Err(e) = modobj::install(&objs, file) {
+        eprintln!("error: {e}");
+        exit(1);
     }
     let (prog, sigs, source_files) = match frontend(file, modules::Mode::Normal) {
         Ok(x) => x,

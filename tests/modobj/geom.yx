@@ -1,0 +1,5 @@
+import util
+
+pub fn area(w: i64, h: i64) -> i64 {
+    return util.twice(w * h) / 2
+}

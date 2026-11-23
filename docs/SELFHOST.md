@@ -168,6 +168,10 @@ captured closures through a worklist, including long chains of environments.
 
 `Box<T>` supports borrowed access through `get()` and `*box`, ownership
 transfer through `take()`, and iterative drop for recursive boxes.
+Lists can contain recursive structs and enums. A shared worklist releases
+cycles that pass through list buffers and ordinary struct or enum fields,
+including cycles with boxes. Drop and `clear()` follow the seed compiler's
+destructor order.
 `Box<dyn Trait>` dispatches through a table for each concrete type and
 trait. Worker closures move their captures and return results through
 `join()`. Recoverable worker panics drop live owned values before
@@ -175,7 +179,10 @@ trait. Worker closures move their captures and return results through
 
 `resolve --link AST_ROOT ENTRY.yx` combines cached source ASTs, validates
 imports and visibility, and gives declarations unique module names before
-type checking. The linked compiler builds `std.path` from source. Bootstrap
+type checking. The source driver supplies implicit `Equal` for non-generic
+enums with plain, payload-free variants, including enums in imported modules.
+An explicit `Equal` implementation or derive takes precedence.
+The linked compiler builds `std.path` from source. Bootstrap
 bindings in the C runtime provide the command-line, file, standard-stream,
 and subprocess operations used by the stages from `std.env`, `std.fs`,
 `std.io`, and `std.process`. Other standard modules can be linked from source
@@ -264,8 +271,6 @@ comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.
 |---|---|---|
 | Concurrency and synchronization (0) | - | (All 12 programs compile and match Rust: the driver links `prelude_sync.yx`, the channel/`Shared`/`Locked`/`Mutex`/`RwLock`/pool part of `prelude_threads.yx`, built by `selfhost/bootstrap.sh`. `Shared` drops by refcount, `LockGuard` unlocks on drop, `Locked.take` unboxes through `__locked_unbox`, `Box.from_runtime_word` and `__check_shared_content` are lowered, and `Atomic.new` picks its single-instance impl by argument type.) |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
-| Enum equality (1) | `tests/enum_implicit_equal.yx` | The checker lacks implicit `Equal` for payload-free enums. |
-| Arrays and ownership (1) | `tests/own_deep_scc_drop.yx` | Recursive by-value struct `Dir` (`List<Dir>` inside `Dir`). (`arr_eq_show` now compiles.) |
 | JSON (0) | - | (`json_edge_*` compile: the driver links the preludes the imported modules use.) |
 | Source syntax (0) | - | (`consts_types` compiles: `[Int; geo.SIDES]` lengths are parsed as `Field(Var(geo),SIDES)`. Trait default methods work: the parser keeps the body in the trait and `ast.decode_linked` copies it into each impl that does not define it.) |
 
