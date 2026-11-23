@@ -1,0 +1,27 @@
+// collections.map_with reads an owned map value through a borrow: no entry index, no -1 check.
+import std.collections
+
+struct Item { name: String, qty: Int }
+
+fn main() {
+  var m = Map<String, String>.new()
+  m.insert(String.from("a"), String.from("xy"))
+  var items = Map<Int, Item>.new()
+  items.insert(7, Item { name: String.from("nut"), qty: 3 })
+  let a = String.from("a")
+  let missing = String.from("zz")
+  let n = collections.map_with(m, a, |v: view String| -> Int { return v.len() })
+  print(n.unwrap())
+  print(collections.map_with(m, missing, |v: view String| -> Int { return v.len() }).is_none())
+  let copy = collections.map_with(m, a, |v: view String| -> String { return String.from(v) })
+  print(copy.unwrap())
+  // the closure sees the value by borrow: the map still owns it afterwards
+  print(collections.map_with(m, a, |v: view String| -> Bool { return v == "xy" }).unwrap())
+  print(m.take(a))
+  print(m.len())
+  let q = collections.map_with(items, 7, |it: view Item| -> Int { return it.qty * 2 })
+  print(q.unwrap())
+  let label = collections.map_with(items, 7, |it: view Item| -> String { return String.from(it.name) })
+  print(label.unwrap())
+  print(collections.map_with(items, 8, |it: view Item| -> Int { return it.qty }).unwrap_or(-1))
+}

@@ -4552,7 +4552,8 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
         .iter()
         .any(|t| matches!(&t.t, Tok::Id(k) if k == "derive"));
     let auto = auto_into_iter(&user);
-    if !has_derive && auto.is_empty() {
+    let auto_eq = auto_enum_equal(&user);
+    if !has_derive && auto.is_empty() && auto_eq.is_empty() {
         return user;
     }
     // definitions: name -> (is_struct, generic, body tokens between the braces)
@@ -4622,6 +4623,9 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
     let mut gen = String::new();
     let mut at = user.first().map(|t| t.pos).unwrap_or_default();
     gen.push_str(&auto);
+    for n in &auto_eq {
+        gen.push_str(&derive_impl("Equal", n, defs.get(n), gens.get(n), &parts));
+    }
     let mut depth = 0i32;
     let mut i = 0;
     while i < user.len() {
@@ -4677,6 +4681,78 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
     }
     out.extend(eof);
     out
+}
+
+/// Non-generic enums whose variants carry no payload are `Equal` without a `derive` line: `==` / `!=` just
+/// work on them. An enum with a hand-written `impl Equal for E` or a `derive .., Equal, .. for E` keeps it.
+fn auto_enum_equal(user: &[Token]) -> Vec<String> {
+    let mut have: Vec<String> = vec![];
+    let mut cands: Vec<String> = vec![];
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < user.len() {
+        match &user[i].t {
+            Tok::Sym("{") => depth += 1,
+            Tok::Sym("}") => depth -= 1,
+            Tok::Id(k) if depth == 0 && k == "impl" => {
+                if matches!(user.get(i + 1).map(|t| &t.t), Some(Tok::Id(t)) if t == "Equal")
+                    && matches!(user.get(i + 2).map(|t| &t.t), Some(Tok::Id(f)) if f == "for")
+                {
+                    if let Some(Tok::Id(n)) = user.get(i + 3).map(|t| &t.t) {
+                        have.push(n.clone());
+                    }
+                }
+            }
+            Tok::Id(k) if depth == 0 && k == "derive" => {
+                let mut j = i + 1;
+                let mut eq = false;
+                while let Some(Tok::Id(t)) = user.get(j).map(|t| &t.t) {
+                    if t == "for" {
+                        break;
+                    }
+                    eq |= t == "Equal";
+                    j += 1;
+                    if user.get(j).map(|t| &t.t) == Some(&Tok::Sym(",")) {
+                        j += 1;
+                    }
+                }
+                if eq {
+                    if let Some(Tok::Id(n)) = user.get(j + 1).map(|t| &t.t) {
+                        have.push(n.clone());
+                    }
+                }
+            }
+            Tok::Id(k) if depth == 0 && k == "enum" => {
+                if let (Some(Tok::Id(n)), Some(Tok::Sym("{"))) =
+                    (user.get(i + 1).map(|t| &t.t), user.get(i + 2).map(|t| &t.t))
+                {
+                    let (mut d, mut j, mut variants, mut payload) = (0i32, i + 2, 0, false);
+                    while j < user.len() {
+                        match &user[j].t {
+                            Tok::Sym("{") => d += 1,
+                            Tok::Sym("}") => d -= 1,
+                            Tok::Sym("(") => payload = true,
+                            Tok::Id(_) if d == 1 && matches!(user[j - 1].t, Tok::Sym("{") | Tok::Sym(",")) => variants += 1,
+                            _ => {}
+                        }
+                        if d == 0 {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    if variants > 0 && !payload {
+                        cands.push(n.clone());
+                    }
+                    // the body was scanned: continue after it (depth stays 0)
+                    i = j;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    cands.retain(|n| !have.contains(n));
+    cands
 }
 
 fn derive_impl(

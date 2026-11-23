@@ -1335,8 +1335,15 @@ impl<'a> Checker<'a> {
         // `a == b`, `a < b` on a type that implements Equal / Ordered
         if let EK::Bin(op, a, _) = &e.k {
             // a Text literal on the left (`"abc" < s`) is compared like a Text variable
+            // a payload-free enum variant on the left (`Kind.End == k`) compares like an enum variable
             let lit = if matches!(a.k, EK::Text(_)) {
                 Some(Ty::Text)
+            } else if let EK::Variant { eid, args, .. } = &a.k {
+                if args.is_empty()  {
+                    Some(Ty::Enum(*eid))
+                } else {
+                    None
+                }
             } else {
                 None
             };

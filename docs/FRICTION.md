@@ -67,12 +67,14 @@ with the bootstrap compiler on clone/inference errors for this generic derive.
 The failing fixture also exercises cloning a generic enum payload containing
 the cloned struct. This repro is recorded for the selfhost compiler work.
 
-### Owned map lookups require an index and access to a storage field
+### Fixed: owned map lookups no longer need an index or a storage field
 
-The map repro above also illustrates the API gap. A caller that needs to read
-an owned value without removing it uses `find` and checks for `-1` before
-borrowing `vals.at(i)`. A lookup that supplies a read-only value to a callback
-could express this without returning a borrow or exposing the storage field.
+A caller that needed to read an owned value without removing it used `find`
+and checked for `-1` before borrowing `vals.at(i)`. Now
+`collections.map_with(m, k, f)` returns `Option<R>`: `f` receives the value by
+`view` and its result is wrapped in `Some`, or `None` when the key is missing.
+The map keeps the value. `Option<view V>` itself is not expressible, so the
+borrow stays inside the callback. Test: `std_map_with`.
 
 ### Built-in string borrows require a named place
 
@@ -162,7 +164,7 @@ The compiler accepts `first([4, 5])` and rejects the explicit range with
 array before taking a slice. Slices themselves are parameter-only, so the
 parser and evaluator pass slices through their helpers.
 
-### Open: Copy enums still need an explicit equality implementation
+### Fixed: payload-free enums need no explicit equality implementation
 
 ```yx
 enum Kind { Word, End }
@@ -173,8 +175,12 @@ fn main() {
 }
 ```
 
-The compiler asks for an `Equal` implementation even for a payload-free
-enum. The tokenizer compares its token kinds with an explicit pair match.
+Previously the compiler asked for an `Equal` implementation even for a
+payload-free enum. Now a non-generic enum whose variants carry no payload is
+`Equal` implicitly: `==` and `!=` work on variables, fields, list elements and
+variant literals (`Kind.End == k`). A hand-written `impl Equal for E` or a
+`derive Equal for E` line still wins. Enums with a payload keep requiring an
+`Equal` implementation (`yerux check` error e1506). Test: `enum_implicit_equal`.
 
 ### Open: whole-file reads have no size argument
 
