@@ -30,11 +30,11 @@ graph.
 |---|---|---|---|---|---|
 | **M1** | Native backend foundations | x86-64 Linux native backend, register allocation, structs/enums/match, borrows, allocator and drop glue are implemented. AArch64 Linux core IR and Windows PE support are present with documented limitations. C remains the default backend and test oracle. | substantially complete | — | See `BACKEND.md` for supported features and target-specific gaps. |
 | **M2** | Systems types and language core | Sized integers, `Float`/`Float32`, `Ptr<T>` construction, `String`, generic `List<T>`, `Option`/`Result`/`?`, modules, formatting, ranges, compile-time evaluation, fixed-size arrays `[T; N]` and second-class slices `view [T]`/`mut [T]` are implemented (docs/ARRAYS.md: owned elements, `==`/`print`, `const` items, `const N: Int` parameters, chunks/windows/split_at, arrays in comptime). | substantially complete | — | See `SPEC.md` and `docs/STDLIB.md`. |
-| **M3** | Stdlib core + FFI | `std.io` has an implemented first slice, extended by `std.fs` (directories, metadata), `std.env` and the clocks/calendar of `std.time` (Linux x86-64 native + C backend), then by file handles (explicit close), binary/buffered I/O, links, `env.set` and `time.Duration` (docs/STDLIB_SYSTEM.md), and `std.process` (docs/STDLIB_PROCESS.md). C FFI works through the C backend and Linux x86-64 native path; dynamic ELF loading is implemented for that native path. `std.net` provides blocking TCP sockets (docs/NET.md) and `std.http` a small HTTP/1.1 client; also `std.log`, `std.kv`, `std.compress` (run-length), `std.unicode`, `std.sync`, and the text/encoding/regex/csv/toml/hash/sort/iter/collections modules (docs/STDLIB.md). The broader syscall, polling and capability design remains future work. | partial | — | See `docs/STDLIB_IO.md` and `docs/FFI.md`. |
+| **M3** | Stdlib core + FFI | `std.io` has an implemented first slice, extended by `std.fs` (directories, metadata), `std.env` and the clocks/calendar of `std.time` (Linux x86-64 native + C backend), then by file handles (explicit close), binary/buffered I/O, links, `env.set` and `time.Duration` (docs/STDLIB_SYSTEM.md), and `std.process` (docs/STDLIB_PROCESS.md). C FFI works through the C backend and Linux x86-64 native path; dynamic ELF loading is implemented for that native path. `std.net` provides TCP sockets with configurable timeouts and endpoint queries (docs/NET.md) and `std.http` a small HTTP/1.1 client; also `std.log`, `std.kv`, `std.compress` (run-length), `std.unicode`, `std.sync`, and the text/encoding/regex/csv/toml/hash/sort/iter/collections modules (docs/STDLIB.md). The broader syscall, polling and capability design remains future work. | partial | — | See `docs/STDLIB_IO.md` and `docs/FFI.md`. |
 | **M4** | Window + pixels (Linux) | Wayland client from scratch, memfd+shm, xdg-shell, events; first CPU fill; headless Weston CI + golden images | M3 (sockets only; no FFI needed) | 3-5 | Solid-colour window, closes cleanly |
 | **M5** | Text and first widgets | Closures and function values (done); interfaces/traits with dynamic dispatch (done: `Box<dyn Trait>`); TTF reader, outline rasterizer, glyph cache; display list; pointer/keyboard input; box-constraint layout core; "counter" app | M4, language work | 6-9 | Line of text and clickable button (Linux Wayland, CPU) |
 | **M6** | Framework core + X11 | Element/render tree, rebuild/state model (decision on diff vs signals), gestures, focus, scroll, animation ticker/vsync; X11 backend; hot restart | M5 | 8-12 | Todo-list app with text field (Latin) runs on Wayland and X11 |
-| **M7** | Self-hosting and tooling | Compiler rewritten in Yerux (partial: `selfhost/`, a bootstrap of the front end and C emitter for the subset the stages use); formatter (done, `yerux fmt` + a self-hosted copy identical on the whole corpus); LSP (done, `yerux lsp` + VS Code extension); package manager (basic: `yerux.toml`, path/git dependencies, `yerux.lock`); DWARF/debug info; object format for modules; disassembler for encoder tests (done: `tests/disasm_check.sh`); fuzzing (done: `tests/fuzz*.py`) | M2-M5 (can run in parallel with M5-M6) | 10-14 | Compiler builds itself; incremental builds |
+| **M7** | Self-hosting and tooling | Compiler rewritten in Yerux (partial: `selfhost/`, a bootstrap of the front end and C emitter for the subset the stages use); formatter (done, `yerux fmt` + a self-hosted copy identical on the whole corpus); LSP (done, `yerux lsp` + VS Code extension); package manager (basic: `yerux.toml`, path/git dependencies, `yerux.lock`); DWARF/debug info (done: x86-64 native `--dwarf`, line tables, frame unwinding, parameters and locals for gdb); object format for modules; disassembler for encoder tests (done: `tests/disasm_check.sh`); fuzzing (done: `tests/fuzz*.py`) | M2-M5 (can run in parallel with M5-M6) | 10-14 | Compiler builds itself; incremental builds |
 | **M8** | GPU | Vulkan RHI via `dlopen`, shader IR + SPIR-V, SDF primitive renderer, tessellated paths, glyph atlas, layer compositor, partial present; CPU renderer kept as fallback | M6, FFI F2, M7 helpful | 10-14 | Same demo at 60-120 fps on GPU, identical output within tolerance |
 | **M9** | Second OS: Windows | PE writer (imports, `.pdata`), Win64 convention + probes, callbacks, Win32 window, IME (TSF), DPI, Vulkan on Windows | M3 (F0-F3), M8 | 8-12 | Demo + text field on Windows |
 | **M10** | World text, IME, accessibility | Shaping engine (GSUB/GPOS, Arabic, Hebrew, bidi), CJK + emoji/color fonts, hyphenation, Wayland text-input-v3 IME, AT-SPI and UIA trees, selection/caret everywhere | M6, M9 | 15-25 | RTL and CJK editing; screen reader reads buttons and fields |
@@ -56,13 +56,13 @@ expensive milestones and are at zero.
 | M4 | 0 / 6 | 0 | no Wayland, shm, xdg-shell, windowing code in the repository (RENDERING.md is design only) |
 | M5 | 2 / 9 | 22 | closures and `Box<dyn Trait>` exist; no TTF reader, rasterizer, glyph cache, display list, input or layout |
 | M6 | 0 / 8 | 0 | SIGNALS.md is a design document |
-| M7 | 5.5 / 8 | 69 | formatter, LSP, package manager (basic), disassembler check, fuzzing done; self-hosting partial (0.5, see below); no DWARF, no module object format |
+| M7 | 6.5 / 8 | 81 | formatter, LSP, package manager (basic), disassembler check, fuzzing done; self-hosting partial (0.5, 431/447 candidates, see below); DWARF debug info done (`--native --dwarf`: line tables, stack unwinding, locals/params in gdb); missing: module object format |
 | M8 | 0 / 7 | 0 | |
 | M9 | 1.5 / 7 | 21 | PE writer (0.5: no `.pdata`, fixed base, console only) and Win64 calling convention at the OS boundary; no callbacks, Win32 window, IME, DPI, Vulkan |
 | M10 | 0 / 6 | 0 | `std.unicode` is a small helper set, not a shaping engine |
 | M11 | 0 / 6 | 0 | `std.compress` is run-length encoding, not an image codec |
 | M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, no OS services); nothing else |
-| **All** | **42.5 / 100** | **42.5** | |
+| **All** | **43.5 / 100** | **43.5** | |
 
 ### Numbers behind the table
 
@@ -70,10 +70,10 @@ Taken from the repository at the time of writing (re-measure with the commands s
 
 | Measure | Value | How |
 |---|---|---|
-| Rust compiler and tools | 39,801 lines in `src/` (`*.rs`, `syntax/`, `lsp/`) | `cat src/*.rs src/syntax/*.rs src/lsp/*.rs \| wc -l` |
-| Library written in Yerux | prelude 3,559 lines; 27 `std.*` modules, 7,147 lines | `src/prelude*.yx`, `src/std/*.yx` |
-| Self-hosted compiler | 7,553 lines in 12 files (`selfhost/`) | `cat selfhost/*.yx \| wc -l` |
-| Test programs | 536 `tests/*.yx`, 54 `examples/*.yx`, 597 goldens, 34 scripts, 16 fuzzers/checkers in Python | `ls` |
+| Rust compiler and tools | 43,866 lines in `src/` (`*.rs`, `syntax/`, `lsp/`) | `cat src/*.rs src/syntax/*.rs src/lsp/*.rs \| wc -l` |
+| Library written in Yerux | prelude 3,605 lines; 27 `std.*` modules, 7,781 lines | `src/prelude*.yx`, `src/std/*.yx` |
+| Self-hosted compiler | 10,021 lines in 11 files (`selfhost/`) | `cat selfhost/*.yx \| wc -l` |
+| Test programs | 594 `tests/*.yx`, 63 `examples/*.yx`, 1,182 expected outputs, 45 scripts, 12 fuzzers/checkers in Python | `ls` |
 | Doc-tests | every `yerux` block of the book, GUIDE.md and STDLIB.md | `bash tests/doctests.sh` |
 
 Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `tests/selfhost_*.sh`:
@@ -87,10 +87,10 @@ Self-hosting parity, measured on every Git-tracked `.yx` file (801 files) by `te
 | formatter | identical to `yerux fmt` on the whole dirty corpus, idempotent |
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
-The self-hosted code generator matches the Rust C backend on **395 of 418
-candidate programs (94.5%)** (2026-11-22; 82.1% the day before), with 100 runtime
-panics reproduced exactly, 22 candidates outside the supported subset, one
-expected rejection and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
+The self-hosted code generator matches the Rust C backend on **431 of 447
+candidate programs (96.4%)** (2026-11-22; 82.1% on 2026-11-21), with 100 runtime
+panics reproduced exactly, 15 candidates outside the supported subset, one
+expected type rejection and **zero mismatches**. `tests/selfhost_stage2.sh` verifies the
 fixpoint: the stages built by the driver rebuild themselves and generation 1
 and 2 emit byte-identical C. What is left before it can be called
 self-hosted (details and the list of the 31 programs in

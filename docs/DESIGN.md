@@ -6,9 +6,10 @@ Status: living document. Decisions made with the project owner (Yerson Vizcaino)
 | Area | Decision |
 |---|---|
 | Name / extension | Yerux / `.yx`; keywords, identifiers and messages in English **[decided]** |
-| Backend | Own machine-code backend (x86-64 Linux + Windows PE, aarch64 Linux); C backend kept as reference/oracle **[decided]** |
+| Backend | Own machine-code backend (x86-64 Linux + Windows PE, aarch64 Linux); C backend kept as reference/oracle; DWARF debug info on x86-64 native (`--dwarf`) **[decided]** |
 | Memory | Simplified ownership, no lifetimes; borrows live only for a call **[decided]** |
 | FFI / dynamic linking | Only at the OS boundary (GPU, windowing on Windows/macOS/iOS/Android) **[decided]** |
+| Networking / stdlib | TCP sockets with configurable timeouts and endpoint queries in `std.net` on top of raw OS syscalls **[decided]** |
 | Text (framework) | Hybrid: own engine for simple scripts, OS text services for complex scripts, behind one replaceable interface **[decided]** |
 | First extra platform | Windows **[decided]** |
 | Concurrency | Shared-memory threads for maximum performance, with simple compile-time data-race rules (see [CONCURRENCY.md](CONCURRENCY.md)); actors as a library on top **[decided]** |
@@ -44,7 +45,8 @@ Better: no `nil`, generics from the start, real sum types, no data races in shar
 4. ~~`defer`.~~ **Done** (SPEC.md: defer).
 5. Range integers `Int<lo..hi>`.
 6. Threads + `Shared/Locked/Atomic` + `parallel for`.
-7. `comptime`, explicit allocators.
+7. `comptime`, explicit allocators (comptime blocks and const evaluation done; explicit allocators open).
+8. Compiler self-hosting and tooling: self-hosted front end and C emitter match 431/447 candidates (96.4%) with byte-identical bootstrap; DWARF debug info (`--native --dwarf`) with gdb stack unwinding and parameter/local inspection.
 Specs for 5–7 and signals live in docs/ (written ahead of the implementation):
 
 | Spec | Covers |
