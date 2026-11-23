@@ -41,13 +41,40 @@ have on disk (`<dir of app.yx>/<rel-path>`). The normal pipeline then runs uncha
 module name with different bytes are rejected (`module 'util.yx' differs between a.yxo and b.yxo`); identical
 copies are shared. A file on disk is shadowed by the object.
 
-## Limits (stage 1, stated honestly)
+## Stage 2: separate compilation of the C backend (`--separate`)
+
+```
+yerux build app.yx --separate [-o app]     (also works with --obj; cache in <out>.cache, or $YERUX_CACHE)
+```
+
+The generated C of the whole program is split (`src/sepc.rs`) into one translation unit per user module (functions
+`nx_f_<module>__*`) plus one for everything else (standard library, generic instances, drop glue, `main`, debug
+tables). Each unit gets the shared prefix (types, runtime; the few mutable globals become `extern`, defined in the
+main unit) and the prototypes it mentions. The object file of a unit is cached under a hash of the compiler, its flags
+and the unit's exact text, so a module whose generated code did not change is not given to the C compiler again.
+`separate: N unit(s), M reused` is printed on stderr. If the C has a shape the splitter does not know, or a unit
+fails to compile or link, the build falls back to the single-unit compile (6 of 274 corpus programs; the other 266
+give the same output as the normal build).
+
+What is cached and what is not, honestly:
+- Cached: the C compiler step per module (the dominant cost for big modules). Editing only `main` or a module
+  reuses all other modules' objects; editing a module's body recompiles that module only.
+- Not cached: parsing, checking and monomorphisation still run on the whole program, because generics are
+  instantiated per use and the checker needs every module. Generic instances and std code land in the main unit and
+  are recompiled whenever it changes.
+- A change to the shared prefix (a new struct or enum anywhere) changes every unit's text, so it invalidates all
+  units. Debug builds (`--debug`) embed global location ids in the code, so an edit that shifts them also does.
+- Cross-module inlining is lost: calls between units are real calls. Use `--separate` for development builds, not
+  for release performance.
+- The native backend is not split: it emits one image in a single pass (fast enough that caching buys little).
+
+## Limits of the object itself (stage 1)
 
 - The object carries **sources**, not machine code. The compiler still parses, checks and generates code for the
   whole program, because monomorphisation, inlining and the layout/drop analyses are whole-program. What the object
   gives today: distribution without sources next to the program, reproducible dependency content (hashes), and
   interface hashes for staleness/incremental decisions by build tools.
-- Per-module code generation (emitting IR or machine code per module and linking) needs a stable ABI for generics
-  and an exported-IR format; it is the next stage and is not implemented.
+- The `.yxo` file still carries sources, not machine code; the per-module objects of stage 2 live in the build
+  cache, keyed by content. Embedding them in the `.yxo` needs a stable ABI for generics and is not done.
 - Symbol-level interface checking of importers against the interface (without the source) is not done; the
   interface is informational and a hash.
