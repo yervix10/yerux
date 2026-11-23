@@ -25,7 +25,7 @@ SYSTEM_TESTS = (
     "fs_handles", "fs_links", "hostile_fs", "io_args", "io_basic", "io_exit", "io_exit_drop",
     "io_exit_skips_drop", "io_stdin_all", "io_stdin_bad", "io_stdin_final_cr",
     "io_stdin_lines", "native_linux_memory", "std_env_typed", "std_fs_metadata",
-    "std_kv", "std_kv_hostile", "std_log", "std_misc", "std_time_calendar",
+    "std_kv", "std_kv_hostile", "std_log", "std_misc", "std_rand", "std_time_calendar",
     "time_clock", "time_duration",
 )
 SHRINK = {"02_fast": ("100000000", "20000"), "own_deep_box_drop": ("return 1000000", "return 2000"), "own_deep_scc_drop": ("return 1000000", "return 2000"), "own_deep_closure_drop": ("return 1000000", "return 2000")}  # loops too long for emulation

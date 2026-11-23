@@ -23,7 +23,7 @@ spawning, native concurrency and C FFI remain unavailable on this target.
 
 Run `bash tests/a64_all.sh --system` with `qemu-aarch64` on `PATH` to compare the
 system fixtures with the x86-64 backend and the regression goldens. Under QEMU,
-30 of 30 fixtures passed, up from 3 of 30 with the compiler at `a1e3b3a`.
+31 of 31 fixtures passed, up from 4 of 31 with the compiler at `a1e3b3a`.
 `bash tests/a64_all.sh --network` runs the socket fixtures. For core IR,
 allocator checks and differential fuzzing, see the
 [backend overview](../BACKEND.md#aarch64-linux).

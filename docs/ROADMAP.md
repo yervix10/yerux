@@ -64,7 +64,7 @@ expensive milestones and are at zero.
 | M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, console, filesystem, environment, clocks and blocking TCP); Apple, mobile and web pending |
 | **All** | **43.5 / 100** | **43.5** | |
 
-The AArch64 system fixture group passed 30/30 under QEMU, up from 3/30 at
+The AArch64 system fixture group passed 31/31 under QEMU, up from 4/31 at
 `a1e3b3a` on the same corpus. See the [AArch64 backend limits](BACKEND.md).
 
 ### Numbers behind the table
