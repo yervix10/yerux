@@ -51,10 +51,57 @@ fn finalize(f: &mut IrFunc) {
             did = true;
         }
     }
+    if !pass_off("bytefuse") {
+        did |= fuse_byte_loads(f);
+    }
     if did {
         opt_func_inner(f, false);
     }
 }
+
+/// `a = base + idx; d = byte [a]` (a String/byte-buffer index) with `a` dead afterwards becomes the single
+/// indexed load `d = byte [base + idx]`: one instruction instead of lea + movzx, and a register less in hot
+/// scan loops. Only adjacent pairs are fused, so `base` and `idx` cannot change in between.
+fn fuse_byte_loads(f: &mut IrFunc) -> bool {
+    let live_out = liveness(f);
+    let mut did = false;
+    for b in 0..f.blocks.len() {
+        let mut live = live_out[b].clone();
+        for u in term_uses(&f.blocks[b].term) {
+            live[u] = true;
+        }
+        let n = f.blocks[b].insts.len();
+        // walk backwards: when we reach the load (index k+1), `live` is what is live AFTER it
+        let mut fuse: Vec<usize> = vec![];
+        for k in (0..n).rev() {
+            if k >= 1 {
+                if let (Inst::LeaX(a, _, _, 1), Inst::Load8(d, a2, 0)) = (&f.blocks[b].insts[k - 1], &f.blocks[b].insts[k]) {
+                    if a == a2 && a != d && !live[*a] {
+                        fuse.push(k - 1);
+                    }
+                }
+            }
+            let ins = &f.blocks[b].insts[k];
+            if let Some(d) = def(ins) {
+                live[d] = false;
+            }
+            for u in uses(ins) {
+                live[u] = true;
+            }
+        }
+        for k in fuse {
+            let (p, i, d) = match (&f.blocks[b].insts[k], &f.blocks[b].insts[k + 1]) {
+                (Inst::LeaX(_, p, i, _), Inst::Load8(d, ..)) => (*p, *i, *d),
+                _ => continue,
+            };
+            f.blocks[b].insts[k + 1] = Inst::LoadX(d, p, i, 0);
+            f.blocks[b].insts[k] = Inst::Mov(d, d); // removed by dce
+            did = true;
+        }
+    }
+    did
+}
+
 
 /// Debug switch: `YERUX_OPT_OFF=constprop,copyprop,sroa,memopt,rangeopt,coalesce,dce,cfg,inline,versioning,strength` disables the
 /// named passes (used by the optimizer differential fuzzer to bisect a miscompile to one pass).
@@ -1065,7 +1112,19 @@ fn refine(st: &mut RState, op: Op, a: V, b: V) -> bool {
             st.lt.insert((a, b));
             true
         }
-        Op::Le => narrow(st, a, xl, yh) && narrow(st, b, xl, yh),
+        Op::Le => {
+            if !(narrow(st, a, xl, yh) && narrow(st, b, xl, yh)) {
+                return false;
+            }
+            // a <= b and b < n  =>  a < n
+            let up: Vec<V> = st.lt.iter().filter(|&&(p, _)| p == b).map(|&(_, q)| q).collect();
+            for q in up {
+                if q != a {
+                    st.lt.insert((a, q));
+                }
+            }
+            true
+        }
         Op::Gt => refine(st, Op::Lt, b, a),
         Op::Ge => refine(st, Op::Le, b, a),
         Op::Eq => {
@@ -1305,7 +1364,9 @@ fn rstep(i: &Inst, st: &mut RState) -> Rew {
                         .collect();
                     set(st, *d, r);
                     st.lt.extend(rels.into_iter().filter(|&(p, q)| p != q));
-                    return Rew::Keep;
+                    // the value is already in `s`: reuse it (copy propagation then merges the two, so every
+                    // fact about one holds for the other, e.g. a check against a re-read length)
+                    return if pass_off("loadcse") { Rew::Keep } else { Rew::To(Inst::Mov(*d, s)) };
                 }
             }
             set(st, *d, TOP);
