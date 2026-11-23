@@ -967,7 +967,6 @@ fn function_value(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, ty
 }
 
 fn closure(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
-  if tree.at(ast.child(tree, node, 2)).tag == "true" { unsupported("parallel Closure") }
   let worker = tree.at(ast.child(tree, node, 3)).tag == "true"
   let instance = schedule(gen, node, ty, type_terms.copy(gen.sub))
   var entry = "F{instance}"
@@ -1075,6 +1074,20 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
   }
   let fun = find_named(tree, gen.functions, name)
   if fun < 0 {
+    if name == "__box_address" {
+      let box = expression(gen, tree, args + 1)
+      return temp(gen, tree, ty, "((int64_t)(intptr_t)({box.code})->data)")
+    }
+    if name == "__parallel_address" {
+      let body = local_place(gen, args + 1)
+      return temp(gen, tree, ty, "((int64_t)(intptr_t)&({body.code}))")
+    }
+    if name == "__parallel_call" {
+      let body = expression(gen, tree, args + 1)
+      let address = temp(gen, tree, body.ty, body.code)
+      let index = expression(gen, tree, tree.at(args + 1).end)
+      return temp(gen, tree, ty, "nx_parallel_call({address.code}, {index.code})")
+    }
     if name == "__spawn_owned" && ty.starts_with("JoinHandle<") {
       let entry = expression(gen, tree, args + 1)
       return temp(gen, tree, ty, "nx_thread_start({transfer(gen, tree, entry)}, true)")
@@ -3104,9 +3117,16 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     }
     assign_place(gen, tree, target, move saved_value)
   } else if tag == "Expr" {
+    let expr = ast.child(tree, node, 0)
+    if gen.value_target == "" && tree.at(expr).tag == "Call" && ast.name_at(tree, expr, 0).eq("__spawn_owned") &&
+        gen.checked.expressions.at(expr).starts_with("JoinHandle<") {
+      // A bare spawn owns its handle until the enclosing block exits.
+      let worker = expression(gen, tree, expr)
+      return
+    }
     line(gen, String.from("{{"))
     gen.indent = gen.indent + 1
-    let value = expression(gen, tree, ast.child(tree, node, 0))
+    let value = expression(gen, tree, expr)
     if value.ty != "nothing" && gen.value_target != "" {
       let wanted = String.from(gen.value_type)
       let assigned = coerce(gen, tree, move value, wanted)

@@ -1,0 +1,31 @@
+fn sum_range(counter: Int, first: Int, last: Int) {
+  parallel for i in first..=last {
+    __atomic_fetch_add(counter, i)
+  }
+}
+
+fn main() {
+  let counter = __alloc(8)
+  __atomic_store(counter, 0)
+  scope {
+    let worker = spawn move { sum_range(counter, 1, 1000) }
+    assert(worker.join().is_ok())
+  }
+  print(__atomic_load(counter))
+
+  var words = List<String>.new()
+  words.push(String.from("ab"))
+  words.push(String.from("xyz"))
+  parallel for word in words {
+    __atomic_fetch_add(counter, word.len())
+  }
+  print(__atomic_load(counter))
+
+  parallel for i in 9223372036854775806..=9223372036854775807 {
+    assert(i > 0)
+    __atomic_fetch_add(counter, 1)
+  }
+  parallel for _ in 4..4 { assert(false) }
+  print(__atomic_load(counter))
+  __free(counter)
+}

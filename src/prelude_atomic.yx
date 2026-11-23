@@ -1,0 +1,73 @@
+struct Atomic<T> {
+    word: Box<Int>,
+}
+
+impl Atomic<Int> {
+    fn new(value: Int) -> Atomic<Int> {
+        return Atomic<Int> { word: Box.new(value) }
+    }
+
+    fn load(view self) -> Int {
+        return __atomic_load(__box_address(self.word))
+    }
+
+    fn store(view self, value: Int) {
+        __atomic_store(__box_address(self.word), value)
+    }
+
+    fn compare_swap(view self, expected: Int, value: Int) -> Bool {
+        return __atomic_cmpxchg(__box_address(self.word), expected, value) == expected
+    }
+
+    fn swap(view self, value: Int) -> Int {
+        while true {
+            let old = self.load()
+            if self.compare_swap(old, value) { return old }
+        }
+        return 0
+    }
+
+    fn add(view self, value: Int) -> Int {
+        while true {
+            let old = self.load()
+            if self.compare_swap(old, old + value) { return old }
+        }
+        return 0
+    }
+
+    fn add_wrapping(view self, value: Int) -> Int {
+        return __atomic_fetch_add(__box_address(self.word), value)
+    }
+}
+
+fn __atomic_bool_word(value: Bool) -> Int {
+    if value { return 1 }
+    return 0
+}
+
+impl Atomic<Bool> {
+    fn new(value: Bool) -> Atomic<Bool> {
+        return Atomic<Bool> { word: Box.new(__atomic_bool_word(value)) }
+    }
+
+    fn load(view self) -> Bool {
+        return __atomic_load(__box_address(self.word)) != 0
+    }
+
+    fn store(view self, value: Bool) {
+        __atomic_store(__box_address(self.word), __atomic_bool_word(value))
+    }
+
+    fn compare_swap(view self, expected: Bool, value: Bool) -> Bool {
+        let word = __atomic_bool_word(expected)
+        return __atomic_cmpxchg(__box_address(self.word), word, __atomic_bool_word(value)) == word
+    }
+
+    fn swap(view self, value: Bool) -> Bool {
+        while true {
+            let old = self.load()
+            if self.compare_swap(old, value) { return old }
+        }
+        return false
+    }
+}

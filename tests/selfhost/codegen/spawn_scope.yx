@@ -1,0 +1,27 @@
+fn advance(state: Int) {
+  while __atomic_load(state) != 1 {}
+  __atomic_store(state, 2)
+}
+
+fn leave_early(state: Int) {
+  scope {
+    spawn move { advance(state) }
+    __atomic_store(state, 1)
+    return
+  }
+}
+
+fn main() {
+  let state = __alloc(8)
+  __atomic_store(state, 0)
+  scope {
+    spawn move { advance(state) }
+    __atomic_store(state, 1)
+  }
+  print(__atomic_load(state))
+
+  __atomic_store(state, 0)
+  leave_early(state)
+  print(__atomic_load(state))
+  __free(state)
+}

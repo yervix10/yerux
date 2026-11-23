@@ -86,6 +86,14 @@ if "$driver" "$tmp/deferred-move.yx" 2>"$tmp/deferred-move.err"; then
 fi
 grep -q 'this deferred statement uses' "$tmp/deferred-move.err"
 
+for file in tests/e736_parallel_assign.yx tests/e737_parallel_mut_list.yx; do
+  if "$driver" "$file" -o "$tmp/invalid" 2>"$tmp/parallel.err"; then
+    printf 'selfhost accepted a write through a parallel capture in %s\n' "$file" >&2
+    exit 1
+  fi
+  grep -q 'only borrowed for reading' "$tmp/parallel.err"
+done
+
 source_ast() {
   : >"$tmp/source.err"
   "$tmp/rebuilt/lexer" "$1" --positioned --columns >"$tmp/tokens" 2>"$tmp/source.err" || return
@@ -93,7 +101,7 @@ source_ast() {
     cp "$tmp/ast" "$tmp/source.err"
     return 1
   }
-  if [[ $(<"$tmp/ast") == *',Import('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self' "$1"; then
+  if [[ $(<"$tmp/ast") == *',Import('* ]] || grep -qE '(Map|Set|Iter)[<.]|Arena|^derive |into_iter|[.](context|with_context|wrap)[(]|fn next[(]mut self|\bparallel\b' "$1"; then
     "$tmp/rebuilt/yerux-self" --emit-ast "$1" -o "$tmp/ast" 2>"$tmp/source.err"
   fi
 }
@@ -114,7 +122,7 @@ required() {
     tests/gen_types.yx|tests/own_deep_box_drop.yx|tests/t912_box_tree.yx|tests/dyn_call_order.yx|tests/dyn_handlers.yx|\
     tests/hard2_dyn_generic_impls.yx|tests/hard2_dyn_holders.yx|tests/hard2_dyn_nested_drop.yx|\
     tests/conc_print.yx|tests/drop_worker.yx|tests/drop_double_panic.yx|tests/drop_panic.yx|\
-    tests/net_loopback.yx|tests/std_http_client.yx) return 0 ;;
+    tests/net_loopback.yx|tests/std_http_client.yx|tests/std_sync.yx) return 0 ;;
     *) return 1 ;;
   esac
 }

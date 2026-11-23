@@ -689,6 +689,13 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
           }
         }
       }
+      if name == "__parallel_list" && sub.values.len() == 1 {
+        let element = String.from(sub.values.at(0))
+        var visited = List<String>.new()
+        if !transferable(types, element, visited) {
+          issue(types, "parallel for cannot read list elements of type {element}")
+        }
+      }
       if types.errors != before { return unknown() }
     }
     return type_terms.substitute(types.signatures.at(sig).result, sub)
@@ -1308,24 +1315,27 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   let moving = tree.at(ast.child(tree, index, 0)).tag == "true"
   let borrowing = borrow_argument && !moving
   let worker = tree.at(ast.child(tree, index, 3)).tag == "true"
+  let parallel_body = tree.at(ast.child(tree, index, 2)).tag == "true"
   var captures = List<Int>.new()
   var modes = List<String>.new()
-  if types.verify_ownership && !borrowing {
+  if types.verify_ownership && (!borrowing || parallel_body) {
     captures = locals.capture_ids(types.captures, index)
     for id in captures {
       modes.push(String.from(types.modes.at(id)))
       let ty = String.from(types.bindings.at(id))
       let name = binding_name(types, tree, id)
       read_binding(types, id, name)
-      if worker {
-        if modes.at(modes.len() - 1) != "Own" {
+      if worker || parallel_body {
+        if worker && modes.at(modes.len() - 1) != "Own" {
           issue(types, "spawn cannot capture borrowed binding '{name}'")
         }
         var visited = List<String>.new()
         if !transferable(types, ty, visited) {
-          issue(types, "spawn cannot transfer '{name}' of type {ty}")
+          if parallel_body { issue(types, "parallel for cannot transfer '{name}' of type {ty}") }
+          else { issue(types, "spawn cannot transfer '{name}' of type {ty}") }
         }
-        types.modes.set(id, String.from("Own"))
+        if parallel_body { types.modes.set(id, String.from("View")) }
+        else { types.modes.set(id, String.from("Own")) }
       }
       else if moving { types.modes.set(id, String.from("Capture")) }
       else {
@@ -1481,6 +1491,29 @@ pub fn raw_arity(name: view String) -> Int {
 }
 
 fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view String, args: Int) -> String {
+  if name == "__box_address" && child_count(tree, args) == 1 {
+    let box = infer(types, tree, args + 1, unknown())
+    let payload = type_terms.box_payload(box)
+    if payload == "?" || payload.starts_with("$dyn<") || shape_index(types, box) >= 0 {
+      issue(types, "expected a builtin Box for __box_address, got {box}")
+    }
+    return String.from("Int")
+  }
+  if name == "__parallel_address" && child_count(tree, args) == 1 {
+    let expected = String.from("fn(Int)")
+    let actual = infer(types, tree, args + 1, expected)
+    expect_type(types, expected, actual)
+    if tree.at(args + 1).tag != "Var" {
+      issue(types, String.from("__parallel_address requires a named callback"))
+    }
+    return String.from("Int")
+  }
+  if name == "__parallel_call" && child_count(tree, args) == 2 {
+    let expected = String.from("Int")
+    expect_type(types, expected, infer(types, tree, args + 1, expected))
+    expect_type(types, expected, infer(types, tree, tree.at(args + 1).end, expected))
+    return unit()
+  }
   if name == "__spawn_owned" && child_count(tree, args) == 1 && tree.at(args + 1).tag == "Closure" &&
       tree.at(ast.child(tree, args + 1, 3)).tag == "true" {
     let entry = infer(types, tree, args + 1, unknown())

@@ -1,0 +1,27 @@
+fn __parallel_lane(first: Int, end: Int, inclusive: Bool, body: Int) {
+    var index = first
+    while index < end || (inclusive && index == end) {
+        __parallel_call(body, index)
+        if index > 9223372036854775803 { return }
+        index = index + 4
+    }
+}
+
+fn __parallel_range(first: Int, end: Int, inclusive: Bool, body: view fn(Int)) {
+    let address = __parallel_address(body)
+    var tasks = List<Int>.new()
+    for lane in 0..4 {
+        if first > 9223372036854775807 - lane { break }
+        let index = first + lane
+        if index > end || (index == end && !inclusive) { break }
+        tasks.push(__thread_start(move || {
+            __parallel_lane(index, end, inclusive, address)
+            return 0
+        }))
+    }
+    for task in tasks { __thread_wait(task) }
+}
+
+fn __parallel_list<T>(items: view List<T>, body: view fn(view T)) {
+    __parallel_range(0, items.len(), false, |index| body(items.at(index)))
+}
