@@ -1489,6 +1489,10 @@ fn bootstrap_call(gen: mut Generator, tree: view List<ast.AstNode>, name: view S
       return move result
     }
   } else if tree.at(second).end == end {
+    if name == "std__env__get_or" {
+      let fallback = expression(gen, tree, second)
+      return temp(gen, tree, ty, "sc_env_get_or({text_view(left)}, {text_view(fallback)})")
+    }
     if name == "std__fs__write" || name == "std__process__run" {
       let right = expression(gen, tree, second)
       let result = temp(gen, tree, ty, String.from("{{0}}"))

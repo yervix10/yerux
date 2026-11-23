@@ -705,13 +705,12 @@ fn main() {
     if mode == "build" { output = path.with_extension(input, "") }
   }
 
-  var work_root = env.temp_dir()
-  if output.len() > 0 { work_root = path.parent(output) }
-  let template = path.join(work_root, ".yerux-self.XXXXXX")
   args.clear()
   args.push(String.from("-d"))
-  args.push(String.from("--"))
-  args.push(move template)
+  if output.len() > 0 {
+    args.push(String.from("--"))
+    args.push(path.join(path.parent(output), ".yerux-self.XXXXXX"))
+  }
   match invoke("mktemp", args, "creating build directory") {
     None => { env.exit(1) }
     Some(created) => {

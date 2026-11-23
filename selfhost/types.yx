@@ -1653,6 +1653,7 @@ fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view Str
   if name == "std__print_owned" || name == "std__io__eprintln" || name == "std__io__eprint" ||
       name == "std__env__exit" || name == "std__io__exit" || name == "std__io__exit_clean" { result = unit() }
   else if name == "std__env__arg" { result = String.from("Option<String>") }
+  else if name == "std__env__get_or" { result = String.from("String") }
   else if name == "std__env__args" || name == "std__io__args" { result = String.from("List<String>") }
   else if name == "std__env__arg_count" || name == "std__env__pid" || name == "std__io__process_id" || name == "max" || name == "min" { result = String.from(int_type) }
   else if name == "std__io__read_line" { result = String.from("Result<Option<String>, std__io__IoError>") }
