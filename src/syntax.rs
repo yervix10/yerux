@@ -4117,7 +4117,7 @@ impl Parser {
                 }
                 self.postfix(e)
             }
-            Tok::Id(k) if (k == "if" || k == "match") && self.surface.is_none() => {
+            Tok::Id(k) if k == "if" || k == "match" => {
                 self.i -= 1; // the expression parsers read the keyword themselves
                 if k == "if" {
                     self.if_expr()

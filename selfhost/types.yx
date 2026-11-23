@@ -56,7 +56,8 @@ pub struct Checked {
 }
 struct LoopFlow { label: String, breaks: List<Bool>, continues: List<Bool>, continued: Bool, deferred: Int }
 struct PatternRow { nodes: List<Int> }
-struct Returns { expected: String, inferred: String }
+// `want` marks the tail of an `if`/`match` used as a value: its last line produces `value`.
+struct Returns { expected: String, inferred: String, want: Bool, hint: String, value: String }
 
 fn unknown() -> String { return String.from("?") }
 fn unit() -> String { return String.from("nothing") }
@@ -1266,7 +1267,7 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   if tree.at(ret).tag == "_" && hinted >= 0 {
     expected = String.from(types.signatures.at(hinted).result)
   }
-  var state = Returns { expected: move expected, inferred: unit() }
+  var state = Returns { expected: move expected, inferred: unit(), want: false, hint: String.new(), value: String.new() }
   let outer = String.from(types.return_type)
   let floor = types.defer_floor
   types.defer_floor = types.deferred.len()
@@ -1606,7 +1607,7 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
         if actual == "UInt64" { issue(types, String.from("as with an else block does not take a UInt64")) }
         let before = ownership.snapshot(types.moved)
         let result = String.from(types.return_type)
-        var returns = Returns { expected: move result, inferred: unit() }
+        var returns = Returns { expected: move result, inferred: unit(), want: false, hint: String.new(), value: String.new() }
         if !check_body(types, returns, tree, otherwise) {
           issue(types, String.from("the else block of a checked conversion must exit"))
         }
@@ -1614,6 +1615,15 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
       }
       return expected
     }
+  }
+  if tag == "IfExpr" || tag == "MatchExpr" {
+    var state = Returns { expected: String.from(types.return_type), inferred: unit(), want: true, hint: String.from(hint), value: String.new() }
+    let exits = check_body(types, state, tree, index)
+    if state.value == "" {
+      if types.errors == 0 { issue(types, String.from("this `if`/`match` never produces a value")) }
+      return unknown()
+    }
+    return String.from(state.value)
   }
   if tag == "Ascribe" {
     let expected = source_type(types, tree, ast.child(tree, index, 0))
@@ -2208,6 +2218,19 @@ fn check_unpack(types: mut Types, tree: view List<ast.AstNode>, pattern: Int, ty
 }
 
 fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
+  let want = returns.want
+  if want {
+    let tag = String.from(tree.at(index).tag)
+    if tag != "Block" && tag != "[" && tag != "If" && tag != "IfExpr" && tag != "Match" && tag != "MatchExpr" && tag != "Expr" {
+      returns.want = false
+    }
+  }
+  let exits = check_statement(types, returns, tree, index)
+  returns.want = want
+  return exits
+}
+
+fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
   let tag = String.from(tree.at(index).tag)
   if tag == "Let" {
     let initializer = ast.child(tree, index, 2)
@@ -2252,13 +2275,23 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
     check_assignment(types, tree, index)
   } else if tag == "Expr" {
     let value = ast.child(tree, index, 0)
-    let ty = infer(types, tree, value, unknown())
+    var hint = unknown()
+    if returns.want {
+      if returns.value != "" { hint = String.from(returns.value) }
+      else { hint = String.from(returns.hint) }
+    }
+    let ty = infer(types, tree, value, hint)
     require_value(types, tree, value, ty)
     if tree.at(value).tag == "Call" && types.identities.at(value) < 0 {
       let name = ast.name_at(tree, value, 0)
       if name == "panic" && signature_index(types, name, false) < 0 { return true }
     }
-  } else if tag == "If" {
+    if returns.want {
+      if ty == "nothing" { issue(types, String.from("this expression produces no value")) }
+      else if returns.value == "" { returns.value = String.from(ty) }
+      else { expect_type(types, returns.value, ty) }
+    }
+  } else if tag == "If" || tag == "IfExpr" {
     let boolean = String.from("Bool")
     expect_type(types, boolean, infer(types, tree, ast.child(tree, index, 0), boolean))
     let before = ownership.snapshot(types.moved)
@@ -2274,7 +2307,7 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
   } else if tag == "Break" || tag == "Continue" {
     loop_exit(types, tree, index, tag == "Break")
     return true
-  } else if tag == "Match" {
+  } else if tag == "Match" || tag == "MatchExpr" {
     return check_match(types, returns, tree, index)
   } else if tag == "Defer" {
     let before = ownership.snapshot(types.moved)
@@ -2286,13 +2319,16 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
     var i = index + 1
     let deferred = types.deferred.len()
     var exits = false
+    let tail = returns.want
     while i < tree.at(index).end {
+      returns.want = tail && tree.at(i).end == tree.at(index).end
       if check_body(types, returns, tree, i) {
         exits = true
         if types.verify_ownership { break }
       }
       i = tree.at(i).end
     }
+    returns.want = tail
     if !exits { check_deferred(types, tree, deferred) }
     while types.deferred.len() > deferred { let unused = types.deferred.pop() }
     return exits
@@ -2693,7 +2729,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     types.function_params = ast.child(tree, fun.node, 1)
     types.impl_params = fun.impl_params
     types.generics = copy_names(types.signatures.at(fun.signature).generics)
-    var state = Returns { expected: String.from(types.signatures.at(fun.signature).result), inferred: unit() }
+    var state = Returns { expected: String.from(types.signatures.at(fun.signature).result), inferred: unit(), want: false, hint: String.new(), value: String.new() }
     types.return_type = String.from(state.expected)
     types.copy_params = copy_names(types.signatures.at(fun.signature).copy_params)
     types.ordered_params = copy_names(types.signatures.at(fun.signature).ordered_params)
