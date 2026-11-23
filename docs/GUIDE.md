@@ -192,6 +192,9 @@ fn main() {
 5. In one call, a variable lent as `mut` or moved cannot appear twice.
 6. Values are freed automatically at the end of their scope unless moved (runtime drop flags for conditional moves).
 7. `let` = immutable, `var` = mutable. Owned parameters are mutable.
+8. A borrowed temporary lives only for the call: a slice of a literal or of a function result
+   (`sum([4, 5, 6][1..3])`, `sum(make()[0..2])`) can be passed to a `view [T]` parameter. A `mut [T]` parameter
+   needs a variable — the error is "pass a variable here (the function borrows it)".
 
 ```yx
 fn consume(items: List) { }

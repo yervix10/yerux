@@ -124,10 +124,20 @@ fn sum(xs: view [Int]) -> Int {
   return t
 }
 
+fn make() -> List<Int> {
+  var l = List<Int>.new()
+  l.push(7)
+  l.push(8)
+  l.push(9)
+  return l
+}
+
 fn main() {
   let a = [10, 20, 30, 40]
   print(sum(a))
   print(sum(a[1..3]))
+  print(sum([4, 5, 6][1..3]))
+  print(sum(make()[0..2]))
   var grid = [0; 5]
   grid[2] = 7
   print(grid[2] + grid.len())
@@ -137,7 +147,18 @@ fn main() {
 ```output
 100
 50
+11
+15
 12
+```
+
+A slice of a temporary needs no local variable: `sum([4, 5, 6][1..3])` and `sum(make()[0..2])` keep the temporary
+in a hidden variable until the call returns. A `mut [T]`
+parameter still needs a variable — a borrowed temporary could be modified and thrown away:
+
+```yerux error=pass a variable here
+fn bump(xs: mut [Int]) { xs[0] = xs[0] + 100 }
+fn main() { bump([1, 2][0..1]) }
 ```
 
 See [ARRAYS.md](../ARRAYS.md) for the rules (owned elements, `const N: Int` generics, chunks and windows).
