@@ -3151,6 +3151,13 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     if tree.at(arg).tag == "_" { emit_return(gen, tree, String.from("nothing"), String.new()) }
     else {
       let expected = String.from(gen.result)
+      let produced = type_terms.substitute(gen.checked.expressions.at(arg), gen.sub)
+      if expected == "nothing" && produced == "nothing" {
+        // `return body(x)` in a generic function whose result is the unit type
+        let ignored = expression(gen, tree, arg)
+        emit_return(gen, tree, String.from("nothing"), String.new())
+        return
+      }
       if expected == "nothing" { unsupported("return value in a function without a result type") }
       let value = expression(gen, tree, arg)
       let result = coerce(gen, tree, move value, expected)
