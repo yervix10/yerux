@@ -244,8 +244,8 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-23 run matched **453 of 456 candidates (99.3%)**, with 100 runtime
-panics reproduced exactly, 2 candidates outside the supported subset, one
+2026-11-23 run matched **455 of 456 candidates (99.8%)**, with 100 runtime
+panics reproduced exactly, no candidates outside the supported subset, one
 expected type rejection and zero mismatches. The previous run matched 441 of 456 (96.7%); before it, 431
 of 447 candidates (96.4%).
 
@@ -264,12 +264,14 @@ seven stages and keeps their C with `--keep-c`), generation 1 builds it again
 (`cmp`), and generation 2 still compiles and runs a program. None of this
 uses the Rust compiler after the seed.
 
-The first diagnostic for each of the 2 programs outside the supported subset
+No program is outside the supported subset now. The first diagnostic for any future rejection
 comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`.
 
 | Group | Programs | What is missing |
 |---|---|---|
 | Concurrency and synchronization (0) | - | (All 12 programs compile and match Rust: the driver links `prelude_sync.yx`, the channel/`Shared`/`Locked`/`Mutex`/`RwLock`/pool part of `prelude_threads.yx`, built by `selfhost/bootstrap.sh`. `Shared` drops by refcount, `LockGuard` unlocks on drop, `Locked.take` unboxes through `__locked_unbox`, `Box.from_runtime_word` and `__check_shared_content` are lowered, and `Atomic.new` picks its single-instance impl by argument type.) |
+| Enum equality, deep recursive drops (0) | - | (`enum_implicit_equal` and `own_deep_scc_drop` compile now: payload-free enums derive equality and recursive list layouts get heap drops.) |
+| Ownership of names borrowed from lists (0) | - | (`let x = l.at(i)` of an owned element freezes `l` until the end of the block, as in the Rust checker; `bad_let_borrow_change.yx` and `let_borrow_scope.yx` cover both sides.) |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
 | JSON (0) | - | (`json_edge_*` compile: the driver links the preludes the imported modules use.) |
 | Source syntax (0) | - | (`consts_types` compiles: `[Int; geo.SIDES]` lengths are parsed as `Field(Var(geo),SIDES)`. Trait default methods work: the parser keeps the body in the trait and `ast.decode_linked` copies it into each impl that does not define it.) |
@@ -281,10 +283,10 @@ and category for each unsupported file.
 
 As of 2026-11-23, the driver compiles all seven `selfhost/*.yx` stages
 and itself without the Rust compiler (`--stage2`), and reproduces itself
-byte for byte. It builds `examples/project` and matches 441 programs in the corpus.
+byte for byte. It builds `examples/project` and matches 455 programs in the corpus.
 Replacing the default compiler requires closing these gaps.
 
-1. the 2 programs above, plus native
+1. native
    x86-64/aarch64/PE backends, `--check-ranges`, `yerux fmt/lsp/doctor` and
    the package manager, which exist only in the Rust binary;
 2. diagnostics: the self-hosted stages print their own messages and no spans;
