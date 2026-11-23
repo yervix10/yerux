@@ -168,6 +168,10 @@ captured closures through a worklist, including long chains of environments.
 
 `Box<T>` supports borrowed access through `get()` and `*box`, ownership
 transfer through `take()`, and iterative drop for recursive boxes.
+Lists can contain recursive structs and enums. A shared worklist releases
+cycles that pass through list buffers and ordinary struct or enum fields,
+including cycles with boxes. Drop and `clear()` follow the seed compiler's
+destructor order.
 `Box<dyn Trait>` dispatches through a table for each concrete type and
 trait. Worker closures move their captures and return results through
 `join()`. Recoverable worker panics drop live owned values before
@@ -175,7 +179,10 @@ trait. Worker closures move their captures and return results through
 
 `resolve --link AST_ROOT ENTRY.yx` combines cached source ASTs, validates
 imports and visibility, and gives declarations unique module names before
-type checking. The linked compiler builds `std.path` from source. Bootstrap
+type checking. The source driver supplies implicit `Equal` for non-generic
+enums with plain, payload-free variants, including enums in imported modules.
+An explicit `Equal` implementation or derive takes precedence.
+The linked compiler builds `std.path` from source. Bootstrap
 bindings in the C runtime provide the command-line, file, standard-stream,
 and subprocess operations used by the stages from `std.env`, `std.fs`,
 `std.io`, and `std.process`. Other standard modules can be linked from source
@@ -237,10 +244,11 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilds 7 of 7 executables with byte-identical C. The
-2026-11-23 run matched **441 of 456 candidates (96.7%)**, with 100 runtime
-panics reproduced exactly, 14 candidates outside the supported subset, one
-expected type rejection and zero mismatches. The previous run matched 431
-of 447 candidates (96.4%).
+2026-11-23 run matched **443 of 456 candidates (97.1%)** with zero mismatches,
+including 100 identical panics. Twelve concurrency cases remain outside the
+supported subset. The harness expects the type checker to reject
+`tests/selfhost/codegen/rejected_types.yx`. The previous run matched 441 of
+456 candidates (96.7%).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
@@ -257,15 +265,15 @@ seven stages and keeps their C with `--keep-c`), generation 1 builds it again
 (`cmp`), and generation 2 still compiles and runs a program. None of this
 uses the Rust compiler after the seed.
 
-The first diagnostic for each of the 14 programs outside the supported subset
+The first diagnostic for each of the 12 programs outside the supported subset
 comes from `SELFHOST_REJECTIONS=/tmp/rejections.tsv bash tests/selfhost_codegen.sh`.
 
 | Group | Programs | What is missing |
 |---|---|---|
-| Concurrency and synchronization (12) | `examples/concurrency.yx`, `examples/concurrency_channels.yx`, `examples/thread_pool.yx`; `tests/conc_parallel.yx`, `conc_sharing.yx`, `conc_spawn.yx`, `concurrency_channel.yx`, `concurrency_mutex.yx`, `concurrency_rwlock.yx`, `concurrency_thread_pool.yx`, `net_drop.yx`, `thread_handles_list.yx` | The remaining cases depend on linking the rest of the threads prelude, including `Shared` refcounting, lock-guard cleanup, channels and thread pools. |
+| Shared cells and locks (7) | `examples/concurrency.yx`; `tests/conc_parallel.yx`, `tests/conc_sharing.yx`, `tests/conc_spawn.yx`, `tests/concurrency_mutex.yx`, `tests/concurrency_rwlock.yx`, `tests/net_drop.yx` | Unresolved bindings for the remaining threads prelude, including `Shared` and lock guards. |
+| Channels (3) | `examples/concurrency_channels.yx`; `tests/concurrency_channel.yx`, `tests/thread_handles_list.yx` | Generic lowering for `Sender.bounded` and `Sender.unbounded`. |
+| Thread pools (2) | `examples/thread_pool.yx`, `tests/concurrency_thread_pool.yx` | Unresolved threads-prelude bindings for shared state and pools. |
 | Iterators and errors (0) | - | (`arr_const` now compiles: `const K: Int` generic parameters bind from array lengths and work as values. `iter_basic`, `iter_more`, `err_context` now compile: the driver links the Map/Set prelude with `Iter`, adds `into_iter` to user types with `next`, and links `prelude_error.yx` for `context`/`with_context`/`wrap`.) |
-| Enum equality (1) | `tests/enum_implicit_equal.yx` | The checker lacks implicit `Equal` for payload-free enums. |
-| Arrays and ownership (1) | `tests/own_deep_scc_drop.yx` | Recursive by-value struct `Dir` (`List<Dir>` inside `Dir`). (`arr_eq_show` now compiles.) |
 | JSON (0) | - | (`json_edge_*` compile: the driver links the preludes the imported modules use.) |
 | Source syntax (0) | - | (`consts_types` compiles: `[Int; geo.SIDES]` lengths are parsed as `Field(Var(geo),SIDES)`. Trait default methods work: the parser keeps the body in the trait and `ast.decode_linked` copies it into each impl that does not define it.) |
 
