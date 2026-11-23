@@ -3302,6 +3302,15 @@ fn breaks_out(tree: view List<ast.AstNode>, node: Int, nested: Bool) -> Bool {
 fn returns_value(tree: view List<ast.AstNode>, node: Int) -> Bool {
   let tag = String.from(tree.at(node).tag)
   if tag == "Return" { return tree.at(ast.child(tree, node, 0)).tag != "_" }
+  if tag == "Expr" {
+    // a call to panic never returns
+    let call = ast.child(tree, node, 0)
+    if tree.at(call).tag == "Call" {
+      let callee = ast.name_at(tree, call, 0)
+      return callee == "panic"
+    }
+    return false
+  }
   if tag == "While" {
     let condition = ast.child(tree, node, 1)
     if tree.at(condition).tag != "Bool" || tree.at(ast.child(tree, condition, 0)).tag != "true" {
