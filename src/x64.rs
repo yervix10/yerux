@@ -73,6 +73,12 @@ pub static DWARF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 
 struct Asm {
     code: Vec<u8>,
+    /// (slot, register, code length right after it) of the last `mov [rbp+slot], reg`: an immediate reload is dropped
+    last_store: (i32, u8, usize),
+    /// code length at the last label bound (a jump may land there, so nothing before it can be assumed)
+    last_bind: usize,
+    /// (vreg, condition code, code length) of the last comparison materialised with setcc: the flags still hold it
+    cmp_rec: (usize, u8, usize),
     labels: Vec<Option<usize>>,
     fix: Vec<(usize, usize)>,  // (position of rel32, label)
     dfix: Vec<(usize, usize)>, // (position of rel32, data blob id)
@@ -97,6 +103,9 @@ struct Asm {
 impl Asm {
     fn new(os: Os) -> Asm {
         Asm {
+            last_store: (0, 0, usize::MAX),
+            last_bind: usize::MAX,
+            cmp_rec: (usize::MAX, 0, usize::MAX),
             code: vec![],
             labels: vec![],
             fix: vec![],
@@ -140,6 +149,7 @@ impl Asm {
     }
     fn bind(&mut self, l: usize) {
         self.labels[l] = Some(self.code.len());
+        self.last_bind = self.code.len();
     }
     /// `n` bytes of multi-byte NOPs (Intel recommended forms), n <= 15
     fn nops(&mut self, mut n: usize) {
@@ -304,19 +314,29 @@ impl Asm {
     }
     /// mov r64, [rbp+disp]
     fn load(&mut self, r: u8, slot: i32) {
+        if self.last_store == (slot, r, self.code.len()) && self.last_bind != self.code.len() {
+            return; // `r` still holds the value that was just stored
+        }
         self.rm(0x8B, r, RBP, slot);
     }
     /// mov [rbp+disp], r64
     fn store(&mut self, slot: i32, r: u8) {
         self.rm(0x89, r, RBP, slot);
+        self.last_store = (slot, r, self.code.len());
     }
     /// mov r64, [base+disp]
     fn ld(&mut self, r: u8, base: u8, disp: i32) {
+        if base == RBP && self.last_store == (disp, r, self.code.len()) && self.last_bind != self.code.len() {
+            return; // `r` still holds the value that was just stored to this frame slot
+        }
         self.rm(0x8B, r, base, disp);
     }
     /// mov [base+disp], r64
     fn st(&mut self, base: u8, disp: i32, r: u8) {
         self.rm(0x89, r, base, disp);
+        if base == RBP {
+            self.last_store = (disp, r, self.code.len());
+        }
     }
     /// lea r64, [base+disp]
     fn lea(&mut self, r: u8, base: u8, disp: i32) {
@@ -1620,6 +1640,7 @@ impl<'a> G<'a> {
                         let dr = self.dreg(*d, RAX);
                         self.a.setcc_to(cc, dr);
                         self.fin(*d, dr);
+                        self.a.cmp_rec = (*d, cc, self.a.code.len());
                     }
                 }
             },
@@ -1758,11 +1779,20 @@ impl<'a> G<'a> {
             }
             Inst::Sel(d, c, a, b) => {
                 // d = c ? a : b without a branch: rax = b; test c; cmovne rax, a
+                // when the comparison that made `c` was the last thing emitted, its flags are still live (movs
+                // do not touch them): cmp + cmovcc, no setcc/test round trip
+                let rec = self.a.cmp_rec;
+                let flags = (rec.0 == *c && rec.2 == self.a.code.len() && self.a.last_bind != rec.2).then_some(rec.1);
                 self.mov_to(RAX, *b);
                 let ar = self.reg(*a, RDX);
-                let cr = self.reg(*c, RCX);
-                self.a.test_rr(cr);
-                self.a.cmov_rr(CC_NE, RAX, ar);
+                match flags {
+                    Some(cc) => self.a.cmov_rr(cc, RAX, ar),
+                    None => {
+                        let cr = self.reg(*c, RCX);
+                        self.a.test_rr(cr);
+                        self.a.cmov_rr(CC_NE, RAX, ar);
+                    }
+                }
                 let dr = self.dreg(*d, RAX);
                 if dr != RAX {
                     self.a.mov_rr(dr, RAX);
@@ -2220,7 +2250,9 @@ fn ifconv(f: &IrFunc) -> Option<IrFunc> {
         g.nvregs = next;
         g.vranges.resize(next, None);
         let blk = &mut g.blocks[bi];
-        blk.insts.extend(prep);
+        for (k, p) in prep.into_iter().enumerate() {
+            blk.insts.insert(k, p);
+        }
         blk.insts.extend(sels);
         blk.term = Term::Jmp(join);
         for x in [t, e] {
@@ -2441,6 +2473,17 @@ fn gen_func(
             }
         }
     }
+    // blocks entered from exactly one place: when that is the fall-through from the block before, nothing can
+    // jump to the label, so a reload of a slot stored just before it can be dropped (`Asm::load`)
+    let mut npred = vec![0usize; nb];
+    for (bi, b) in f.blocks.iter().enumerate() {
+        if fwd[bi].is_none() {
+            for t in succs_of(&b.term) {
+                npred[if early[bi] { t } else { thread(t) }] += 1;
+            }
+        }
+    }
+    let no_early = !early.iter().any(|&e| e);
     // innermost loop headers (targets of back edges between hot blocks): aligned to 16 bytes when that costs few NOPs
     let align_max: usize = std::env::var("YERUX_ALIGN")
         .ok()
@@ -2484,7 +2527,11 @@ fn gen_func(
         if hot_header[bi] {
             g.a.align_small(align_max);
         }
+        let before_bind = g.a.last_bind;
         g.a.bind(bl[bi]);
+        if no_early && bi > 0 && npred[bi] == 1 && fwd[bi].is_none() {
+            g.a.last_bind = before_bind;
+        }
         if g.a.dwarf {
             let at = g.a.code.len();
             g.a.cfi.push((at, if frameless || early[bi] { crate::dwarf::CFA_ENTRY } else { crate::dwarf::CFA_FRAME }));

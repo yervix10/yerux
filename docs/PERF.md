@@ -231,3 +231,59 @@ to 497 ms after it in the stage profile. These compile-time samples ran while
 other regression suites were active and are noisy. The native backend avoids
 the GCC step; the C backend retains `-O2` for generated program runtime
 performance.
+
+## Native x86-64: select (cmov), loop-invariant header loads, store/reload peephole
+
+All numbers below were measured on one shared host (other sessions were running; hashmap/sort show 22-25 %
+spread), `python3 bench/run.py --runs 5 --langs c,yn --no-write`, best of 5, before/after in the same session.
+
+What changed in the native backend:
+- **if-conversion to cmov** (`x64::ifconv`, `Inst::Sel`, x86-64 only): `if c { d = a }` and `if c { d = a } else
+  { d = b }` whose arms are a single `Mov`/`Const` become `cmovcc`. When the comparison that produced `c` is the last
+  thing emitted, its flags are reused (`cmp` + `cmovcc`, no `setcc`/`test` round trip). Disable with
+  `YERUX_NO_IFCONV=1`.
+- **loop-invariant header loads** (`loopopt::hoist_header_loads`): in a loop that cannot write memory, `len`/`ptr`
+  reads of a list or string through an address defined outside the loop move to the preheader. Disable with
+  `YERUX_OPT_OFF=licm`.
+- **reload after store peephole** (`Asm::ld`/`Asm::st`): `mov [rbp+k], r` immediately followed by `mov r, [rbp+k]`
+  loses the reload (not across a label that can be jumped to).
+- Range analysis (`opt.rs`): a re-read of a memory word with no store in between is now the same vreg (so facts
+  about a list length hold for its re-reads), and `a <= b` with `b < n` gives `a < n`; with the `find_from` rewrite
+  this removed the outer bounds check of `String.find`.
+
+Benchmarks (`bench/`, best time as multiple of C gcc -O2; native only):
+
+| benchmark | before | after |
+|---|---|---|
+| fib | 1.34 | 1.33 |
+| nbody | 0.98 | 1.01 |
+| fannkuch | 1.05 | 1.02 |
+| hashmap | 3.15 | 2.71 |
+| sort | 1.15 | 1.11 |
+| strings | 1.19 | 1.17 |
+| textops | 1.38 | 1.37 |
+| json | 0.74 | 0.80 |
+| geometric mean | 1.25 | 1.23 |
+
+These differences are within the run-to-run noise of this host (spread up to 25 %); they are not a demonstrated
+speed-up on these benchmarks. Mean native binary size stayed 8 KB; per benchmark (bytes, before -> after):
+fannkuch 6682 -> 6746, fib 5340 -> 5340, hashmap 8876 -> 8924, json 7453 -> 7469, nbody 11528 -> 11528, sort
+8994 -> 9106, strings 5666 -> 5666, textops 9109 -> 9109 (the emptied if-conversion arms stay in the image).
+
+Where the change does show: `bench/src/select.yx` (running max and a clamp at 500 on pseudo-random data, a 50/50
+branch), user seconds, 5 runs each:
+
+| build | user s |
+|---|---|
+| native, branches (`YERUX_NO_IFCONV=1`) | 0.038-0.041 |
+| native, cmov (default) | 0.031-0.034 |
+| C backend | 0.022-0.026 |
+
+(~18 % less than the branching native code; a first version that did `setcc`/`test`/`cmov` was 0.060, slower than the
+branches, which is why the flags are reused.) With a predictable branch (clamp at 700, running max that saturates)
+cmov equals the branching code (0.034 vs 0.034). Loop-invariant loads were neutral on `select.yx`
+(`YERUX_OPT_OFF=licm`: 0.030-0.034).
+
+Not done: the spilled loop invariant `first` of `String.find_from` (the allocator keeps it in memory because the
+inner loop has higher weight) and the inner bounds check `i + j < n` (needs linear reasoning the range analysis
+does not have). Both remain open.
