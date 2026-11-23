@@ -1078,6 +1078,13 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
       let box = expression(gen, tree, args + 1)
       return temp(gen, tree, ty, "((int64_t)(intptr_t)({box.code})->data)")
     }
+    if name == "__check_shared_content" { return temp(gen, tree, ty, String.from("0")) }
+    if name == "__locked_unbox" {
+      let lock = expression(gen, tree, args + 1)
+      let held = temp(gen, tree, lock.ty, transfer(gen, tree, lock))
+      line(gen, "sc_drop_ScBox(&{held.code}.m{hex_text("mutex")});")
+      return temp(gen, tree, ty, "{held.code}.m{hex_text("value")}")
+    }
     if name == "__parallel_address" {
       let body = local_place(gen, args + 1)
       return temp(gen, tree, ty, "((int64_t)(intptr_t)&({body.code}))")
@@ -2521,6 +2528,10 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
       let range = ast.range_type(tree, ast.child(tree, node, 1))
       return range_conversion(gen, tree, ast.child(tree, node, 3) + 1, range, ty, -1)
     }
+    if owner == "Box" && member == "from_runtime_word" && !gen.user_box {
+      let word = expression(gen, tree, ast.child(tree, node, 3) + 1)
+      return temp(gen, tree, ty, "sc_box_of({word.code})")
+    }
     if owner == "Ptr" && member == "null" { return temp(gen, tree, ty, "(({c_type(gen, tree, ty)})0)") }
     if owner == "Ptr" && member == "alloc" {
       let count = expression(gen, tree, ast.child(tree, node, 3) + 1)
@@ -3207,6 +3218,11 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
   let sub = nominal_sub(tree, node, ty)
   let fields = ast.child(tree, node, 2)
   var drops = List<String>.new()
+  let family = type_terms.base(ty)
+  let is_shared = family == "Shared" && !gen.user_box
+  if family == "LockGuard" && !gen.user_box {
+    drops.push("if (value->m{hex_text("address")}) nx_unlock(value->m{hex_text("address")});")
+  }
   var at = fields + 1
   while at < tree.at(fields).end {
     let ty = declared_for(tree, ast.child(tree, at, 1), sub)
@@ -3215,7 +3231,11 @@ fn emit_struct(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: 
     let drop = drop_fn(gen, tree, ty)
     if drop != "" {
       let name = String.from(tree.at(ast.child(tree, at, 0)).tag)
-      drops.push("{drop}(&value->m{name});")
+      let field_family = type_terms.base(ty)
+      if field_family == "Box" && is_shared && name == hex_text("cell") {
+        // the last Shared handle drops the cell: every clone points at the same box
+        drops.push("if (value->m{name}) {{ if (nx_atomic_fetch_add((int64_t)(intptr_t)value->m{name}->data, -1) == 1) sc_drop_ScBox(&value->m{name}); else value->m{name} = NULL; }}")
+      } else { drops.push("{drop}(&value->m{name});") }
     }
     at = tree.at(at).end
   }

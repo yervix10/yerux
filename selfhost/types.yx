@@ -876,6 +876,11 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     let result = owner.slice(11, owner.len() - 1)
     return "Result<{result}, ThreadPanic>"
   }
+  if builtin_box && receiver < 0 && payload != "?" && name == "from_runtime_word" {
+    if child_count(tree, args) != 1 { issue(types, String.from("'from_runtime_word' takes the address")) }
+    else { expect_type(types, String.from("Int"), infer(types, tree, args + 1, String.from("Int"))) }
+    return String.from(owner)
+  }
   if builtin_box && receiver < 0 && (owner == "Box" || payload != "?") && name == "new" {
     if child_count(tree, args) != 1 {
       issue(types, String.from("'Box.new' expects 1 argument"))
@@ -1491,6 +1496,14 @@ pub fn raw_arity(name: view String) -> Int {
 }
 
 fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view String, args: Int) -> String {
+  if name == "__check_shared_content" && child_count(tree, args) == 1 {
+    let ignored = infer(types, tree, args + 1, unknown())
+    return unit()
+  }
+  if name == "__locked_unbox" && child_count(tree, args) == 1 {
+    let lock = infer(types, tree, args + 1, unknown())
+    return "Box<{type_terms.first_argument(lock)}>"
+  }
   if name == "__box_address" && child_count(tree, args) == 1 {
     let box = infer(types, tree, args + 1, unknown())
     let payload = type_terms.box_payload(box)

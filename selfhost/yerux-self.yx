@@ -355,7 +355,11 @@ fn with_prelude(build: view Build, source: view String) -> String {
   if uses(scan, ".context(") || uses(scan, ".with_context(") || uses(scan, ".wrap(") {
     head.push_str(read_text(path.join(build.runtime, "prelude_error.yx")))
   }
-  // the real threads prelude (channels, Shared, Locked) is not linked yet: those programs stay outside the subset
+  var synchronized = false
+  for word in ["Sender", "Receiver", "Shared", "Locked", "Mutex", "RwLock", "thread_pool", "select2"] {
+    if uses(scan, word) { synchronized = true }
+  }
+  if synchronized { head.push_str(read_text(path.join(build.runtime, "prelude_sync.yx"))) }
   if uses(scan, "spawn ") || uses(scan, "JoinHandle") {
     head.push_str(read_text(path.join(build.runtime, "prelude_spawn.yx")))
   }
