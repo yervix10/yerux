@@ -489,3 +489,44 @@ input (over 16 MiB or 100000 cells) silently becomes an empty list. The report c
 from an empty file. A `Result` or at least a parsed/error flag would let a real importer explain the problem.
 Also, `csv.write` always ends every record with CRLF, including the last one, so a write→parse round-trip
 returns the data but not the exact input text.
+
+# Round 4: JSON linter, directory inventory and meal planner
+
+Written as `examples/22_json_lint.yx`, `examples/23_directory_inventory.yx` and `examples/24_meal_planner.yx`.
+
+## Open
+
+### There is no `std.json`, only the example CLI
+
+`docs/JSON.md` describes `examples/real/json/`, but importing `std.json` fails: the embedded modules contain no
+JSON reader or writer. A program that needs to validate or read JSON must either copy the 340-line tree codec or
+hand-roll a scanner, as `22_json_lint.yx` does for validation and counting. A `std.json` module (at least string
+escaping and a `Value` enum) would let the example reuse the standard library instead of duplicating grammar.
+
+### A `Text` literal has no `String` methods
+
+```yx
+let pad = "  ".repeat(depth)
+```
+
+This reports "type Text has no method 'repeat'" and then a cascade of "cannot infer the type parameter T of
+'std__fmt_val'" errors in every `print` that uses `pad`. The fix is `String.from("  ").repeat(depth)`, but the
+first diagnostic does not say so, and the cascade hides the one real error. A `Text` literal looks like a
+`String` everywhere else (interpolation, `push_str`, `view String` parameters).
+
+### Every ordinary string is a format string, including diagnostics
+
+```yx
+return Err("expected ',' or '}'")
+```
+
+This is "a lone `}` in a string"; the escape is `"}}`". The JSON linter has to write `"expected ',' or '}}'"`,
+which reads like an unbalanced literal in the output. A raw string avoids it, but the same rule made the
+earlier CSV example avoid braces in messages. Error text that contains JSON syntax should not need doubling.
+
+### File-existence helpers are split across `std.io` and `std.fs`
+
+`io.file_exists(path)` exists, `fs.file_exists(path)` does not (the `std.fs` name is `fs.exists`, and
+`fs.is_file`/`fs.is_dir` follow symlinks). The inventory example first used the `fs.` spelling and got a list of
+40 public items without a hint that `exists` is the one it wanted; the docs table in STDLIB_IO lists
+`io.file_exists` and a later section introduces `fs.exists`.
