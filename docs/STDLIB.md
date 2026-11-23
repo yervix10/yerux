@@ -169,6 +169,9 @@ Hash map with insertion-order iteration (until `remove`/`take`). Keys need `Hash
 | `get` | `fn get(view self, k: view K) -> V` (panics if missing) | `let v = m.get(k)` |
 | `get_or` | `fn get_or(view self, k: view K, d: V) -> V` | `let v = m.get_or(k, 0)` |
 
+### Borrowed read of any value (`std.collections`)
+`collections.map_with(m, k, f)`: `fn map_with<K: Hash + Equal, V, R>(m: view Map<K, V>, k: view K, f: view fn(view V) -> R) -> Option<R>`. Calls `f` with the value borrowed (works for owned `V`; the map keeps it) and returns `Some(f(v))`, or `None` if `k` is missing. Use it instead of `find` + `-1` + `vals.at(i)`. Example: `let n = collections.map_with(m, k, |v: view String| -> Int { return v.len() })`.
+
 ### Iteration (insertion order)
 ```yx
 fn main() {
@@ -552,7 +555,7 @@ struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
 | Trait | Gives you | Implemented for | Notes |
 |---|---|---|---|
 | `Copy` | implicit duplication | numbers, `Bool`, `Char`, `Text`, structs/enums/tuples/arrays of Copy parts | marker; cannot be written by hand |
-| `Equal` | `==`, `!=` | numbers, `Bool`, `Char`, `Text`, `String`, `Option<T>`, `List<T>` (not `Map`, `Set`, `Result` or tuples) | `derive Equal` |
+| `Equal` | `==`, `!=` | numbers, `Bool`, `Char`, `Text`, `String`, `Option<T>`, `List<T>`, non-generic enums without payload (implicit, no `derive` needed) (not `Map`, `Set`, `Result` or tuples) | `derive Equal` (enums with payload) |
 | `Ordered` | `<`, `>`, `<=`, `>=`, `sort`, `min`/`max` | numbers, `Bool`, `Char`, `String`, `Text` | tuples have none; not derivable |
 | `Show` | `show()` and `"{x}"` (`print` itself takes only scalars, `Text` and `String`: write `print("{xs}")`) | numbers, `Bool`, `Char`, `Text`, `String`, `Option`, `Result`, `List`, `Map`, `Set` (not tuples) | `derive Show` |
 | `Hash` | key of `Map`/`Set` | integers, `Bool`, `Char`, `Text`, `String` | not derivable |
@@ -747,7 +750,7 @@ Beyond interpolation. Widths count characters.
 
 ### `std.collections`
 
-The prelude already provides generic open-addressed `Map<K, V>` and `Set<T>` (`Hash + Equal` keys), so this module adds borrowed iteration helpers: `map_for_each(m, f)` and `set_for_each(s, f)`. Map `get`/`get_or` require `V: Copy`; `take` moves a value out. Iteration follows current storage order, which can change after removals.
+The prelude already provides generic open-addressed `Map<K, V>` and `Set<T>` (`Hash + Equal` keys), so this module adds borrowed iteration helpers: `map_for_each(m, f)` and `set_for_each(s, f)`, plus the borrowed lookup `map_with(m, k, f) -> Option<R>` (see Map above). Map `get`/`get_or` require `V: Copy`; `take` moves a value out. Iteration follows current storage order, which can change after removals.
 
 `vecdeque_push_front/back`, `vecdeque_pop_front/back`, `vecdeque_len`, and `vecdeque_for_each` provide double-ended queue operations over a `List<T>`. This backing representation keeps FIFO/LIFO ends available; front insertion/removal costs O(n). Owned elements are moved.
 

@@ -9,6 +9,16 @@ pub fn map_for_each<K: Hash + Equal, V>(m: view Map<K, V>, f: view fn(view K, vi
   }
 }
 
+/// Reads the value of key `k` through a borrow: `f` gets `view V` and its result is returned in `Some`;
+/// `None` when the key is missing. Works for owned values (no removal, no entry index, no `-1` check).
+pub fn map_with<K: Hash + Equal, V, R>(m: view Map<K, V>, k: view K, f: view fn(view V) -> R) -> Option<R> {
+  let e = m.find(k)
+  if e < 0 {
+    return Option.None
+  }
+  return Option.Some(f(m.vals.at(e)))
+}
+
 /// Visits set elements by borrow in the set's current storage order.
 pub fn set_for_each<T: Hash + Equal>(s: view Set<T>, f: view fn(view T)) {
   var i = 0
