@@ -409,7 +409,7 @@ fn main() {
 
 **Creation**: `String.new()`, `String.from(text_or_string)`, `String.concat(a, b)`.
 
-**Methods**: `len()`, `is_empty()`, `push_str(x)`, `push_int(n)`, `push_byte(b)`, `push_char(c)`, `eq(x)`, `byte(i)`, `clear()`, `slice(from, to)`, `split(sep)`, `trim()`, `to_upper()`, `to_lower()`, `replace(from, to)`, `repeat(n)`, `find(p)`, `starts_with(p)`, `ends_with(p)`, `contains(p)`, `parse_int(out)`. See STDLIB.md for the full list.
+**Methods**: `len()`, `is_empty()`, `push_str(x)`, `push_int(n)`, `push_byte(b)`, `push_char(c)`, `eq(x)`, `byte(i)`, `clear()`, `slice(from, to)`, `split(sep)`, `trim()`, `to_upper()`, `to_lower()`, `replace(from, to)`, `repeat(n)`, `find(p)`, `starts_with(p)`, `ends_with(p)`, `contains(p)`, `parse_int(out)`. See STDLIB.md for the full list. An unknown method close to a built-in one gets a suggestion: `s.lenn()` fails with ``help: did you mean `len`?`` and the list above.
 
 **Interpolation** (produces a `String`):
 ```yx
@@ -430,7 +430,7 @@ fn main() {
 - A literal with `{expr}` is a `String`; without one it stays `Text`. `{{` and `}}` are literal braces.
 - `{expr}` is one expression (variable, field, `l.at(i)`, method call, arithmetic). It cannot contain a quote or a brace.
 - The value's type needs `Show` (numbers, `Bool`, `Char`, `Text`, `String`, `List`, `Map`, `Set`, `Option`, `Result`, and your own `impl Show`).
-- `print` accepts numbers, `Char`, `Bool`, `Text`, `String` and `String` temporaries. To print any other `Show` value (a list, a map, an `Option`, your own type), interpolate it: `print("{x}")`.
+- `print` accepts numbers, `Char`, `Bool`, `Text`, `String` and `String` temporaries. To print any other `Show` value (a list, a map, an `Option`, your own type), interpolate it: `print("{x}")`. Passing the value directly (`print(p)` on a struct) is rejected with a help line showing exactly this.
 - Escapes in literals: `\n \t \r \" \\`.
 
 ---
@@ -976,6 +976,7 @@ fn main() {
 - Tuple types `(A, B)` have 2 to 6 elements.
 - Fields are `.0`, `.1`, ...; `t.1.len()` borrows an owned element.
 - `let (a, b) = e` consumes the tuple (use `move t` for an owned tuple variable). `_` discards an element, which is still freed.
+- Moving a single element out of an owned tuple binding (`let want = pair.0`) is refused; the help says to take the tuple apart: `let (x0, x1) = move pair`, so each name owns its element.
 - A tuple is Copy when all elements are Copy and owned when any element is owned.
 - Tuples have no `==`, `<` or `Show` (`print("{t}")` is an error): compare or show the elements. A tuple has **2 to 6** elements: the compiler rejects `(1,)` ("a tuple needs at least two elements") and a 7-tuple ("a tuple has at most 6 elements", use a struct).
 
@@ -1208,7 +1209,7 @@ fn main() {
 - Wrapping variants (`wrapping_add`, `truncate_uint8`, ...) never panic.
 - Floats follow IEEE 754: `nan` and `inf` are defined, nothing traps, and there is no float `%`.
 - Math functions (`sqrt`, `sin`, `cos`, `exp`, `ln`, `pow`, `abs`, `min`, `max`, ...) are usable as functions or methods.
-- A literal suffix (`250u8`, `1.5f32`) fixes the type; otherwise it comes from context, defaulting to `Int` / `Float`.
+- A literal suffix (`250u8`, `1.5f32`) fixes the type; otherwise it comes from context, defaulting to `Int` / `Float`. A sized type written as a value (`UInt8.from(0)`) is rejected; the help says `UInt8` is a type and shows `0u8` or `n.to_uint8()`.
 
 ---
 
