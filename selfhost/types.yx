@@ -1438,6 +1438,9 @@ fn infer_field(types: mut Types, tree: view List<ast.AstNode>, index: Int, acces
 pub fn raw_arity(name: view String) -> Int {
   if name == "__syscall" { return 7 }
   if name == "__store8" || name == "__store64" { return 2 }
+  if name == "__atomic_store" || name == "__atomic_fetch_add" || name == "__futex_park" || name == "__futex_wake" { return 2 }
+  if name == "__atomic_cmpxchg" { return 3 }
+  if name == "__atomic_load" || name == "__thread_wait" { return 1 }
   if name == "__alloc" || name == "__free" || name == "__global" ||
       name == "__load8" || name == "__load64" { return 1 }
   return 0
@@ -1455,6 +1458,11 @@ fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view Str
     let result = parts.pop()
     if result == "nothing" { return String.from("JoinHandle<ThreadDone>") }
     return "JoinHandle<{result}>"
+  }
+  if (name == "__thread_start" || name == "__thread_start_recover") && child_count(tree, args) == 1 {
+    // a raw worker: the closure runs on a new thread, the result is its handle word
+    let entry = infer(types, tree, args + 1, unknown())
+    return String.from("Int")
   }
   var result = unknown()
   let int_type = String.from("Int")
@@ -1480,7 +1488,7 @@ fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view Str
       expect_type(types, int_type, infer(types, tree, at, int_type))
       at = tree.at(at).end
     }
-    if name == "__free" || name.starts_with("__store") { return unit() }
+    if name == "__free" || name.starts_with("__store") || name == "__atomic_store" { return unit() }
     return int_type
   }
   if name == "ok_or" && child_count(tree, args) == 2 {

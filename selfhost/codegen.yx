@@ -1077,6 +1077,12 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
       let entry = expression(gen, tree, args + 1)
       return temp(gen, tree, ty, "nx_thread_start({transfer(gen, tree, entry)}, true)")
     }
+    if (name == "__thread_start" || name == "__thread_start_recover") && tree.at(args).end > args + 1 && tree.at(args + 1).end == tree.at(args).end {
+      let entry = expression(gen, tree, args + 1)
+      var recover = String.from("false")
+      if name == "__thread_start_recover" { recover = String.from("true") }
+      return temp(gen, tree, ty, "nx_thread_start({transfer(gen, tree, entry)}, {recover})")
+    }
     if types.raw_arity(name) > 0 {
       var values = List<String>.new()
       var at = args + 1
