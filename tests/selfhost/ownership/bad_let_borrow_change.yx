@@ -1,0 +1,7 @@
+fn main() {
+    var lines = List<String>.new()
+    lines.push(String.from("a"))
+    let line = lines.at(0)
+    lines.push(String.from("b"))
+    print(line)
+}

@@ -1,0 +1,16 @@
+fn main() {
+    var lines = List<String>.new()
+    lines.push(String.from("a"))
+    if lines.len() > 0 {
+        let line = lines.at(0)
+        print(line)
+        print(lines.len())
+    }
+    lines.push(String.from("b"))
+    var counts = List<Int>.new()
+    counts.push(1)
+    let first = counts.at(0)
+    counts.push(2)
+    print(first)
+    print(lines.len())
+}

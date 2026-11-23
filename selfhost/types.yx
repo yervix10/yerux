@@ -16,7 +16,7 @@ struct Signature {
   required_trait: String,
 }
 struct Function { node: Int, signature: Int, impl_params: Int }
-struct Frozen { binding: Int, place: String, exclusive: Bool }
+struct Frozen { binding: Int, place: String, exclusive: Bool, from_let: Bool }
 struct Types {
   identities: List<Int>,
   declarations: List<Int>,
@@ -475,6 +475,14 @@ fn check_frozen(types: mut Types, id: Int, name: view String, write: Bool) {
       let place = String.from(types.frozen.at(i).place)
       if name != place && !name.starts_with("{place}.") && !name.starts_with("{place}[") &&
           !place.starts_with("{name}.") && !place.starts_with("{name}[") { continue }
+      if types.frozen.at(i).from_let {
+        // a name borrowed from the list (`let x = l.at(i)`): changing the list would leave it dangling
+        if write {
+          issue(types, "cannot change '{name}' while a name borrowed from it is alive")
+          return
+        }
+        continue
+      }
       if types.frozen.at(i).exclusive {
         issue(types, "cannot use '{name}' inside the `match mut` arm that borrows it")
         return
@@ -2124,7 +2132,7 @@ fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNo
     var borrows = false
     check_pattern(types, tree, pat, subject, mode, borrows)
     if borrows {
-      types.frozen.push(Frozen { binding: id, place: place_name(tree, scrutinee), exclusive: mutable })
+      types.frozen.push(Frozen { binding: id, place: place_name(tree, scrutinee), exclusive: mutable, from_let: false })
     }
     if tree.at(guard).tag == "_" {
       var row = List<Int>.new()
@@ -2347,14 +2355,24 @@ fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.A
     var ty = infer(types, tree, initializer, unknown())
     // `let x = list.at(i)` borrows the element
     let id = types.identities.at(index)
-    if borrows_element(types, tree, initializer, ty) { types.modes.set(id, String.from("View")) }
+    var named_borrow = false
+    if borrows_element(types, tree, initializer, ty) {
+      named_borrow = true
+      types.modes.set(id, String.from("View"))
+      let list = ast.child(tree, initializer, 0)
+      let root = root_place(types, tree, list)
+      if types.verify_ownership && tree.at(ast.child(tree, index, 1)).tag == "false" && root >= 0 && types.identities.at(root) >= 0 {
+        types.frozen.push(Frozen { binding: types.identities.at(root), place: place_name(tree, list), exclusive: false, from_let: true })
+      }
+    }
     else { require_value(types, tree, initializer, ty) }
     if ty == "nothing" {
       issue(types, String.from("this expression produces no value"))
       ty = unknown()
     }
     types.bindings.set(id, String.from(ty))
-    if types.trace && ty != "?" {
+    // the Rust checker binds a borrowed element without a typed-let trace line
+    if types.trace && ty != "?" && !(named_borrow && types.verify_ownership) {
       let name = ast.name_at(tree, index, 0)
       let display = numeric_type(ty)
       types.messages.push("type:{name}:{display}")
@@ -2432,6 +2450,7 @@ fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.A
     let deferred = types.deferred.len()
     var exits = false
     let tail = returns.want
+    let frozen_before = types.frozen.len()
     while i < tree.at(index).end {
       returns.want = tail && tree.at(i).end == tree.at(index).end
       if check_body(types, returns, tree, i) {
@@ -2441,6 +2460,8 @@ fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.A
       i = tree.at(i).end
     }
     returns.want = tail
+    // names borrowed from a list by `let x = l.at(i)` end with their block
+    while types.frozen.len() > frozen_before { let unused = types.frozen.pop() }
     if !exits { check_deferred(types, tree, deferred) }
     while types.deferred.len() > deferred { let unused = types.deferred.pop() }
     return exits
