@@ -11,6 +11,7 @@ mod dropscc;
 mod elfdyn;
 mod fmt;
 mod inline;
+mod dwarf;
 mod ir;
 mod json;
 mod layout;
@@ -233,7 +234,7 @@ fn native_build(
     }
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--no-opt] [--native-debug-alloc]
+const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--no-opt] [--native-debug-alloc]
        yerux --version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
@@ -544,6 +545,11 @@ fn real_main() {
         exit(2);
     }
     let no_opt = args.iter().any(|a| a == "--no-opt") || debug;
+    if debug || args.iter().any(|a| a == "--dwarf") {
+        // native Linux: symbols + DWARF line/frame tables for gdb (docs/PANIC_DIAGNOSTICS.md)
+        ir::ALL_LOCS.store(true, std::sync::atomic::Ordering::Relaxed);
+        x64::DWARF.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if debug || std::env::var_os("YERUX_BACKTRACE").is_some() || std::env::var_os("YERUX_LOCS").is_some() {
         cgen::FULL_LOCS.store(true, std::sync::atomic::Ordering::Relaxed);
     }

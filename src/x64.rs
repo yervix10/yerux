@@ -68,6 +68,9 @@ const IMP_SETCONSOLEOUTPUTCP: usize = 5;
 
 // ───────────────────────── Assembler ─────────────────────────
 
+/// Emit DWARF line/frame information for the native Linux backend (`--dwarf`, `--debug`).
+pub static DWARF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 struct Asm {
     code: Vec<u8>,
     labels: Vec<Option<usize>>,
@@ -82,6 +85,10 @@ struct Asm {
     report: bool,
     /// panic site table: (offset of the return address after a call, location id), see `emit_report`
     sites: Vec<(usize, u32)>,
+    /// DWARF (see `dwarf.rs`): line rows (code offset, location id) and the frame-state rows of the current function
+    dwarf: bool,
+    lines: Vec<(usize, u32)>,
+    cfi: Vec<(usize, u8)>,
     // Windows runtime stubs (labels are only bound when os == Windows)
     l_oswrite: usize,
     l_osexit: usize,
@@ -101,6 +108,9 @@ impl Asm {
             os,
             report: false,
             sites: vec![],
+            dwarf: DWARF.load(std::sync::atomic::Ordering::Relaxed),
+            lines: vec![],
+            cfi: vec![],
             l_oswrite: 0,
             l_osexit: 0,
         }
@@ -2188,6 +2198,12 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
     // emitted out of line, after the early-exit region
     let prologue = |g: &mut G, tb: usize| {
         if !frameless {
+            if g.a.dwarf {
+                let at = g.a.code.len();
+                g.a.cfi.push((at, crate::dwarf::CFA_ENTRY));
+                g.a.cfi.push((at + 1, crate::dwarf::CFA_PUSHED));
+                g.a.cfi.push((at + 4, crate::dwarf::CFA_FRAME));
+            }
             g.a.raw(&[0x55]); // push rbp
             g.a.raw(&[0x48, 0x89, 0xE5]); // mov rbp, rsp
             if frame > 0 {
@@ -2223,6 +2239,10 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         }
     };
     let any_early = early.iter().any(|e| *e);
+    if g.a.dwarf {
+        let at = g.a.code.len();
+        g.a.cfi.push((at, crate::dwarf::CFA_ENTRY));
+    }
     if !any_early {
         prologue(&mut g, 0);
     }
@@ -2318,6 +2338,7 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             }
         }
     }
+    let mut last_loc = 0u32;
     for (bi, b) in f.blocks.iter().enumerate() {
         if skipped[bi] {
             continue;
@@ -2326,6 +2347,10 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             g.a.align_small(align_max);
         }
         g.a.bind(bl[bi]);
+        if g.a.dwarf {
+            let at = g.a.code.len();
+            g.a.cfi.push((at, if frameless || early[bi] { crate::dwarf::CFA_ENTRY } else { crate::dwarf::CFA_FRAME }));
+        }
         g.no_frame = frameless || early[bi];
         // early blocks run before the prologue: parameters are still in their argument registers
         let saved: Vec<Loc> = if early[bi] {
@@ -2354,6 +2379,14 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
         let mut cc = CC_NE;
         for (ii, ins) in b.insts.iter().enumerate() {
             g.cur = (bi, ii);
+            if g.a.dwarf {
+                let l = g.locs[bi].get(ii).copied().unwrap_or(0);
+                if l != 0 && l != last_loc {
+                    let at = g.a.code.len();
+                    g.a.lines.push((at, l));
+                    last_loc = l;
+                }
+            }
             if fused && ii + 1 == b.insts.len() {
                 match ins {
                     Inst::Bin(_, op, x, y) => cc = g.cmp_flags(*op, *x, *y),
@@ -2398,6 +2431,10 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
                     if frameless {
                         g.a.raw(&[0xC3]); // ret
                     } else {
+                        if g.a.dwarf {
+                            let at = g.a.code.len();
+                            g.a.cfi.push((at + 1, crate::dwarf::CFA_ENTRY)); // after `leave` the return address is on top
+                        }
                         g.a.raw(&[0xC9, 0xC3]); // leave; ret
                     }
                 }
@@ -2416,6 +2453,10 @@ fn gen_func(a: &mut Asm, rt: &Rt, f: &IrFunc, cold_fn: &[bool]) {
             prologue(&mut g, t);
             g.a.jmp(bl[t]);
         }
+    }
+    if g.a.dwarf {
+        let at = g.a.code.len();
+        g.a.cfi.push((at, if frameless { crate::dwarf::CFA_ENTRY } else { crate::dwarf::CFA_FRAME }));
     }
     for (l, r, lo, hi, loc, fix) in std::mem::take(&mut g.stubs) {
         g.a.bind(l);
@@ -2600,6 +2641,7 @@ pub(crate) struct Built {
     pub(crate) blob: Vec<u8>,
     pub(crate) entry: usize,
     pub(crate) imports: Vec<(usize, usize)>,
+    pub(crate) dbg: crate::dwarf::DebugInfo,
 }
 
 pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
@@ -2609,9 +2651,14 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
             if !ir.externs.is_empty() {
                 return crate::elfdyn::write(&b, &ir.links, &ir.externs);
             }
+            let code_len = b.code.len();
             let mut all = b.code;
             all.extend_from_slice(&b.blob);
-            elf64(&all, b.entry)
+            let mut elf = elf64(&all, b.entry);
+            if b.dbg.funcs.len() > 0 {
+                crate::dwarf::append(&mut elf, &b.dbg, &ir.locs, &ir.files, BASE + HDR, HDR, code_len);
+            }
+            elf
         }
         Os::Windows => {
             // The heap state lives in .data at a fixed address (no relocations: the image is linked
@@ -3863,13 +3910,24 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         thread_wait: l_thread_wait,
     };
     let cold_fn: Vec<bool> = ir.funcs.iter().map(|f| f.name == "__list_grow").collect();
+    let mut dbg_info = crate::dwarf::DebugInfo::default();
     for (fi, f) in ir.funcs.iter().enumerate() {
         // functions start on 16 bytes (strbuild: -15% CPU time; padding is never executed)
         if std::env::var_os("YERUX_NO_FALIGN").is_none() {
             a.align_small(15);
         }
         a.bind(l_funcs[fi]);
+        let start = a.code.len();
+        a.cfi.clear();
         gen_func(&mut a, &rt, f, &cold_fn);
+        if a.dwarf {
+            dbg_info.funcs.push(crate::dwarf::FuncInfo {
+                name: f.name.clone(),
+                start,
+                end: a.code.len(),
+                cfi: std::mem::take(&mut a.cfi),
+            });
+        }
     }
 
     // the tables read by the panic report (see `l_report`), u32 words: a header, the panic site table (return
@@ -4023,7 +4081,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
     }
     let entry = a.labels[l_start].unwrap();
+    dbg_info.lines = std::mem::take(&mut a.lines);
     Built {
+        dbg: dbg_info,
         code: a.code,
         blob,
         entry,
