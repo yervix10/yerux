@@ -3042,8 +3042,10 @@ fn lower_statement(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) 
     gen.indent = gen.indent + 1
     let value = expression(gen, tree, ast.child(tree, node, 0))
     if value.ty != "nothing" && gen.value_target != "" {
-      let assigned = coerce(gen, tree, move value, gen.value_type)
-      line(gen, "{gen.value_target} = {transfer(gen, tree, assigned)};")
+      let wanted = String.from(gen.value_type)
+      let assigned = coerce(gen, tree, move value, wanted)
+      let moved = transfer(gen, tree, assigned)
+      line(gen, "{gen.value_target} = {moved};")
     } else if value.ty != "nothing" { line(gen, "(void)({value.code});") }
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
