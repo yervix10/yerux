@@ -537,8 +537,10 @@ transcripts identical. The server exits by itself after MAXCLIENTS connections; 
 28. **Fields cannot be moved out of an owned struct.** `return Vm { code: p.code }` with `p: Prog` gives "cannot move 'p.code'
     out of its struct" (bcvm moves the whole struct).
 29. **`==` on a call result.** `if kind_at(p) == Kind.Eof` gives "cannot use `==` here: ... not a variable" (bind with `let` first).
-30. **`assert_eq` and `==` on a String call result** fail the same way; `.eq` is the workaround (sudoku).
-31. **String `+` is not concatenation.** `s + "x"` on Strings gives "expected Int but this is String" (use interpolation).
+30. **`assert_eq` and `==` on a String call result** fail the same way; `.eq` is the workaround (sudoku). Reported by the
+    sudoku author; not re-checked.
+31. **Not reproduced.** The sudoku author reported `s + "x"` on Strings as rejected; `fn add(a: String) -> String { return a + "x" }`
+    builds, so no friction is recorded here.
 32. **`pub` on methods.** `pub fn` inside an `impl` gives "methods take no `pub`".
 33. **`view` at call sites.** `net.write(s, view line)` gives "unexpected keyword 'view' here".
 34. **String/Text mismatch and no `String.push`.** `String.push` is missing, and a `Text` parameter rejects a `String` with
