@@ -170,3 +170,53 @@ line. Prerequisite names are split on spaces or tabs. Recursive traversal uses
 call stack space proportional to the longest prerequisite chain. The [graph tests](../tests/minimake_graph.sh) verify stdout, stderr and
 status on C and native, including an older, newer and equal prerequisite mtime,
 a shared prerequisite, phony prerequisites, cycle and invalid inputs.
+
+# Round 3: Markdown converter, ray tracer, JSON over HTTP
+
+Three programs of 380 to 730 lines, each with unit tests (`yerux test`) and a golden run on the C and the native
+backend. The suite runs them as `mdconv`, `raytrace` and `httpjson` in `tests/run_all.sh`.
+
+- [mdconv](../examples/real/mdconv/): Markdown to HTML over an enum block tree (`Block`, `Inline`). Checked by
+  `tests/mdconv.sh` (sample golden `tests/expected/mdconv_sample.out`). Round 2's `md2html.yx` is line based; this one
+  builds the tree first, so the renderer matches on enum payloads.
+- [raytrace](../examples/real/raytrace/): spheres, planes, shadows and recursive mirrors; writes P3 PPM. Checked by
+  `tests/raytrace.sh` (32x20 golden `tests/expected/raytrace_32x20.ppm`, byte-identical on both backends).
+- [httpjson](../examples/real/httpjson/): `std.http` client, a hand-written JSON parser (`json.yx`) and a loopback test
+  server (`server.yx`). Checked by `tests/httpjson.sh`, which starts the server on port 0 and reads the port it prints.
+
+## Fixed in round 3
+
+- **`String.slice(from, to)` with `from > to` panicked with "index out of range".** It now panics with
+  `String.slice start is after end` (in `src/prelude_string.yx` and the bootstrap helper `src/c_selfhost_text.h`).
+  Test: `tests/string_slice_inverted.yx` (its golden includes the position, so it runs under `YERUX_LOCS=1`, as
+  `run_all.sh` does).
+
+## Open (not changed; minimal repros)
+
+1. **A type parameter that appears only in the result cannot be inferred.** A helper that builds an error for any
+   result type does not compile:
+   ```
+   fn fail<T>(m: Text) -> Result<T, String> { return Err(String.from(m)) }
+   fn main() { let r: Result<Int, String> = fail("x") }
+   ```
+   Error: `cannot infer the type parameter T of 'fail'`. Workaround: return a plain error value and wrap it with
+   `Err(...)` at each call site (`httpjson` does this with `json.fail`).
+2. **A `Text` literal is not a `String` inside a tuple.** `var h = List<(String, String)>.new(); h.push(("Accept", "x"))`
+   fails with `expected (String, String) but this is (Text, Text)`. Use `String.from("Accept")` in each slot.
+3. **A pattern cannot reach into an owned payload.** `match json.parse(s) { Ok(Json.Str(t)) => { .. } .. }` gives
+   `cannot look inside an owned payload in match move`. The diagnostic is clear; bind the value first, then match it
+   (`Ok(v) => { match v { Str(t) => ... } }`).
+4. **A field of a borrowed error cannot be moved.** `Err(e) => { return Err(e.message) }` fails with
+   `cannot move 'e.message' out of its struct`. `Err(String.from(e.message))` works.
+5. **Pushing a borrowed list element needs a copy.** `body.push(lines.at(i))` fails with `cannot move 'lines.at(..)'`.
+   Use `.clone()` (same as open item 2 of round 2).
+6. **An interpolation cannot contain an escaped quote.** `"n = {text.parse_int(\"1\")}"` gives `this { in a string is never
+   closed`. Inside `{...}` the quotes are plain (`"n = {text.parse_int("1")}"`); outside them, a literal brace is `{{`
+   and `}}`, which JSON text needs everywhere.
+7. **I/O messages repeat the path.** `io.write_file("/nonexistent/x", "a")` yields
+   `open '/nonexistent/x': No such file or directory (os error 2)`; a program that prefixes the path prints it twice.
+   Programs must choose: prefix the operation, or print the message alone.
+8. **`text.parse_int` errors do not name the input.** `text.parse_int("4x")` returns `invalid digit at byte 1` without
+   the text, so a caller that wants `bad size "4x"` must add it.
+9. **`text.parse_float("1e400")` is `Ok(inf)`.** This matches Rust's `f64::from_str`, but the `std.text` reference does
+   not say so. The JSON parser rejects infinite results itself. (Documentation only.)
