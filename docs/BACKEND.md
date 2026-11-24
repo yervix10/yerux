@@ -33,7 +33,7 @@ bash tests/a64_all.sh --threads
 QEMU_LD_PREFIX=/usr/aarch64-linux-gnu bash tests/a64_all.sh --ffi
 ```
 
-The groups passed 33 system, 4 socket, 8 process, 20 thread and 5 FFI fixtures.
+The groups passed 34 system, 4 socket, 8 process, 23 thread and 5 FFI fixtures.
 Install `qemu-aarch64` on `PATH` and set `QEMU_LD_PREFIX` to the matching glibc
 sysroot for FFI. To measure the entire current runnable test corpus, pass
 `--qemu` and the selected `tests/*.yx` files to `tests/a64_all.sh`.

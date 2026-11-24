@@ -23,7 +23,7 @@ STACK = 0x7F000000
 MMAP_BASE = 0x10000000
 MAX_INSNS = 400_000_000
 NETWORK = ("net_errors", "net_hostile_address", "net_read_timeout", "net_timeouts")
-SYSTEM_EXAMPLES = ("21_mini_echo", "23_directory_inventory")
+SYSTEM_EXAMPLES = ("21_mini_echo", "23_directory_inventory", "25_calculator")
 SYSTEM_TESTS = (
     "chain_temps", "env_basic", "env_set", "fs_autoclose", "fs_basic", "fs_buffered",
     "fs_buffered_final_cr", "fs_handles", "fs_links", "hostile_fs", "io_args", "io_basic", "io_exit", "io_exit_drop",
@@ -36,6 +36,7 @@ PROCESS = (
     "caps_deny", "caps_grant", "env_process", "hostile_process",
     "process_basic", "process_leaks", "process_pipes", "process_timeout",
 )
+THREAD_EXAMPLES = ("concurrency", "concurrency_channels", "thread_pool")
 THREADS = (
     "conc_channel_worker_panic", "conc_freeze_api", "conc_parallel", "conc_print",
     "conc_runtime", "conc_sharing", "conc_spawn", "concurrency_channel",
@@ -202,7 +203,7 @@ def a64_run(src, tmp, extra, check_decode=True, qemu=None):
 def check_one(args):
     f, debug, force_qemu = args
     name = os.path.basename(f)[:-3]
-    needs_qemu = force_qemu or name in NETWORK + SYSTEM_EXAMPLES + SYSTEM_TESTS + PROCESS + THREADS + FFI
+    needs_qemu = force_qemu or name in NETWORK + SYSTEM_EXAMPLES + SYSTEM_TESTS + PROCESS + THREADS + THREAD_EXAMPLES + FFI
     qemu = shutil.which("qemu-aarch64") if needs_qemu else None
     if needs_qemu and qemu is None:
         return f, "SKIP", "qemu-aarch64 unavailable"
@@ -251,7 +252,7 @@ def check_one(args):
         why = []
         if ec != gold_c: why.append(f"exit {ec} != {gold_c}")
         if so != gold_o: why.append("stdout differs")
-        if debug and name in THREADS:
+        if debug and name in THREADS + THREAD_EXAMPLES:
             # The number of temporary allocations can depend on scheduling.
             # Preserve and compare the live count and any other diagnostics.
             counts = rb"(?m)^allocs: [0-9]+\nfrees: [0-9]+\n"
@@ -283,8 +284,8 @@ def main():
     selected = next((group for group in groups if getattr(a, group)), None)
     if selected:
         files = [f"tests/{name}.yx" for name in groups[selected]]
-        if selected == "system":
-            files.extend(f"examples/{name}.yx" for name in SYSTEM_EXAMPLES)
+        examples = {"system": SYSTEM_EXAMPLES, "threads": THREAD_EXAMPLES}
+        files.extend(f"examples/{name}.yx" for name in examples.get(selected, ()))
     else:
         files = a.files
     if not files:
