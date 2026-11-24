@@ -37,6 +37,30 @@ for file in tests/selfhost/spans/bad_*.yx; do
   spans=$((spans + 1))
 done
 printf 'selfhost spans: %d diagnostics drawn with line, column and underline\n' "$spans"
+
+# error corpus: for every tests/e*.yx the self-hosted driver should reject with the same first error as the Rust
+# compiler. Counted, not gated per file (SELFHOST_ERRORS=/tmp/x.tsv keeps the table); the floor below only guards
+# against regressions of what already matches.
+: >"$tmp/errors.tsv"
+same=0; differs=0; other=0; accepts=0; errors_total=0
+for file in tests/e[0-9]*.yx; do
+  errors_total=$((errors_total + 1))
+  want=$(timeout 20 "$rust" build "$file" -o "$tmp/err-rust" 2>&1 | grep -m1 '^error' || true)
+  got=$(timeout 20 "$driver" "$file" -o "$tmp/err-self" 2>&1 | grep -m1 -v '^yerux-self:\|^ \|^$' || true)
+  if [[ -z $want ]]; then kind=rust-accepts
+  elif [[ -z $got ]]; then kind=self-accepts; accepts=$((accepts + 1))
+  elif [[ $want == "$got" ]]; then kind=same; same=$((same + 1))
+  elif [[ $got == error:* ]]; then kind=differs; differs=$((differs + 1))
+  else kind=other; other=$((other + 1)); fi
+  printf '%s\t%s\t%s\t%s\n' "$file" "$kind" "$want" "$got" >>"$tmp/errors.tsv"
+done
+[[ -n ${SELFHOST_ERRORS:-} ]] && cp "$tmp/errors.tsv" "$SELFHOST_ERRORS"
+printf 'selfhost error corpus: %d of %d tests/e*.yx give the same first error as the Rust compiler (%d differ in wording, %d fail another way, %d are accepted)\n' \
+  "$same" "$errors_total" "$differs" "$other" "$accepts"
+if [[ $same -lt ${SELFHOST_ERROR_FLOOR:-0} ]]; then
+  printf 'selfhost error corpus: fell below %d matching diagnostics\n' "${SELFHOST_ERROR_FLOOR:-0}" >&2
+  exit 1
+fi
 cp -R examples/project "$tmp/project"
 "$driver" "$tmp/project/yerux.toml"
 "$tmp/project/target/hello-project" >"$tmp/project.out"
@@ -120,7 +144,7 @@ if "$driver" "$tmp/enum-empty-args.yx" -o "$tmp/invalid" 2>"$tmp/enum-empty-args
   printf 'selfhost derived implicit Equal for a parenthesized variant\n' >&2
   exit 1
 fi
-grep -q 'cannot compare values of type Kind' "$tmp/enum-empty-args.err"
+grep -q 'does not implement Equal' "$tmp/enum-empty-args.err"
 
 source_ast() {
   : >"$tmp/source.err"

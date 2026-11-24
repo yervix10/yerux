@@ -80,9 +80,15 @@ fn issue(types: mut Types, message: view String) {
   types.errors = types.errors + 1
 }
 
+// A declaration is checked from several places: report the same problem once
+fn issue_once(types: mut Types, message: view String) {
+  let line = "error: {message}"
+  if !types.messages.contains(line) { issue(types, message) }
+}
+
 fn expect_type(types: mut Types, expected: view String, actual: view String) {
   if !type_terms.compatible(expected, actual) {
-    issue(types, "expected {expected} but this is {actual}")
+    issue(types, "expected {type_terms.pretty(expected)} but this is {type_terms.pretty(actual)}")
   }
 }
 
@@ -255,7 +261,18 @@ fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> St
   if tree.at(index).tag == "Type" {
     let name = ast.name_at(tree, index, 0)
     let args = ast.child(tree, index, 1)
-    if name == "Int" { return ast.range_type(tree, args) }
+    if name == "Int" {
+      let range = ast.range_type(tree, args)
+      if range.starts_with("Int<") {
+        let bounds = range.slice(4, range.len() - 1).split("..")
+        var lo = 0
+        var hi = 0
+        if bounds.len() == 2 && bounds.at(0).parse_int(lo) && bounds.at(1).parse_int(hi) && lo > hi {
+          issue_once(types, "empty integer range {lo}..{hi}")
+        }
+      }
+      return range
+    }
     if name == "Int64" { return String.from("Int") }
     if name == "Float64" { return String.from("Float") }
     if integer(name) || floating(name) || name == "Bool" || name == "Char" ||
@@ -476,7 +493,9 @@ fn place_name(tree: view List<ast.AstNode>, node: Int) -> String {
   }
   if tree.at(node).tag == "Field" {
     let base = place_name(tree, ast.child(tree, node, 0))
-    let field = ast.name_at(tree, node, 1)
+    var field = ast.name_at(tree, node, 1)
+    // a tuple field `_0` is written `.0`
+    if field.len() > 1 && field.starts_with("_") && field.byte(1) >= 48 && field.byte(1) <= 57 { field = field.slice(1, field.len()) }
     return "{base}.{field}"
   }
   return ast.name_at(tree, node, 0)
@@ -559,7 +578,22 @@ fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<o
     node: Int, mode: view String, ty: view String, receiver: Bool) {
   if !types.verify_ownership { return }
   let owns = owns_value(types, ty)
-  if mode != "Mut" && !owns { return }
+  if mode != "Mut" && !owns {
+    // a read-only use of a plain value still conflicts with a `mut` use of it in the same call
+    if mode == "View" {
+      let place = root_place(types, tree, node)
+      if place >= 0 && types.identities.at(place) >= 0 {
+        let id = types.identities.at(place)
+        for prior in loans {
+          if prior.binding == id && prior.exclusive {
+            issue(types, "'{place_name(tree, place)}' appears twice in the same call and one use modifies or moves it")
+          }
+        }
+        loans.push(ownership.Loan { binding: id, exclusive: false })
+      }
+    }
+    return
+  }
   let explicit = tree.at(node).tag == "Move"
   if explicit && mode != "Own" {
     issue(types, String.from("this function only borrows: remove `move`"))
@@ -1230,11 +1264,17 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
     return unknown()
   }
   if equal {
+    // `==` calls `eq`, which borrows its left side: a String or Equal-implementing value has to be a variable
+    if (a == "String" || (shape_index(types, a) >= 0 && equal_type(types, a))) && root_place(types, tree, left) < 0 {
+      issue(types, "cannot use `{op}` here: the left side is a {a} value that is not a variable")
+      return boolean
+    }
     if integer(a) || floating(a) || a == "Char" || a == "Bool" || a == "String" || a == "Text" {
       if !((a == "String" && b == "Text") || (a == "Text" && b == "String")) { expect_type(types, a, b) }
     } else if equal_type(types, a) || a.starts_with("Option<") { expect_type(types, a, b) }
     else if shape_index(types, a) >= 0 {
-      issue(types, "cannot compare values of type {a}")
+      if root_place(types, tree, left) >= 0 { issue(types, "cannot use `{op}` on values of type {a}: it does not implement Equal") }
+      else { issue(types, "cannot compare values of type {a}") }
     }
     return boolean
   }
@@ -2684,9 +2724,15 @@ fn declare_shapes(types: mut Types, tree: view List<ast.AstNode>, items: Int) {
       let name = ast.name_at(tree, i, 0)
       let entry = ast.child(tree, i, 1)
       if tree.at(i).tag == "FieldDef" {
+        if field_index(types.shapes.at(at), name) >= 0 { issue_once(types, "duplicate field '{name}'") }
         let ty = source_type(types, tree, entry)
         types.shapes.at(at).fields.push(FieldType { name: move name, ty: move ty })
       } else {
+        var repeated = false
+        for k in 0..types.shapes.at(at).variants.len() {
+          if types.shapes.at(at).variants.at(k).name == name { repeated = true }
+        }
+        if repeated { issue_once(types, "duplicate variant '{name}'") }
         let payload = source_types(types, tree, entry)
         types.shapes.at(at).variants.push(Variant { name: move name, payload: move payload })
       }
@@ -2719,6 +2765,14 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
   let params = param_types(types, tree, params_node, -1, true)
   let ret = return_type(types, tree, ast.child(tree, node, 3))
   let name = ast.name_at(tree, node, 0)
+  var seen = List<String>.new()
+  for at in params_node + 1..tree.at(params_node).end {
+    if tree.at(at).tag == "Param" {
+      let parameter = ast.name_at(tree, at, 0)
+      if seen.contains(parameter) { issue_once(types, "duplicate parameter '{parameter}'") }
+      else { seen.push(String.from(parameter)) }
+    }
+  }
   for at in params_node + 1..tree.at(params_node).end {
     if tree.at(at).tag == "Variadic" { types.variadics.push(String.from(name)) }
   }
@@ -2800,7 +2854,8 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
         let owner = source_type(types, tree, ast.child(tree, item, 2))
         if name == "Drop" {
           let shape = shape_index(types, owner)
-          if shape >= 0 { types.shapes.at(shape).user_drop = true }
+          if shape >= 0 && types.shapes.at(shape).is_enum { issue_once(types, "`Drop` can only be implemented for a struct, not for {owner}") }
+          else if shape >= 0 { types.shapes.at(shape).user_drop = true }
         } else if name == "Equal" { types.equal_types.push(String.from(owner)) }
         else if name == "Ordered" { types.ordered_types.push(String.from(owner)) }
         else if name == "Show" { types.shown_types.push(String.from(owner)) }

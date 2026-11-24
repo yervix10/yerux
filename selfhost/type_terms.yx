@@ -242,3 +242,27 @@ pub fn snake(name: view String) -> String {
   while out.len() > 0 && out.byte(out.len() - 1) == 95 { out = out.slice(0, out.len() - 1) }
   return out
 }
+
+// A type as the Rust compiler spells it in diagnostics: `[Int; 3]`, `[Int]`, `(Int, Int)`, `time.Duration`.
+pub fn pretty(ty: view String) -> String {
+  if ty.starts_with("std__") {
+    var out = String.new()
+    var rest = ty.slice(5, ty.len())
+    let pieces = rest.split("__")
+    for i in 0..pieces.len() {
+      if i > 0 { out.push_str(".") }
+      out.push_str(pieces.at(i))
+    }
+    return out
+  }
+  let name = base(ty)
+  if name.len() == ty.len() { return String.from(ty) }
+  let args = arguments(ty)
+  var shown = List<String>.new()
+  for arg in args { shown.push(pretty(arg)) }
+  if name == "Array" && args.len() == 2 { return "[{shown.at(0)}; {args.at(1)}]" }
+  if name == "Slice" && args.len() == 1 { return "[{shown.at(0)}]" }
+  if name == "$dyn" && args.len() == 1 { return "dyn {shown.at(0)}" }
+  if name.starts_with("$tuple") { return "({shown.join(", ")})" }
+  return "{pretty(name)}<{shown.join(", ")}>"
+}
