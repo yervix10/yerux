@@ -999,6 +999,19 @@ impl<'a> Checker<'a> {
         t
     }
 
+    /// `a + b + c` where the leftmost sum starts a String concatenation (`s + "x"`, `"(" + s`): the left operand
+    /// is itself a concatenation, so the whole chain builds Strings step by step.
+    fn concat_chain(&self, e: &Expr) -> bool {
+        match &e.k {
+            EK::Bin("+", a, b) => {
+                (self.isp(a) && self.peek_ty(a) == Some(Ty::String))
+                    || (matches!(a.k, EK::Text(_)) && self.isp(b) && self.peek_ty(b) == Some(Ty::String))
+                    || self.concat_chain(a)
+            }
+            _ => false,
+        }
+    }
+
     fn expr_checked(&mut self, e: &mut Expr) -> Ty {
         let pos = e.pos;
         // a `const` (not shadowed by a local): its folded value
@@ -1321,9 +1334,11 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        // `a + b` on a String variable: a new String (`std__concat`); b is a String variable or a Text
-        if let EK::Bin("+", a, _) = &e.k {
-            if self.isp(a) && self.peek_ty(a) == Some(Ty::String) {
+        // `a + b` on a String variable: a new String (`std__concat`); b is a String variable or a Text.
+        // A Text literal on the left (`"(" + s`) concatenates the same way: the literal is lent as a hidden String.
+        if let EK::Bin("+", a, b) = &e.k {
+            let lit_left = matches!(a.k, EK::Text(_)) && self.isp(b) && self.peek_ty(b) == Some(Ty::String);
+            if lit_left || (self.isp(a) && self.peek_ty(a) == Some(Ty::String)) || self.concat_chain(a) {
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
                 if let EK::Bin(_, a, b) = k {
                     e.k = EK::Call("std__concat".into(), vec![*a, *b]);

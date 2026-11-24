@@ -1,0 +1,17 @@
+// A Text literal on the left of `+` with a String variable on the right, and chains of `+`.
+fn main() {
+  let s = String.from("x")
+  let t = "(" + s
+  print(t)
+  print(s)
+  let u = "<" + s + ">"
+  print(u)
+  let v = s + "y" + "z" + s
+  print(v)
+  var n = 0
+  for i in 0..3 {
+    let k = "k" + s
+    n = n + k.len() + i
+  }
+  print(n)
+}
