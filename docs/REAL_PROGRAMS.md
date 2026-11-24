@@ -90,6 +90,12 @@ Frictions and their resolution (1.0 freeze round):
 3. **Closed.** `sort.stable_by(l, compare)` accepts a named comparator with a concrete signature.
    Generic calls now also infer the type of an argument such as `identity(compare)`, including
    module-qualified functions. [Regression test](../tests/named_fn_sort.yx).
+
+   **Open, module lookup.** A local function value named after an imported
+   function can trigger the diagnostic for an unqualified import. For example,
+   with `import std.path`, `let join = path.join` followed by
+   `print(join("a", "b"))` inside `main` is rejected. Use a local name such
+   as `join_path`.
 4. `Result::unwrap` needs `E: Show`. **Final:** the diagnostic already says `add impl Show for E`.
 5. `assert_eq` rejected `String`. **Fixed:** `assert_eq` is now `assert(a == b)` checked like any `==`, so
    numbers, Bool and String/Text variables or literals work, and other types get the precise `==`
@@ -160,6 +166,7 @@ entry loads the same engine.
 
 The supported Makefile subset evaluates both variable assignment forms once, in
 file order. It supports one rule per target and uses a new shell for each recipe
-line. The [graph tests](../tests/minimake_graph.sh) verify stdout, stderr and
+line. Prerequisite names are split on spaces or tabs. Recursive traversal uses
+call stack space proportional to the longest prerequisite chain. The [graph tests](../tests/minimake_graph.sh) verify stdout, stderr and
 status on C and native, including an older, newer and equal prerequisite mtime,
 a shared prerequisite, phony prerequisites, cycle and invalid inputs.
