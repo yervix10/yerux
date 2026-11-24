@@ -2,7 +2,7 @@
 """Yerux benchmark suite driver.
 
 Builds every benchmark with every toolchain, checks that all outputs are identical,
-runs each binary N times (interleaved), and writes RESULTS.md.
+runs each binary N times (interleaved), and writes the selected report.
 
   python3 bench/run.py [--runs 7] [--only fib,sieve] [--skip-build] [--no-write]
   python3 bench/run.py --large --no-write
@@ -54,12 +54,11 @@ def build(benches):
     shutil.rmtree(BUILD, ignore_errors=True)
     os.makedirs(BUILD)
     ctime, size = {}, {}
-    env = dict(os.environ, GOCACHE=os.path.join(BUILD, "gocache"), GOFLAGS="-trimpath")
     for b in benches:
         for k, _, mk in LANGS:
             out = os.path.join(BUILD, f"{k}_{b}")
             t = time.perf_counter()
-            r = subprocess.run(mk(b, out), capture_output=True, text=True, env=env)
+            r = subprocess.run(mk(b, out), capture_output=True, text=True)
             ctime[(b, k)] = time.perf_counter() - t
             if r.returncode != 0:
                 sys.exit(f"build failed: {k} {b}\n{r.stderr}")
@@ -112,7 +111,7 @@ def main():
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--large", action="store_true", help="also time three large multi-module programs")
     ap.add_argument("--langs", default="c,yn,yc", help="comma-separated: c,yn,yc")
-    ap.add_argument("--report", default=os.path.join(ROOT, "docs", "PERF.md"))
+    ap.add_argument("--report", default=os.path.join(HERE, "RESULTS.md"))
     a = ap.parse_args()
     if a.runs < 1:
         ap.error("--runs must be positive")
@@ -162,7 +161,7 @@ def main():
           f"{os.cpu_count()} CPUs, `{subprocess.getoutput('uname -sr')}`. All outputs verified identical to the C version.", "",
           "CPU time = user+sys from `wait4`. `best`/`median` in seconds; `spread` = (max-min)/median over the runs (noise indicator); "
           "ratios are relative to plain `C cc -O2` (lower is better; ratio of best / ratio of median). RSS = peak resident set (MB).", "",
-          "The measurements were collected on a shared build host while other regression suites were active. Treat high-spread entries as noisy; rerun this script on an idle host for tighter comparisons.", ""]
+          "Treat high-spread entries as noisy. Use an idle host for comparisons when possible.", ""]
     ratios = {k: [] for k in KEYS}
     median_ratios = {k: [] for k in KEYS}
     for b in benches:
@@ -181,8 +180,7 @@ def main():
         g = math.exp(sum(math.log(max(r, 1e-9)) for r in ratios[k]) / len(ratios[k]))
         wi = max(range(len(benches)), key=lambda i: ratios[k][i])
         md.append(f"| {LABEL[k]} | {g:.2f} | {benches[wi]} ({ratios[k][wi]:.2f}x) |")
-    md += ["", "## Main measured bottlenecks", "",
-           "The three largest median slowdowns among Yerux backends in this run are below. Causes are code-path hypotheses from the benchmark structure; this host has neither `perf` nor Valgrind/callgrind installed, so no hardware-counter profile was available.", ""]
+    md += ["", "## Largest median runtime ratios to C", ""]
     gaps = {}
     for k in KEYS:
         if k == "c": continue
@@ -191,15 +189,7 @@ def main():
             if b not in gaps or sample[0] > gaps[b][0]:
                 gaps[b] = sample
     for rank, (ratio, k, b) in enumerate(sorted(gaps.values(), reverse=True)[:3], 1):
-        cause = {
-            "strings": "the workload repeatedly appends formatted integers; the Yerux C backend pays per-character helper and capacity-check costs",
-            "hashmap": "Map uses checked modular integer hashing, open addressing, and parallel key/value/hash lists; the pure C loop has fewer abstraction and safety checks",
-            "fib": "recursive calls and overflow checks dominate this call-heavy workload; the C compiler optimizes the plain-C recursion more aggressively",
-            "sort": "merge-sort's indexed list access adds bounds checks and creates register pressure in the inner copy/merge loops",
-            "nbody": "no material slowdown versus C in this sample",
-            "json": "no material slowdown versus C in this sample",
-        }.get(b, "the benchmark's hot loop is a candidate for profiling")
-        md.append(f"{rank}. **{b} ({LABEL[k]} {ratio:.2f}x median vs C).** {cause}.")
+        md.append(f"{rank}. {b} ({LABEL[k]}, {ratio:.2f}x).")
     md.append("")
     md += ["", "## Binary size and compile time (mean over benchmarks)", "", "| Language | binary size (KB) | compile time (s) |", "|---|---|---|"]
     for k in KEYS:
@@ -212,9 +202,10 @@ def main():
         text += "\n" + "\n".join(large_builds())
     print(text)
     if not a.no_write:
-        open(os.path.join(HERE, "RESULTS.md"), "w").write(text)
-        os.makedirs(os.path.dirname(a.report), exist_ok=True)
-        open(a.report, "w").write(text)
+        os.makedirs(os.path.dirname(os.path.abspath(a.report)), exist_ok=True)
+        with open(a.report, "w") as report:
+            report.write(text)
 
 
-main()
+if __name__ == "__main__":
+    main()

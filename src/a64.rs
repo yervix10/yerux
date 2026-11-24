@@ -395,6 +395,10 @@ impl Asm {
         self.fix.push((self.code.len(), Fix::B19, l));
         self.emit(0xB500_0000 | rt);
     }
+    fn cbnz_word(&mut self, rt: u32, l: usize) {
+        self.fix.push((self.code.len(), Fix::B19, l));
+        self.emit(0x3500_0000 | rt);
+    }
     pub fn ret(&mut self) {
         self.emit(0xD65F_03C0);
     }
@@ -429,6 +433,12 @@ impl Asm {
         self.mov_imm(X0, code);
         self.mov_imm(X8, 94);
         self.svc();
+    }
+
+    fn call_import(&mut self, index: usize) {
+        self.mov_imm(X16, G + (GOT_REL + 8 * index) as i64);
+        self.ldr_i(X16, X16, 0);
+        self.blr(X16);
     }
 
     /// `base` = virtual address of code[0]; `data_start` = offset of the data blobs in code.
@@ -510,7 +520,7 @@ const PANIC_MSGS: [&str; 17] = [
     "float is NaN or out of range for the integer type",
     "could not start thread",
     "second panic during worker cleanup",
-    "extern C calls from AArch64 Yerux workers require libc TLS",
+    "could not join thread",
 ];
 const P_ADD: usize = 0;
 const P_SUB: usize = 1;
@@ -528,7 +538,7 @@ const P_CONV: usize = 12;
 const P_F2I: usize = 13;
 const P_THREAD_START: usize = 14;
 const P_DOUBLE_PANIC: usize = 15;
-const P_WORKER_FFI: usize = 16;
+const P_THREAD_WAIT: usize = 16;
 const CHK_PANIC: [usize; 7] = [P_ADD, P_SUB, P_MUL, P_DIV, P_NEG, P_CONV, P_F2I];
 const FREED: i64 = 1 << 62; // debug builds tag the header of a block sitting on a free list
 
@@ -764,7 +774,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let mut a = Asm::new();
     let has_threads = ir.funcs.iter().flat_map(|f| &f.blocks)
         .flat_map(|b| &b.insts).any(|i| matches!(i, Inst::Thread(..)));
-    let thread_runtime = has_threads.then(|| threads::Runtime::new(&mut a));
+    let pthreads = (has_threads && !ir.externs.is_empty())
+        .then(|| threads::Pthreads::new(ir.externs.len()));
+    let thread_runtime = has_threads.then(|| threads::Runtime::new(&mut a, pthreads));
 
     let mut data: Vec<Vec<u8>> = vec![
         b"panic: ".to_vec(),
@@ -810,9 +822,30 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
 
     // _start: expose the initial Linux stack for std.io and std.env.
     a.bind(l_start);
+    if pthreads.is_some() {
+        a.mov(X5, X0); // the loader's finalizer
+    }
     a.mov_imm(X0, G + G_USER);
     a.mov_sp(X1, SP);
     a.str_i(X1, X0, 0);
+    if let Some(pthreads) = pthreads {
+        let main = a.label();
+        a.mov_imm(X29, 0);
+        a.lea_label(X0, main);
+        a.ldr_i(X1, SP, 0); // argc
+        a.add_imm(X2, SP, 8); // argv
+        a.mov_imm(X3, 0); // legacy init
+        a.mov_imm(X4, 0); // legacy fini
+        a.mov_sp(X6, SP); // stack end
+        a.call_import(pthreads.start_main);
+        a.sys_exit(127); // __libc_start_main does not return
+        a.bind(main);
+        a.sub_imm(SP, SP, 32);
+        a.str_i(X19, SP, 0);
+        a.str_i(X29, SP, 8);
+        a.str_i(X30, SP, 16);
+        a.mov_imm(X29, 0); // stop Yerux's panic trace at the ABI boundary
+    }
     a.mov_imm(X17, 0);
     if has_threads {
         a.mov_imm(X19, threads::MAIN_CONTEXT);
@@ -838,7 +871,16 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
             a.bl(l_print_int);
         }
     }
-    a.sys_exit(0);
+    if pthreads.is_some() {
+        a.ldr_i(X19, SP, 0);
+        a.ldr_i(X29, SP, 8);
+        a.ldr_i(X30, SP, 16);
+        a.add_imm(SP, SP, 32);
+        a.mov_imm(X0, 0);
+        a.ret();
+    } else {
+        a.sys_exit(0);
+    }
 
     // write2: x1 = buf, x2 = len -> write(2, buf, len)
     a.bind(l_write2);
@@ -849,7 +891,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     for (i, l) in l_panic.iter().enumerate() {
         a.bind(*l);
         if let Some(rt) = &thread_runtime {
-            if !matches!(i, P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_DOUBLE_PANIC) {
+            if !matches!(i, P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_DOUBLE_PANIC | P_THREAD_WAIT) {
                 rt.panic_probe(&mut a, l_panic[P_DOUBLE_PANIC]);
             }
         }
@@ -1101,7 +1143,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.svc();
     a.ret();
     if let Some(rt) = &thread_runtime {
-        rt.emit(&mut a, l_mmap, l_panic[P_THREAD_START]);
+        rt.emit(&mut a, l_mmap, l_panic[P_THREAD_START], l_panic[P_THREAD_WAIT]);
     }
 
     // rt_alloc: x0 = bytes -> x0 = payload pointer. Block = [size header][payload].
@@ -1725,20 +1767,19 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         a.str(X0, SP, slot(*d));
                     }
                     Inst::ExternCall(dst, id, args, floats, ret_float) => {
-                        if has_threads {
-                            a.mov_imm(X9, threads::MAIN_CONTEXT);
-                            a.cmp(X19, X9);
-                            a.bcond(NE, l_panic[P_WORKER_FFI]);
-                        }
                         // Linux AAPCS64: eight registers in each argument bank.
                         // Arguments that overflow either bank spill in source order.
                         let (mut gp, mut fp, mut spilled) = (0, 0, 0);
                         let float_count = floats.iter().filter(|&&f| f).count();
                         let stack_count = float_count.saturating_sub(8)
                             + (args.len() - float_count).saturating_sub(8);
-                        let size = ((8 * stack_count + 15) & !15) as u32;
+                        let stack_bytes = 8 * stack_count as u32;
+                        let size = (stack_bytes + 8 * u32::from(report) + 15) & !15;
                         if size != 0 {
                             a.sub_sp_const(SP, SP, size, false);
+                        }
+                        if report {
+                            a.str(X17, SP, stack_bytes);
                         }
                         for (&arg, &float) in args.iter().zip(floats) {
                             let offset = slot(arg) + size;
@@ -1755,9 +1796,10 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                                 spilled += 8;
                             }
                         }
-                        a.mov_imm(X16, G + (GOT_REL + 8 * id) as i64);
-                        a.ldr_i(X16, X16, 0);
-                        a.blr(X16);
+                        a.call_import(*id);
+                        if report {
+                            a.ldr(X17, SP, stack_bytes);
+                        }
                         if size != 0 {
                             a.sub_sp_const(SP, SP, size, true);
                         }
@@ -2039,7 +2081,14 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     } else {
         use crate::elfdyn::{write_image, Arch, HEADER_SIZE};
         a.finalize(BASE + HEADER_SIZE as u64, data_start, &offs);
-        write_image(&a.code, &blob, entry, &ir.links, &ir.externs, Arch::A64)
+        let mut imports = ir.externs.clone();
+        let mut links = ir.links.clone();
+        if pthreads.is_some() {
+            imports.extend(threads::Pthreads::IMPORTS.map(str::to_owned));
+            // Older glibc releases provide these symbols in a separate DSO.
+            links.push("libpthread.so.0".into());
+        }
+        write_image(&a.code, &blob, entry, &links, &imports, Arch::A64)
     }
 }
 

@@ -1,0 +1,172 @@
+// Unit tests: `yerux test examples/real/lzh/tests.yx`
+import bits
+import codec
+import gen
+import huff
+
+fn ints(s: view String) -> List<Int> {
+  var out = List<Int>.new()
+  for i in 0..s.len() {
+    out.push(s.byte(i))
+  }
+  return out
+}
+
+// True when compress and then decompress give back `data` exactly.
+fn round_trips(data: view List<Int>) -> Bool {
+  let packed = codec.compress(data).unwrap()
+  let back = codec.decompress(packed).unwrap()
+  if back.len() != data.len() {
+    return false
+  }
+  for i in 0..data.len() {
+    if back.at(i) != data.at(i) {
+      return false
+    }
+  }
+  return true
+}
+
+test "bit writer and reader agree, least significant bit first" {
+  var w = bits.writer()
+  bits.put(w, 5, 3)
+  bits.put(w, 1, 1)
+  bits.put(w, 300, 12)
+  let bytes = bits.finish(w)
+  assert(bytes.at(0) == 205)
+  var r = bits.reader(move bytes, 0)
+  assert(bits.take(r, 3) == 5)
+  assert(bits.take(r, 1) == 1)
+  assert(bits.take(r, 12) == 300)
+  assert(!r.overrun)
+}
+
+test "reading past the end sets overrun" {
+  var r = bits.reader(List<Int>.new(), 0)
+  assert(bits.take(r, 1) == 0)
+  assert(r.overrun)
+}
+
+test "huffman lengths: one symbol gets one bit, unused symbols none" {
+  var f = List<Int>.new()
+  for _ in 0..4 {
+    f.push(0)
+  }
+  f[2] = 9
+  let len = huff.lengths(f)
+  assert(len.at(2) == 1)
+  assert(len.at(0) == 0 && len.at(1) == 0 && len.at(3) == 0)
+}
+
+test "huffman lengths follow frequency and codes are canonical" {
+  var f = List<Int>.new()
+  f.push(1)
+  f.push(1)
+  f.push(2)
+  f.push(4)
+  let len = huff.lengths(f)
+  assert(len.at(3) == 1)
+  assert(len.at(2) == 2)
+  assert(len.at(0) == 3 && len.at(1) == 3)
+  let code = huff.codes(len)
+  assert(code.at(3) == 0)
+  assert(code.at(2) == 2)
+  assert(code.at(0) == 6 && code.at(1) == 7)
+}
+
+test "the empty input is a header and an end code" {
+  var empty = List<Int>.new()
+  let packed = codec.compress(empty).unwrap()
+  assert(packed.len() == codec.HEADER + 1)
+  assert(packed.at(0) == 76 && packed.at(3) == 49)
+  assert(packed.at(7) == 0)
+  assert(codec.decompress(packed).unwrap().len() == 0)
+}
+
+test "repeated text compresses and round-trips" {
+  var s = String.new()
+  for _ in 0..200 {
+    s.push_str("the quick brown fox ")
+  }
+  let data = ints(s)
+  let packed = codec.compress(data).unwrap()
+  assert(packed.len() < data.len() / 2)
+  assert(round_trips(data))
+}
+
+test "matches within and beyond the window, and runs past the 258-byte limit" {
+  var state = 3
+  let block = gen.sample(state, 5000)
+  var near = List<Int>.new()
+  for i in 0..3000 {
+    near.push(block.at(i))
+  }
+  for i in 0..3000 {
+    near.push(block.at(i))
+  }
+  assert(round_trips(near))
+  assert(codec.compress(near).unwrap().len() < 3000 + codec.HEADER)
+  var far = List<Int>.new()
+  for b in block {
+    far.push(b)
+  }
+  for b in block {
+    far.push(b)
+  }
+  assert(round_trips(far))
+  var run = List<Int>.new()
+  for _ in 0..1000 {
+    run.push(120)
+  }
+  assert(round_trips(run))
+}
+
+test "sampled inputs of every kind round-trip" {
+  var state = 11
+  for k in 0..120 {
+    let size = if_small(k, gen.next(state, 4000))
+    assert(round_trips(gen.sample(state, size)))
+  }
+}
+
+fn if_small(k: Int, size: Int) -> Int {
+  if k % 3 == 0 {
+    return size % 3
+  }
+  return size
+}
+
+test "sampling is deterministic for a seed" {
+  var a = 5
+  var b = 5
+  let x = gen.sample(a, 500)
+  let y = gen.sample(b, 500)
+  assert(x.len() == y.len())
+  for i in 0..500 {
+    assert(x.at(i) == y.at(i))
+  }
+}
+
+test "malformed streams are errors" {
+  var short = List<Int>.new()
+  short.push(76)
+  assert(codec.decompress(short).is_err())
+  var empty = List<Int>.new()
+  for _ in 0..codec.HEADER {
+    empty.push(0)
+  }
+  assert(codec.decompress(empty).is_err())
+  let packed = codec.compress(ints(String.from("hello hello hello"))).unwrap()
+  var cut = List<Int>.new()
+  for i in 0..packed.len() - 2 {
+    cut.push(packed.at(i))
+  }
+  assert(codec.decompress(cut).is_err())
+}
+
+test "a code length above the limit is rejected" {
+  let packed = codec.compress(ints(String.from("abc"))).unwrap()
+  var bad = packed.copy()
+  bad[8 + 97] = 90
+  assert(codec.decompress(bad).is_err())
+}

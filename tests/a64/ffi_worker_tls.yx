@@ -1,0 +1,34 @@
+extern "C" {
+  fn __errno_location() -> Ptr<Int32>
+}
+
+// Use the low byte of libc's int on little-endian Linux. Ptr dereference
+// supports byte elements, and every sentinel fits in a single byte.
+fn set_errno(value: UInt8) {
+  unsafe { Ptr<UInt8>.from_addr(__errno_location().addr()).write(value) }
+}
+
+fn get_errno() -> UInt8 {
+  unsafe { return Ptr<UInt8>.from_addr(__errno_location().addr()).read() }
+}
+
+fn main() {
+  set_errno(17)
+  scope {
+    let worker = spawn move {
+      set_errno(42)
+      scope {
+        let child = spawn move {
+          set_errno(99)
+          let payload = String.from("dropped after a recoverable panic")
+          assert(get_errno() == 99)
+          panic(payload)
+        }
+        assert(child.join().is_err())
+      }
+      return get_errno()
+    }
+    print(worker.join().unwrap())
+  }
+  print(get_errno())
+}

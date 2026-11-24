@@ -92,7 +92,8 @@ Pipeline: `AST -> Yerux IR -> machine code -> executable file`.
 - Runtime allocator mirrors x64: size classes 2^4..2^16 with free lists, 1 MiB arenas, larger blocks own an mmap;
   state lives in a zero-filled RW PT_LOAD at 0x600000.
 - Native programs support `std.io`, `std.fs`, `std.env`, `std.time`, blocking TCP through `std.net`,
-  `std.process`, workers and scalar/variadic C imports. See the [AArch64 coverage and limits](docs/BACKEND.md).
+  `std.process`, workers and scalar/variadic C imports from both main and worker threads. See the
+  [AArch64 coverage and limits](docs/BACKEND.md).
 - Still the simple model: every vreg in a stack slot, args on the stack, no register allocation, no optimisations
   beyond `opt.rs` (shared IR pass); `MemCpy` is a byte loop. Not run on real hardware, only emulated.
 - Verification: `tests/a64_emu.py` (Unicorn + capstone) runs every example/test the native backend accepts and checks
@@ -153,9 +154,10 @@ Pipeline: `AST -> Yerux IR -> machine code -> executable file`.
 - Typed worker panic recovery walks stack records describing live owned
   locals and then releases the closure environment. Lock cleanup poisons a
   mutex when recovery follows a panic inside its protected closure.
-- The C oracle uses pthreads and C11 atomics. AArch64 Linux uses `clone`,
-  guarded stacks and acquire/release exclusive instructions. The Windows native
-  backend rejects concurrency IR with a target-specific diagnostic.
+- The C oracle uses pthreads and C11 atomics. AArch64 Linux uses `clone` and
+  guarded stacks for libc-free executables, pthreads for workers that can call C,
+  and acquire/release exclusive instructions for synchronization. The Windows
+  native backend rejects concurrency IR with a target-specific diagnostic.
 - See [docs/CONCURRENCY.md](docs/CONCURRENCY.md) for language support and
   the remaining concurrency design.
 

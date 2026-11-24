@@ -1,0 +1,189 @@
+// lzh: LZ77 + canonical Huffman compression of files, with a round-trip check.
+//
+//   lzh compress IN OUT       writes the lzh stream of IN to OUT
+//   lzh decompress IN OUT     writes the original bytes of an lzh stream IN to OUT (a corrupt stream is an error)
+//   lzh stat FILE...          one line per file: name, size, packed size, percent, and "ok" when the round trip is exact
+//   lzh selftest N [SEED]     N generated inputs (sizes 0..~8 KiB and up to 64 KiB) round-tripped in memory
+// Exit status: 0 ok, 1 an unreadable or corrupt input, a failed round trip or an I/O error, 2 a usage error.
+import codec
+import gen
+import std.args
+import std.fs
+import std.io
+import std.text
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("lzh: {msg}")
+  io.exit(code)
+}
+
+fn to_ints(b: view List<UInt8>) -> List<Int> {
+  var out = List<Int>.new()
+  for x in b {
+    out.push(x.to_int())
+  }
+  return out
+}
+
+fn to_bytes(v: view List<Int>) -> List<UInt8> {
+  var out = List<UInt8>.new()
+  for x in v {
+    out.push(x.to_uint8())
+  }
+  return out
+}
+
+// Round trip of one input: the packed size, or an error message.
+fn round_trip(data: view List<Int>) -> Result<Int, String> {
+  let packed = codec.compress(data)?
+  let back = codec.decompress(packed)?
+  if back.len() != data.len() {
+    return Err("length differs")
+  }
+  for i in 0..data.len() {
+    if back.at(i) != data.at(i) {
+      return Err("byte {i} differs")
+    }
+  }
+  return Ok(packed.len())
+}
+
+fn percent(packed: Int, size: Int) -> String {
+  if size == 0 {
+    return String.from("-")
+  }
+  return "{(packed * 1000) / size / 10}.{(packed * 1000) / size % 10}"
+}
+
+fn cmd_compress(names: view List<String>, decode: Bool) -> Int {
+  if names.len() != 2 {
+    fail("usage: lzh compress|decompress IN OUT", 2)
+  }
+  let raw = match fs.read_bytes(names.at(0)) {
+    Ok(b) => move b
+    Err(e) => {
+      fail("cannot read {names.at(0)}", 1)
+      return 1
+    }
+  }
+  let input = to_ints(raw)
+  var result: List<Int> = List<Int>.new()
+  if decode {
+    match codec.decompress(input) {
+      Ok(v) => { result = move v }
+      Err(e) => {
+        fail("{names.at(0)}: {e}", 1)
+        return 1
+      }
+    }
+  } else {
+    match codec.compress(input) {
+      Ok(v) => { result = move v }
+      Err(e) => {
+        fail("{names.at(0)}: {e}", 1)
+        return 1
+      }
+    }
+  }
+  match fs.write_bytes(names.at(1), to_bytes(result)) {
+    Ok(n) => { return 0 }
+    Err(e) => {
+      fail("cannot write {names.at(1)}", 1)
+      return 1
+    }
+  }
+}
+
+fn cmd_stat(names: view List<String>) -> Int {
+  if names.len() == 0 {
+    fail("usage: lzh stat FILE...", 2)
+  }
+  var status = 0
+  for name in names {
+    match fs.read_bytes(name) {
+      Ok(raw) => {
+        let data = to_ints(raw)
+        match round_trip(data) {
+          Ok(packed) => {
+            print("{name} {data.len()} {packed} {percent(packed, data.len())}% ok")
+          }
+          Err(e) => {
+            print("{name} {data.len()} - - FAIL {e}")
+            status = 1
+          }
+        }
+      }
+      Err(e) => {
+        fail("cannot read {name}", 1)
+        status = 1
+      }
+    }
+  }
+  return status
+}
+
+fn cmd_selftest(names: view List<String>) -> Int {
+  if names.len() < 1 || names.len() > 2 {
+    fail("usage: lzh selftest N [SEED]", 2)
+  }
+  let n = match text.parse_int(names.at(0)) {
+    Ok(v) => v
+    Err(e) => {
+      fail("bad count: {e}", 2)
+      return 2
+    }
+  }
+  var seed = 1
+  if names.len() == 2 {
+    seed = match text.parse_int(names.at(1)) {
+      Ok(v) => v
+      Err(e) => {
+        fail("bad seed: {e}", 2)
+        return 2
+      }
+    }
+  }
+  var state = seed
+  var total = 0
+  var packed_total = 0
+  for k in 0..n {
+    let size = if_small(gen.next(state, 65536), k)
+    let data = gen.sample(state, size)
+    match round_trip(data) {
+      Ok(packed) => {
+        total = total + size
+        packed_total = packed_total + packed
+      }
+      Err(e) => {
+        fail("case {k} (size {size}): {e}", 1)
+        return 1
+      }
+    }
+  }
+  print("selftest: {n} cases ok, {total} bytes in, {packed_total} bytes packed")
+  return 0
+}
+
+// Every fourth case is small (under 64 bytes), so the empty and tiny inputs are always covered.
+fn if_small(size: Int, k: Int) -> Int {
+  if k % 4 == 0 {
+    return size % 64
+  }
+  return size % 8192
+}
+
+fn main() {
+  let p = args.parse_process()
+  let cmd = p.subcommand.clone()
+  let names = args.positionals(p)
+  if cmd.eq("compress") {
+    io.exit(cmd_compress(names, false))
+  } else if cmd.eq("decompress") {
+    io.exit(cmd_compress(names, true))
+  } else if cmd.eq("stat") {
+    io.exit(cmd_stat(names))
+  } else if cmd.eq("selftest") {
+    io.exit(cmd_selftest(names))
+  }
+  fail("usage: lzh compress|decompress|stat|selftest ...", 2)
+}
