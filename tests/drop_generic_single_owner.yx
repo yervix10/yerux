@@ -6,6 +6,12 @@ impl<T: Copy> Drop for Tag<T> {
 fn forward<T: Copy>(value: Tag<T>) -> Tag<T> { return value }
 fn consume<T: Copy>(value: Tag<T>) { print("consume") }
 
+struct Shell<T> { id: Int }
+struct Owner { shell: Shell<Owner>, text: String }
+impl<T: Copy> Drop for Shell<T> {
+  fn drop(mut self) { print("drop shell") }
+}
+
 fn main() {
   let original = Tag<Int> { value: 1 }
   let handed_off = forward(move original)
@@ -15,5 +21,10 @@ fn main() {
   let owned = Tag<String> { value: String.from("owned") }
   let moved = move owned
   print(moved.value)
+
+  // Owner is independently owned through text, so this Shell has no destructor.
+  let shell = Shell<Owner> { id: 42 }
+  let copy = shell
+  assert_eq(shell.id, copy.id)
   print("done")
 }

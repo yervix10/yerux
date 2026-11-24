@@ -6615,7 +6615,11 @@ impl<'a> Checker<'a> {
         has_drop: &mut dyn FnMut(usize) -> bool,
     ) -> bool {
         if tr == "Copy" {
-            return !self.types.owned_with_drop(ty, has_drop) && ty != Ty::Unit;
+            // An independently owned field settles Copy without asking about a
+            // destructor that might itself have a Copy bound on this type.
+            return ty != Ty::Unit
+                && !self.types.owned_with_drop(ty, &mut |_| false)
+                && !self.types.owned_with_drop(ty, has_drop);
         }
         if let Ty::Param(i) = ty {
             return self.types.params[i].bounds.iter().any(|b| b == tr);
