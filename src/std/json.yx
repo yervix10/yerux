@@ -11,6 +11,7 @@
 // Nesting is limited to 200 levels. `to_string` writes one line, `to_pretty` indents by two spaces; a Float
 // that is NaN or infinite has no JSON spelling and is written as `null`.
 import std.text
+import std.io
 
 pub enum Value {
   Null,
@@ -191,12 +192,14 @@ fn hex4(r: mut Reader) -> Result<Int, Error> {
 }
 
 fn parse_string(r: mut Reader) -> Result<String, Error> {
+  let start = r.pos
   r.pos = r.pos + 1
   var out = String.new()
   while true {
     let b = peek(r)
     if b < 0 { return Err(fault(r.pos, "unterminated string")) }
     if b == '"'.to_int() {
+      if !io.valid_utf8(out) { return Err(fault(start, "invalid UTF-8 in string")) }
       r.pos = r.pos + 1
       return Ok(move out)
     }

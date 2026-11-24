@@ -22,6 +22,8 @@ error at byte 3 (line 1, column 4): invalid literal
 error at byte 4 (line 1, column 5): unexpected text after the JSON value
 error at byte 0 (line 1, column 1): integer out of range
 error at byte 9 (line 3, column 3): unexpected character
+invalid value at 1: invalid UTF-8 in string
+invalid key at 1: invalid UTF-8 in string
 {
   "a": [
     1,

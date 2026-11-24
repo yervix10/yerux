@@ -1,4 +1,6 @@
 // std.hex: hexadecimal encoding for strings and raw bytes (docs/STDLIB.md).
+import std.io
+
 fn digit(n: Int) -> Int {
   if n < 10 { return 48 + n }
   return 87 + n
@@ -36,6 +38,7 @@ fn decode_pair(s: view String, i: Int) -> Int {
   return hi * 16 + lo
 }
 
+/// Decode hexadecimal text into a UTF-8 String. Use decode_bytes for binary data.
 pub fn decode(s: view String) -> Result<String, String> {
   if s.len() % 2 != 0 { return Err(String.from("hex input must have even length")) }
   var out = String.new()
@@ -46,6 +49,7 @@ pub fn decode(s: view String) -> Result<String, String> {
     out.push_byte(b)
     i = i + 2
   }
+  if !io.valid_utf8(out) { return Err(String.from("decoded hex is not valid UTF-8")) }
   return Ok(move out)
 }
 

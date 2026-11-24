@@ -38,6 +38,21 @@ fn main() {
   show("9223372036854775808")
   show("[\n  1,\n  oops\n]")
 
+  var invalid_value = String.from("[\"")
+  invalid_value.push_byte(255)
+  invalid_value.push_str("\"]")
+  var invalid_key = String.from("{{\"")
+  invalid_key.push_byte(195)
+  invalid_key.push_str("\":1}}")
+  match json.parse(invalid_value) {
+    Ok(_) => { print("invalid value accepted") }
+    Err(e) => { print("invalid value at {e.offset}: {e.message}") }
+  }
+  match json.parse(invalid_key) {
+    Ok(_) => { print("invalid key accepted") }
+    Err(e) => { print("invalid key at {e.offset}: {e.message}") }
+  }
+
   // pretty output
   match json.parse("{{\"a\":[1,{{\"b\":[]}},\"é\\u0001\"],\"c\":{{}},\"d\":2.0}}") {
     Ok(v) => { print(json.to_pretty(v)) }

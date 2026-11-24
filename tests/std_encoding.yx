@@ -36,4 +36,11 @@ fn main() {
     Ok(_) => { print("bad") }
     Err(_) => { print("base64 rejected") }
   }
+  print(hex.decode("ff").is_err())
+  let binary = hex.decode_bytes("ff").unwrap()
+  print(binary.at(0).to_int())
+  print(base64.decode("/w==").is_err())
+  let base64_binary = base64.decode_bytes("/w==").unwrap()
+  print(base64_binary.at(0).to_int())
+  print(base64.decode("4oKs").unwrap())
 }

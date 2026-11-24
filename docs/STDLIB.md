@@ -705,10 +705,12 @@ Rules that follow from the language and apply to the calls below:
 
 `std.hex.encode(s)` encodes the UTF-8 bytes of a string as lowercase hexadecimal. `encode_bytes(data: view [UInt8])`
 encodes raw bytes the same way. `decode(s)` returns `Result<String, String>` and `decode_bytes(s: view String)`
-returns `Result<List<UInt8>, String>`. Both decoders reject odd lengths or non-hex digits.
+returns `Result<List<UInt8>, String>`. Both decoders reject odd lengths or non-hex digits. `decode` requires
+valid UTF-8 in the decoded result. Use `decode_bytes` for binary data.
 
 `std.base64.encode(s)` and `decode(s)` use the RFC 4648 standard alphabet and padded form. Decode validates padding and returns
-errors for malformed input. The decoded bytes are returned in a Yerux `String`.
+errors for malformed input or decoded bytes that are invalid UTF-8. `decode_bytes(s: view String)` applies the same
+alphabet and padding rules and returns `Result<List<UInt8>, String>` for binary data.
 
 `std.hash.fnv1a32(s)` and `crc32(s)` return unsigned 32-bit results represented by non-negative
 `Int` values. CRC is CRC-32/ISO-HDLC (the ZIP/Ethernet variant). `std.hash.sha256(s)` returns the
@@ -811,7 +813,7 @@ manifest subset via dotted-key accessors.
 
 | Function | Notes |
 |----------|-------|
-| `parse(text: view String) -> Result<Value, Error>` | RFC 8259: any whitespace around the value, `\uXXXX` escapes with surrogate pairs, UTF-8 passed through. A number without fraction or exponent is `Int` (outside the `Int` range it is an error), otherwise `Float`; leading zeros, a bare `-`, `1.`, `1e`, control characters in strings, trailing text and nesting deeper than 200 levels are errors |
+| `parse(text: view String) -> Result<Value, Error>` | RFC 8259: any whitespace around the value, `\uXXXX` escapes with surrogate pairs, and validation of UTF-8 in string values and object keys. Invalid UTF-8 is reported at the string's opening quote. A number without fraction or exponent is `Int` (outside the `Int` range it is an error), otherwise `Float`; leading zeros, a bare `-`, `1.`, `1e`, control characters in strings, trailing text and nesting deeper than 200 levels are errors |
 | `Error { offset: Int, message: String }` | `offset` is a byte offset into the text |
 | `to_string(v) -> String` | compact, one line |
 | `to_pretty(v) -> String` | two-space indent, one element per line; empty arrays and objects stay `[]` and `{}` |

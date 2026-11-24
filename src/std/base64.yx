@@ -1,4 +1,6 @@
 // std.base64: RFC 4648 standard alphabet, with required '=' padding.
+import std.io
+
 fn alphabet(n: Int) -> Int {
   if n < 26 { return 65 + n }
   if n < 52 { return 97 + n - 26 }
@@ -36,9 +38,19 @@ pub fn encode(s: view String) -> String {
   return move out
 }
 
+/// Decode base64 text into a UTF-8 String. Use decode_bytes for binary data.
 pub fn decode(s: view String) -> Result<String, String> {
-  if s.len() % 4 != 0 { return Err(String.from("base64 length must be a multiple of 4")) }
+  let bytes = decode_bytes(s)?
   var out = String.new()
+  for b in bytes { out.push_byte(b.to_int()) }
+  if !io.valid_utf8(out) { return Err(String.from("decoded base64 is not valid UTF-8")) }
+  return Ok(move out)
+}
+
+/// Decode base64 text into raw bytes.
+pub fn decode_bytes(s: view String) -> Result<List<UInt8>, String> {
+  if s.len() % 4 != 0 { return Err(String.from("base64 length must be a multiple of 4")) }
+  var out = List<UInt8>.new()
   var i = 0
   while i < s.len() {
     let a = value(s.byte(i))
@@ -55,9 +67,9 @@ pub fn decode(s: view String) -> Result<String, String> {
     var d = 0
     if !pad_c { c = value(s.byte(i + 2)) }
     if !pad_d { d = value(s.byte(i + 3)) }
-    out.push_byte(a * 4 + b / 16)
-    if !pad_c { out.push_byte((b % 16) * 16 + c / 4) }
-    if !pad_d { out.push_byte((c % 4) * 64 + d) }
+    out.push((a * 4 + b / 16).to_uint8())
+    if !pad_c { out.push(((b % 16) * 16 + c / 4).to_uint8()) }
+    if !pad_d { out.push(((c % 4) * 64 + d).to_uint8()) }
     i = i + 4
   }
   return Ok(move out)

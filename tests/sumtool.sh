@@ -26,6 +26,7 @@ PY
   base64 -w0 "$TMP/big.bin" > "$TMP/want.b64"; echo >> "$TMP/want.b64"; same base64 "$TMP/want.b64" "$TMP/st" base64 "$TMP/big.bin"
   xxd -p "$TMP/big.bin" | tr -d '\n' > "$TMP/want.hex"; echo >> "$TMP/want.hex"; same hex "$TMP/want.hex" "$TMP/st" hex "$TMP/big.bin"
   printf 'Hello base64!' > "$TMP/want.dec"; same decode "$TMP/want.dec" "$TMP/st" base64 --decode "$TMP/b64.txt"
+  same decode-binary "$TMP/big.bin" "$TMP/st" base64 --decode "$TMP/want.b64"
   same check-ok <(sha256sum $F | sed 's/.*/&/' >/dev/null; { sha256sum $F | awk '{print $2": OK"}'; echo "4 files verified"; }) "$TMP/st" check "$TMP/want.sha"
   # failures
   printf 'x' >> "$TMP/big.bin"

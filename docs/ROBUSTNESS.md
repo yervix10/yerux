@@ -70,56 +70,27 @@ Boundary cases tried on both backends (`Ptr<UInt8>.alloc(n)` and the collections
 Known difference, not changed: `String.reserve(9223372036854775807)` reports `out of memory` on the C backend and
 `integer overflow in multiplication` natively (both exit 101).
 
-## 4. Findings of the stdlib coverage round
+## 4. Stdlib coverage findings
 
-The golden tests added over `src/std/*.yx` (27 public functions that had no test) found two stdlib defects. Both
-reproduce on the C and the native backend; neither is fixed here, and the tests that touch them accept either
-behaviour so the goldens survive a fix.
+### Closed
 
-### `std.http.server.url_decode` can build a String that is not valid UTF-8
+| Finding | Reproduction before the fix | Current behavior and coverage |
+|---|---|---|
+| Percent decoding could return a String containing invalid UTF-8 | `server.url_decode("%FF", false)` returned a String containing byte 255. Iterating its characters panicked with exit 101. The HTTP parser exposed the decoded bytes in `Request.path` and through `query_param`. | The decoder returns `None` for invalid UTF-8, malformed escapes or NUL. The parser returns HTTP 400 with a message naming the path or query. The cases in `tests/std_http_util.yx` include truncated sequences, overlong encodings, a surrogate, and valid multi-byte text. `tests/http_server_loopback.yx` covers the wire responses. |
+| Timed-out `net.accept` returned raw errno 11 (`EAGAIN`) | Set `net.set_accept_timeout(l, 30)` on a listener with no pending connections and inspect the error from `net.accept(l)`. | `accept` uses the same error conversion as socket reads and writes. `tests/std_net_accept.yx` requires code 110 (`ETIMEDOUT`). |
+| Hex and base64 text decoders could return invalid UTF-8 | `hex.decode("ff")` and `base64.decode("/w==")` each returned a String containing byte 255. | Both text decoders return an error. Their `decode_bytes` variants preserve arbitrary bytes. `tests/std_encoding.yx` covers both paths and `tests/sumtool.sh` checks binary base64 decoding end to end. |
+| JSON could pass through malformed UTF-8 from raw input | Append byte 255 between two quotes with `String.push_byte`, then call `json.parse`. It returned a JSON string containing that byte. | JSON rejects malformed UTF-8 in string values and object keys at the opening quote. Escaped surrogate pairs still decode as before. `tests/std_json.yx` covers both errors. |
 
-The I/O invariant "Strings stay UTF-8 … instead of building a String that `char_at` would later panic on"
-(docs/STDLIB_IO.md) is broken by the percent decoder: every percent-encoded byte is copied into the result with
-no validation, so a sequence that is not valid UTF-8 becomes part of the String. The first UTF-8-strict
-operation on that value panics.
+### Decoder audit
 
-```yerux
-import std.http.server
-import std.text
+There is no separate `std.url` module. TOML's supported escapes and literal bytes are converted to Unicode scalars
+by `unquote`, so it cannot emit malformed UTF-8. It does misdecode non-ASCII literals. For example,
+`toml.get_string("name = \"é\"", "name")` returns `"Ã©"`. CSV preserves valid UTF-8 because its delimiters are ASCII.
 
-fn main() {
-  let s = server.url_decode("%FF", false).unwrap()  // Some, len 1, byte 0xFF (a truncated lead, "%C3", behaves the same)
-  print(text.chars(s).len())                        // panic: invalid UTF-8 sequence, exit 101
-}
-```
-
-The same value reaches programs through the parser: `server.parse("GET /%FF HTTP/1.1\r\nHost: h\r\n\r\n", 0,
-server.config())` returns `Done` with `req.path` holding byte `0xFF` (`raw_path` stays `/%FF`), so a handler that
-iterates the path panics, and `server.query_param` on `?k=%FF` returns `Some` with the same invalid byte.
-`io.read_file` rejects such input with `IoErrorKind.InvalidData`; `url_decode` (and therefore the path and query
-decoding of `server.parse`) should validate before returning, or reject the request.
-
-### `net.set_accept_timeout` expiry reports code 11 instead of the documented 110
-
-`socket_io_error` maps `EAGAIN` from a timed-out read or write to errno 110 so that every expired socket
-operation reports `ETIMEDOUT` (docs/NET.md, "Timeouts and addresses"; asserted by `tests/net_timeouts.yx`).
-`accept` does not use that helper: once `SO_RCVTIMEO` expires it reports the raw errno 11 with the message
-"Unknown error (os error 11)", while its own doc comment in `src/std/net.yx` and docs/NET.md promise code 110.
-
-```yx
-import std.net
-
-fn main() {
-  let l = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
-  let _ = net.set_accept_timeout(l, 30)
-  match net.accept(l) {
-    Ok(s) => { print("connected") }
-    Err(e) => { print(e.code) }  // 11 (EAGAIN); the documentation says 110 (ETIMEDOUT)
-  }
-}
-```
-
-`tests/std_net_accept.yx` prints `true` for `e.code == 11 || e.code == 110`, so it keeps passing either way.
+Some interfaces carry arbitrary bytes in a String. For example, `compress.decompress` accepts an RLE pair assembled
+with `push_byte(1)` and `push_byte(255)` and returns byte 255, as permitted by its byte-oriented format.
+The TCP read API and HTTP body fields can likewise carry binary data, and HTTP header values may contain opaque
+bytes. Moving these byte-oriented interfaces to byte buffers requires a separate API migration.
 
 ## 5. Status
 
@@ -127,5 +98,7 @@ fn main() {
 * Backends: 0 disagreements between C, native and native `--no-opt` once the harnesses ignore the native-only
   location lines.
 * Runtime: 1 inconsistency fixed (negative allocation sizes); ASAN/UBSAN and TSAN clean on the real programs.
-* Open: the `String.reserve` message difference above; the two stdlib findings of section 4; fuzzers are bounded in
-  time, so a longer run with new seeds is the next step (`/tmp`-style batch: `python3 tests/fuzz.py -n 5000 --seed N`).
+* Stdlib: four decoder and timeout findings closed. TOML's Unicode decoding and the byte-oriented interfaces
+  listed above remain open.
+* Open: the `String.reserve` message difference above. Fuzzers are bounded in time, so a longer run with new
+  seeds is the next step (`python3 tests/fuzz.py -n 5000 --seed N`).

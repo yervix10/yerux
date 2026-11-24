@@ -238,9 +238,9 @@ fn run() -> Int {
         }
         let data = bytes_string(bytes)
         if args.has_flag(p, "decode") {
-          match base64.decode(data.trim()) {
+          match base64.decode_bytes(data.trim()) {
             Ok(raw) => {
-              match io.write_stdout(raw) {
+              match io.write_stdout_bytes(raw) {
                 Ok(n) => { return 0 }
                 Err(e) => { return fail(1, e.message) }
               }
