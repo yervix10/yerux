@@ -1,0 +1,233 @@
+// cachesim: a trace-driven CPU cache simulator (set-associative, true LRU, write-back, write-allocate).
+//
+//   cachesim run [--sets S] [--ways W] [--line L] TRACE   statistics of one configuration (defaults 16, 4, 64)
+//   cachesim sweep [--line L] TRACE                       ways 1,2,4,8 x sets 4,16,64, sorted by miss rate
+//   cachesim gen SEED N                                   synthetic trace of N accesses on standard output
+//   cachesim check TRACE                                  validate a trace: `ok N accesses`
+// TRACE is a file, or "-" for standard input. The trace format is described in trace.yx; the model in cache.yx; the
+// output tables in report.yx. Exit status: 0 ok; 1 an unreadable trace or an invalid trace line (the message is
+// `cachesim: TRACE:LINE: message`); 2 a usage error.
+import cache
+import report
+import std.env
+import std.fs
+import std.io
+import trace
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("cachesim: {msg}")
+  io.exit(code)
+}
+
+fn usage(msg: view String) {
+  fail("usage: {msg}", 2)
+}
+
+// The options and positional arguments of one command line (after the command name).
+struct Scan {
+  sets: Int,
+  ways: Int,
+  line: Int,
+  given: List<String>,
+  pos: List<String>,
+}
+
+fn scan(args: view List<String>) -> Result<Scan, String> {
+  var s = Scan { sets: 16, ways: 4, line: 64, given: List<String>.new(), pos: List<String>.new() }
+  var i = 2
+  while i < args.len() {
+    let a = String.from(args.at(i))
+    if a.eq("--sets") || a.eq("--ways") || a.eq("--line") {
+      if i + 1 >= args.len() {
+        return Err("{a} needs a value")
+      }
+      let v = String.from(args.at(i + 1))
+      var n = 0
+      if !v.parse_int(n) {
+        return Err("{a} needs a number, got '{v}'")
+      }
+      if a.eq("--sets") {
+        s.sets = n
+      } else if a.eq("--ways") {
+        s.ways = n
+      } else {
+        s.line = n
+      }
+      s.given.push(move a)
+      i = i + 2
+    } else if a.len() > 1 && a.starts_with("-") {
+      return Err("unknown option {a}")
+    } else {
+      s.pos.push(move a)
+      i = i + 1
+    }
+  }
+  return Ok(move s)
+}
+
+fn has(names: view List<String>, name: view String) -> Bool {
+  for n in names {
+    if n.eq(name) {
+      return true
+    }
+  }
+  return false
+}
+
+// The accesses of a trace file (or of standard input for "-"), or the message for the first failure.
+fn load(path: view String) -> Result<List<trace.Access>, String> {
+  var src = String.new()
+  if path.eq("-") {
+    match io.read_all() {
+      Ok(s) => { src = move s }
+      Err(e) => { return Err("cannot read standard input: {e}") }
+    }
+  } else {
+    match fs.read_to_string(path) {
+      Ok(s) => { src = move s }
+      Err(e) => { return Err("cannot read {path}: {e}") }
+    }
+  }
+  match trace.parse(src) {
+    Ok(list) => { return Ok(move list) }
+    Err(e) => { return Err("{path}:{e.line}: {e.message}") }
+  }
+}
+
+fn run_cmd(args: view List<String>) {
+  let o = match scan(args) {
+    Ok(s) => move s
+    Err(e) => {
+      usage(e)
+      return
+    }
+  }
+  if o.pos.len() != 1 {
+    usage("run [--sets S] [--ways W] [--line L] TRACE")
+    return
+  }
+  if !cache.is_pow2(o.sets) || o.sets > 1048576 {
+    usage("--sets must be a power of two up to 2^20, got {o.sets}")
+    return
+  }
+  if o.ways < 1 || o.ways > 4096 {
+    usage("--ways must be a positive integer up to 4096, got {o.ways}")
+    return
+  }
+  if !cache.is_pow2(o.line) || o.line > 1073741824 {
+    usage("--line must be a power of two up to 2^30, got {o.line}")
+    return
+  }
+  if o.sets * o.ways > 4194304 {
+    usage("--sets times --ways must be at most 2^22")
+    return
+  }
+  let accesses = match load(o.pos.at(0)) {
+    Ok(a) => move a
+    Err(e) => {
+      fail(e, 1)
+      return
+    }
+  }
+  let st = cache.simulate(cache.Config { sets: o.sets, ways: o.ways, line: o.line }, accesses)
+  let _ = io.write_stdout(report.stats_text(st))
+}
+
+fn sweep_cmd(args: view List<String>) {
+  let o = match scan(args) {
+    Ok(s) => move s
+    Err(e) => {
+      usage(e)
+      return
+    }
+  }
+  if has(o.given, "--sets") || has(o.given, "--ways") {
+    usage("sweep takes only --line L: sweep [--line L] TRACE")
+    return
+  }
+  if o.pos.len() != 1 {
+    usage("sweep [--line L] TRACE")
+    return
+  }
+  if !cache.is_pow2(o.line) || o.line > 1073741824 {
+    usage("--line must be a power of two up to 2^30, got {o.line}")
+    return
+  }
+  let accesses = match load(o.pos.at(0)) {
+    Ok(a) => move a
+    Err(e) => {
+      fail(e, 1)
+      return
+    }
+  }
+  let _ = io.write_stdout(report.sweep_text(accesses, o.line))
+}
+
+fn gen_cmd(args: view List<String>) {
+  let o = match scan(args) {
+    Ok(s) => move s
+    Err(e) => {
+      usage(e)
+      return
+    }
+  }
+  if o.given.len() > 0 {
+    usage("gen takes no options: gen SEED N")
+    return
+  }
+  if o.pos.len() != 2 {
+    usage("gen SEED N")
+    return
+  }
+  let seed = match trace.parse_addr(o.pos.at(0)) {
+    Ok(v) => move v
+    Err(e) => {
+      usage("SEED must be an unsigned 64-bit number: {e}")
+      return
+    }
+  }
+  var n = 0
+  if !o.pos.at(1).parse_int(n) || n < 0 || n > 100000000 {
+    usage("N must be a number of accesses from 0 to 100000000")
+    return
+  }
+  let _ = io.write_stdout(trace.generate(seed, n))
+}
+
+fn check_cmd(args: view List<String>) {
+  let o = match scan(args) {
+    Ok(s) => move s
+    Err(e) => {
+      usage(e)
+      return
+    }
+  }
+  if o.given.len() > 0 || o.pos.len() != 1 {
+    usage("check TRACE")
+    return
+  }
+  match load(o.pos.at(0)) {
+    Ok(list) => { print("ok {list.len()} accesses") }
+    Err(e) => { fail(e, 1) }
+  }
+}
+
+fn main() {
+  let args = env.args()
+  if args.len() < 2 {
+    usage("expected a command: run, sweep, gen or check")
+    return
+  }
+  let cmd = String.from(args.at(1))
+  if cmd.eq("run") {
+    run_cmd(args)
+  } else if cmd.eq("sweep") {
+    sweep_cmd(args)
+  } else if cmd.eq("gen") {
+    gen_cmd(args)
+  } else if cmd.eq("check") {
+    check_cmd(args)
+  } else {
+    usage("unknown command '{cmd}', expected run, sweep, gen or check")
+  }
+}

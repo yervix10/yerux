@@ -1,0 +1,148 @@
+// Set-associative cache with true LRU replacement, write-back and write-allocate.
+//
+// Line slot of (set s, way w) is s * ways + w. For each set, `order` holds the way numbers in recency order, most
+// recently used first: order[s * ways + 0] is the MRU way and order[s * ways + ways - 1] the LRU way. A miss fills the
+// LRU way. Ways that were never filled stay at the end of the list until their first fill, so an empty way is used
+// before any valid line is evicted.
+//
+// A block is `addr / line`; its set is `block % sets` and its tag is `block / sets`. Addresses are UInt64, so the
+// whole 64-bit range is valid.
+import trace
+
+pub struct Config {
+  sets: Int,
+  ways: Int,
+  line: Int,
+}
+
+pub struct Stats {
+  accesses: Int,
+  reads: Int,
+  writes: Int,
+  hits: Int,
+  misses: Int,
+  evictions: Int,
+  writebacks: Int,
+}
+
+pub struct Cache {
+  ways: Int,
+  line: UInt64,
+  sets: UInt64,
+  tags: List<UInt64>,
+  valid: List<Bool>,
+  dirty: List<Bool>,
+  order: List<Int>,
+}
+
+// True for 1, 2, 4, ... (false for 0 and for numbers with an odd factor).
+pub fn is_pow2(n: Int) -> Bool {
+  if n < 1 {
+    return false
+  }
+  var m = n
+  while m % 2 == 0 {
+    m = m / 2
+  }
+  return m == 1
+}
+
+pub fn zero_stats() -> Stats {
+  return Stats { accesses: 0, reads: 0, writes: 0, hits: 0, misses: 0, evictions: 0, writebacks: 0 }
+}
+
+// An empty cache: no line valid, and each set's recency list is 0, 1, ..., ways - 1.
+pub fn new_cache(cfg: Config) -> Cache {
+  var c = Cache {
+    ways: cfg.ways,
+    line: cfg.line.to_uint64(),
+    sets: cfg.sets.to_uint64(),
+    tags: List<UInt64>.new(),
+    valid: List<Bool>.new(),
+    dirty: List<Bool>.new(),
+    order: List<Int>.new(),
+  }
+  var s = 0
+  while s < cfg.sets {
+    var w = 0
+    while w < cfg.ways {
+      c.tags.push(0u64)
+      c.valid.push(false)
+      c.dirty.push(false)
+      c.order.push(w)
+      w = w + 1
+    }
+    s = s + 1
+  }
+  return c
+}
+
+// Moves the way at recency position `pos` of the set whose list starts at `base` to the front (MRU).
+fn touch(c: mut Cache, base: Int, pos: Int) {
+  let w = c.order.at(base + pos)
+  var j = pos
+  while j > 0 {
+    let prev = c.order.at(base + j - 1)
+    c.order.set(base + j, prev)
+    j = j - 1
+  }
+  c.order.set(base, w)
+}
+
+// Simulates one access and updates the cache and the statistics.
+pub fn access(c: mut Cache, addr: UInt64, write: Bool, st: mut Stats) {
+  let block = addr / c.line
+  let set = (block % c.sets).to_int()
+  let tag = block / c.sets
+  let base = set * c.ways
+  st.accesses = st.accesses + 1
+  if write {
+    st.writes = st.writes + 1
+  } else {
+    st.reads = st.reads + 1
+  }
+  var pos = 0
+  while pos < c.ways {
+    let slot = base + c.order.at(base + pos)
+    if c.valid.at(slot) && c.tags.at(slot) == tag {
+      st.hits = st.hits + 1
+      if write {
+        c.dirty.set(slot, true)
+      }
+      touch(c, base, pos)
+      return
+    }
+    pos = pos + 1
+  }
+  st.misses = st.misses + 1
+  let last = c.ways - 1
+  let vslot = base + c.order.at(base + last)
+  if c.valid.at(vslot) {
+    st.evictions = st.evictions + 1
+    if c.dirty.at(vslot) {
+      st.writebacks = st.writebacks + 1
+    }
+  }
+  c.tags.set(vslot, tag)
+  c.valid.set(vslot, true)
+  c.dirty.set(vslot, write)
+  touch(c, base, last)
+}
+
+// Runs a whole trace through a fresh cache.
+pub fn simulate(cfg: Config, accesses: view List<trace.Access>) -> Stats {
+  var c = new_cache(cfg)
+  var st = zero_stats()
+  for a in accesses {
+    access(c, a.addr, a.write, st)
+  }
+  return st
+}
+
+// The miss rate in units of 1/10000, rounded half up; 0 when there are no accesses.
+pub fn miss_rate4(st: view Stats) -> Int {
+  if st.accesses == 0 {
+    return 0
+  }
+  return (st.misses * 20000 + st.accesses) / (2 * st.accesses)
+}

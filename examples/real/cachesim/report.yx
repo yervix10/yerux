@@ -1,0 +1,122 @@
+// Output text: the statistics of one run, and the sweep table.
+import cache
+import std.fmt
+import trace
+
+// A miss rate in units of 1/10000 as "X.XXXX".
+fn rate_text(r4: Int) -> String {
+  return "{r4 / 10000}.{fmt.zero_pad(r4 % 10000, 4)}"
+}
+
+// The statistics of one configuration, one `name value` line each.
+pub fn stats_text(st: view cache.Stats) -> String {
+  var out = String.new()
+  out.push_str("accesses {st.accesses}\n")
+  out.push_str("reads {st.reads}\n")
+  out.push_str("writes {st.writes}\n")
+  out.push_str("hits {st.hits}\n")
+  out.push_str("misses {st.misses}\n")
+  out.push_str("miss rate {rate_text(cache.miss_rate4(st))}\n")
+  out.push_str("evictions {st.evictions}\n")
+  out.push_str("writebacks {st.writebacks}\n")
+  return out
+}
+
+// One configuration of the sweep, with its result.
+struct Row {
+  sets: Int,
+  ways: Int,
+  rate: Int,
+  st: cache.Stats,
+}
+
+// Appends a cell to a table line: cells are separated by one space; the first cell is left-aligned, the others
+// right-aligned to their column width.
+fn put(line: mut String, s: view String, width: Int, left: Bool) {
+  if line.len() > 0 {
+    line.push_str(" ")
+  }
+  if left {
+    line.push_str(fmt.pad_right(s, width, ' '))
+  } else {
+    line.push_str(fmt.pad_left(s, width, ' '))
+  }
+}
+
+// One table line: config, sets, ways, accesses, misses, miss rate, evictions, writebacks.
+fn table_line(cells: view List<String>) -> String {
+  var line = String.new()
+  put(line, cells.at(0), 8, true)
+  put(line, cells.at(1), 4, false)
+  put(line, cells.at(2), 4, false)
+  put(line, cells.at(3), 8, false)
+  put(line, cells.at(4), 8, false)
+  put(line, cells.at(5), 9, false)
+  put(line, cells.at(6), 9, false)
+  put(line, cells.at(7), 10, false)
+  return line
+}
+
+// Row order: lower miss rate first, then fewer sets, then fewer ways. The row name is S<sets, 3 digits>-W<ways>, which
+// sorts the same way as (sets, ways).
+fn before(a: view Row, b: view Row) -> Bool {
+  if a.rate != b.rate {
+    return a.rate < b.rate
+  }
+  if a.sets != b.sets {
+    return a.sets < b.sets
+  }
+  return a.ways < b.ways
+}
+
+// The sweep table: ways 1, 2, 4, 8 by sets 4, 16, 64, one row per configuration, sorted by miss rate ascending, then
+// by name. Every configuration is simulated with the same line size.
+pub fn sweep_text(accesses: view List<trace.Access>, line: Int) -> String {
+  var rows = List<Row>.new()
+  var ways = 1
+  while ways <= 8 {
+    var sets = 4
+    while sets <= 64 {
+      let st = cache.simulate(cache.Config { sets: sets, ways: ways, line: line }, accesses)
+      rows.push(Row { sets: sets, ways: ways, rate: cache.miss_rate4(st), st: st })
+      sets = sets * 4
+    }
+    ways = ways * 2
+  }
+  // insertion sort: the list is short and the sort is stable
+  var i = 1
+  while i < rows.len() {
+    var j = i
+    while j > 0 && before(rows.at(j), rows.at(j - 1)) {
+      rows.swap(j, j - 1)
+      j = j - 1
+    }
+    i = i + 1
+  }
+  var out = String.new()
+  var head = List<String>.new()
+  head.push(String.from("config"))
+  head.push(String.from("sets"))
+  head.push(String.from("ways"))
+  head.push(String.from("accesses"))
+  head.push(String.from("misses"))
+  head.push(String.from("miss rate"))
+  head.push(String.from("evictions"))
+  head.push(String.from("writebacks"))
+  out.push_str(table_line(head))
+  out.push_str("\n")
+  for r in rows {
+    var cells = List<String>.new()
+    cells.push("S{fmt.zero_pad(r.sets, 3)}-W{r.ways}")
+    cells.push("{r.sets}")
+    cells.push("{r.ways}")
+    cells.push("{r.st.accesses}")
+    cells.push("{r.st.misses}")
+    cells.push(rate_text(r.rate))
+    cells.push("{r.st.evictions}")
+    cells.push("{r.st.writebacks}")
+    out.push_str(table_line(cells))
+    out.push_str("\n")
+  }
+  return out
+}
