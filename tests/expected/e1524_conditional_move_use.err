@@ -1,0 +1,9 @@
+error: cannot use 's': it was already moved
+ --> tests/e1524_conditional_move_use.yx:9:9
+  |
+9 |   print(s)
+  |         ^
+  = 's' was moved on line 7
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

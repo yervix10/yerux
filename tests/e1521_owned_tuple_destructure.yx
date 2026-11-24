@@ -1,0 +1,7 @@
+// Taking an owned tuple apart without `move` tries to copy it: the help names the `move`.
+fn main() {
+  let t = (String.from("a"), 1)
+  let (s, n) = t
+  print(s)
+  print(n)
+}

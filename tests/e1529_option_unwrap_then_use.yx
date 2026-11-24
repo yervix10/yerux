@@ -1,0 +1,7 @@
+// `unwrap` consumes the owned Option, so the Option cannot be inspected afterwards.
+fn main() {
+  let o = Option.Some(String.from("a"))
+  let s = o.unwrap()
+  print(o.is_some())
+  print(s)
+}

@@ -1,0 +1,10 @@
+// A move inside an `if` still consumes the variable for the rest of the block.
+fn take(s: String) { }
+
+fn main() {
+  let s = String.from("a")
+  if s.len() > 0 {
+    take(move s)
+  }
+  print(s)
+}

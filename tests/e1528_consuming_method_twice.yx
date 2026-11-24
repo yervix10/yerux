@@ -1,0 +1,12 @@
+// A method that takes `self` consumes the receiver: the second call uses a moved value.
+struct Token { name: String }
+
+impl Token {
+  fn consume(self) { print(self.name) }
+}
+
+fn main() {
+  let t = Token { name: String.from("a") }
+  t.consume()
+  t.consume()
+}

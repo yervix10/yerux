@@ -1,0 +1,9 @@
+error: cannot use 's': it was already moved
+ --> tests/e1527_tuple_double_move.yx:4:23
+  |
+4 |   let pair = (move s, move s)
+  |                       ^^^^^^
+  = 's' was moved on line 4
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.
