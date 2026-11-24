@@ -8,7 +8,7 @@ TMP="$(mktemp -d /tmp/yerux_iotargets.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 services=(
-  io_basic fs_basic env_basic fs_handles fs_autoclose fs_buffered
+  fs_basic env_basic fs_handles fs_autoclose fs_buffered
   process_basic env_process process_pipes process_leaks
 )
 for m in "${services[@]}"; do
@@ -18,24 +18,16 @@ for m in "${services[@]}"; do
   if "$Y" build "tests/$m.yx" --target windows -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
     echo "FAIL: $m built for windows"; fail=1; continue
   fi
-  grep -Eq "native backend: (raw system call [0-9]+|process arguments and environment|thread runtime intrinsics) .* is not supported on the windows target yet" "$TMP/err" ||
+  grep -Eq "native backend: raw system call [0-9]+ .* is not supported on the windows target yet" "$TMP/err" ||
     { echo "FAIL: unclear message for $m on windows"; cat "$TMP/err"; fail=1; }
 done
-# clocks, sleep, process arguments and environment build for both targets (the Windows PE maps them to Win32)
-for m in time_clock env_set; do
+# Both targets support basic file I/O, environment, clocks and the thread runtime.
+for m in io_basic time_clock env_set conc_runtime pe_fs pe_fs_metadata; do
   for t in aarch64 windows; do
     "$Y" build "tests/$m.yx" --target "$t" -o "$TMP/x" >"$TMP/out" 2>"$TMP/err" ||
       { echo "FAIL: $m did not build for $t"; cat "$TMP/err"; fail=1; }
   done
 done
-if ! "$Y" build tests/conc_runtime.yx --target aarch64 -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
-  echo "FAIL: thread runtime did not build for aarch64"; cat "$TMP/err"; fail=1
-fi
-if "$Y" build tests/conc_runtime.yx --target windows -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
-  echo "FAIL: thread runtime built for windows"; fail=1
-elif ! grep -q "native backend: thread runtime intrinsics .* is not supported on the windows target yet" "$TMP/err"; then
-  echo "FAIL: unclear thread runtime message for windows"; cat "$TMP/err"; fail=1
-fi
 for t in windows aarch64; do
   "$Y" build tests/agg_list_ops.yx --target "$t" -o "$TMP/y" >/dev/null 2>&1 ||
     { echo "FAIL: ordinary program does not build for $t"; fail=1; }
