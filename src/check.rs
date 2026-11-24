@@ -6222,6 +6222,7 @@ impl<'a> Checker<'a> {
 
     fn func_once(&mut self, f: &mut Func, changing: &HashSet<String>, unstable: HashSet<String>) {
         self.vars.clear();
+        self.closure_loans.clear(); // keyed by variable id: ids restart in every function
         self.scopes = vec![HashMap::new()];
         self.st = State::default();
         self.dscopes.clear();

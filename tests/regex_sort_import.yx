@@ -1,0 +1,13 @@
+// Regression: variable ids restart per function, but the closure-loan table kept entries from earlier functions,
+// so a closure in std.sort (`|e: view T| ..`) was reported as borrowing `prog` of std.regex's compile().
+import std.regex
+import std.sort
+
+fn main() {
+  print("{regex.is_match("a|b", "b")}")
+  var l = List<Int>.new()
+  l.push(1)
+  l.push(3)
+  l.push(5)
+  print("{sort.lower_bound(l, 3)} {sort.upper_bound(l, 3)}")
+}
