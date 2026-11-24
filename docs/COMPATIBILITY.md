@@ -275,7 +275,7 @@ corrected text now states).
    Evidence: `tests/e1960_comptime_fn_keyword.yx`, `tests/e1963_comptime_for_keyword.yx`.
 7. **Parallel and step.** *Resolved.* A sequential `for` accepts `step`. `parallel for` rejects it, and the
    Threads section now says so. Evidence: `tests/conf_for_step.yx` (0 3 6 9), `tests/e1961_parallel_for_step.yx`.
-8. **Std module list.** *Resolved.* `src/std/` has 28 modules, and docs/STDLIB.md indexes all 28 (the item
+8. **Std module list.** *Resolved.* `src/std/` has 29 modules, and docs/STDLIB.md indexes all 29 (the item
    text said 27, which was wrong). The root SPEC now says so instead of listing a subset. Evidence:
    `tests/spec_conformance.sh` (item 8 counts the files).
 9. **Generic `impl` for library and user code.** *Resolved.* User types can use generic `impl`, for example
