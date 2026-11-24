@@ -131,3 +131,16 @@ See the [development findings](../../docs/REAL_PROGRAMS.md#yxscan).
 
 `webkv/` is a key-value HTTP server with threads, channels, `std.net` and a client, with its own tests; see
 `docs/REAL_PROGRAMS.md` and `tests/webkv.sh`.
+
+## JSON query tool
+
+`jql/` is a multi-module (8 files, about 1,700 lines) jq-like tool: a JSON
+reader/writer, a query lexer, a recursive-descent parser into a `Box`ed enum
+AST, and a generator-style evaluator with about 25 builtins. Errors are
+`Result<_, value.Fault>` values carrying an offset.
+
+```sh
+target/release/yerux build examples/real/jql/jql.yx -o /tmp/jql
+echo '{"a":[1,2,3]}' | /tmp/jql -c '.a | map(. * 2) | add'
+target/release/yerux test examples/real/jql        # 12 unit tests
+```

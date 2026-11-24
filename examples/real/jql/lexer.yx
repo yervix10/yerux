@@ -1,0 +1,151 @@
+// Query text -> tokens. Every token remembers the byte offset where it starts, for error messages.
+import std.text
+import value
+
+pub enum Tok {
+  Dot, Pipe, Comma, Colon,
+  LParen, RParen, LBracket, RBracket, LBrace, RBrace,
+  Plus, Minus, Star, Slash, Percent,
+  EqEq, NotEq, Less, LessEq, Greater, GreaterEq,
+  Int(Int), Float(Float), Str(String), Name(String),
+  End,
+}
+
+pub struct Token { kind: Tok, offset: Int }
+
+fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
+
+fn is_name_start(b: Int) -> Bool {
+  return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95
+}
+
+fn is_name_part(b: Int) -> Bool { return is_name_start(b) || is_digit(b) }
+
+pub fn describe(t: view Tok) -> String {
+  match t {
+    Dot => { return String.from("'.'") }
+    Pipe => { return String.from("'|'") }
+    Comma => { return String.from("','") }
+    Colon => { return String.from("':'") }
+    LParen => { return String.from("'('") }
+    RParen => { return String.from("')'") }
+    LBracket => { return String.from("'['") }
+    RBracket => { return String.from("']'") }
+    LBrace => { return String.from("'{{'") }
+    RBrace => { return String.from("'}}'") }
+    Plus => { return String.from("'+'") }
+    Minus => { return String.from("'-'") }
+    Star => { return String.from("'*'") }
+    Slash => { return String.from("'/'") }
+    Percent => { return String.from("'%'") }
+    EqEq => { return String.from("'=='") }
+    NotEq => { return String.from("'!='") }
+    Less => { return String.from("'<'") }
+    LessEq => { return String.from("'<='") }
+    Greater => { return String.from("'>'") }
+    GreaterEq => { return String.from("'>='") }
+    Int(n) => { return "number {n}" }
+    Float(f) => { return "number {f}" }
+    Str(s) => { return "string {s}" }
+    Name(n) => { return "name '{n}'" }
+    End => { return String.from("the end of the query") }
+  }
+}
+
+pub fn tokenize(src: view String) -> Result<List<Token>, value.Fault> {
+  var tokens = List<Token>.new()
+  var i = 0
+  while i < src.len() {
+    let b = src.byte(i)
+    let start = i
+    if b == 32 || b == 9 || b == 10 || b == 13 {
+      i = i + 1
+    } else if is_digit(b) {
+      var real = false
+      while i < src.len() && is_digit(src.byte(i)) { i = i + 1 }
+      if i + 1 < src.len() && src.byte(i) == 46 && is_digit(src.byte(i + 1)) {
+        real = true
+        i = i + 1
+        while i < src.len() && is_digit(src.byte(i)) { i = i + 1 }
+      }
+      let spelling = src.slice(start, i)
+      if real {
+        match text.parse_float(spelling) {
+          Ok(f) => { tokens.push(Token { kind: Tok.Float(f), offset: start }) }
+          Err(_) => { return Err(value.fault(start, "invalid number")) }
+        }
+      } else {
+        var n = 0
+        if !spelling.parse_int(n) { return Err(value.fault(start, "number out of range")) }
+        tokens.push(Token { kind: Tok.Int(n), offset: start })
+      }
+    } else if is_name_start(b) {
+      while i < src.len() && is_name_part(src.byte(i)) { i = i + 1 }
+      tokens.push(Token { kind: Tok.Name(String.from(src.slice(start, i))), offset: start })
+    } else if b == 34 {
+      i = i + 1
+      var s = String.new()
+      var closed = false
+      while i < src.len() {
+        let c = src.byte(i)
+        if c == 34 {
+          closed = true
+          i = i + 1
+          break
+        }
+        if c == 92 && i + 1 < src.len() {
+          let e = src.byte(i + 1)
+          if e == 110 { s.push_byte(10) }
+          else if e == 116 { s.push_byte(9) }
+          else { s.push_byte(e) }
+          i = i + 2
+        } else {
+          s.push_byte(c)
+          i = i + 1
+        }
+      }
+      if !closed { return Err(value.fault(start, "unterminated string")) }
+      tokens.push(Token { kind: Tok.Str(move s), offset: start })
+    } else {
+      var kind = Tok.End
+      var width = 1
+      var known = true
+      let next = if i + 1 < src.len() { src.byte(i + 1) } else { 0 }
+      if b == 46 { kind = Tok.Dot }
+      else if b == 124 { kind = Tok.Pipe }
+      else if b == 44 { kind = Tok.Comma }
+      else if b == 58 { kind = Tok.Colon }
+      else if b == 40 { kind = Tok.LParen }
+      else if b == 41 { kind = Tok.RParen }
+      else if b == 91 { kind = Tok.LBracket }
+      else if b == 93 { kind = Tok.RBracket }
+      else if b == 123 { kind = Tok.LBrace }
+      else if b == 125 { kind = Tok.RBrace }
+      else if b == 43 { kind = Tok.Plus }
+      else if b == 45 { kind = Tok.Minus }
+      else if b == 42 { kind = Tok.Star }
+      else if b == 47 { kind = Tok.Slash }
+      else if b == 37 { kind = Tok.Percent }
+      else if b == 61 && next == 61 {
+        kind = Tok.EqEq
+        width = 2
+      } else if b == 33 && next == 61 {
+        kind = Tok.NotEq
+        width = 2
+      } else if b == 60 && next == 61 {
+        kind = Tok.LessEq
+        width = 2
+      } else if b == 60 { kind = Tok.Less }
+      else if b == 62 && next == 61 {
+        kind = Tok.GreaterEq
+        width = 2
+      } else if b == 62 { kind = Tok.Greater }
+      else { known = false }
+      if !known { return Err(value.fault(start, "unexpected character")) }
+      tokens.push(Token { kind: move kind, offset: start })
+      i = i + width
+    }
+  }
+  tokens.push(Token { kind: Tok.End, offset: src.len() })
+  return Ok(move tokens)
+}

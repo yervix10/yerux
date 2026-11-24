@@ -45,6 +45,7 @@ for flag in "" --native; do
   [ $rc -eq 1 ] && grep -q 'FAIL  fails on purpose' "$TMP/t.out" && grep -q 'assertion failed' "$TMP/t.out" \
     && grep -q 'FAIL  does not compile' "$TMP/t.out" && grep -q '1 passed; 2 failed' "$TMP/t.out" || { note "FAIL yerux test fail.yx $flag (rc=$rc)"; cat "$TMP/t.out"; }
   "$Y" test examples/12_modules tests/mod_ok/types $flag >"$TMP/t.out" 2>&1 || { note "FAIL yerux test on modules $flag"; cat "$TMP/t.out"; }
+  "$Y" test examples/real/jql $flag >"$TMP/t.out" 2>&1 || { note "FAIL yerux test on jql $flag"; cat "$TMP/t.out"; }
   "$Y" test tests/test_cmd/fail.yx --filter passes $flag >"$TMP/t.out" 2>&1 || { note "FAIL yerux test --filter $flag"; cat "$TMP/t.out"; }
 done
 

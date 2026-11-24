@@ -1,0 +1,127 @@
+// Unit tests: `yerux test examples/real/jql`
+import eval
+import lexer
+import parser
+import reader
+import value
+import writer
+
+// runs QUERY over DOC and returns the outputs as compact JSON joined by ';', or "error: .." on failure
+fn query(doc: view String, q: view String) -> String {
+  match reader.read(doc) {
+    Err(f) => { return "input error: {f.message}" }
+    Ok(input) => {
+      match lexer.tokenize(q) {
+        Err(f) => { return "lex error: {f.message}" }
+        Ok(tokens) => {
+          match parser.parse(move tokens) {
+            Err(f) => { return "parse error: {f.message}" }
+            Ok(e) => {
+              match eval.run(e, input) {
+                Err(f) => { return "error: {f.message}" }
+                Ok(outs) => {
+                  var s = String.new()
+                  for i in 0..outs.len() {
+                    if i > 0 { s.push_str(";") }
+                    s.push_str(writer.compact(outs.at(i)))
+                  }
+                  return s
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn main() { print("run with `yerux test`") }
+
+test "reader round-trips" {
+  assert(query("[1, 2.5, \"a\\nb\", null, true, {{\"k\": []}}]", ".").eq("[1,2.5,\"a\\nb\",null,true,{{\"k\":[]}}]"))
+}
+
+test "reader reports offsets" {
+  assert(query("[1, 2", ".").starts_with("input error"))
+  assert(query("{{\"a\" 1}}", ".").starts_with("input error"))
+  assert(query("01", ".").starts_with("input error"))
+}
+
+test "paths and iteration" {
+  assert(query("{{\"a\": {{\"b\": [10, 20, 30]}}}}", ".a.b[1]").eq("20"))
+  assert(query("{{\"a\": {{\"b\": [10, 20, 30]}}}}", ".a.b[-1]").eq("30"))
+  assert(query("{{\"a\": [1, 2]}}", ".a[]").eq("1;2"))
+  assert(query("{{}}", ".missing.deeper").eq("null"))
+}
+
+test "arithmetic" {
+  assert(query("null", "1 + 2 * 3").eq("7"))
+  assert(query("null", "7 / 2").eq("3.5"))
+  assert(query("null", "8 / 2").eq("4"))
+  assert(query("null", "7 % 3").eq("1"))
+  assert(query("null", "-(2 + 3)").eq("-5"))
+  assert(query("null", "\"ab\" * 3").eq("\"ababab\""))
+  assert(query("null", "[1] + [2]").eq("[1,2]"))
+  assert(query("null", "9223372036854775807 + 1").eq("9.223372036854776e18"))
+}
+
+test "arithmetic errors" {
+  assert(query("null", "1 / 0").eq("error: division by zero"))
+  assert(query("null", "1 % 0").eq("error: modulo by zero"))
+  assert(query("null", "\"a\" - 1").starts_with("error: string and number"))
+}
+
+test "generators" {
+  assert(query("null", "(1, 2) + (10, 20)").eq("11;12;21;22"))
+  assert(query("[1, 2, 3]", "[.[] | . * 2]").eq("[2,4,6]"))
+}
+
+test "comparison and ordering" {
+  assert(query("null", "1 < 2 and \"a\" < \"b\"").eq("true"))
+  assert(query("null", "null < false").eq("true"))
+  assert(query("[3, \"a\", null, [1], true]", "sort").eq("[null,true,3,\"a\",[1]]"))
+  assert(query("[1, 1.0, 2]", "unique").eq("[1,2]"))
+}
+
+test "conditionals and short circuit" {
+  assert(query("5", "if . > 3 then \"big\" elif . > 1 then \"mid\" else \"small\" end").eq("\"big\""))
+  assert(query("null", "false and (1 / 0)").eq("false"))
+  assert(query("null", "true or (1 / 0)").eq("true"))
+}
+
+test "construction" {
+  assert(query("{{\"a\": 1, \"b\": 2}}", "{{a, c: (.a + .b)}}").eq("{{\"a\":1,\"c\":3}}"))
+  assert(query("{{\"a\": 1}}", "{{(\"k\" + \"1\"): .a}}").eq("{{\"k1\":1}}"))
+  assert(query("{{\"a\": 1}}", ". + {{\"b\": 2}}").eq("{{\"a\":1,\"b\":2}}"))
+}
+
+test "builtins" {
+  assert(query("[3, 1, 2]", "map(. + 1) | add").eq("9"))
+  assert(query("[3, 1, 2]", "[min, max, first, last, length]").eq("[1,3,3,2,3]"))
+  assert(query("[1, 2, 3, 4]", "map(select(. % 2 == 0))").eq("[2,4]"))
+  assert(query("{{\"b\": 1, \"a\": 2}}", "keys").eq("[\"a\",\"b\"]"))
+  assert(query("{{\"a\": 1}}", "[has(\"a\"), has(\"z\")]").eq("[true,false]"))
+  assert(query("[\"a\", \"b\"]", "join(\", \")").eq("\"a, b\""))
+  assert(query("\"héllo\"", "length").eq("5"))
+  assert(query("\"12\"", "tonumber + 1").eq("13"))
+  assert(query("[1, 2]", "tostring").eq("\"[1,2]\""))
+  assert(query("null", "[range(3)]").eq("[0,1,2]"))
+  assert(query("\"Abc\"", "ascii_upcase").eq("\"ABC\""))
+  assert(query("[1, 2]", "reverse").eq("[2,1]"))
+}
+
+test "query errors" {
+  assert(query("null", ".[").starts_with("parse error"))
+  assert(query("null", "1 +").starts_with("parse error"))
+  assert(query("null", "nosuch").starts_with("error: nosuch/0"))
+  assert(query("null", "1 @ 2").starts_with("lex error"))
+  assert(query("null", "if 1 then 2").starts_with("parse error"))
+  assert(query("null", "length(1)").starts_with("error: length/1"))
+}
+
+test "nesting limits" {
+  var deep = String.new()
+  for i in 0..300 { deep.push_char('[') }
+  assert(query(deep, ".").starts_with("input error"))
+}

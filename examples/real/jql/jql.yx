@@ -1,0 +1,106 @@
+// jql: a small jq-like query tool.
+//   jql [-c] [-r] QUERY [FILE]     reads JSON from FILE or stdin, prints every output of QUERY
+import std.env
+import std.fs
+import std.io
+import eval
+import lexer
+import parser
+import reader
+import value
+import writer
+
+fn usage() {
+  io.eprintln("usage: jql [-c] [-r] QUERY [FILE]")
+  io.exit(2)
+}
+
+// shows the offending offset under the source text
+fn report(what: view String, src: view String, f: view value.Fault) {
+  if f.offset < 0 {
+    io.eprintln("jql: {what}: {f.message}")
+    return
+  }
+  io.eprintln("jql: {what}: {f.message} (at offset {f.offset})")
+  io.eprintln("  {src}")
+  var pad = String.new()
+  for i in 0..f.offset { pad.push_char(' ') }
+  io.eprintln("  {pad}^")
+}
+
+fn main() {
+  let args = env.args()
+  var compact = false
+  var raw = false
+  var rest = List<String>.new()
+  for i in 1..args.len() {
+    let a = args.at(i)
+    if a.eq("-c") { compact = true }
+    else if a.eq("-r") { raw = true }
+    else { rest.push(String.from(a)) }
+  }
+  if rest.len() < 1 || rest.len() > 2 { usage() }
+  let query = rest.at(0)
+
+  var text = String.new()
+  if rest.len() == 2 {
+    match fs.read_to_string(rest.at(1)) {
+      Ok(s) => { text = move s }
+      Err(e) => {
+        io.eprintln("jql: {rest.at(1)}: {e}")
+        io.exit(2)
+      }
+    }
+  } else {
+    match io.read_all() {
+      Ok(s) => { text = move s }
+      Err(e) => {
+        io.eprintln("jql: stdin: {e}")
+        io.exit(2)
+      }
+    }
+  }
+
+  let doc = match reader.read(text) {
+    Ok(d) => move d
+    Err(f) => {
+      report("input", text, f)
+      io.exit(2)
+      return
+    }
+  }
+  let tokens = match lexer.tokenize(query) {
+    Ok(t) => move t
+    Err(f) => {
+      report("query", query, f)
+      io.exit(3)
+      return
+    }
+  }
+  let program = match parser.parse(move tokens) {
+    Ok(e) => move e
+    Err(f) => {
+      report("query", query, f)
+      io.exit(3)
+      return
+    }
+  }
+  match eval.run(program, doc) {
+    Ok(outputs) => {
+      for o in outputs {
+        match o {
+          Str(s) => {
+            if raw { print(s) } else { print(writer.quote(s)) }
+          }
+          _ => {
+            if compact { print(writer.compact(o)) } else { print(writer.pretty(o)) }
+          }
+        }
+      }
+    }
+    Err(f) => {
+      report("runtime", query, f)
+      io.exit(1)
+    }
+  }
+}
