@@ -106,3 +106,23 @@ HTTP/1.1 on loopback: an acceptor thread deals connections to three workers thro
 `examples/real/json`. A scripted client (std.http) and four concurrent client threads drive it, so the output is
 deterministic. The port comes from the process id and is retried when busy.
 
+
+## yxscan
+
+[yxscan](yxscan/) searches files and counts LF line endings, ASCII-whitespace
+words and bytes. It works with binary contents, defaults to stdin, and supports
+recursive directory traversal. Search accepts literal patterns with optional
+ASCII case folding, inversion, line numbers and per-input match counts.
+Recursive traversal skips symlinks and special files within directories.
+
+```sh
+target/release/yerux build examples/real/yxscan/main.yx --native -o /tmp/yxscan
+/tmp/yxscan grep -rin TODO src/std
+/tmp/yxscan wc -r src/std
+/tmp/yxscan grep -n release --exec /usr/bin/printf '%s\n' 'first release'
+```
+
+`--exec` passes arguments directly to a child and scans stdout as it arrives.
+Grep exits with 0 for a match, 1 for no matches and 2 for errors. Wc exits with
+0 on success and 2 on errors. Use `yxscan --help` for the command syntax.
+See the [development findings](../../docs/REAL_PROGRAMS.md#yxscan).

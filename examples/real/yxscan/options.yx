@@ -1,0 +1,89 @@
+pub struct Options {
+    wc: Bool,
+    recursive: Bool,
+    numbered: Bool,
+    ignore_case: Bool,
+    invert: Bool,
+    count: Bool,
+    pattern: String,
+    producer: String,
+    inputs: List<String>,
+}
+
+pub fn usage() -> String {
+    return String.from("Usage: yxscan grep [-rinvc] PATTERN [PATH ...]\n       yxscan wc [-r] [PATH ...]\n       yxscan grep [OPTIONS] PATTERN --exec PROGRAM [ARG ...]\n       yxscan wc --exec PROGRAM [ARG ...]\nUse - for stdin and -- to end options. -r visits directories in name order.\nGrep matches literal bytes. -i folds ASCII, -v inverts, -n numbers lines,\nand -c prints matching line counts. Wc counts LF, ASCII words, and bytes.")
+}
+
+pub fn parse(argv: view List<String>) -> Result<Options, String> {
+    if argv.len() < 2 {
+        return Err(String.from("expected grep or wc"))
+    }
+    let mode = argv.at(1)
+    if mode != "grep" && mode != "wc" {
+        return Err("unknown mode: {mode}")
+    }
+    var opts = Options {
+        wc: mode == "wc", recursive: false, numbered: false, ignore_case: false,
+        invert: false, count: false, pattern: String.new(), producer: String.new(),
+        inputs: List<String>.new(),
+    }
+    var i = 2
+    var have_pattern = opts.wc
+    var flags = true
+    while i < argv.len() {
+        let arg = argv.at(i)
+        i = i + 1
+        if flags && arg == "--" {
+            flags = false
+        } else if flags && arg == "--exec" {
+            if !have_pattern || opts.inputs.len() > 0 || opts.recursive {
+                return Err(String.from("--exec follows the pattern and replaces all paths; it cannot use -r"))
+            }
+            if i == argv.len() || argv.at(i) == "" {
+                return Err(String.from("--exec requires a program"))
+            }
+            opts.producer = String.from(argv.at(i))
+            while i + 1 < argv.len() {
+                i = i + 1
+                opts.inputs.push(String.from(argv.at(i)))
+            }
+            break
+        } else if flags && arg.len() > 1 && arg.starts_with("-") {
+            let applied = apply_flags(opts, arg)?
+        } else if !have_pattern {
+            opts.pattern = String.from(arg)
+            have_pattern = true
+        } else {
+            opts.inputs.push(String.from(arg))
+        }
+    }
+    if !have_pattern {
+        return Err(String.from("grep requires a pattern"))
+    }
+    if opts.producer == "" && opts.inputs.len() == 0 {
+        opts.inputs.push(String.from("-"))
+    }
+    return Ok(move opts)
+}
+
+fn apply_flags(opts: mut Options, arg: view String) -> Result<Bool, String> {
+    for i in 1..arg.len() {
+        let flag = arg.byte(i)
+        if flag == 'r'.to_int() {
+            opts.recursive = true
+        } else if opts.wc {
+            return Err("unsupported wc option: {arg}")
+        } else if flag == 'i'.to_int() {
+            opts.ignore_case = true
+        } else if flag == 'v'.to_int() {
+            opts.invert = true
+        } else if flag == 'n'.to_int() {
+            opts.numbered = true
+        } else if flag == 'c'.to_int() {
+            opts.count = true
+        } else {
+            return Err("unknown option: {arg}")
+        }
+    }
+    return Ok(true)
+}

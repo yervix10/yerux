@@ -1,0 +1,131 @@
+import std.io
+import options
+
+pub struct Needle {
+    bytes: List<Int>,
+    fallback: List<Int>,
+}
+
+fn fold(byte: Int, ignore_case: Bool) -> Int {
+    if ignore_case && byte >= 65 && byte <= 90 {
+        return byte + 32
+    }
+    return byte
+}
+
+// Build the prefix table once, so long shared prefixes never require backtracking in the input.
+pub fn prepare(opts: view options.Options) -> Needle {
+    var bytes = List<Int>.new()
+    var fallback = List<Int>.new()
+    var prefix = 0
+    for i in 0..opts.pattern.len() {
+        let byte = fold(opts.pattern.byte(i), opts.ignore_case)
+        if i > 0 {
+            while prefix > 0 && bytes.at(prefix) != byte {
+                prefix = fallback.at(prefix - 1)
+            }
+            if bytes.at(prefix) == byte {
+                prefix = prefix + 1
+            }
+        }
+        bytes.push(byte)
+        fallback.push(prefix)
+    }
+    return Needle { bytes: move bytes, fallback: move fallback }
+}
+
+pub struct Scan {
+    line: List<UInt8>,
+    line_pending: Bool,
+    in_word: Bool,
+    prefix: Int,
+    matched: Bool,
+    selected: Int,
+    newlines: Int,
+    words: Int,
+    bytes: Int,
+}
+
+pub fn start() -> Scan {
+    return Scan {
+        line: List<UInt8>.new(), line_pending: false, in_word: false,
+        prefix: 0, matched: false, selected: 0, newlines: 0, words: 0, bytes: 0,
+    }
+}
+
+fn finish_line(state: mut Scan, opts: view options.Options, needle: view Needle,
+               label: view String, show_label: Bool) -> Result<Int, io.IoError> {
+    let match_found = state.matched || needle.bytes.len() == 0
+    if match_found != opts.invert {
+        state.selected = state.selected + 1
+        if !opts.count {
+            if show_label {
+                let written = io.write_stdout("{label}:")?
+            }
+            if opts.numbered {
+                let line_number = state.newlines + 1
+                let written = io.write_stdout("{line_number}:")?
+            }
+            let written = io.write_stdout_bytes(state.line[..])?
+            let newline = io.write_stdout("\n")?
+        }
+    }
+    state.line.clear()
+    state.line_pending = false
+    state.prefix = 0
+    state.matched = false
+    return Ok(0)
+}
+
+pub fn feed(state: mut Scan, data: view [UInt8], opts: view options.Options, needle: view Needle,
+            label: view String, show_label: Bool) -> Result<Int, io.IoError> {
+    state.bytes = state.bytes + data.len()
+    for i in 0..data.len() {
+        let byte = data[i].to_int()
+        if opts.wc {
+            let space = byte == 32 || (byte >= 9 && byte <= 13)
+            if !space && !state.in_word {
+                state.words = state.words + 1
+            }
+            state.in_word = !space
+        } else if byte == 10 {
+            let finished = finish_line(state, opts, needle, label, show_label)?
+        } else {
+            state.line_pending = true
+            if !opts.count {
+                state.line.push(data[i])
+            }
+            if !state.matched && needle.bytes.len() > 0 {
+                let c = fold(byte, opts.ignore_case)
+                while state.prefix > 0 && needle.bytes.at(state.prefix) != c {
+                    state.prefix = needle.fallback.at(state.prefix - 1)
+                }
+                if needle.bytes.at(state.prefix) == c {
+                    state.prefix = state.prefix + 1
+                    state.matched = state.prefix == needle.bytes.len()
+                }
+            }
+        }
+        if byte == 10 {
+            state.newlines = state.newlines + 1
+        }
+    }
+    return Ok(data.len())
+}
+
+pub fn finish(state: mut Scan, opts: view options.Options, needle: view Needle,
+              label: view String, show_label: Bool) -> Result<Int, io.IoError> {
+    if opts.wc {
+        return io.write_stdout("{state.newlines} {state.words} {state.bytes} {label}\n")
+    }
+    if state.line_pending {
+        let finished = finish_line(state, opts, needle, label, show_label)?
+    }
+    if opts.count {
+        if show_label {
+            return io.write_stdout("{label}:{state.selected}\n")
+        }
+        return io.write_stdout("{state.selected}\n")
+    }
+    return Ok(0)
+}

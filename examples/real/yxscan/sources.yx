@@ -1,0 +1,184 @@
+import std.fs
+import std.io
+import std.path
+import std.process
+import options
+import scanner
+
+pub struct Totals {
+    completed: Int,
+    selected: Int,
+    lines: Int,
+    words: Int,
+    bytes: Int,
+    failed: Bool,
+}
+
+pub fn totals() -> Totals {
+    return Totals { completed: 0, selected: 0, lines: 0, words: 0, bytes: 0, failed: false }
+}
+
+fn record(tot: mut Totals, current: view scanner.Scan) {
+    tot.completed = tot.completed + 1
+    tot.selected = tot.selected + current.selected
+    tot.lines = tot.lines + current.newlines
+    tot.words = tot.words + current.words
+    tot.bytes = tot.bytes + current.bytes
+}
+
+fn problem(tot: mut Totals, label: view String, error: view io.IoError) {
+    tot.failed = true
+    io.eprintln("yxscan: {label}: {error}")
+}
+
+fn scan_file(name: view String, opts: view options.Options, needle: view scanner.Needle,
+             show_label: Bool, tot: mut Totals) -> Result<Int, io.IoError> {
+    var reader = fs.open_reader(name)?
+    var buf = [0u8; 8192]
+    var state = scanner.start()
+    while true {
+        let n = reader.read(buf[..])?
+        if n == 0 {
+            break
+        }
+        let scanned = scanner.feed(state, buf[0..n], opts, needle, name, show_label)?
+    }
+    let written = scanner.finish(state, opts, needle, name, show_label)?
+    record(tot, state)
+    return Ok(0)
+}
+
+fn scan_stdin(opts: view options.Options, needle: view scanner.Needle,
+              show_label: Bool, tot: mut Totals) -> Result<Int, io.IoError> {
+    var buf = [0u8; 8192]
+    var state = scanner.start()
+    while true {
+        let n = io.read_stdin_bytes(buf[..])?
+        if n == 0 {
+            break
+        }
+        let scanned = scanner.feed(state, buf[0..n], opts, needle, "-", show_label)?
+    }
+    let written = scanner.finish(state, opts, needle, "-", show_label)?
+    record(tot, state)
+    return Ok(0)
+}
+
+// Only stdout is piped. The producer inherits stdin and stderr and gets each argument literally.
+fn scan_producer(opts: view options.Options, needle: view scanner.Needle,
+                 tot: mut Totals) -> Result<Int, io.IoError> {
+    var command = process.command(opts.producer)
+    command.add_args(opts.inputs)
+    command.set_stdout(process.Stdio.Piped)
+    var child = process.start(command)?
+    var buf = [0u8; 8192]
+    var state = scanner.start()
+    while true {
+        let n = child.read_stdout_into(buf[..])?
+        if n == 0 {
+            break
+        }
+        let scanned = scanner.feed(state, buf[0..n], opts, needle, opts.producer, false)?
+    }
+    let status = child.wait()?
+    if !status.success() {
+        let message = status.show()
+        return Err(io.IoError { kind: io.IoErrorKind.Other, code: status.code, message: move message })
+    }
+    let written = scanner.finish(state, opts, needle, opts.producer, false)?
+    record(tot, state)
+    return Ok(0)
+}
+
+struct Work {
+    name: String,
+    explicit: Bool,
+}
+
+fn expand(work: mut List<Work>, directory: view String) -> Result<Int, io.IoError> {
+    let entries = fs.read_dir_entries(directory)?
+    var i = entries.len()
+    // Push in reverse byte order for stable depth-first output.
+    while i > 0 {
+        i = i - 1
+        let entry = entries.at(i)
+        if entry.kind == fs.FileKind.File || entry.kind == fs.FileKind.Dir {
+            work.push(Work { name: path.join(directory, entry.name), explicit: false })
+        }
+    }
+    return Ok(entries.len())
+}
+
+fn scan_path(root: view String, opts: view options.Options, needle: view scanner.Needle,
+             show_label: Bool, tot: mut Totals) {
+    var work = List<Work>.new()
+    work.push(Work { name: String.from(root), explicit: true })
+    while work.len() > 0 {
+        let item = work.pop()
+        var kind = fs.FileKind.Other
+        match fs.symlink_metadata(item.name) {
+            Ok(info) => { kind = info.kind }
+            Err(e) => {
+                problem(tot, item.name, e)
+                continue
+            }
+        }
+        if kind == fs.FileKind.Symlink && item.explicit {
+            match fs.metadata(item.name) {
+                Ok(info) => { kind = info.kind }
+                Err(e) => {
+                    problem(tot, item.name, e)
+                    continue
+                }
+            }
+        }
+        if kind == fs.FileKind.Dir && opts.recursive {
+            match expand(work, item.name) {
+                Ok(_) => {}
+                Err(e) => { problem(tot, item.name, e) }
+            }
+        } else if kind == fs.FileKind.File {
+            match scan_file(item.name, opts, needle, show_label, tot) {
+                Ok(_) => {}
+                Err(e) => { problem(tot, item.name, e) }
+            }
+        } else if item.explicit {
+            tot.failed = true
+            if kind == fs.FileKind.Dir {
+                io.eprintln("yxscan: {item.name}: directory requires -r")
+            } else {
+                io.eprintln("yxscan: {item.name}: expected a regular file")
+            }
+        }
+    }
+}
+
+pub fn run(opts: view options.Options, needle: view scanner.Needle) -> Totals {
+    var tot = totals()
+    if opts.producer != "" {
+        match scan_producer(opts, needle, tot) {
+            Ok(_) => {}
+            Err(e) => { problem(tot, opts.producer, e) }
+        }
+        return tot
+    }
+
+    let show_label = opts.recursive || opts.inputs.len() > 1
+    for input in opts.inputs {
+        if input == "-" {
+            match scan_stdin(opts, needle, show_label, tot) {
+                Ok(_) => {}
+                Err(e) => { problem(tot, input, e) }
+            }
+        } else {
+            scan_path(input, opts, needle, show_label, tot)
+        }
+    }
+    if opts.wc && tot.completed > 1 {
+        match io.write_stdout("{tot.lines} {tot.words} {tot.bytes} total\n") {
+            Ok(_) => {}
+            Err(e) => { problem(tot, "stdout", e) }
+        }
+    }
+    return tot
+}

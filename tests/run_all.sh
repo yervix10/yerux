@@ -114,6 +114,7 @@ AUX=(
   "fmt|bash tests/fmt.sh"
   "sumtool|bash tests/sumtool.sh"
   "minimake_errors|bash tests/minimake_errors.sh"
+  "yxscan|bash tests/yxscan.sh"
   "io_targets|bash tests/io_targets.sh"
   "a64_net|python3 tests/a64_emu.py --network -j 1"
   "a64_system|python3 tests/a64_emu.py --system -j 1"
