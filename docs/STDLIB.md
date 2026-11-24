@@ -339,7 +339,8 @@ Ordinary generic enums: `Option<T>` is `Some(T)` or `None`; `Result<T, E>` is `O
 | `unwrap_or` | `fn unwrap_or(self, d: T) -> T` | consumes |
 | `or` | `fn or(self, other: Option<T>) -> Option<T>` | Option |
 | `ok` / `err` | `fn ok(self) -> Option<T>` / `fn err(self) -> Option<E>` | Result, consumes |
-| `ok_or` | `fn ok_or<T, E>(o: Option<T>, e: E) -> Result<T, E>` | a free function: `ok_or(opt, "message")` |
+| `ok_or` | `fn ok_or(self, msg: view String) -> Result<T, String>` | Option, consumes: `opt.ok_or("message")` (like `context`, the error is a `String`; methods cannot be generic yet) |
+| `ok_or` (free) | `fn ok_or<T, E>(o: Option<T>, e: E) -> Result<T, E>` | any error type: `ok_or(opt, MyError.Missing)`; final, kept alongside the method |
 
 Also `Show` (`"{o}"` gives `Some(8)`, `None`, `Ok(42)`, `Err(text)`) when the payloads implement `Show`, and `Equal` for `Option<T: Equal>`.
 
@@ -456,7 +457,7 @@ Types are `fn(Param, ...) -> Result` (parameter modes are part of the type). A f
 | `print(x)` | prints a number, `Char`, `Bool`, `Text` or `String` (also a `String` temporary) and a newline. For any other `Show` type use interpolation: `print("{x}")` |
 | `panic(msg)` | writes `panic: <msg>` to stderr and exits with code 101; `msg` is a `Text` or `String`, interpolation allowed |
 | `assert(cond)` | panics with `assertion failed` if `cond` is false |
-| `assert_eq(a, b)` | panics with `assertion failed` if `a != b` (`Int` or `Bool`; for strings use `assert(a.eq(b))`) |
+| `assert_eq(a, b)` | panics with `assertion failed` if `a != b` (numbers, `Bool`, and `String`/`Text` variables or literals; store a call result with `let` first, as for `==`) |
 | `todo()` | panics with `not yet implemented` |
 | `unreachable()` | panics with `internal error: entered unreachable code` |
 
@@ -719,7 +720,7 @@ randomness; range reduction has modulo bias unless the width divides `2^32`.
 Only what the prelude lacks (`sqrt`, `sin`, `pow`, `floor`, ... are prelude functions). `pi()` `e()` `tau()`; `abs` `sign` `min` `max` `clamp(x, lo, hi)` on `Int`; `clamp_float`; `gcd` `lcm`; `ipow(base, exp)` (checked); `isqrt`; `div_floor` `mod_floor` (sign of the divisor); `is_prime`; `lerp`; `to_radians` `to_degrees`.
 
 ### `std.sort`
-A comparator is `fn(view T, view T) -> Int` (negative: first sorts first). The algorithms only use `at` and `swap`, so they work for owned element types.
+Naming is final: `l.sort()` is `sort.unstable(l)` (in place, not stable; for `Ordered` types equal values are indistinguishable, so stability cannot be observed). Use `stable`/`stable_by` when records with equal keys must keep their order. A comparator is `fn(view T, view T) -> Int` (negative: first sorts first). The algorithms only use `at` and `swap`, so they work for owned element types.
 
 | Function | Notes |
 |----------|-------|

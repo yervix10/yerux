@@ -80,20 +80,19 @@ Size: 8 modules, 1,677 lines; 12 `yerux test` blocks plus a golden run
 No compiler or stdlib defect was found; the program's own bug (a reader that
 accepted `01`) was caught by its unit test and fixed in `reader.yx`.
 
-API/ergonomics frictions (documented, not changed):
+Frictions and their resolution (1.0 freeze round):
 
-1. `String.parse_int(out)` is a method returning `Bool`, while the float
-   equivalent is `text.parse_float(s)` returning `Result`. Two shapes for the
-   same task.
-   Repro: `var n = 0; if s.parse_int(n) {..}` vs `match text.parse_float(s) {..}`.
-2. `Char.from_int(n)` panics on invalid scalars (surrogates, > 0x10FFFF), so
-   decoding `\uD800` needs a prior `Char.is_valid` check.
-3. A top-level `fn` cannot be passed by name where a `fn` value is expected:
-   `sort.stable_by(l, compare)` gives "variable 'compare' does not exist"; a
-   closure `|a, b| compare(a, b)` is required.
-4. `Result::unwrap` needs `E: Show`, so any program with its own error struct
-   must `match` instead (or add `impl Show`).
-5. `assert_eq` rejects `String`; tests must use `assert(a.eq(b))`.
-6. There is no `io.println`; stdout printing is the builtin `print`.
-7. `{`/`}` in string literals must be doubled, including char literals
-   (`'}}'`), which is easy to forget in JSON-heavy code.
+1. `String.parse_int(out)` (Bool) vs `text.parse_float(s)` (Result). **Final, documented:** `std.text` has
+   the matching `Result` pair `parse_int(s)`/`parse_float(s)`; the prelude method is the no-import `Bool`
+   fast path for integers only.
+2. `Char.from_int(n)` panics on invalid scalars; use `Char.is_valid(n)` first. **Final** (checked conversion
+   style, like `Int<lo..hi>.from`).
+3. A top-level `fn` cannot be passed by name as a `fn` value (`sort.stable_by(l, compare)` fails); wrap it:
+   `|a, b| compare(a, b)`. **Open, language gap** (not a 1.0 blocker: a closure is the workaround).
+4. `Result::unwrap` needs `E: Show`. **Final:** the diagnostic already says `add impl Show for E`.
+5. `assert_eq` rejected `String`. **Fixed:** `assert_eq` is now `assert(a == b)` checked like any `==`, so
+   numbers, Bool and String/Text variables or literals work, and other types get the precise `==`
+   diagnostic. A String-returning call must be stored with `let` first (the general rule for `==`).
+   Tests: tests/assert_eq_string.yx, tests/e963_assert_eq_strings.yx.
+6. No `io.println`; stdout is the builtin `print`. **Final** (one way to print).
+7. `{`/`}` in string literals must be doubled, including char literals. **Final** (SPEC string rules).

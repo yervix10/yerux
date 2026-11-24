@@ -1650,31 +1650,17 @@ impl<'a> Checker<'a> {
             }
             EK::Call(name, args) => {
                 if name == "assert_eq" && args.len() == 2 {
-                    // assert_eq(a, b) is assert(a == b), with the operand types checked first
-                    let ta = self.expr(&mut args[0]);
-                    if is_num(ta) {
-                        self.hint = Some(ta);
-                    }
-                    let tb = self.expr(&mut args[1]);
-                    if !matches!(ta, Ty::Bool | Ty::Err) && !is_num(ta) {
-                        let n = self.tn(ta);
-                        self.err(
-                            diag(
-                                format!("assert_eq compares numbers or Bool values, not {}", n),
-                                args[0].pos,
-                            )
-                            .note("help: for strings use `assert(a.eq(b))`"),
-                        );
-                    } else {
-                        self.expect(tb, ta, args[1].pos);
-                    }
+                    // assert_eq(a, b) is assert(a == b): the comparison is checked like any `==`
+                    // (numbers, Bool, String and Text compare; other types give the `==` diagnostic)
                     let b = args.pop().unwrap();
                     let a = args.pop().unwrap();
-                    let cmp = Expr {
+                    let mut cmp = Expr {
                         pos: span(a.pos, b.pos),
                         ty: Ty::Bool,
                         k: EK::Bin("==", Box::new(a), Box::new(b)),
                     };
+                    self.expr(&mut cmp);
+                    cmp.ty = Ty::Bool;
                     *name = "assert".into();
                     args.push(cmp);
                     Ty::Unit
