@@ -1,0 +1,113 @@
+// One ASCII line per trial: codec tag followed by the hex-encoded input bytes.
+import std.io
+import std.hex
+import std.base64
+import std.json
+import std.toml
+import std.http.server
+
+fn raw(hex_text: view String) -> String {
+  let bytes = hex.decode_bytes(hex_text).unwrap()
+  var s = String.new()
+  for b in bytes { s.push_byte(b.to_int()) }
+  return move s
+}
+
+fn encoded(s: view String) -> String {
+  assert(io.valid_utf8(s))
+  return hex.encode(s)
+}
+
+fn json_trial(s: view String) -> String {
+  match json.parse(s) {
+    Ok(value) => {
+      let compact = json.to_string(value)
+      match json.parse(compact) {
+        Ok(parsed) => { assert(json.to_string(parsed).eq(compact)) }
+        Err(_) => { panic("JSON output could not be parsed") }
+      }
+      return "ok:{encoded(compact)}"
+    }
+    Err(e) => {
+      let at = json.line_col(s, e.offset)
+      assert(at.0 > 0 && at.1 > 0)
+      return String.from("error")
+    }
+  }
+}
+
+fn toml_trial(s: view String) -> String {
+  let name = toml.get_string(s, "section.name")
+  let n = toml.get_int(s, "section.n")
+  let flag = toml.get_bool(s, "section.flag")
+  let items = toml.get_array(s, "section.items")
+  var result = String.from("{encoded(name)}:{n}:{flag}")
+  for item in items { result.push_str(":{encoded(item)}") }
+  return move result
+}
+
+fn http_trial(s: view String) -> String {
+  var cfg = server.config()
+  cfg.max_body = 32
+  cfg.max_uri = 64
+  cfg.max_headers = 5
+  match server.parse(s, 0, cfg) {
+    Need(_) => { return String.from("need") }
+    Reject(status, _) => { return "{status}" }
+    Done(req, used) => {
+      assert(used > 0 && used <= s.len())
+      var router = server.router()
+      router.add("POST", "/item/:name", 1)
+      router.add("GET", "/item/:name", 1)
+      match router.route(req) {
+        Found(m) => {
+          let name = server.param(m, "name").unwrap()
+          let q = server.query_param(req, "k").unwrap_or(String.new())
+          return "ok:{encoded(req.path)}:{encoded(name)}:{encoded(q)}:{hex.encode(req.body)}:{used}"
+        }
+        _ => { return "unrouted:{encoded(req.path)}" }
+      }
+    }
+  }
+}
+
+fn text_result(r: Result<String, String>) -> String {
+  match r {
+    Ok(s) => { return "ok:{encoded(s)}" }
+    Err(_) => { return String.from("error") }
+  }
+}
+
+fn bytes_result(r: Result<List<UInt8>, String>) -> String {
+  match r {
+    Ok(b) => { return "ok:{hex.encode_bytes(b)}" }
+    Err(_) => { return String.from("error") }
+  }
+}
+
+fn trial(s: view String) -> String {
+  let spelling = s.slice(1, s.len())
+  match s.byte(0) {
+    106 => { return json_trial(raw(spelling)) }
+    116 => { return toml_trial(raw(spelling)) }
+    104 => { return http_trial(raw(spelling)) }
+    120 => {
+      let data = raw(spelling)
+      return "{bytes_result(hex.decode_bytes(data))}/{text_result(hex.decode(data))}"
+    }
+    98 => {
+      let data = raw(spelling)
+      return "{bytes_result(base64.decode_bytes(data))}/{text_result(base64.decode(data))}"
+    }
+    _ => { panic("unknown test codec") }
+  }
+}
+
+fn main() {
+  while true {
+    match io.read_line().unwrap() {
+      Some(line) => { print(trial(line)) }
+      None => { return }
+    }
+  }
+}

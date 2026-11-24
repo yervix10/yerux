@@ -99,6 +99,7 @@ AUX=(
   "parser_depth|bash tests/parser_depth.sh"
   "tsan_concurrency|bash tests/tsan_concurrency.sh"
   "fuzz_parse|python3 tests/fuzz_parse.py --edge-only -j 2"
+  "fuzz_text|python3 tests/fuzz_text.py --asan"
   "selfhost_fmt|bash tests/selfhost_fmt.sh"
   "selfhost_types|bash tests/selfhost_types.sh"
   "selfhost_resolve|bash tests/selfhost_resolve.sh"
