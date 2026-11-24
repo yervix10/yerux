@@ -120,6 +120,7 @@ AUX=(
   "lisp|bash tests/lisp.sh"
   "rxdfa|bash tests/rxdfa.sh"
   "lzh|bash tests/lzh.sh"
+  "schedsim|bash tests/schedsim.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"

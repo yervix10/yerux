@@ -1,0 +1,199 @@
+// Discrete-event simulation of a FIFO scheduler with K identical servers. Events live in parallel arrays and are
+// ordered by a binary min-heap of event numbers on (time, number); the number is the creation order, so events at
+// the same time are handled in a fixed order. Jobs arrive at times given by a seeded generator and need the service
+// times computed by work.yx.
+import std.text
+
+const ARRIVE: Int = 0
+const FINISH: Int = 1
+const DIGEST_MOD: Int = 1000000007
+const TRACE_LINES: Int = 12
+
+// Outcome of a run. `busy` is the busy time of each server, `trace` the first events as text.
+pub struct Outcome {
+  events: Int,
+  makespan: Int,
+  total_wait: Int,
+  max_wait: Int,
+  busy: List<Int>,
+  trace: List<String>,
+  digest: Int,
+}
+
+// The simulation state: event arrays, the event heap, the FIFO queue of waiting jobs and the free servers.
+struct State {
+  etime: List<Int>,
+  ejob: List<Int>,
+  ekind: List<Int>,
+  eserver: List<Int>,
+  heap: List<Int>,
+  queue: List<Int>,
+  head: Int,
+  free: List<Int>,
+}
+
+// Arrival time of job j: a running sum of gaps of 1..24 ticks drawn from the seed.
+pub fn arrivals(jobs: Int, seed: Int) -> List<Int> {
+  var out = List<Int>.new()
+  var t = 0
+  for j in 0..jobs {
+    var x = (seed * 2654435761 + j * 40503 + 1) % 2147483648
+    x = (x * 1103515245 + 12345) % 2147483648
+    t = t + 1 + (x / 65536) % 24
+    out.push(t)
+  }
+  return out
+}
+
+fn before(a: Int, b: Int, etime: view List<Int>) -> Bool {
+  if etime.at(a) != etime.at(b) {
+    return etime.at(a) < etime.at(b)
+  }
+  return a < b
+}
+
+fn heap_push(s: mut State, e: Int) {
+  s.heap.push(e)
+  var k = s.heap.len() - 1
+  while k > 0 {
+    let p = (k - 1) / 2
+    if !before(s.heap.at(k), s.heap.at(p), s.etime) {
+      break
+    }
+    let t = s.heap.at(k)
+    s.heap[k] = s.heap.at(p)
+    s.heap[p] = t
+    k = p
+  }
+}
+
+// Removes and returns the earliest event; the heap must not be empty.
+fn heap_pop(s: mut State) -> Int {
+  let top = s.heap.at(0)
+  let last = s.heap.pop()
+  if s.heap.len() > 0 {
+    s.heap[0] = last
+    var k = 0
+    while true {
+      let l = 2 * k + 1
+      let r = l + 1
+      var m = k
+      if l < s.heap.len() && before(s.heap.at(l), s.heap.at(m), s.etime) {
+        m = l
+      }
+      if r < s.heap.len() && before(s.heap.at(r), s.heap.at(m), s.etime) {
+        m = r
+      }
+      if m == k {
+        break
+      }
+      let t = s.heap.at(k)
+      s.heap[k] = s.heap.at(m)
+      s.heap[m] = t
+      k = m
+    }
+  }
+  return top
+}
+
+fn schedule(s: mut State, time: Int, job: Int, kind: Int, server: Int) {
+  let e = s.etime.len()
+  s.etime.push(time)
+  s.ejob.push(job)
+  s.ekind.push(kind)
+  s.eserver.push(server)
+  heap_push(s, e)
+}
+
+// Starts the waiting jobs while a server is free: the lowest-numbered free server takes the job at the queue head.
+fn dispatch(s: mut State, now: Int, svc: view List<Int>, start: mut List<Int>, busy: mut List<Int>) {
+  while s.head < s.queue.len() && s.free.len() > 0 {
+    var best = 0
+    for i in 1..s.free.len() {
+      if s.free.at(i) < s.free.at(best) {
+        best = i
+      }
+    }
+    let server = s.free.remove(best)
+    let job = s.queue.at(s.head)
+    s.head = s.head + 1
+    start[job] = now
+    busy[server] = busy.at(server) + svc.at(job)
+    schedule(s, now + svc.at(job), job, FINISH, server)
+  }
+}
+
+fn describe(time: Int, job: Int, kind: Int, server: Int) -> String {
+  if kind == ARRIVE {
+    return "t={time} arrive job={job}"
+  }
+  return "t={time} finish job={job} server={server}"
+}
+
+// Runs the simulation of `svc.len()` jobs on `servers` servers; `arrive` gives each job's arrival time.
+pub fn run(arrive: view List<Int>, svc: view List<Int>, servers: Int) -> Outcome {
+  let jobs = svc.len()
+  var s = State {
+    etime: List<Int>.new(),
+    ejob: List<Int>.new(),
+    ekind: List<Int>.new(),
+    eserver: List<Int>.new(),
+    heap: List<Int>.new(),
+    queue: List<Int>.new(),
+    head: 0,
+    free: List<Int>.new(),
+  }
+  var start = List<Int>.new()
+  var busy = List<Int>.new()
+  for k in 0..servers {
+    s.free.push(k)
+    busy.push(0)
+  }
+  for j in 0..jobs {
+    start.push(-1)
+    schedule(s, arrive.at(j), j, ARRIVE, -1)
+  }
+  var events = 0
+  var makespan = 0
+  var digest = 0
+  var trace = List<String>.new()
+  while s.heap.len() > 0 {
+    let e = heap_pop(s)
+    let now = s.etime.at(e)
+    let job = s.ejob.at(e)
+    let kind = s.ekind.at(e)
+    let server = s.eserver.at(e)
+    events = events + 1
+    digest = (digest * 31 + now * 7 + job * 3 + kind * 5 + (server + 1) * 11) % DIGEST_MOD
+    if trace.len() < TRACE_LINES {
+      trace.push(describe(now, job, kind, server))
+    }
+    if kind == ARRIVE {
+      s.queue.push(job)
+    } else {
+      s.free.push(server)
+      if now > makespan {
+        makespan = now
+      }
+    }
+    dispatch(s, now, svc, start, busy)
+  }
+  var total_wait = 0
+  var max_wait = 0
+  for j in 0..jobs {
+    let wait = start.at(j) - arrive.at(j)
+    total_wait = total_wait + wait
+    if wait > max_wait {
+      max_wait = wait
+    }
+  }
+  return Outcome {
+    events: events,
+    makespan: makespan,
+    total_wait: total_wait,
+    max_wait: max_wait,
+    busy: move busy,
+    trace: move trace,
+    digest: digest,
+  }
+}
