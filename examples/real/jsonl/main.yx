@@ -1,0 +1,87 @@
+// jsonl: validates newline-delimited JSON and writes each non-blank line in canonical form (see canon.yx).
+//
+//   jsonl [--check] [FILE]   FILE, or standard input when it is omitted or "-"; --check writes nothing
+//
+// Each invalid line is reported on stderr as FILE:LINE:COL: MESSAGE (COL is a one-based byte column) and does not
+// stop the others. Exit status: 0 every non-blank line is valid, 1 an invalid line or an unreadable input, 2 a usage
+// error. The input must be UTF-8.
+import canon
+import reader
+import std.env
+import std.fs
+import std.io
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("jsonl: {msg}")
+  io.exit(code)
+}
+
+fn blank(line: view String) -> Bool {
+  for i in 0..line.len() {
+    let b = line.byte(i)
+    if b != 32 && b != 9 && b != 13 {
+      return false
+    }
+  }
+  return true
+}
+
+fn main() {
+  var check = false
+  var path = String.from("-")
+  var given = false
+  var options = true
+  let args = env.args()
+  for i in 1..args.len() {
+    let a = args.at(i)
+    if options && a.eq("--") {
+      options = false
+    } else if options && a.eq("--check") {
+      check = true
+    } else if options && a.starts_with("-") && !a.eq("-") {
+      fail("usage: jsonl [--check] [FILE]", 2)
+    } else {
+      if given {
+        fail("usage: jsonl [--check] [FILE]", 2)
+      }
+      path = String.from(a)
+      given = true
+    }
+  }
+  var text = String.new()
+  if path.eq("-") {
+    match io.read_all() {
+      Ok(s) => { text = move s }
+      Err(e) => { fail("cannot read standard input", 1) }
+    }
+  } else {
+    match fs.read_to_string(path) {
+      Ok(s) => { text = move s }
+      Err(e) => { fail("cannot read {path}", 1) }
+    }
+  }
+  var invalid = 0
+  let lines = text.lines()
+  for n in 0..lines.len() {
+    let line = lines.at(n)
+    if !blank(line) {
+      match reader.parse(line) {
+        Ok(v) => {
+          if !check {
+            print(canon.canonical(v))
+          }
+        }
+        Err(e) => {
+          let line_no = n + 1
+          let col = e.offset + 1
+          io.eprintln("{path}:{line_no}:{col}: {e.message}")
+          invalid = invalid + 1
+        }
+      }
+    }
+  }
+  if invalid > 0 {
+    io.exit(1)
+  }
+  io.exit(0)
+}

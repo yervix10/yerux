@@ -1,0 +1,116 @@
+// Canonical text of a jsonl value: no insignificant whitespace, object keys in byte order, strings escaped with the
+// short escapes and \u00XX for other control characters (non-ASCII UTF-8 is written as is), numbers as spelled.
+import reader
+
+// Byte order of two keys (equal to code point order for UTF-8).
+fn key_less(a: view String, b: view String) -> Bool {
+  let n = if_min(a.len(), b.len())
+  for i in 0..n {
+    if a.byte(i) != b.byte(i) {
+      return a.byte(i) < b.byte(i)
+    }
+  }
+  return a.len() < b.len()
+}
+
+fn if_min(a: Int, b: Int) -> Int {
+  if a < b {
+    return a
+  }
+  return b
+}
+
+fn hex_digit(d: Int) -> Int {
+  if d < 10 {
+    return '0'.to_int() + d
+  }
+  return 'a'.to_int() + d - 10
+}
+
+pub fn write_string(out: mut String, s: view String) {
+  out.push_byte('"'.to_int())
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b == '"'.to_int() || b == '\\'.to_int() {
+      out.push_byte('\\'.to_int())
+      out.push_byte(b)
+    } else if b == 10 {
+      out.push_str("\\n")
+    } else if b == 13 {
+      out.push_str("\\r")
+    } else if b == 9 {
+      out.push_str("\\t")
+    } else if b == 8 {
+      out.push_str("\\b")
+    } else if b == 12 {
+      out.push_str("\\f")
+    } else if b < 32 {
+      out.push_str("\\u00")
+      out.push_byte(hex_digit(b / 16))
+      out.push_byte(hex_digit(b % 16))
+    } else {
+      out.push_byte(b)
+    }
+  }
+  out.push_byte('"'.to_int())
+}
+
+// Object members in byte order of their keys; the indexes are sorted by insertion sort (stable).
+fn sorted_indexes(members: view List<reader.Member>) -> List<Int> {
+  var order = List<Int>.new()
+  for i in 0..members.len() {
+    var k = order.len()
+    order.push(i)
+    while k > 0 && key_less(members.at(i).key, members.at(order.at(k - 1)).key) {
+      order[k] = order.at(k - 1)
+      k = k - 1
+    }
+    order[k] = i
+  }
+  return order
+}
+
+pub fn write(v: view reader.Value, out: mut String) {
+  match v {
+    reader.Value.Null => { out.push_str("null") }
+    reader.Value.Bool(b) => {
+      if b {
+        out.push_str("true")
+      } else {
+        out.push_str("false")
+      }
+    }
+    reader.Value.Number(spelling) => { out.push_str(spelling) }
+    reader.Value.Str(s) => { write_string(out, s) }
+    reader.Value.Array(items) => {
+      out.push_byte('['.to_int())
+      for i in 0..items.len() {
+        if i > 0 {
+          out.push_byte(','.to_int())
+        }
+        write(items.at(i).get(), out)
+      }
+      out.push_byte(']'.to_int())
+    }
+    reader.Value.Object(members) => {
+      out.push_byte('{'.to_int())
+      let order = sorted_indexes(members)
+      for k in 0..order.len() {
+        let m = members.at(order.at(k))
+        if k > 0 {
+          out.push_byte(','.to_int())
+        }
+        write_string(out, m.key)
+        out.push_byte(':'.to_int())
+        write(m.value.get(), out)
+      }
+      out.push_byte('}'.to_int())
+    }
+  }
+}
+
+pub fn canonical(v: view reader.Value) -> String {
+  var out = String.new()
+  write(v, out)
+  return out
+}
