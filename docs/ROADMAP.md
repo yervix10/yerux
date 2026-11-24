@@ -61,11 +61,12 @@ expensive milestones and are at zero.
 | M9 | 1.5 / 7 | 21 | PE writer with `.pdata`/`.xdata` unwind info, ASLR, Win64 calling convention and console runtime. On Windows Server 2022, stdout and exit parity rose from 337/402 to 353/402, then with clocks, sleep, process arguments and environment, and file open/close/unlink/rename to 377/417 (the corpus grew from 402 to 417 eligible tests; all 377 built programs match every golden). See [WINDOWS.md](WINDOWS.md) for the 40 unsupported cases. Callbacks, Win32 windows, IME, DPI and Vulkan remain pending. |
 | M10 | 0 / 6 | 0 | `std.unicode` is a small helper set, not a shaping engine |
 | M11 | 0 / 6 | 0 | `std.compress` is run-length encoding, not an image codec |
-| M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, system services, workers and C imports); Apple, mobile and web pending |
+| M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, system services, workers and C imports with worker TLS); Apple, mobile and web pending |
 | **All** | **43.5 / 100** | **43.5** | |
 
-QEMU passed 405/405 existing runnable programs in `tests/`, up from 373/405
-at `655549e` on the same corpus. The new Float32 FFI regression also passed.
+QEMU passed 433/433 programs, up from 432/433 at `0567a7f` on the same
+corpus. This includes 432 runnable programs directly in `tests/` and the new
+AArch64 worker TLS regression.
 See the [AArch64 coverage and remaining limits](BACKEND.md).
 
 ### Numbers behind the table
