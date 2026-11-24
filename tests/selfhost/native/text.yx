@@ -1,0 +1,13 @@
+fn greeting(flag: Bool) -> Text {
+  if flag { return "hello" }
+  return "bye"
+}
+fn show(s: Text) { print(s) }
+fn main() {
+  let a = "alpha"
+  print(a)
+  show("xy")
+  print(greeting(true))
+  print(greeting(false))
+  show(greeting(true))
+}
