@@ -29,6 +29,7 @@ pub struct IoError { kind: IoErrorKind, code: Int, message: String }            
 | Function | Result | Notes |
 |---|---|---|
 | `read_line()` | `Result<Option<String>, IoError>` | Next line of stdin without `\n` / `\r\n`; `Ok(None)` at end of input; a last line without newline is returned verbatim. |
+| `read_stdin_bytes(buf)` | `Result<Int, IoError>` | Read into a mutable byte slice with no UTF-8 conversion. A non-empty buffer returns 0 at EOF. |
 | `read_all()` | `Result<String, IoError>` | Rest of stdin (`""` at end of input). |
 | `write_stdout(s)`, `write_stderr(s)` | `Result<Int, IoError>` | Raw write of the bytes of `s` (no newline), returns the byte count. |
 | `eprint(s)`, `eprintln(s)` | | Diagnostics on stderr; errors ignored. |
@@ -52,7 +53,7 @@ Rules worth knowing:
 - **Strings stay UTF-8.** `read_line`, `read_all` and `read_file` validate their input (no overlong forms, no surrogates, nothing above U+10FFFF) and return `IoErrorKind.InvalidData` instead of building a String that `char_at` would later panic on. `args()` and `env_*` are converted lossily instead (every non-ASCII byte of an invalid value becomes `?`), because a program cannot refuse its own command line.
 - **Paths** with an embedded NUL byte are `InvalidInput`.
 - **Interrupted calls** (`EINTR`) are retried, never reported.
-- **stdin buffering.** `read_line`/`read_all` share one 64 KiB buffer that is allocated when a read finds it empty and freed again as soon as everything in it has been consumed (a program that stops reading in the middle of a buffer keeps it until exit). Reading stdin by other means (raw intrinsics) would bypass it.
+- **stdin buffering.** `read_line`, `read_all` and `read_stdin_bytes` share one 64 KiB buffer that is allocated when a read finds it empty and freed again as soon as everything in it has been consumed (a program that stops reading in the middle of a buffer keeps it until exit). Reading stdin by other means (raw intrinsics) would bypass it.
 - **Output ordering.** `print` and `write_stdout` are both unbuffered in the native backend. The C backend flushes C's `stdout` before every raw syscall, so the order of `print` and raw writes is the same in both.
 - Not thread-safe (there are no threads yet).
 

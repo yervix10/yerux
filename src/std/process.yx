@@ -854,6 +854,31 @@ impl Child {
         return io.checked_text(move s)
     }
 
+    /// Read a chunk of piped stdout without collecting the entire stream or decoding UTF-8.
+    /// Returns zero at EOF or for an empty buffer. The caller must drain any other piped streams separately.
+    fn read_stdout_into(mut self, buf: mut [UInt8]) -> Result<Int, io.IoError> {
+        if self.stdout.fd < 0 {
+            return Err(bad("read stdout: the child's stdout is not piped or already read"))
+        }
+        let size = buf.len().min(16384)
+        if size == 0 {
+            return Ok(0)
+        }
+        let tmp = __alloc(size)
+        defer __free(tmp)
+        var n = __syscall(0, self.stdout.fd, tmp, size, 0, 0, 0)
+        while n == -4 {
+            n = __syscall(0, self.stdout.fd, tmp, size, 0, 0, 0)
+        }
+        if n < 0 {
+            return Err(io.os_error("read stdout", "", 0 - n))
+        }
+        for i in 0..n {
+            buf[i] = __load8(tmp + i).to_uint8()
+        }
+        return Ok(n)
+    }
+
     /// Exact bytes of stdout (any content).
     fn read_stdout_bytes(mut self) -> Result<List<UInt8>, io.IoError> {
         if self.stdout.fd < 0 {

@@ -33,6 +33,7 @@ Note: **`spawn` is a language keyword** (threads), so the function that starts a
 
 `Child` (owned; use `var`): `id()`, `write_stdin(s)`, `write_stdin_bytes(b: view [UInt8])`, `close_stdin()`,
 `read_stdout()`, `read_stderr()` (to end of stream, `InvalidData` when not UTF-8), `read_stdout_bytes()`,
+`read_stdout_into(buf)` (read a chunk into a mutable byte slice, returning 0 at EOF or for an empty slice),
 `wait()` (closes stdin first; repeating it returns the same status), `try_wait() -> Result<Option<ExitStatus>>`,
 `signal(n)` (1..64), `kill()` (SIGKILL), `communicate(input) -> Result<Output>`.
 

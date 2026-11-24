@@ -1,0 +1,19 @@
+import std.io
+
+fn main() {
+    match io.read_line().unwrap() {
+        Some(line) => { print(line) }
+        None => { panic("expected first line") }
+    }
+    var buf = [0u8; 4]
+    print(io.read_stdin_bytes(buf[0..0]).unwrap())
+    print(io.read_stdin_bytes(buf[0..2]).unwrap())
+    print(buf[0])
+    print(buf[1])
+    match io.read_line().unwrap() {
+        Some(line) => { print(line) }
+        None => { panic("expected tail") }
+    }
+    print(io.read_stdin_bytes(buf).unwrap())
+    print(io.read_stdin_bytes(buf).unwrap())
+}

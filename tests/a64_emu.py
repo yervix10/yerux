@@ -22,8 +22,8 @@ NETWORK = ("net_errors", "net_hostile_address", "net_read_timeout", "net_timeout
 SYSTEM_EXAMPLES = ("21_mini_echo", "23_directory_inventory")
 SYSTEM_TESTS = (
     "chain_temps", "env_basic", "env_set", "fs_autoclose", "fs_basic", "fs_buffered",
-    "fs_handles", "fs_links", "hostile_fs", "io_args", "io_basic", "io_exit", "io_exit_drop",
-    "io_exit_skips_drop", "io_stdin_all", "io_stdin_bad", "io_stdin_final_cr",
+    "fs_buffered_final_cr", "fs_handles", "fs_links", "hostile_fs", "io_args", "io_basic", "io_exit", "io_exit_drop",
+    "io_exit_skips_drop", "io_stdin_all", "io_stdin_bad", "io_stdin_bytes", "io_stdin_final_cr",
     "io_stdin_lines", "native_linux_memory", "std_env_typed", "std_fs_metadata",
     "std_kv", "std_kv_hostile", "std_log", "std_misc", "std_rand", "std_time_calendar",
     "time_clock", "time_duration",

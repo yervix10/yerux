@@ -386,6 +386,29 @@ pub fn read_line() -> Result<Option<String>, IoError> {
     return Ok(Some(move c))
 }
 
+/// Read up to `buf.len()` bytes from stdin, sharing any data buffered by `read_line()`.
+/// A non-empty buffer returning zero means end of input. No UTF-8 conversion is applied.
+pub fn read_stdin_bytes(buf: mut [UInt8]) -> Result<Int, IoError> {
+    if buf.len() == 0 {
+        return Ok(0)
+    }
+    if __load64(__global(2)) == __load64(__global(3)) {
+        let more = fill()?
+        if !more {
+            return Ok(0)
+        }
+    }
+    let pos = __load64(__global(2))
+    let n = (__load64(__global(3)) - pos).min(buf.len())
+    let base = __load64(__global(1)) + pos
+    for i in 0..n {
+        buf[i] = __load8(base + i).to_uint8()
+    }
+    __store64(__global(2), pos + n)
+    release_if_drained()
+    return Ok(n)
+}
+
 // Everything left on standard input ("" at end of input).
 pub fn read_all() -> Result<String, IoError> {
     var out = String.new()

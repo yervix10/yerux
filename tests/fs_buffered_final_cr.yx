@@ -1,0 +1,23 @@
+import std.fs
+import std.io
+
+fn exercise(path: view String) -> Result<Int, io.IoError> {
+    let written = fs.write(path, "A\r\nB\r")?
+    for line in fs.read_lines(path)? {
+        print("{line.len()} {line.byte(line.len() - 1)}")
+    }
+    var reader = fs.open_reader(path)?
+    while true {
+        match reader.read_line()? {
+            Some(line) => { print("{line.len()} {line.byte(line.len() - 1)}") }
+            None => { return Ok(0) }
+        }
+    }
+    return Ok(0)
+}
+
+fn main() {
+    let path = "/tmp/yerux-buffered-cr-{io.process_id()}"
+    defer io.remove_file(path).unwrap()
+    let done = exercise(path).unwrap()
+}
