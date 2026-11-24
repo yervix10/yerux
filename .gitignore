@@ -6,3 +6,4 @@ bench/build/
 /yerux./
 
 .claude/
+.tmp/

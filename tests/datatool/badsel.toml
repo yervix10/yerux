@@ -1,0 +1,4 @@
+[input]
+file = "sales.csv"
+[select]
+columns = ["region","zzz"]

@@ -1,0 +1,5 @@
+[input]
+file = "sales.csv"
+[filter]
+column = "region"
+pattern = "^(nor"

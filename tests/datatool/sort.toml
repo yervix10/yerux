@@ -1,0 +1,6 @@
+[input]
+file = "tests/datatool/sales.csv"
+
+[sort]
+column = "amount"
+numeric = true

@@ -1,0 +1,9 @@
+[input]
+file = "tests/datatool/sales.csv"
+
+[group]
+by = "region"
+value = "amount"
+
+[output]
+format = "csv"

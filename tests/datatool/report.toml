@@ -1,0 +1,17 @@
+[input]
+file = "tests/datatool/sales.csv"  # relative to the repo root
+
+[filter]
+column = "region"
+pattern = "^[ns]"
+
+[select]
+columns = ["region", "product", "amount"]
+
+[sort]
+column = "amount"
+numeric = true
+descending = true
+
+[output]
+format = "text"

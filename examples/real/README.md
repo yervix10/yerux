@@ -144,3 +144,10 @@ target/release/yerux build examples/real/jql/jql.yx -o /tmp/jql
 echo '{"a":[1,2,3]}' | /tmp/jql -c '.a | map(. * 2) | add'
 target/release/yerux test examples/real/jql        # 12 unit tests
 ```
+
+## CSV and TOML data tool
+
+`datatool/` checks CSV files and runs TOML-described jobs (filter, select,
+sort, group statistics, text or CSV output) across five modules. Commands:
+`datatool check FILE.csv` and `datatool run CONFIG.toml`. Findings and open
+limits are in `docs/REAL_PROGRAMS.md`; the tests are in `tests/datatool.sh`.
