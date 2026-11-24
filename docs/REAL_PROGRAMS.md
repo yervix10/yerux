@@ -310,3 +310,30 @@ its tests).
    gives "recursion too deep" (the limit is 2000 nested `eval` calls). Every call allocates a frame in an arena that is
    not reclaimed, so a long loop written as recursion grows memory. This is a design limit of the 900-line program, not
    a compiler bug.
+
+## Round 5: rxdfa (regex parser, NFA and lazy DFA)
+
+[rxdfa](../examples/real/rxdfa/) parses the `std.regex` syntax into an arena of nodes, compiles it to a Thompson
+program, and matches it with a leftmost-longest NFA simulation and a lazily built DFA (one 256-entry row per state,
+built on first use). `std.regex` is the oracle: `diff N SEED` generates random valid patterns and texts and compares
+`is_match` (DFA), `find` (NFA leftmost start) and the anchored full match and longest end (against a reference
+matcher that follows the tree directly). The [test script](../tests/rxdfa.sh) runs the unit tests and 3000 generated
+cases on both backends; a 100,000-case sweep over five seeds passed.
+
+Bugs found in the program itself (not in Yerux), fixed before the commit: the DFA closed successor threads at "not at
+the end", which dropped a `$` instruction from the state, so `b$` did not match `ccb`. The NFA needs closed successors
+and the DFA needs unclosed ones; the first diff run (300 cases, seed 7) found it.
+
+Compiler frictions, not changed (minimal repros):
+
+10. **A field cannot be moved out of a struct.** `fn take(b: view Box) -> List<Int> { return b.items }` gives "cannot
+    move 'b.items' out of its struct". Workaround: move the whole struct (`return Ok(move p)`) and keep the cursor
+    fields in it. The message is clear.
+11. **An element of `List<List<T>>` cannot be copied out with `get`.** `let first = rows.get(0)` gives "cannot copy an
+    element out of a List<List>". Use `rows.at(0)` (borrow) as the diagnostic says.
+12. **`std.regex` and this program differ in one place.** `std.regex` rejects `a||b`, `()` and `a**` as invalid; the
+    rxdfa parser accepts them (empty alternatives match the empty text). The differential run avoids them, so the
+    oracle is only consulted on the common subset.
+
+Not done in round 5: the LZ77+Huffman compressor, the event-queue scheduler, and the JSON formatter. `std.json` is
+not in main yet (checked), so the JSON item needs claude-3's merge first.
