@@ -287,7 +287,7 @@ call does to the source.
 |---|---|
 | all numbers, `Bool`, `Char`, `Text` | `String`, `List<T>`, `Box<T>` |
 | enums whose payloads are all Copy | enums with any owned payload |
-| structs whose fields are all Copy | structs with any owned field |
+| structs with all Copy fields and no `Drop` impl | structs with any owned field or a `Drop` impl (section 3.8) |
 | tuples whose elements are all Copy | tuples with any owned element |
 | `Option<T>` / `Result<T, E>` of Copy types | closures that own captures |
 | arrays `[T; N]` of Copy elements | arrays of owned elements (owned, element by element) |
@@ -449,8 +449,8 @@ is valid). `return x` moves `x` out implicitly. A `let` binding cannot be modifi
 
 ### 3.2 Rules
 
-1. **Copy values are duplicated.** Numbers, `Bool`, `Char`, `Text`, and any type whose parts are
-   all Copy (section 2.2).
+1. **Copy values are duplicated.** Numbers, `Bool`, `Char` and `Text` are Copy. Aggregate types
+   follow section 2.2. A user-defined destructor requires a single owner (section 3.8).
 2. **Owned values have one owner.** Using a moved variable is an error:
    `cannot use 'a': it was already moved`, with the line of the move.
 3. **Handing over ownership is explicit:** `move x`. The only implicit move is `return x`.
@@ -541,15 +541,32 @@ can never be a variable, field, element or result. `view [T]` accepts an array, 
 slice, a sub-range `a[from..to]`, or a temporary array or list kept alive for the call. Rules for
 arrays and slices are in the book (chapter 12) and in [ARRAYS.md](ARRAYS.md).
 
+### 3.8 User-defined destructors (experimental)
+
+A struct can implement the built-in `Drop` trait with `fn drop(mut self)`. Destruction
+runs that method first, then drops the owned fields in reverse declaration order. Live
+locals are dropped in reverse declaration order. A move transfers cleanup to the new
+owner. On a normal exit, pending `defer` statements of the exited scopes run before
+their live locals are dropped (`tests/drop_basic.yx`, `tests/drop_exits.yx`). Direct
+calls and field moves are rejected (`tests/e1200_drop_call.yx`,
+`tests/e1204_drop_field_move.yx`). `Drop` prevents `Copy` (`tests/e1966_drop_copy_bound.yx`).
+
+Generic implementations run in C and Linux x86-64 native builds. The checker can
+still copy a generic destructor-bearing struct with only Copy fields. See
+[DROP.md](DROP.md#generic-ownership-gap) for the reproducer and proposed fix.
+
 ---
 
 ## 4. Errors and `Result`
 
-Yerux has no exceptions and no unwinding. A program reports failure in one of two ways:
+Yerux reports failures in these forms:
 
 - **Recoverable failure** is a value: `Option<T>` or `Result<T, E>`. The caller decides.
-- **Unrecoverable failure** is a **panic**: the program writes `panic: <message>` to stderr and
-  exits with code **101** at once. Pending `defer` statements do **not** run.
+- **Fatal panic** writes `panic: <message>` to stderr and exits with code **101**.
+  Pending destructors and `defer` statements are skipped (`tests/drop_main_panic.yx`).
+- **Recoverable worker panic** runs the worker's live-value cleanup, skips its pending
+  `defer` statements and reports `Err(ThreadPanic)` through `join()` (`tests/drop_worker.yx`).
+  A panic during a destructor is fatal (`tests/drop_panic.yx`, `tests/drop_double_panic.yx`).
 
 ### 4.1 Option and Result
 
@@ -662,12 +679,10 @@ should handle; use `panic` for bugs and impossible states.
 
 ### 4.5 Guarantees
 
-- Every failure path is either a value the type system forces the caller to handle, or a panic
-  with exit code 101.
+- An unhandled fatal panic exits with code 101. Callers can handle an `Option`, a `Result`
+  or a worker failure reported through `join()`.
 - Panics are never undefined behaviour. Integer overflow, out-of-range indexing, and division by
   zero are always checked (section 2.1).
-- Threads: a panic in a spawned task is returned as `Err(ThreadPanic)` from `join()`, and the
-  task's `defer` statements are skipped (see [CONCURRENCY.md](CONCURRENCY.md)).
 
 ---
 
@@ -695,9 +710,9 @@ section lists only what the tests fix. Anything not listed is **no especificado*
   `return` (tests/e740_join_escape.yx), and cannot be dropped at the end of a loop iteration, because
   dropping it waits for its worker (tests/e1414_joinhandle_dropped_in_loop.yx). Handles may be
   collected in a `List<JoinHandle<T>>` and joined later (tests/thread_handles_list.yx).
-- A panic inside a task does not end the process; it makes that task's `join()` return an error
-  (tests/conc_spawn.yx, tests/conc_sharing.yx). Whether the other tasks keep running after such a
-  panic is **no especificado**.
+- A recoverable panic inside a task makes that task's `join()` return an error
+  (tests/conc_spawn.yx, tests/conc_sharing.yx). Destructor panics are fatal (section 4).
+  Whether the other tasks keep running after a recoverable panic is **no especificado**.
 
 ### 5.2 Capture rules (checked at `spawn`)
 

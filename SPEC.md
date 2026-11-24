@@ -540,8 +540,12 @@ Lexer → parser → type + ownership checker → C generator → `cc -O2`.
 ## User-defined destructors
 
 A concrete user-defined struct may implement `Drop` with `fn drop(mut self)`.
-Its values are owned even when all fields are Copy. The compiler calls the
-destructor before destroying its owned fields in reverse declaration order.
-Field moves and explicit calls to the destructor are rejected. A panic
-during a destructor is fatal, including in a recoverable worker.
-See [docs/DROP.md](docs/DROP.md) for cleanup order, worker behavior and support.
+Such a value has one owner even when all fields are Copy. A move transfers
+that ownership. The compiler calls the destructor before dropping its owned
+fields in reverse declaration order. Field moves and explicit calls to the
+destructor are rejected. A fatal panic skips pending cleanup. A recoverable
+worker panic drops its live owned values and skips `defer`. A panic inside a
+destructor is itself fatal.
+
+User-defined `Drop` is experimental. See [docs/DROP.md](docs/DROP.md) for the
+generic `impl` ownership gap, cleanup order and tested backends.

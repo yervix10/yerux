@@ -1,0 +1,11 @@
+struct Tag { id: Int }
+impl Drop for Tag {
+  fn drop(mut self) {}
+}
+
+fn duplicate<T: Copy>(value: T) -> T { return value }
+
+fn main() {
+  let tag = Tag { id: 1 }
+  let copy = duplicate(tag)
+}

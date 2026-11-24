@@ -1,0 +1,19 @@
+struct Tag<T> { id: Int, data: T }
+impl<T> Drop for Tag<T> {
+  fn drop(mut self) { print(self.id) }
+}
+
+struct Pair { first: Tag<String>, second: Tag<String> }
+impl Drop for Pair {
+  fn drop(mut self) { print(10 + self.first.id) }
+}
+
+fn take(p: Pair) { print("take") }
+
+fn main() {
+  let first = Tag<String> { id: 1, data: String.from("a") }
+  let second = Tag<String> { id: 2, data: String.from("b") }
+  let p = Pair { first: move first, second: move second }
+  take(move p)
+  print("done")
+}

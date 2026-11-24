@@ -170,8 +170,10 @@ fn main() {
 ## Panics
 
 A *bug* is not an `Err`: `unwrap()` on `None`, a failed `assert`, an index out of range, arithmetic overflow
-and an explicit `panic("...")` write `panic: <message>` to stderr and end the process with **exit code 101**,
-without unwinding (no destructors, no `defer`).
+and an explicit `panic("...")` write `panic: <message>` to stderr and on the main thread end the process
+with **exit code 101**, skipping pending destructors and `defer` statements. On a recoverable worker panic
+the worker drops live owned values, skips pending `defer` statements and reports failure to `join()`.
+A panic in a destructor is fatal. See [User-defined destructors](../DROP.md).
 
 ```yerux exit=101
 fn main() {

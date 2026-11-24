@@ -1,0 +1,10 @@
+struct Guard { label: Text }
+impl Drop for Guard {
+  fn drop(mut self) { print(self.label) }
+}
+
+fn main() {
+  let g = Guard { label: "drop" }
+  defer print("defer")
+  panic("fatal")
+}

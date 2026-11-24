@@ -1,7 +1,8 @@
 # User-defined destructors
 
 `Drop` is a built-in trait. A concrete user-defined struct can implement it once.
-C and Linux x86-64 native builds run its destructor automatically.
+C and Linux x86-64 native builds run its destructor automatically. The feature
+is experimental for 1.0 while the checker has the generic ownership gap below.
 
 ```yerux
 struct Tag { id: Int }
@@ -22,7 +23,7 @@ This prints `2` and then `1`. Even though `Tag` holds only an `Int`, a
 `Tag` is owned and moves when passed by value. Aggregates containing it are
 also owned. Generic structs can implement `Drop` with a generic impl, such as
 `impl<T> Drop for Boxed<T>`. The compiler instantiates the destructor for each
-concrete struct type that is used. Built-in types, enums, tuples, and arrays
+applicable concrete type it uses. Built-in types, enums, tuples, and arrays
 cannot implement `Drop` directly.
 
 ## Destruction order
@@ -60,6 +61,9 @@ function that accepts it by value.
 
 ## Panic and worker cleanup
 
+A fatal panic in the main task exits with code 101 and skips pending cleanup,
+including destructors and `defer` (`tests/drop_main_panic.yx`).
+
 A recoverable worker panic destroys live owners on its cleanup stack and
 then releases its entry closure and its remaining captures. Ownership flags
 are cleared before the corresponding cleanup runs. Panic continues to skip
@@ -72,13 +76,45 @@ owned value. If the worker was already unwinding, the diagnostic is
 
 ## Backends and verification
 
-The checker registers destructors before checking function bodies, so Copy
-bounds, argument passing, closures and collection operations all see the same
-ownership rule. The C emitter and native IR call the method before releasing
-its fields. Recursive drops that pass through a destructor-bearing struct
-use the ordinary call stack. The existing worklists still handle cycles of
-plain structs and heap nodes.
+The checker registers non-generic destructors during declaration checking
+(`src/check.rs`). `Types::owned` consults that registration (`src/syntax.rs`).
+The C emitter (`src/cgen.rs`) and native IR (`src/ir.rs`) call the method before
+releasing its fields. Recursive drops that pass through a destructor-bearing
+struct use the ordinary call stack. The existing worklists still handle cycles
+of plain structs and heap nodes.
 
 The `drop_*.yx` fixtures verify normal order, ownership transfers, deferred
 and early exits, worker recovery, and fatal destructor panics. The default
 `tests/leakcheck.sh` run includes the successful Drop fixtures.
+
+## Generic ownership gap
+
+Both C and Linux x86-64 native accept and print `42` twice for this program.
+The single-owner rule requires a compile error at `let duplicate = tag`.
+
+```yerux
+struct Tag<T> { value: T }
+impl<T> Drop for Tag<T> {
+  fn drop(mut self) { print(42) }
+}
+
+fn main() {
+  let tag = Tag<Int> { value: 1 }
+  let duplicate = tag
+}
+```
+
+`src/check.rs` resolves generic destructors for concrete instantiations after
+checking the entry program's bodies. The checker sees `Tag<Int>` as Copy at
+the assignment. Later, both emitters see its registered destructor and drop
+both bindings. The same timing matters to Copy bounds and containers whose
+ownership depends on their element type. Until this is fixed, use a non-generic
+wrapper for a resource-owning handle with Copy fields. The generic case with
+an independently owned field is covered by `tests/drop_generic_move_order.yx`.
+
+The proposed fix is to establish whether an applicable `Drop` implementation
+exists before the first ownership query for each concrete instantiation. Use
+normal impl matching and bounds, and keep lazy compilation of the destructor
+body separate from its effect on ownership. Validate Copy checks, transitive
+ownership of containers, conditional moves and worker cleanup together. The
+same repro should become a rejection fixture once the checker enforces it.

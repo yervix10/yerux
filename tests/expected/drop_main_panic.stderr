@@ -1,0 +1,2 @@
+panic: fatal
+  at tests/drop_main_panic.yx:9:3

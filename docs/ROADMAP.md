@@ -127,5 +127,9 @@ of the language and standard library.
 ## Open decisions (see final report)
 
 Compatibility and stability levels for 1.0, and the list of names to settle before the freeze, are in [COMPATIBILITY.md](COMPATIBILITY.md).
+User-defined `Drop` remains experimental. C and Linux x86-64 native run destructors,
+but the checker can copy some generic destructor-bearing structs before their
+destructors are registered. [DROP.md](DROP.md#generic-ownership-gap) records the repro
+and the ownership-checking work needed before stabilization.
 
 Policy on system libraries (dynamic linking, libc/dlopen); scope of "from scratch" for text (own shaping for all scripts vs OS text services where available); concurrency model (decided: CONCURRENCY.md) and reactivity model (decided: SIGNALS.md), whose spec work is done and whose implementation is needed by M5-M6 (see also RANGES.md and COMPTIME.md for the language features pulled by M2-M6); first extra platform (Windows vs macOS).

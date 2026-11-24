@@ -61,7 +61,10 @@ Tests: `tests/generic_methods.yx`, `tests/option_result_methods.yx`, `tests/mute
 - Generic methods in a *trait* impl (`impl Show for P { fn show<R>(..) }`): rejected ("methods of a trait impl cannot be generic yet").
 - Adding methods/impls to library types (`impl<T> Describe for List<T>`): still rejected ("cannot add methods to
   the built-in type"); wrap them in your own struct.
-- `impl<T> Drop for Stack<T>` (generic Drop) is rejected; `Ordered`/`Hash` cannot be derived.
+- `Ordered`/`Hash` cannot be derived.
+
+Generic `impl<T> Drop for Stack<T>` is accepted. See [DROP.md](DROP.md#generic-ownership-gap)
+for the ownership gap when a concrete instantiation has only Copy fields.
 - Bodies of never-instantiated generic impls are not type-checked; errors show per instantiation.
 - Bounds on struct/enum parameters and default type arguments. (Explicit type arguments on calls exist since the
   freeze rounds: `f<Int>(x)`, all parameters in order; `tests/generic_explicit_args.yx`.)
