@@ -1,0 +1,5 @@
+// String.slice with from > to panics and names the inverted range (it used to say "index out of range").
+fn main() {
+  let s = String.from("abc")
+  print(s.slice(2, 1).len())
+}

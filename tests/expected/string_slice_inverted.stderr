@@ -1,0 +1,2 @@
+panic: String.slice start is after end
+  at tests/string_slice_inverted.yx:4:9
