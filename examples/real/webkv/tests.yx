@@ -1,56 +1,31 @@
 // yerux test examples/real/webkv/tests.yx
+import std.http.server
 import std.io
 import std.net
-import proto
-import router
-import server
+import app
 import store
 
-fn req(method: Text, path: Text, body: Text) -> proto.Request {
-  return proto.Request {
-    method: String.from(method),
-    path: String.from(path),
-    headers: List<(String, String)>.new(),
-    body: String.from(body),
+// A request as the server would parse it from the wire.
+fn req(method: Text, path: Text, body: Text) -> server.Request {
+  let payload = String.from(body)
+  let raw = String.from("{method} {path} HTTP/1.1\r\nHost: t\r\nContent-Length: {payload.len()}\r\n\r\n{payload}")
+  let cfg = server.config()
+  match server.parse(raw, 0, cfg) {
+    Done(r, used) => { return move r }
+    Need(x) => { panic("incomplete request") }
+    Reject(c, m) => { panic("rejected {c}: {m}") }
   }
 }
 
 // (a field of a temporary that owns memory cannot be read: keep the reply in a variable first)
-fn status_of(s: view store.Store, method: Text, path: Text, body: Text) -> Int {
-  let r = router.handle(s, req(method, path, body))
+fn status_of(a: view app.KvApp, method: Text, path: Text, body: Text) -> Int {
+  let r = a.handle(req(method, path, body))
   return r.status
 }
 
-fn body_of(s: view store.Store, method: Text, path: Text, body: Text) -> String {
-  let r = router.handle(s, req(method, path, body))
+fn body_of(a: view app.KvApp, method: Text, path: Text, body: Text) -> String {
+  let r = a.handle(req(method, path, body))
   return r.body.clone()
-}
-
-test "parse_head reads the request line and the headers" {
-  let r = proto.parse_head("GET /kv/a HTTP/1.1\r\nHost: x\r\nContent-Length:  7 ").unwrap()
-  assert(r.method.eq("GET"))
-  assert(r.path.eq("/kv/a"))
-  assert(r.headers.len() == 2)
-  assert(proto.header(r, "content-length").unwrap().eq("7"))
-  assert(proto.header(r, "HOST").unwrap().eq("x"))
-  assert(proto.header(r, "accept").is_none())
-}
-
-test "parse_head rejects malformed heads" {
-  assert(proto.parse_head("GET /x").is_err())
-  assert(proto.parse_head("GET /x HTTP/2 extra HTTP/1.1").is_err())
-  assert(proto.parse_head("GET x HTTP/1.1").is_err())
-  assert(proto.parse_head("GET /x SPDY/3").is_err())
-  assert(proto.parse_head("GET /x HTTP/1.1\r\nno colon here").is_err())
-  assert(proto.parse_head("GET /x HTTP/1.1\r\n: empty name").is_err())
-}
-
-test "render frames a reply" {
-  let text = proto.render(proto.reply(404, "text/plain", "gone"))
-  assert(text.starts_with("HTTP/1.1 404 Not Found\r\n"))
-  assert(text.contains("Content-Length: 4\r\n"))
-  assert(text.contains("Connection: close\r\n\r\ngone"))
-  assert(proto.reason(299).eq("Internal Server Error"))
 }
 
 test "store keeps values, counts and deletes" {
@@ -72,7 +47,7 @@ test "store keeps values, counts and deletes" {
 }
 
 test "router: methods, keys and statuses" {
-  let s = store.new_store()
+  let s = app.new_app()
   assert(status_of(s, "PUT", "/kv/k", "v") == 201)
   assert(status_of(s, "PUT", "/kv/k", "w") == 200)
   assert(status_of(s, "GET", "/kv/k", "") == 200)
@@ -81,7 +56,7 @@ test "router: methods, keys and statuses" {
   assert(status_of(s, "DELETE", "/kv/k", "") == 204)
   assert(status_of(s, "PATCH", "/kv/k", "") == 405)
   assert(status_of(s, "GET", "/kv/", "") == 404)
-  assert(status_of(s, "GET", "/kv/a b", "") == 404)
+  assert(status_of(s, "GET", "/kv/a%20b", "") == 404)
   assert(status_of(s, "GET", "/kv/a/b", "") == 404)
   assert(body_of(s, "POST", "/incr/n", " 12 ").eq("12\n"))
   assert(body_of(s, "POST", "/incr/n", "").eq("13\n"))
@@ -89,6 +64,13 @@ test "router: methods, keys and statuses" {
   assert(status_of(s, "GET", "/incr/n", "") == 405)
   assert(status_of(s, "GET", "/health", "") == 200)
   assert(body_of(s, "GET", "/stats", "").starts_with("{{\"keys\":1"))
+}
+
+test "an Allow header names the methods of a path" {
+  let a = app.new_app()
+  let r = a.handle(req("PATCH", "/kv/k", ""))
+  assert(r.status == 405)
+  assert(r.headers.len() == 2)
 }
 
 // Send raw bytes to a running server and return the status line of the answer.
@@ -107,29 +89,33 @@ test "server answers malformed and oversized requests with 4xx" {
   let listener = net.listen(a).unwrap()
   let bound = net.listener_local_addr(listener).unwrap()
   let port = bound.port
-  let st = Shared.new(store.new_store())
-  var oversized = String.from("GET /health HTTP/1.1\r\nX-Pad: ")
+  var oversized = String.from("GET /health HTTP/1.1\r\nHost: t\r\nX-Pad: ")
   for i in 0..9000 { oversized.push_byte(97) }
   oversized.push_str("\r\n\r\n")
   var seen = List<String>.new()
+  var cfg = server.config()
+  cfg.workers = 2
+  cfg.max_body = 65536
+  cfg.max_connections = 5
   scope {
     let client = spawn move || {
       var out = List<String>.new()
       out.push(raw_status(port, "BROKEN\r\n\r\n"))
-      out.push(raw_status(port, "GET /health HTTP/1.1\r\nContent-Length: nope\r\n\r\n"))
+      out.push(raw_status(port, "GET /health HTTP/1.1\r\nHost: t\r\nContent-Length: nope\r\n\r\n"))
       out.push(raw_status(port, oversized))
-      out.push(raw_status(port, "PUT /kv/x HTTP/1.1\r\nContent-Length: 999999\r\n\r\n"))
-      out.push(raw_status(port, "GET /health HTTP/1.1\r\n\r\n"))
+      out.push(raw_status(port, "PUT /kv/x HTTP/1.1\r\nHost: t\r\nContent-Length: 999999\r\n\r\n"))
+      out.push(raw_status(port, "GET /health HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"))
       return out
     }
-    let counts = server.run(listener, move st, 2, 5)
-    assert(counts.len() == 2)
-    assert(counts.at(0) + counts.at(1) == 5)
+    let summary = server.serve(listener, Shared.new(app.new_app()), cfg, server.stop_handle())
+    assert(summary.per_worker.len() == 2)
+    assert(summary.connections == 5)
+    assert(summary.requests == 1)
     seen = client.join().unwrap()
   }
   assert(seen.at(0).eq("HTTP/1.1 400 Bad Request"))
   assert(seen.at(1).eq("HTTP/1.1 400 Bad Request"))
-  assert(seen.at(2).eq("HTTP/1.1 413 Payload Too Large"))
-  assert(seen.at(3).eq("HTTP/1.1 413 Payload Too Large"))
+  assert(seen.at(2).eq("HTTP/1.1 431 Request Header Fields Too Large"))
+  assert(seen.at(3).eq("HTTP/1.1 413 Content Too Large"))
   assert(seen.at(4).eq("HTTP/1.1 200 OK"))
 }
