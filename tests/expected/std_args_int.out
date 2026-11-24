@@ -1,0 +1,11 @@
+count: Some(12)
+neg: Some(-7)
+zero: Some(0)
+max: Some(9223372036854775807)
+huge: None
+junk: None
+empty: None
+spaces: None
+verbose: None
+missing: None
+double: Some(12)
