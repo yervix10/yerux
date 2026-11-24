@@ -24,16 +24,16 @@ comptime assert(N % 8 == 0, "N must be a multiple of 8")
 fn alloc_ring<const CAP: Int>() -> Ring<CAP> { ... } // comptime parameters (section A5)
 ```
 - `const NAME: T = expr`: global immutable value, `expr` evaluated at compile time. The value is a *constant*, stored read-only, **not** owned in the usual sense (no drop, can be `view`-borrowed everywhere, shared between threads as `readable`/`xfer` freely: it is immutable and static).
-- `comptime fn`: a function that can be evaluated by the interpreter. Ordinary (non-`comptime`) functions are also callable at compile time **if** they are pure enough (section A3); the keyword is an *assertion and a documentation*, and makes the compiler report why a function is not eligible. (Rule: `comptime fn` = checked for eligibility at its definition.)
+- `comptime fn` (not implemented: `comptime fn` is a parse error today, tests/e1960_comptime_fn_keyword.yx; plain functions are evaluated by `comptime f(..)`): a function that can be evaluated by the interpreter. Ordinary (non-`comptime`) functions are also callable at compile time **if** they are pure enough (section A3); the keyword is an *assertion and a documentation*, and makes the compiler report why a function is not eligible. (Rule: `comptime fn` = checked for eligibility at its definition.)
 - `comptime expr` forces compile-time evaluation of an expression in a runtime function; failure is a compile error with the call stack.
 - `comptime assert(cond, msg)`: compile error when false.
-- `comptime for` / `comptime if` unroll/prune at compile time (A5), with conditions on constants and comptime parameters only.
+- `comptime for` / `comptime if` unroll/prune at compile time (A5), with conditions on constants and comptime parameters only. Not implemented: `comptime for` is a parse error today (tests/e1963_comptime_for_keyword.yx), and `comptime if { .. }` is read as a comptime expression, so it needs an `else`.
 
 ### A3. Semantics: what may run at compile time
 The compile-time evaluator is **the same language semantics** as runtime: checked arithmetic (overflow panics become compile errors "this overflows while evaluating the constant"), bounds checks, `List`/`String` with ownership. No second semantics.
 Allowed: arithmetic, control flow, structs/enums/match, `List`, `String`, calls to eligible functions, `comptime`-time allocators (A6: the compiler provides a compile-time heap).
 Not allowed (compile error E-K1 with explanation): `print` (can be made a compile-time *note* with `comptime note(x)`), file/network/clock/random/environment access, threads (CONCURRENCY.md), calls to `extern` functions, `unsafe` raw-pointer operations except those the evaluator implements (none initially), any function that needs a capability (effects, v0.5). Reading a file at compile time is possible only through an explicit `comptime embed("font.ttf") -> List<Int>` builtin that records the file as a build dependency (hash in the build cache; reproducible builds preserved).
-Termination: a **step budget** (fixed at 20 000 000 interpreter steps in 1.0; a `--comptime-steps=N` flag is not implemented) and a memory budget (256 MiB); exceeded: error E-K2 showing the call stack and the loop that was running. No halting-problem solution is attempted.
+Termination: a **step budget** of 20 000 000 interpreter steps (enforced today, E-K2, examples/e53_comptime_budget.yx) and a call depth limit of 1000 nested calls (E-K6, tests/e1962_comptime_depth_1000.yx). The **256 MiB memory budget** described here is design only: the compiler does not enforce it yet. A `--comptime-steps=N` flag is not implemented. No halting-problem solution is attempted.
 Determinism: evaluation is deterministic (no hash-iteration order, no addresses observable: pointers do not exist at this level), so builds are reproducible.
 
 ### A4. Which values may leave compile time

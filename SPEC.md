@@ -24,7 +24,7 @@ File extension: `.yx` · Compiler: `yerux` · All keywords, identifiers and mess
 - **Bounds checks.** A range-typed list index drops the lower-bound test; the upper-bound test disappears when a length fact dominates the access: `assert(l.len() > 255)`, `if l.len() <= 255 { panic(..) }` or a `return`, `&&`/`||` chains in those conditions (they are lowered to one branch per operand), `l.len() == 256`, and the same for a list in a struct field (`s.t.len() > 255`). A list whose length is not tested keeps its upper-bound check; a fixed-size array `[T; N]` has a constant length, so `for i in 0..N` and an `Int<0..N-1>` index need no check at all (`tests/range_array_loops.yx`).
 - **Optimizer.** Parameters, variables of range type and call/field/list results of range type seed `rangeopt` (and survive inlining), so checks the types prove disappear in both native backends and the C backend agrees on every observable result. `--check-ranges` makes the native backends re-verify every trusted interval at run time, including every read of a variable whose flow facts narrowed it (debugging aid).
 - **Match.** Integer literals and ranges are patterns for range values; a finite range is exhaustive when its arms cover it (`Int<0..2>`: arms `0`, `1`, `2`).
-- Not implemented yet (see docs/RANGES.md section 13): relational facts between variables, narrowing through calls, fields and list elements, and const generics.
+- Not implemented yet (see docs/RANGES.md section 13): relational facts between variables, narrowing through calls, fields and list elements. Const generic parameters over array lengths are implemented (see Fixed-size arrays `[T; N]`).
 
 ## Goal
 A compiled language as fast as Rust, safer by default, with a much gentler learning curve. Afterwards: a cross-platform UI framework with its own rendering engine.
@@ -188,7 +188,7 @@ let line = "{name} has {names.len()} friends"                        // a String
 - **Text where a `view String` is expected.** A Text literal or Text variable passed to a `view String` parameter (library methods such as `s.starts_with("ab")`, or your own functions) is copied into a hidden String for that statement and freed with the enclosing scope.
 
 ## Standard collections (written in Yerux: `src/prelude_*.yx`)
-The library is ordinary Yerux code over generics and traits, compiled only when used, so both backends get it for free. Library generic `impl` blocks (`impl<T: Show> Show for List<T>`, `impl<K: Hash + Equal, V> Map<K, V>`) exist only inside the library for now; they give `List<T>`/`Map`/`Set` real methods, and `Map<String, Int>.new()` calls a function of an instantiated generic type.
+The library is ordinary Yerux code over generics and traits, compiled only when used, so both backends get it for free. Generic `impl` blocks (`impl<T: Show> Show for List<T>`, `impl<K: Hash + Equal, V> Map<K, V>`) are used by the library, which gives `List<T>`/`Map`/`Set` real methods, and `Map<String, Int>.new()` calls a function of an instantiated generic type; user types may use them too (see Generics).
 
 ### Map<K, V> and Set<T>
 ```
@@ -258,7 +258,7 @@ enum Maybe<T> { Some(T), None }
 - Not yet: explicit type arguments on calls, bounds on struct/enum parameters, generic methods, default type arguments.
 
 ## Function values and closures
-Function types use `fn(Param, ...) -> Result`; parameter modes (`view`, `mut`, or owned) are part of the signature. A function name can be passed where a matching function value is expected, and calls use the same `f(args)` syntax for named functions and function values:
+Function types use `fn(Param, ...) -> Result`; parameter modes (`view`, `mut`, or owned) are part of the signature. A top-level function with a concrete signature can be passed by name, including a public function qualified by its module. A generic call can infer a type parameter from the function value. Calls use the same `f(args)` syntax for named functions and function values:
 ```
 fn apply(f: view fn(Int) -> Int, x: Int) -> Int { return f(x) }
 fn double(x: Int) -> Int { return x * 2 }
@@ -300,13 +300,13 @@ panics, so partial updates cannot be observed through the lock.
 `Atomic.new(value)` supports `Int` and `Bool`. Both use sequentially
 consistent `load`, `store`, `swap` and `compare_swap`. An integer
 atomic also supports checked `add` and `add_wrapping`, which return the
-previous value. Both sharing containers accept explicit type arguments,
-as does `Atomic`.
+previous value. The constructors accept explicit type arguments (`Shared<Int>.new(5)`,
+`Locked<Int>.new(2)`, `Atomic<Int>.new(1)`); calls to generic functions do not yet (`id<Int>(3)` is an error).
 
 `parallel for` runs the iterations of an integer range or a borrowed list
 on up to four workers and waits for completion. Captures and list elements
 are read-only. Use `Atomic` or `Locked` for coordinated mutation. Explicit
-range steps and mutable list iteration are currently unsupported. Iteration
+`step` is rejected in `parallel for` (a sequential `for` accepts it), and so is mutable list iteration. Iteration
 order is unspecified. A panic in a parallel iteration remains process-fatal.
 The native Windows and aarch64 targets reject thread and atomic operations.
 See [docs/CONCURRENCY.md](docs/CONCURRENCY.md) for implementation status.
@@ -369,7 +369,7 @@ import math                 // <root>/math.yx            used as  math.add(1, 2)
 import utils.strings        // <root>/utils/strings.yx    used as  strings.up(s)
 import utils.shapes as sh   //                            used as  sh.area(x)   sh.Shape.Rect(1, 2)
 ```
-- `<root>` is the folder of the file you compile (`yerux run app/main.yx` resolves imports from `app/`), for imports at any depth.
+- `<root>` is the folder of the file you compile (`yerux run app/main.yx` resolves imports from `app/`), for imports at any depth. In a package the main file is `src/main.yx`, so local imports resolve in `src/`; dependencies resolve through `src/<name>.yx` or `src/lib.yx` (docs/PACKAGES.md).
 - A module is just a `.yx` file. Its `fn`, `struct` and `enum` are **private** unless written `pub fn`, `pub struct`, `pub enum`. Fields and variants of a `pub` type are public. A private item is only visible inside its own file (the error says so and how to share it).
 - Imported items are always used **qualified** (`alias.name`, also in types and struct literals); there are no unqualified imports and no name clashes: two modules may both define `helper`. The alias is the last path segment unless `as` renames it. A local variable, parameter, loop variable, match/unpack binding or closure parameter may reuse the name of an imported module: inside its scope the name is the variable (`let path = path.join(a, b)` still reads the module in its own initializer).
 - Top-level `const` and `type` items are items too: `pub const NAME: T = expr` (the type must be written) and `pub type Name = T` are exported and used qualified (`alias.NAME`, `alias.Name`, also as an array length or in a signature); without `pub` they are private to the file, and two modules may both have a private `SECRET`. Each is one declaration on one line. A const only sees consts defined above it, so cycles and forward uses are errors ("const 'B' is used before its definition"). Tests: `tests/mod_ok/consts_types`, `tests/const_item_basic.yx`, `tests/mod_err/{pub_const_untyped,private_const,const_cycle}`, `tests/e1350`..`e1352`.
@@ -382,7 +382,7 @@ import utils.shapes as sh   //                            used as  sh.area(x)   
 The [calculator and key-value CLI](examples/real/README.md) exercise recursive parsing, typed errors and owned collections. See [FRICTION.md](docs/FRICTION.md) for minimal examples and implementation notes.
 
 ## Standard-library modules
-Besides `std.io`, the compiler embeds `std.text`, `std.math`, `std.sort`, `std.iter`, `std.fmt`, `std.time`, `std.path`, `std.fs` and `std.env` (plain Yerux in `src/std/`); their API is in [docs/STDLIB.md](docs/STDLIB.md). The system modules `std.fs` (directories, listings, metadata, copy/rename), `std.env` (arguments, variables, working directory) and the clock/calendar part of `std.time` (monotonic `Instant`, wall clock, `sleep_until`, UTC `DateTime` with ISO 8601) sit on the same raw syscalls as `std.io` and report every failure as `Result<T, io.IoError>`: [docs/STDLIB_IO.md](docs/STDLIB_IO.md). File handles (`fs.File`, closed explicitly with `fs.close(move f)`: the language has no user `Drop`), binary I/O over `[UInt8]`/`List<UInt8>`, buffered `Reader`/`Writer`, `chmod`/symlinks, `env.set`/`remove` and the `time.Duration` type: [docs/STDLIB_SYSTEM.md](docs/STDLIB_SYSTEM.md). `std.process` (start programs with pipes, wait/kill, `run` with captured output; `Child` reaps on drop): [docs/STDLIB_PROCESS.md](docs/STDLIB_PROCESS.md).
+The compiler embeds all 28 modules of `src/std/` (plain Yerux, `std.io` included); their index and API are in [docs/STDLIB.md](docs/STDLIB.md). The system modules `std.fs` (directories, listings, metadata, copy/rename), `std.env` (arguments, variables, working directory) and the clock/calendar part of `std.time` (monotonic `Instant`, wall clock, `sleep_until`, UTC `DateTime` with ISO 8601) sit on the same raw syscalls as `std.io` and report every failure as `Result<T, io.IoError>`: [docs/STDLIB_IO.md](docs/STDLIB_IO.md). File handles (`fs.File`, closed when dropped, or explicitly with `fs.close(move f)` when you want the close error; user structs can implement `Drop`, see User-defined destructors), binary I/O over `[UInt8]`/`List<UInt8>`, buffered `Reader`/`Writer`, `chmod`/symlinks, `env.set`/`remove` and the `time.Duration` type: [docs/STDLIB_SYSTEM.md](docs/STDLIB_SYSTEM.md). `std.process` (start programs with pipes, wait/kill, `run` with captured output; `Child` reaps on drop): [docs/STDLIB_PROCESS.md](docs/STDLIB_PROCESS.md).
 
 ## Standard I/O (`import std.io`)
 A module of the standard library, embedded in the compiler: `import std.io` (used as `io.read_line()`, `io.read_file(path)`, `io.args()`, `io.exit(code)`, `io.monotonic_ns()`, `io.sleep_ms(ms)`, ...). Every failure is a value: operations return `Result<T, io.IoError>` where `IoError { kind: IoErrorKind, code: Int, message: String }` (and `?` works as usual); `String`s read from the outside are validated as UTF-8 (`InvalidData` otherwise). Full API, rules and tests: [docs/STDLIB_IO.md](docs/STDLIB_IO.md).
@@ -530,7 +530,7 @@ Lexer → parser → type + ownership checker → C generator → `cc -O2`.
 - **v0.5** `Option<T>` / `Result<T, E>` (plain generic enums), error handling with `?`.
 - **v0.6** Effects/capabilities system (no network/disk access without permission), range integers `Int<lo..hi>` to remove bounds checks (docs/RANGES.md), `comptime` and explicit allocators (docs/COMPTIME.md; first versions done: scalar `comptime`, `Arena<T>`), threads (docs/CONCURRENCY.md).
 - **v0.7** Tooling: LSP, package manager (formatter and test runner exist).
-- **v1.0** Self-hosting (the compiler written in Yerux).
+- **Self-hosting** is milestone M7 in docs/ROADMAP.md (partial today); the 1.0 release is M12 there. The current version is 0.5.0, so the version lines above are the older plan, and docs/ROADMAP.md is authoritative.
 - **UI framework:** graphics layer (wgpu/Vulkan/Metal) → layout → widgets → reactivity (signals, docs/SIGNALS.md) → platforms.
 
 ## Open decisions

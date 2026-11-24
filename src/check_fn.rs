@@ -425,7 +425,7 @@ impl<'a> Checker<'a> {
     /// `Var(name)` where `name` is a function and not a variable: rewrite it to a function value.
     pub(super) fn norm_fn_arg(&mut self, arg: &mut Expr) {
         if let EK::Var(n, _) = &arg.k {
-            if self.lookup(n).is_none() {
+            if self.lookup(n).is_none() && !self.types.consts.contains_key(n) {
                 let n = n.clone();
                 if self.sigs.contains_key(&n)
                     || self.ps.gfns.iter().any(|g| g.name == n)

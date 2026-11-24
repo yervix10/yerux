@@ -1,0 +1,371 @@
+// minimake: a small `make`. Reads a Makefile and builds targets, running recipes with std.process and
+// comparing modification times with std.fs.
+//
+//   minimake [-f Makefile] [target ...] [--then target ...] ...
+//
+// Supported: `NAME = value` and `NAME := value` variables, `$(NAME)`, `$@` (target), `$<` (first dependency), `$^` (all
+// dependencies), `$$`, `target: dep dep` rules (one target per rule) with tab-indented recipe lines, `.PHONY`,
+// `#` comments, `@cmd` (do not echo) and `-cmd` (ignore failure). Each recipe line runs as `/bin/sh -c line`.
+// Targets after `--then` start a fresh build (nothing is remembered between them but the files).
+// Exit status: 0 ok, 2 on a parse error, a missing rule, a cycle or a failing recipe.
+import std.process
+import std.fs
+import std.io
+import std.env
+
+struct Rule {
+  target: String,
+  deps: List<String>,
+  recipe: List<String>,
+}
+
+struct Ctx {
+  rules: List<Rule>,
+  rule_ids: Map<String, Int>,
+  vars: Map<String, String>,
+  phony: Map<String, Bool>,
+  state: Map<String, Int>,
+}
+
+fn words(s: view String) -> List<String> {
+  var out = List<String>.new()
+  var start = 0
+  for i in 0..s.len() {
+    let byte = s.byte(i)
+    if byte == 32 || byte == 9 {
+      if start < i {
+        out.push(s.slice(start, i))
+      }
+      start = i + 1
+    }
+  }
+  if start < s.len() {
+    out.push(s.slice(start, s.len()))
+  }
+  return out
+}
+
+// List<String> has no copy(): String is not Copy
+fn clone_list(l: view List<String>) -> List<String> {
+  var out = List<String>.new()
+  for x in l {
+    out.push(String.from(x))
+  }
+  return out
+}
+
+// $(NAME), $@, $<, $^ and $$ in `s`
+fn expand(s: view String, vars: view Map<String, String>, target: view String, deps: view List<String>) -> String {
+  var out = String.new()
+  var i = 0
+  while i < s.len() {
+    let b = s.byte(i)
+    if b == 36 && i + 1 < s.len() {
+      let n = s.byte(i + 1)
+      if n == 36 {
+        out.push_byte(36)
+        i = i + 2
+      } else if n == 64 {
+        out.push_str(target)
+        i = i + 2
+      } else if n == 60 {
+        if deps.len() > 0 {
+          out.push_str(deps.at(0))
+        }
+        i = i + 2
+      } else if n == 94 {
+        let all = deps.join(" ")
+        out.push_str(all)
+        i = i + 2
+      } else if n == 40 {
+        let close = s.find_from(")", i)
+        if close < 0 {
+          out.push_byte(b)
+          i = i + 1
+        } else {
+          let name = s.slice(i + 2, close)
+          let entry = vars.find(name)
+          if entry >= 0 {
+            out.push_str(vars.vals.at(entry))
+          }
+          i = close + 1
+        }
+      } else {
+        out.push_byte(b)
+        i = i + 1
+      }
+    } else {
+      out.push_byte(b)
+      i = i + 1
+    }
+  }
+  return out
+}
+
+fn parse_error(file: view String, line: Int, msg: Text) -> Int {
+  io.eprintln("{file}:{line}: {msg}")
+  return 2
+}
+
+fn parse(file: view String, ctx: mut Ctx) -> Int {
+  var lines = List<String>.new()
+  match fs.read_lines(file) {
+    Ok(l) => {
+      lines = move l
+    }
+    Err(e) => {
+      io.eprintln("minimake: {e}")
+      return 2
+    }
+  }
+  let none = List<String>.new()
+  var current = -1
+  var n = 0
+  for raw in lines {
+    n = n + 1
+    if raw.starts_with("\t") {
+      if current < 0 {
+        return parse_error(file, n, "recipe line before any rule")
+      }
+      let cmd = raw.slice(1, raw.len())
+      ctx.rules.at(current).recipe.push(move cmd)
+      continue
+    }
+    let line = raw.trim()
+    if line.len() == 0 || line.starts_with("#") {
+      continue
+    }
+    let eq = line.find("=")
+    let colon = line.find(":")
+    if eq > 0 && (colon < 0 || eq < colon || eq == colon + 1) {
+      var name = line.slice(0, eq).trim()
+      if name.ends_with(":") {
+        name = name.slice(0, name.len() - 1).trim()
+      }
+      let value = expand(line.slice(eq + 1, line.len()).trim(), ctx.vars, "", none)
+      ctx.vars.insert(move name, move value)
+      current = -1
+    } else if colon > 0 {
+      let head = expand(line.slice(0, colon), ctx.vars, "", none)
+      let deps = words(expand(line.slice(colon + 1, line.len()), ctx.vars, "", none))
+      let names = words(head)
+      if names.len() != 1 {
+        return parse_error(file, n, "a rule needs exactly one target")
+      }
+      let name = names.at(0)
+      if name == ".PHONY" {
+        for d in deps {
+          ctx.phony.insert(String.from(d), true)
+        }
+        current = -1
+      } else {
+        if ctx.rule_ids.contains(name) {
+          return parse_error(file, n, "duplicate rule for target")
+        }
+        current = ctx.rules.len()
+        ctx.rule_ids.insert(String.from(name), current)
+        ctx.rules.push(Rule { target: String.from(name), deps: move deps, recipe: List<String>.new() })
+      }
+    } else {
+      return parse_error(file, n, "expected `target: deps`, `NAME = value` or a recipe line")
+    }
+  }
+  return 0
+}
+
+fn mtime(path: view String) -> Result<Option<Int>, io.IoError> {
+  match fs.metadata(path) {
+    Ok(m) => { return Ok(Some(m.modified_ns)) }
+    Err(error) => {
+      if error.kind == io.IoErrorKind.NotFound {
+        return Ok(None)
+      }
+      return Err(move error)
+    }
+  }
+}
+
+// Run one recipe line. 0 = ok, otherwise the status to report.
+fn run_line(line: view String, target: view String) -> Int {
+  var cmd = String.from(line)
+  var quiet = false
+  var ignore = false
+  while cmd.len() > 0 && (cmd.starts_with("@") || cmd.starts_with("-")) {
+    if cmd.starts_with("@") {
+      quiet = true
+    } else {
+      ignore = true
+    }
+    cmd = cmd.slice(1, cmd.len())
+  }
+  if !quiet {
+    print(cmd)
+  }
+  var c = process.command("/bin/sh")
+  c.arg("-c")
+  c.arg(cmd)
+  match process.start(c) {
+    Ok(child) => {
+      var ch = move child
+      match ch.wait() {
+        Ok(st) => {
+          if st.success() || ignore {
+            return 0
+          }
+          if st.signal != 0 {
+            io.eprintln("minimake: *** [{target}] Terminated by signal {st.signal}")
+          } else {
+            io.eprintln("minimake: *** [{target}] Error {st.code}")
+          }
+          return 2
+        }
+        Err(e) => {
+          io.eprintln("minimake: {e}")
+          return 2
+        }
+      }
+    }
+    Err(e) => {
+      io.eprintln("minimake: {e}")
+      return 2
+    }
+  }
+}
+
+const VISITING: Int = 1
+const DONE: Int = 2
+const FORCE_DEPENDENTS: Int = 3
+
+// Children have completed by the time we compare their timestamps.
+fn needs_build(ctx: view Ctx, target: view String, deps: view List<String>, phony: Bool) -> Result<Bool, io.IoError> {
+  if phony { return Ok(true) }
+  let target_time = mtime(target)?
+  match target_time {
+    None => { return Ok(true) }
+    Some(mine) => {
+      for d in deps {
+        if ctx.state.get(d) == FORCE_DEPENDENTS { return Ok(true) }
+        let dep_time = mtime(d)?
+        match dep_time {
+          Some(theirs) => { if theirs > mine { return Ok(true) } }
+          None => { return Ok(true) }
+        }
+      }
+      return Ok(false)
+    }
+  }
+}
+
+fn build(ctx: mut Ctx, target: view String, top: Bool) -> Result<Int, io.IoError> {
+  let state = ctx.state.get_or(target, 0)
+  if state >= DONE { return Ok(0) }
+  if state == VISITING {
+    io.eprintln("minimake: circular dependency involving {target}")
+    return Ok(2)
+  }
+
+  let phony = ctx.phony.contains(target)
+  let ri = ctx.rule_ids.get_or(target, -1)
+  if ri < 0 {
+    if phony {
+      ctx.state.insert(String.from(target), FORCE_DEPENDENTS)
+      return Ok(0)
+    }
+    let existing = mtime(target)?
+    if existing.is_some() {
+      ctx.state.insert(String.from(target), DONE)
+      return Ok(0)
+    }
+    io.eprintln("minimake: *** No rule to make target '{target}'.")
+    return Ok(2)
+  }
+
+  ctx.state.insert(String.from(target), VISITING)
+  let deps = clone_list(ctx.rules.at(ri).deps)
+  for d in deps {
+    let rc = build(ctx, d, false)?
+    if rc != 0 { return Ok(rc) }
+  }
+
+  if needs_build(ctx, target, deps, phony)? {
+    for line in ctx.rules.at(ri).recipe {
+      let cmd = expand(line, ctx.vars, target, deps)
+      let rc = run_line(cmd, target)
+      if rc != 0 { return Ok(rc) }
+    }
+  } else if top {
+    print("minimake: '{target}' is up to date.")
+  }
+
+  var done = DONE
+  if phony { done = FORCE_DEPENDENTS }
+  ctx.state.insert(String.from(target), done)
+  return Ok(0)
+}
+
+pub fn run() {
+  let status = cli()
+  if status != 0 { io.exit(status) }
+}
+
+fn cli() -> Int {
+  match env.args_utf8() {
+    Ok(argv) => { return run_with_args(argv) }
+    Err(error) => {
+      io.eprintln("minimake: {error}")
+      return 2
+    }
+  }
+}
+
+fn run_with_args(argv: view List<String>) -> Int {
+  var file = String.from("Makefile")
+  var passes = List<List<String>>.new()
+  passes.push(List<String>.new())
+  var i = 1
+  while i < argv.len() {
+    let a = String.from(argv.at(i))
+    if a == "-f" {
+      if i + 1 >= argv.len() {
+        io.eprintln("minimake: -f requires a Makefile path")
+        return 2
+      }
+      file = String.from(argv.at(i + 1))
+      i = i + 2
+    } else if a == "--then" {
+      passes.push(List<String>.new())
+      i = i + 1
+    } else {
+      passes.at(passes.len() - 1).push(String.from(a))
+      i = i + 1
+    }
+  }
+  var ctx = Ctx {
+    rules: List<Rule>.new(),
+    rule_ids: Map<String, Int>.new(),
+    vars: Map<String, String>.new(),
+    phony: Map<String, Bool>.new(),
+    state: Map<String, Int>.new(),
+  }
+  let rc = parse(file, ctx)
+  if rc != 0 {
+    return rc
+  }
+  for pass in passes {
+    ctx.state.clear()
+    var targets = clone_list(pass)
+    if targets.len() == 0 && ctx.rules.len() > 0 {
+      targets.push(String.from(ctx.rules.at(0).target))
+    }
+    for t in targets {
+      match build(ctx, t, true) {
+        Ok(status) => { if status != 0 { return status } }
+        Err(error) => {
+          io.eprintln("minimake: {error}")
+          return 2
+        }
+      }
+    }
+  }
+  return 0
+}

@@ -67,7 +67,7 @@ backend, both compared with `tests/expected/webkv_selftest.out` (122 connections
   (`mutex_with(m, |d: mut Data| -> Int { .. })`).
 - The result type of a block closure with several `return`s is not inferred ("cannot infer the type parameter R"):
   write `-> R` on the closure.
-- A field of an owning temporary cannot be read (`f().body.len()`): bind it first.
+- A field of an owning temporary cannot be read when the *field* owns memory (`f().body.len()`): bind it first. A Copy field (`f().status`) is fine since the minidb round (below).
 - `Map<String, String>.get` needs `Copy` values: use `find` + `vals.at(i).clone()`.
 - `Text` and `String` are different types ("expected Text but this is String"): pick one per API.
 
@@ -87,8 +87,15 @@ Frictions and their resolution (1.0 freeze round):
    fast path for integers only.
 2. `Char.from_int(n)` panics on invalid scalars; use `Char.is_valid(n)` first. **Final** (checked conversion
    style, like `Int<lo..hi>.from`).
-3. A top-level `fn` cannot be passed by name as a `fn` value (`sort.stable_by(l, compare)` fails); wrap it:
-   `|a, b| compare(a, b)`. **Open, language gap** (not a 1.0 blocker: a closure is the workaround).
+3. **Closed.** `sort.stable_by(l, compare)` accepts a named comparator with a concrete signature.
+   Generic calls now also infer the type of an argument such as `identity(compare)`, including
+   module-qualified functions. [Regression test](../tests/named_fn_sort.yx).
+
+   **Open, module lookup.** A local function value named after an imported
+   function can trigger the diagnostic for an unqualified import. For example,
+   with `import std.path`, `let join = path.join` followed by
+   `print(join("a", "b"))` inside `main` is rejected. Use a local name such
+   as `join_path`.
 4. `Result::unwrap` needs `E: Show`. **Final:** the diagnostic already says `add impl Show for E`.
 5. `assert_eq` rejected `String`. **Fixed:** `assert_eq` is now `assert(a == b)` checked like any `==`, so
    numbers, Bool and String/Text variables or literals work, and other types get the precise `==`
@@ -134,3 +141,65 @@ Open (no fix; minimal repros):
 Figures: 435 lines of datatool, 1 library defect fixed, 6 open findings (2 of
 them silent wrong results with regex), 4 golden cases, 2 oracles and 14 error
 checks, 3000-row oracle file, both backends identical.
+
+## minimake
+
+[minimake](../examples/real/minimake/main.yx) reads a Makefile, visits prerequisites
+depth first, memoizes completed targets per pass, and detects back edges as cycles.
+It compares `std.fs.metadata` timestamps after visiting the prerequisites and runs
+each recipe line through `std.process`. The original `examples/real/minimake.yx`
+entry loads the same engine.
+
+- A declared phony prerequisite now forces the dependent to rebuild, even when
+  a file has the phony name. A declaration alone is enough. A successful rule
+  that leaves its output absent also forces a rebuild.
+- Metadata distinguishes a missing path from an error. A symlink loop now
+  reports the filesystem error, and negative timestamps remain valid.
+- The parser accepts tabs between prerequisites and handles `NAME := value`.
+  Duplicate rules and a missing `-f` argument now get specific diagnostics.
+- Arguments require UTF-8 so a malformed filename cannot resolve to another
+  file whose name contains `?`.
+- Accessing an owned `String` in `Map<String, String>` requires
+  `m.vals.at(m.find(key))` after checking the index because `Map.get` requires
+  `Copy`. For example, `vars.get("CC")` fails when `vars` has that type.
+  The engine uses one lookup and borrows the value in place.
+
+The supported Makefile subset evaluates both variable assignment forms once, in
+file order. It supports one rule per target and uses a new shell for each recipe
+line. Prerequisite names are split on spaces or tabs. Recursive traversal uses
+call stack space proportional to the longest prerequisite chain. The [graph tests](../tests/minimake_graph.sh) verify stdout, stderr and
+status on C and native, including an older, newer and equal prerequisite mtime,
+a shared prerequisite, phony prerequisites, cycle and invalid inputs.
+
+## minidb (`examples/real/minidb/`)
+
+A persistent key-value store in one append-only log file (not the SQL-like `examples/real/minidb.yx`): `record`
+(binary records: CRC-32, op, lengths, key, value), `db` (std.fs `File` with seek/read/`set_len`, `Map<String, Int>`
+index of value offsets, put/get/delete, compaction by rewrite + `fs.rename`, recovery on open), `main` (CLI over
+`env.args`: `put get del keys stats compact verify load`), `tests.yx` (8 `yerux test` tests). Opening scans the log,
+rebuilds the index and cuts a truncated or corrupted tail off; a record with an absurd length is corrupt, never an
+allocation. Checked by `tests/minidb.sh` (in `run_all.sh`): unit tests plus a CLI session with a truncated and a
+corrupted log on the C and the native backend, compared with `tests/expected/minidb_cli.out`.
+
+Fixed (regression test fails before the fix):
+
+1. **A Copy field of an owning temporary could not be read** (`record.decode(b, 0).status`: "cannot take a field of a
+   temporary ... that owns memory"), the friction hit by webkv and minidb alike. The temporary now moves into a hidden
+   variable that lives to the end of the enclosing expression, and the rest of it is freed there (Drop runs, no leak).
+   A field that owns memory still has to be bound first. Test: `tests/field_of_temporary.yx`.
+2. **`std.hash.crc32` / `crc32_bytes` were 2.3x slower than needed**: the bitwise loop did eight 32-step XORs per byte
+   (the language has no bitwise operators). A 256-entry table now does one 8-step and one 32-step XOR per byte; results
+   are unchanged (`tests/std_hash.yx`). Opening a 653 KB log (20,000 records): 0.42 s before, 0.19 s after.
+
+Measured (this machine, 20,000 records of about 32 bytes, C backend, native within 20%): `load 20000` (20,000 appends
+with one `write` each and 20,000 reads with seek + read) 0.26 s; reopen with CRC check 0.19 s. The in-memory index is not
+the cost: `Map<String, Int>` with 100,000 keys, 100,000 inserts + 500,000 lookups with `find` + `vals.get` 0.12 s (C and
+native), roughly 200 ns per operation. What dominates is the CRC (no bitwise operators) and one syscall per record.
+
+Open (no fix):
+
+- The language has **no bitwise operators** (`^ & << >>`): binary formats and checksums are written with `%` and `/`
+  (`record.put_u32`/`get_u32`), and std.hash emulates XOR with loops. Adding them is a language change.
+- `Map<K, V>` needs a `Copy` value for `get`: the index stores the packed `offset * 2^24 + length` as an `Int`.
+- A `File` has no positional read, so every `get` is `seek` + `read`; there is no read buffering.
+- `compact` rebuilds the log in memory (all live values) before writing it: bounded by RAM, not streamed.

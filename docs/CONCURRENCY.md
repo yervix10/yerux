@@ -31,9 +31,9 @@ error numbers. The C oracle uses the same Linux futex calls for these raw
 operations.
 
 These intrinsics are part of the reserved raw runtime surface described in
-[STDLIB_IO.md](STDLIB_IO.md). Native Windows and aarch64 reject them with the target-specific unsupported
-diagnostic. The PE and aarch64 test runners skip runtime tests on that
-diagnostic. The current structured API uses `scope { ... }`, `spawn move` and
+[STDLIB_IO.md](STDLIB_IO.md). Both native Linux targets support them.
+The AArch64 implementation is tested under QEMU. Native Windows rejects
+these intrinsics with a target-specific diagnostic. The structured API uses `scope { ... }`, `spawn move` and
 `JoinHandle<T>.join() -> Result<T, ThreadPanic>`. Owned captures are moved,
 and scalar captures are copied. Borrow captures into spawned workers are
 rejected, including borrowed scalar parameters. Handles join when dropped.
@@ -190,6 +190,12 @@ atomic update workloads with serial expected results.
 > without `move`, `Locked.new_ordered`, `try_with`, `Runtime.spawn_detached`, `lock x { }` are **not**
 > implemented and not part of the frozen surface.
 
+> **Status of sections 1-12.** These sections are the original design. What the compiler does today,
+> checked by tests/spec_conformance.sh: `spawn { }` without `move` is an error ("spawn requires a
+> move closure"); `Channel<T>.new(capacity: n)` is a parse error (use `Sender<T>.bounded(n)`); `Task<T>` is an
+> unknown type (use `JoinHandle<T>`); `parallel for` rejects `step`. The implemented forms are in
+> "Runtime implementation status" and "Current APIs" above, and they win where they differ.
+
 ## 1. Motivation
 
 - Parallelism is where the language promise ("as fast as Rust, safer, gentler") is most at risk. Rust gets data-race freedom through `Send`, `Sync`, `'static`, `Arc`, `Mutex` guards and lifetimes in scoped threads. That is the steepest part of its learning curve.
@@ -198,7 +204,7 @@ atomic update workloads with serial expected results.
 
 ## 2. The model in five rules
 
-1. A **task** is started by `spawn` inside a `scope` block. All tasks of a scope are joined before the scope ends. Tasks cannot outlive their scope, so a task may *borrow* from the enclosing function.
+1. A **task** is started by `spawn` inside a `scope` block. All tasks of a scope are joined before the scope ends (a standalone `spawn` statement is joined when its enclosing block exits, see SPEC.md Threads). Tasks cannot outlive their scope, so a task may *borrow* from the enclosing function.
 2. A task body is a closure. What it uses from outside is either **moved in** (`move x`) or **borrowed** (read-only, or `mut` if nobody else can touch it meanwhile).
 3. While any task of a scope may be running, a variable lent to a task read-only is frozen for the parent (it cannot be written), and a variable lent `mut` is unusable by the parent. This is the same rule as "a variable lent as `mut` cannot appear twice in one call", extended across the scope.
 4. To share one value between tasks that **outlive no common scope**, or that need **simultaneous access**, use one of three library types: `Shared<T>` (read-only), `Locked<T>` (mutual exclusion), `Atomic<Int>` (lock-free counter/flag). They are the only types that can be reached from two tasks at once.
@@ -458,7 +464,7 @@ error[E-C9]: `image` is moved into the task and used afterwards
 
 - **IR additions** (all lowered to runtime calls; no new machine instruction except atomics):
   `AtomicLoad/AtomicStore` (plain `mov` on x86-64; `ldar/stlr` on aarch64), `AtomicRmw(op)` (`lock xadd`, `lock cmpxchg`, `xchg`; aarch64 `ldaddal`/LL-SC), `Fence`, `TaskSpawn(fn, env)`, `TaskJoin`, `FutexWait/FutexWake`. Memory model: sequential consistency for atomics; data-race freedom means everything else is a plain access.
-- **Threads on Linux** without libc: `clone` with `CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID`, a stack from `mmap` (default 2 MiB, guard page `PROT_NONE`, configurable; main thread keeps the OS stack), `CLONE_CHILD_CLEARTID` + futex wake gives `join` for free. Thread exit via `exit` (not `exit_group`); process exit/panic via `exit_group`. Thread-local state (current task id, allocator cache) in `fs`-based TLS on x86-64 (`arch_prctl(ARCH_SET_FS)`) and `TPIDR_EL0` on aarch64. aarch64 syscalls: `clone` 220, `futex` 98, `exit` 93.
+- **Threads on Linux** without libc: `clone` with `CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID`, a stack from `mmap` (default 2 MiB, guard page `PROT_NONE`, configurable; main thread keeps the OS stack), `CLONE_CHILD_CLEARTID` + futex wake gives `join` for free. Thread exit via `exit` (not `exit_group`); process exit/panic via `exit_group`. x86-64 keeps runtime state in `fs`-based TLS (`arch_prctl(ARCH_SET_FS)`). AArch64 uses the reserved `x19` register for the worker context and omits `CLONE_SETTLS`. AArch64 syscalls: `clone` 220, `futex` 98, `exit` 93.
 - **Blocking primitive**: **futex** (`futex(FUTEX_WAIT_PRIVATE/FUTEX_WAKE_PRIVATE)`, syscall 202 on x86-64). Mutex = 32-bit word {0 free, 1 locked, 2 locked with waiters} (the classic Drepper "mutex2" protocol): uncontended lock/unlock is one `lock cmpxchg` / `xchg`, no syscall. Condvar, `Atomic` waits, join and channels are built on it. Spin a few dozen iterations (`pause`) before sleeping.
 - **Windows** (`--target windows`, WINDOWS.md): `CreateThread` (kernel32, already an allowed import), **`WaitOnAddress` / `WakeByAddressSingle` / `WakeByAddressAll`** (from `api-ms-win-core-synch-l1-2-0.dll`/kernelbase, Windows 8+) as the futex equivalent with the same mutex protocol; `TlsAlloc`/`FlsAlloc` or `gs`-relative TEB slots for thread-local state; thread stacks via `CreateThread` stack size parameter; `ExitProcess` for panics (threads die with the process). No `SRWLOCK` needed (but allowed as an optimisation: it is the same futex-like state machine).
 - **macOS** (later): `__ulock_wait/__ulock_wake` syscalls or `os_unfair_lock`/`pthread` through libSystem (the OS boundary rule from FFI.md); Android/Linux share futex.
@@ -491,7 +497,7 @@ error[E-C9]: `image` is moved into the task and used afterwards
 | C4 | Channels (library), `Option/Result` based API | C3, M2 `Option` | producer/consumer test |
 | C5 | `parallel for/map/reduce`, work-stealing pool, `split_at_mut/chunks_mut` | C3, slices | determinism tests, speedup >= 0.8x cores on a 100M-element map |
 | C6 | Windows port (CreateThread, WaitOnAddress) | WINDOWS.md work | positive tests under wine |
-| C7 | aarch64: atomics (`ldar/stlr/ldaddal`), clone, futex | a64.rs | a64 emulation tests (Unicorn is single-core: run threads cooperatively; real-hardware check listed as open) |
+| C7 | AArch64: atomics (acquire loads and LL/SC), clone, futex | a64/threads.rs | QEMU fixtures in `tests/a64_all.sh --threads`. Physical hardware testing remains open. |
 | C8 | `actor` sugar + framework `UiPort`, `@thread_bound`, lint W-C1 | C4, F work | framework demo with background image load |
 | C9 | Lock levels, effect `blocks`, cancellation tokens | v0.5 effects | E-C6 becomes transitive |
 

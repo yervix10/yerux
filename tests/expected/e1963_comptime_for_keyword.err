@@ -1,0 +1,7 @@
+error: unexpected keyword 'for' here
+ --> tests/e1963_comptime_for_keyword.yx:3:12
+  |
+3 |   comptime for i in 0..3 { print(i) }
+  |            ^^^
+
+1 error(s). Nothing was generated.

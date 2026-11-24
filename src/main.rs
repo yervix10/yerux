@@ -246,7 +246,7 @@ fn native_build(
     target: &str,
     source_files: &[String],
 ) {
-    if !prog.externs.is_empty() && (target == "aarch64" || target == "windows") {
+    if !prog.externs.is_empty() && target == "windows" {
         eprintln!(
             "error: native backend: extern C is not supported on the {} target yet",
             target

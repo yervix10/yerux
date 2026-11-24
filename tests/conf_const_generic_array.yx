@@ -1,0 +1,10 @@
+// COMPATIBILITY.md section 10 item 2: `fn f<const N: Int>` over array lengths is implemented.
+fn dot<const N: Int>(a: [Int; N], b: [Int; N]) -> Int {
+  var s = 0
+  for i in 0..N { s = s + a[i] * b[i] }
+  return s
+}
+
+fn main() {
+  print(dot([1, 2, 3], [4, 5, 6]))
+}

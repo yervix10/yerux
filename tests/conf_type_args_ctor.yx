@@ -1,0 +1,8 @@
+// COMPATIBILITY.md section 10 item 10: explicit type arguments are accepted on the sharing constructors
+// (`Shared<T>.new`, `Locked<T>.new`, `Atomic<T>.new`); calls to generic functions do not take them yet.
+fn main() {
+  let s = Shared<Int>.new(5)
+  let a = Atomic<Int>.new(1)
+  let l = Locked<Int>.new(2)
+  print("ok {s.get()} {a.load()} {l.with(|v| v)}")
+}

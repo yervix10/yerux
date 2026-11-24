@@ -1,9 +1,8 @@
 # `std.process`: running other programs
 
-Linux x86-64 native backend and the C backend (oracle). Raw syscalls only (`pipe2`, `fork`, `execve`,
-`dup2`, `wait4`, `kill`, `poll`, `rt_sigaction`, `fcntl`), no libc on the native path. Every failure is an
-`io.IoError` value. `--target windows` / `aarch64` refuse the module at compile time like `std.io`
-(`tests/io_targets.sh`). It relies on user `Drop` (docs/DROP.md).
+Supported by the Linux x86-64 and AArch64 native backends and the C backend.
+The native implementations use raw syscalls. Failures return an `io.IoError`.
+The module relies on user `Drop` (docs/DROP.md).
 
 ```
 import std.process
@@ -92,6 +91,6 @@ exit by design, so it is not in the leak list).
   `setuid`, no `wait` with a timeout, no `posix_spawn`/`vfork` (the whole address space is copied lazily by
   `fork`), no shell-quoting helpers.
 - stdout/stderr text is lossy in `Output`; stdin is fed as `String` or `[UInt8]` (bytes are copied).
-- Windows and aarch64: refused at compile time (they would need `CreateProcessW` / the aarch64 syscall numbers).
+- Windows: refused at compile time. Support would require `CreateProcessW`.
 
 `process.run_timeout(program, args, timeout_ms)` captures stdout/stderr and returns `Some(Output)` on exit or kills and reaps the child before returning `None` on timeout. Timeout must be positive. It polls at 1 ms intervals; keep child output bounded because pipes are drained after the process exits. Test: `tests/process_timeout.yx`.

@@ -66,11 +66,22 @@ echoes POST bodies, and includes a CLI for GET and POST requests.
 
 ## minimake
 
-`minimake.yx` is a small `make` built on `std.process` (recipes run as `/bin/sh -c`) and `std.fs` (modification
-times). `minimake [-f Makefile] [target ...] [--then target ...]`; variables, `$@ $< $^ $(NAME)`, `.PHONY`,
-`@`/`-` recipe prefixes, cycle and missing-rule errors. `tests/minimake/Makefile` is the golden scenario
-(clean, build, rebuild-nothing, "up to date", clean); `tests/minimake_errors.sh` covers the failure exit codes.
-Friction notes: [../../docs/FRICTION.md](../../docs/FRICTION.md).
+[`minimake/main.yx`](minimake/main.yx) builds rules by visiting prerequisites
+first, comparing modification times with `std.fs` and running each recipe line
+as `/bin/sh -c` through `std.process`.
+
+```sh
+target/release/yerux build examples/real/minimake/main.yx --native -o /tmp/yerux-make
+/tmp/yerux-make -f tests/minimake/Makefile all --then clean
+```
+
+Usage is `minimake [-f Makefile] [target ...] [--then target ...]`. With no target,
+the first rule is the default. Each `--then` starts a new pass. The supported
+syntax includes one target per rule, tab-indented recipes, `.PHONY`,
+`NAME = value` or `NAME := value` (both expanded when read), substitutions
+`$@ $< $^ $(NAME) $$`, and the recipe prefixes `@` and `-`. A missing rule,
+invalid input, a cycle or a failed recipe returns status 2. Tests cover
+incremental builds, graph traversal, and failures on both backends.
 
 ## sumtool
 
@@ -151,3 +162,9 @@ target/release/yerux test examples/real/jql        # 12 unit tests
 sort, group statistics, text or CSV output) across five modules. Commands:
 `datatool check FILE.csv` and `datatool run CONFIG.toml`. Findings and open
 limits are in `docs/REAL_PROGRAMS.md`; the tests are in `tests/datatool.sh`.
+
+## minidb (log-structured store)
+
+`minidb/` is a persistent key-value store over one append-only log (binary records with CRC, in-memory index,
+compaction, recovery of a truncated or corrupted file) with a CLI and tests; see `docs/REAL_PROGRAMS.md` and
+`tests/minidb.sh`.
