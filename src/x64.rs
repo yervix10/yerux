@@ -71,12 +71,28 @@ const IMP_SETCONSOLEOUTPUTCP: usize = 5;
 /// Emit DWARF source, frame and variable information for the native Linux backend (`--dwarf`, `--debug`).
 pub static DWARF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// One function's entry in `.pdata`/`.xdata`: code range (offsets from the start of .text) and, for functions with
+/// a frame, the frame size and the offset (from `begin`) where the prologue ends.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct UnwindRec {
+    pub(crate) begin: usize,
+    pub(crate) end: usize,
+    pub(crate) frame: Option<(i32, usize)>,
+}
+
 struct Asm {
     code: Vec<u8>,
     /// (slot, register, code length right after it) of the last `mov [rbp+slot], reg`: an immediate reload is dropped
     last_store: (i32, u8, usize),
     /// code length at the last label bound (a jump may land there, so nothing before it can be assumed)
     last_bind: usize,
+    /// heap-state base (Linux: absolute) and the places that need its position-independent form (Windows)
+    gbase: i64,
+    /// Windows unwind data: set by `gen_func` (frame size, end of the prologue) and collected per function
+    func_unwind: Option<(i32, usize)>,
+    unwind: Vec<UnwindRec>,
+    gfix: Vec<(usize, i64)>,
+    win_data_rel: usize,
     /// (vreg, condition code, code length) of the last comparison materialised with setcc: the flags still hold it
     cmp_rec: (usize, u8, usize),
     labels: Vec<Option<usize>>,
@@ -105,6 +121,11 @@ impl Asm {
         Asm {
             last_store: (0, 0, usize::MAX),
             last_bind: usize::MAX,
+            gbase: 0,
+            func_unwind: None,
+            unwind: vec![],
+            gfix: vec![],
+            win_data_rel: 0,
             cmp_rec: (usize::MAX, 0, usize::MAX),
             code: vec![],
             labels: vec![],
@@ -423,6 +444,19 @@ impl Asm {
             self.alu(0x89, dst, src);
         }
     }
+    /// address of the heap state + `off`: an absolute immediate on Linux (fixed base), `lea r, [rip+disp]` into
+    /// .data on Windows, so the image can be relocated (ASLR) without a relocation entry for it
+    fn gaddr(&mut self, r: u8, off: i64) {
+        if self.os == Os::Windows {
+            self.raw(&[0x48 | (r >> 3) << 2, 0x8D, 0x05 | ((r & 7) << 3)]);
+            let p = self.code.len();
+            self.gfix.push((p, off));
+            self.imm32(0);
+        } else {
+            let g = self.gbase + off;
+            self.mov_imm(r, g);
+        }
+    }
     fn lea_data(&mut self, r: u8, id: usize) {
         self.raw(&[0x48 | (r >> 3) << 2, 0x8D, 0x05 | ((r & 7) << 3)]); // lea r64, [rip+disp32]
         let p = self.code.len();
@@ -686,6 +720,11 @@ impl Asm {
             let rel = (target - (p as i64 + 4)) as i32;
             self.code[p..p + 4].copy_from_slice(&rel.to_le_bytes());
         }
+        for (p, off) in self.gfix.clone() {
+            let target = self.win_data_rel as i64 + off;
+            let rel = (target - (p as i64 + 4)) as i32;
+            self.code[p..p + 4].copy_from_slice(&rel.to_le_bytes());
+        }
         for (p, id) in self.dfix.clone() {
             let target = (data_start + data_offs[id]) as i64;
             let rel = (target - (p as i64 + 4)) as i32;
@@ -760,10 +799,10 @@ const G_PRINT_LOCK: i32 = 208;
 const G_USER: i64 = 256; // user cells (`__global(i)`): 8 * layout::GLOBAL_CELLS bytes
 pub(crate) const G_SIZE: u64 = 4096;
 // The runtime mutex preserves RDI and RSI on acquisition and RAX on release.
-fn acquire_runtime_lock(a: &mut Asm, g: i64, offset: i32) {
+fn acquire_runtime_lock(a: &mut Asm, _g: i64, offset: i32) {
     let retry = a.label();
     let held = a.label();
-    a.mov_imm(RBX, g);
+    a.gaddr(RBX, 0);
     a.mov_imm(RCX, 1);
     a.mov_imm(RAX, 0);
     a.raw(&[0xF0, 0x48, 0x0F, 0xB1, 0x8B]); // lock cmpxchg [rbx+disp32], rcx
@@ -785,9 +824,9 @@ fn acquire_runtime_lock(a: &mut Asm, g: i64, offset: i32) {
     a.bind(held);
 }
 
-fn release_runtime_lock(a: &mut Asm, g: i64, offset: i32) {
+fn release_runtime_lock(a: &mut Asm, _g: i64, offset: i32) {
     let released = a.label();
-    a.mov_imm(RBX, g);
+    a.gaddr(RBX, 0);
     a.mov_imm(RCX, 0);
     a.rm(0x87, RCX, RBX, offset);
     a.cmp_imm(RCX, 2);
@@ -1966,7 +2005,7 @@ impl<'a> G<'a> {
             }
             Inst::Global(d, n) => {
                 let dr = self.dreg(*d, RAX);
-                self.a.mov_imm(dr, G + G_USER + 8 * *n as i64);
+                self.a.gaddr(dr, G_USER + 8 * *n as i64);
                 self.fin(*d, dr);
             }
             Inst::Free(p) => {
@@ -2335,7 +2374,7 @@ fn gen_func(
     let frameless = frame == 0 && f.nparams <= ARG_REGS.len() && !has_extern && !has_call;
     let callee: Vec<u8> = al.callee_used.clone();
     let nb = f.blocks.len();
-    let early = if frameless || f.debug_bindings || std::env::var_os("YERUX_NO_SHRINKWRAP").is_some() {
+    let early = if frameless || a.os == Os::Windows || f.debug_bindings || std::env::var_os("YERUX_NO_SHRINKWRAP").is_some() {
         vec![false; nb]
     } else {
         early_blocks(f, &al)
@@ -2370,6 +2409,7 @@ fn gen_func(
             if frame > 0 {
                 g.a.sub_imm(RSP, frame);
             }
+            g.a.func_unwind = Some((frame, g.a.code.len()));
         }
         for (k, r) in callee.iter().enumerate() {
             g.a.store(-8 * (k as i32 + 1), *r);
@@ -2824,6 +2864,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
 struct WinLayout {
     rdata_rel: usize, // .rdata (data blobs) minus .text
     iat_rel: usize,   // IAT minus .text
+    data_rel: usize,  // .data (heap state) minus .text
 }
 
 pub(crate) struct Built {
@@ -2832,6 +2873,7 @@ pub(crate) struct Built {
     pub(crate) entry: usize,
     pub(crate) imports: Vec<(usize, usize)>,
     pub(crate) dbg: crate::dwarf::DebugInfo,
+    pub(crate) unwind: Vec<UnwindRec>,
 }
 
 pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
@@ -2851,9 +2893,9 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
             elf
         }
         Os::Windows => {
-            // The heap state lives in .data at a fixed address (no relocations: the image is linked
-            // at a fixed base). Its address is an imm64 in the code, so the code size does not depend
-            // on it: build once to learn the size, lay the sections out, build again for real.
+            // The image is position independent (ASLR): every reference to the heap state is `lea [rip+disp]`,
+            // so no relocation entry is needed. The distance to .data depends on the layout, but the code size
+            // does not: build once to learn the sizes, lay the sections out, build again for real.
             let probe = build(
                 ir,
                 debug_alloc,
@@ -2861,7 +2903,8 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
                 PE_BASE as i64 + 0x100000,
                 WinLayout::default(),
             );
-            let lay = pe_layout(probe.code.len(), probe.blob.len());
+            let (_, xdata_len) = unwind_tables(&probe.unwind, 0, 0);
+            let lay = pe_layout(probe.code.len(), probe.blob.len(), probe.unwind.len(), xdata_len);
             let b = build(
                 ir,
                 debug_alloc,
@@ -2870,6 +2913,7 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
                 WinLayout {
                     rdata_rel: (lay.rdata_rva - lay.text_rva) as usize,
                     iat_rel: (lay.iat_rva() - lay.text_rva) as usize,
+                    data_rel: (lay.data_rva - lay.text_rva) as usize,
                 },
             );
             assert_eq!(
@@ -2877,7 +2921,7 @@ pub fn compile_os(ir: &IrProgram, debug_alloc: bool, os: Os) -> Vec<u8> {
                 probe.code.len(),
                 "code size must not depend on the data address"
             );
-            pe64(&b.code, &b.blob, b.entry, &lay)
+            pe64(&b.code, &b.blob, b.entry, &lay, &b.unwind)
         }
     }
 }
@@ -3070,6 +3114,8 @@ fn emit_worker_panic_probe(a: &mut Asm, recover: usize, double_panic: usize) {
 
 fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> Built {
     let mut a = Asm::new(os);
+    a.gbase = g;
+    a.win_data_rel = win.data_rel;
     // panic reports (position, backtrace) exist when some user code has a checked operation or calls the library
     a.report = os == Os::Linux
         && ir
@@ -3210,11 +3256,11 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             }))
     {
         // global cell 0: the initial stack pointer (argc, argv.., 0, envp.., 0), read by std.io
-        a.mov_imm(RBX, g);
+        a.gaddr(RBX, 0);
         a.st(RBX, G_USER as i32, RSP);
     }
     if has_workers {
-        a.mov_imm(RSI, g + G_MAIN_TLS);
+        a.gaddr(RSI, G_MAIN_TLS as i64);
         a.st(RSI, 0, RSI);
         a.mov_imm(RDI, 0x1002); // ARCH_SET_FS
         a.mov_imm(RAX, 158); // arch_prctl
@@ -3229,7 +3275,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             a.lea_data(RSI, D_DBG0 + i);
             a.mov_imm(RDX, *name_len);
             a.call(l_write2);
-            a.mov_imm(RBX, g);
+            a.gaddr(RBX, 0);
             if i == 0 {
                 a.ld(RAX, RBX, G_NALLOC);
             } else if i == 1 {
@@ -3376,7 +3422,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.bind(l_noloc);
         // YERUX_BACKTRACE in the environment (cell 0 holds the initial stack: argc, argv.., 0, envp.., 0)?
         let (l_env, l_envnext, l_bt) = (a.label(), a.label(), a.label());
-        a.mov_imm(RAX, g + G_USER);
+        a.gaddr(RAX, G_USER as i64);
         a.ld(RAX, RAX, 0);
         a.test_rr(RAX);
         a.jcc(CC_E, done);
@@ -3763,7 +3809,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.size_class(RDI, RSI, RCX); // rsi = block size (smallest 2^k >= rdi), rcx = k
         a.mov_rr(RDX, RCX);
         a.shl(RDX, 3);
-        a.mov_imm(RBX, g + G_FREE as i64);
+        a.gaddr(RBX, G_FREE as i64);
         a.alu(0x01, RDX, RBX); // rdx = &free_list[class]
         a.ld(RAX, RDX, 0);
         a.test_rax();
@@ -3778,7 +3824,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         a.jmp(l_release);
         a.bind(l_bump);
-        a.mov_imm(RBX, g);
+        a.gaddr(RBX, 0);
         a.ld(RAX, RBX, G_BUMP);
         a.mov_rr(RDI, RAX);
         a.alu(0x01, RDI, RSI); // rdi = bump + size
@@ -3794,7 +3840,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.mov_imm(RSI, ARENA as i64);
         a.call(l_mmap);
         a.pop(RSI);
-        a.mov_imm(RBX, g);
+        a.gaddr(RBX, 0);
         a.st(RBX, G_BUMP, RAX);
         a.mov_rr(RCX, RAX);
         a.add_imm(RCX, ARENA);
@@ -3816,7 +3862,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.add_imm(RAX, 8);
         a.bind(l_done);
         if debug_alloc {
-            a.mov_imm(RBX, g);
+            a.gaddr(RBX, 0);
             a.atomic_inc_mem(RBX, G_NALLOC);
         }
         a.ret();
@@ -3829,7 +3875,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.raw(&[0x48, 0x85, 0xFF]); // test rdi, rdi
         a.jcc(CC_E, l_ret);
         if debug_alloc {
-            a.mov_imm(RBX, g);
+            a.gaddr(RBX, 0);
             a.atomic_inc_mem(RBX, G_NFREE);
         }
         a.ld(RSI, RDI, -8); // block size
@@ -3860,7 +3906,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         a.mov_rr(RDX, RCX);
         a.shl(RDX, 3);
-        a.mov_imm(RBX, g + G_FREE as i64);
+        a.gaddr(RBX, G_FREE as i64);
         a.alu(0x01, RDX, RBX); // rdx = &free_list[class]
         a.ld(RBX, RDX, 0);
         a.st(RDI, 0, RBX); // block.next = head
@@ -4118,7 +4164,13 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             a.lines.push((start, decl_loc));
         }
         a.cfi.clear();
+        a.func_unwind = None;
         let (slot_off, scopes) = gen_func(&mut a, &rt, f, &cold_fn, debug_scopes);
+        if os == Os::Windows {
+            let frame = a.func_unwind.take().map(|(fr, pe)| (fr, pe - start));
+            let end = a.code.len();
+            a.unwind.push(UnwindRec { begin: start, end, frame });
+        }
         if a.dwarf {
             dbg_info.funcs.push(crate::dwarf::FuncInfo {
                 name: f.name.clone(),
@@ -4286,6 +4338,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     dbg_info.lines = std::mem::take(&mut a.lines);
     Built {
         dbg: dbg_info,
+        unwind: std::mem::take(&mut a.unwind),
         code: a.code,
         blob,
         entry,
@@ -4345,8 +4398,9 @@ fn elf64(blob: &[u8], entry_off: usize) -> Vec<u8> {
 //   .rdata   : data blobs (text literals…)  (R)
 //   .data    : heap state, zero-filled      (R+W; raw part is one file-alignment unit of zeros)
 //   .idata   : import directory, ILT, IAT, names for kernel32.dll (R+W; the loader writes the IAT)
-// The image has a fixed base and no relocation table (DYNAMIC_BASE is not set), so absolute
-// addresses of the heap state can be embedded in the code.
+// The image is position independent: DYNAMIC_BASE is set (ASLR) and the code holds no absolute address (the heap
+// state, text literals, vtables and the IAT are all reached rip-relative), so the base relocation directory is empty.
+// .pdata/.xdata carry the unwind information of every generated function.
 
 const PE_BASE: u64 = 0x1_4000_0000;
 const PE_SECT_ALIGN: u64 = 0x1000;
@@ -4368,7 +4422,16 @@ struct PeLayout {
     text_size: u64,
     rdata_size: u64,
     idata_size: u64,
+    pdata_rva: u64,
+    pdata_size: u64,
+    xdata_rva: u64,
+    xdata_size: u64,
+    reloc_rva: u64,
 }
+
+/// size of the (empty) base relocation directory: one block header for page 0. The image holds no absolute
+/// address, so there is nothing to relocate; the directory only has to exist for the loader to rebase the image.
+const PE_RELOC_SIZE: u64 = 8;
 
 impl PeLayout {
     /// RVA of the import address table (inside .idata, after the descriptors and the ILT)
@@ -4385,14 +4448,24 @@ fn idata_len() -> u64 {
     n + PE_DLL.len() as u64 + 1
 }
 
-fn pe_layout(code_len: usize, blob_len: usize) -> PeLayout {
+fn pe_layout(code_len: usize, blob_len: usize, nfuncs: usize, xdata_len: usize) -> PeLayout {
     let text_rva = PE_SECT_ALIGN;
     let text_size = code_len as u64;
     let rdata_rva = text_rva + align_up(text_size, PE_SECT_ALIGN);
     let rdata_size = blob_len as u64;
     let data_rva = rdata_rva + align_up(rdata_size.max(1), PE_SECT_ALIGN);
     let idata_rva = data_rva + PE_SECT_ALIGN; // .data is one page (G_SIZE)
+    let pdata_rva = idata_rva + align_up(idata_len(), PE_SECT_ALIGN);
+    let pdata_size = 12 * nfuncs as u64;
+    let xdata_rva = pdata_rva + align_up(pdata_size.max(1), PE_SECT_ALIGN);
+    let xdata_size = xdata_len as u64;
+    let reloc_rva = xdata_rva + align_up(xdata_size.max(1), PE_SECT_ALIGN);
     PeLayout {
+        pdata_rva,
+        pdata_size,
+        xdata_rva,
+        xdata_size,
+        reloc_rva,
         text_rva,
         rdata_rva,
         data_rva,
@@ -4453,7 +4526,71 @@ fn build_idata(l: &PeLayout) -> Vec<u8> {
     o
 }
 
-fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
+/// `.pdata` (RUNTIME_FUNCTION: begin, end, unwind RVA, sorted by begin) and `.xdata` (UNWIND_INFO, shared between
+/// functions with the same frame) for the functions in `recs`. With `text_rva == 0` only the sizes are meaningful.
+///
+/// A framed function is `push rbp; mov rbp, rsp; sub rsp, frame`: unwind codes ALLOC, SET_FPREG, PUSH_NONVOL(rbp).
+/// A frameless one has no codes (rsp points at the return address throughout). The callee-saved registers the
+/// prologue stores with `mov` are not described (UWOP_SAVE_NONVOL offsets are relative to a frame base the
+/// frame size does not fit), so an unwinder recovers rip and rsp exactly but not r12-r15/rbx of the caller.
+fn unwind_tables(recs: &[UnwindRec], text_rva: u64, xdata_rva: u64) -> (Vec<u8>, usize) {
+    let mut xdata: Vec<u8> = vec![];
+    let mut seen: Vec<(Option<(i32, usize)>, u32)> = vec![];
+    let mut pdata: Vec<u8> = vec![];
+    for r in recs {
+        let at = match seen.iter().find(|(k, _)| *k == r.frame) {
+            Some((_, off)) => *off,
+            None => {
+                let off = xdata.len() as u32;
+                let mut codes: Vec<u8> = vec![];
+                let mut prolog = 0u8;
+                if let Some((frame, pe)) = r.frame {
+                    prolog = pe as u8;
+                    let f = frame as u32;
+                    if frame > 0 {
+                        if (8..=128).contains(&f) && f % 8 == 0 {
+                            codes.extend_from_slice(&[pe as u8, (((f - 8) / 8) as u8) << 4 | 2]); // ALLOC_SMALL
+                        } else if f % 8 == 0 && f / 8 <= 0xFFFF {
+                            codes.extend_from_slice(&[pe as u8, 1]); // ALLOC_LARGE, size/8 in the next slot
+                            codes.extend_from_slice(&((f / 8) as u16).to_le_bytes());
+                        } else {
+                            codes.extend_from_slice(&[pe as u8, 0x11]); // ALLOC_LARGE, 32-bit size
+                            codes.extend_from_slice(&f.to_le_bytes());
+                        }
+                    }
+                    codes.extend_from_slice(&[4, 3]); // SET_FPREG (rbp, offset 0) after `mov rbp, rsp`
+                    codes.extend_from_slice(&[1, (5 << 4) | 0]); // PUSH_NONVOL rbp after `push rbp`
+                }
+                let slots = codes.len() / 2;
+                xdata.push(1); // version 1, no flags
+                xdata.push(prolog);
+                xdata.push(slots as u8);
+                xdata.push(if r.frame.is_some() { 5 } else { 0 }); // frame register rbp, offset 0
+                xdata.extend_from_slice(&codes);
+                if slots % 2 == 1 {
+                    xdata.extend_from_slice(&[0, 0]); // the code array is padded to an even slot count
+                }
+                seen.push((r.frame, off));
+                off
+            }
+        };
+        put32(&mut pdata, (text_rva + r.begin as u64) as u32);
+        put32(&mut pdata, (text_rva + r.end as u64) as u32);
+        put32(&mut pdata, (xdata_rva + at as u64) as u32);
+    }
+    let n = xdata.len();
+    let mut out = pdata;
+    out.extend_from_slice(&xdata);
+    (out, n)
+}
+
+fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout, unwind: &[UnwindRec]) -> Vec<u8> {
+    let (tables, _) = unwind_tables(unwind, l.text_rva, l.xdata_rva);
+    let (pdata, xdata) = tables.split_at(l.pdata_size as usize);
+    let mut reloc: Vec<u8> = vec![];
+    put32(&mut reloc, 0); // page RVA
+    put32(&mut reloc, PE_RELOC_SIZE as u32); // block size: header only
+
     let idata = build_idata(l);
     let raw_text = align_up(code.len() as u64, PE_FILE_ALIGN);
     let raw_rdata = align_up(blob.len() as u64, PE_FILE_ALIGN);
@@ -4463,7 +4600,13 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     let ptr_rdata = ptr_text + raw_text;
     let ptr_data = ptr_rdata + raw_rdata;
     let ptr_idata = ptr_data + raw_data;
-    let size_of_image = l.idata_rva + align_up(l.idata_size, PE_SECT_ALIGN);
+    let raw_pdata = align_up(pdata.len() as u64, PE_FILE_ALIGN);
+    let raw_xdata = align_up(xdata.len() as u64, PE_FILE_ALIGN);
+    let raw_reloc = align_up(reloc.len() as u64, PE_FILE_ALIGN);
+    let ptr_pdata = ptr_idata + raw_idata;
+    let ptr_xdata = ptr_pdata + raw_pdata;
+    let ptr_reloc = ptr_xdata + raw_xdata;
+    let size_of_image = l.reloc_rva + align_up(PE_RELOC_SIZE, PE_SECT_ALIGN);
 
     let mut o: Vec<u8> = vec![];
     // DOS header (64 bytes) + stub; e_lfanew = 0x80
@@ -4483,7 +4626,7 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     // PE signature + COFF file header
     o.extend_from_slice(b"PE\0\0");
     put16(&mut o, 0x8664); // Machine: AMD64
-    put16(&mut o, 4); // NumberOfSections
+    put16(&mut o, 7); // NumberOfSections
     put32(&mut o, 0); // TimeDateStamp (0: reproducible output)
     put32(&mut o, 0); // PointerToSymbolTable
     put32(&mut o, 0); // NumberOfSymbols
@@ -4494,7 +4637,7 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     o.push(14); // linker version (informational)
     o.push(0);
     put32(&mut o, raw_text as u32); // SizeOfCode
-    put32(&mut o, (raw_rdata + raw_data + raw_idata) as u32); // SizeOfInitializedData
+    put32(&mut o, (raw_rdata + raw_data + raw_idata + raw_pdata + raw_xdata + raw_reloc) as u32); // SizeOfInitializedData
     put32(&mut o, 0); // SizeOfUninitializedData
     put32(&mut o, (l.text_rva + entry_off as u64) as u32); // AddressOfEntryPoint
     put32(&mut o, l.text_rva as u32); // BaseOfCode
@@ -4512,7 +4655,8 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     put32(&mut o, PE_HDR_SIZE as u32); // SizeOfHeaders
     put32(&mut o, 0); // CheckSum (not verified for user-mode exes)
     put16(&mut o, 3); // Subsystem: WINDOWS_CUI (console)
-    put16(&mut o, 0x8000); // DllCharacteristics: TERMINAL_SERVER_AWARE (no DYNAMIC_BASE: fixed base)
+    // DllCharacteristics: HIGH_ENTROPY_VA | DYNAMIC_BASE (ASLR) | NX_COMPAT | TERMINAL_SERVER_AWARE
+    put16(&mut o, 0x0020 | 0x0040 | 0x0100 | 0x8000);
     put64(&mut o, PE_STACK); // SizeOfStackReserve
     put64(&mut o, PE_STACK); // SizeOfStackCommit
     put64(&mut o, 0x100000); // SizeOfHeapReserve
@@ -4522,6 +4666,8 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     for i in 0..16 {
         let (rva, size) = match i {
             1 => (l.idata_rva, l.idata_size),                    // import table
+            3 => (l.pdata_rva, l.pdata_size),                    // exception table (.pdata)
+            5 => (l.reloc_rva, PE_RELOC_SIZE),                   // base relocations (empty)
             12 => (l.iat_rva(), 8 * (IMPORTS.len() as u64 + 1)), // IAT
             _ => (0, 0),
         };
@@ -4573,6 +4719,9 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
         ptr_idata,
         0xC000_0040,
     );
+    sect(b".pdata\0\0", l.pdata_size.max(1), l.pdata_rva, raw_pdata, ptr_pdata, 0x4000_0040); // initialized | read
+    sect(b".xdata\0\0", l.xdata_size.max(1), l.xdata_rva, raw_xdata, ptr_xdata, 0x4000_0040);
+    sect(b".reloc\0\0", PE_RELOC_SIZE, l.reloc_rva, raw_reloc, ptr_reloc, 0x4200_0040); // initialized | discardable | read
     assert!(o.len() as u64 <= PE_HDR_SIZE);
     o.resize(PE_HDR_SIZE as usize, 0);
     let put_sect = |o: &mut Vec<u8>, bytes: &[u8], raw: u64| {
@@ -4583,6 +4732,9 @@ fn pe64(code: &[u8], blob: &[u8], entry_off: usize, l: &PeLayout) -> Vec<u8> {
     put_sect(&mut o, blob, raw_rdata);
     put_sect(&mut o, &[], raw_data);
     put_sect(&mut o, &idata, raw_idata);
+    put_sect(&mut o, pdata, raw_pdata);
+    put_sect(&mut o, xdata, raw_xdata);
+    put_sect(&mut o, &reloc, raw_reloc);
     o
 }
 

@@ -1,0 +1,9 @@
+fn apply(f: view fn(Int) -> Int, x: Int) -> Int { return f(x) }
+fn double(x: Int) -> Int { return x * 2 }
+fn main() {
+  let f: fn(Int) -> Int = |x| x * 2
+  print(f(21))                         // 42
+  print(apply(double, 4))              // 8
+  let k = 100
+  print(apply(|x| x + k, 5))           // 105 (borrows k for the call)
+}

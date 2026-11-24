@@ -1,8 +1,9 @@
 import std.fs
+import std.io
 import std.kv
 
 fn main() {
-  let path = "/tmp/yerux-kv-hostile-limit"
+  let path = "/tmp/yerux-kv-hostile-limit-{io.process_id()}"
   var content = String.new()
   for i in 0..16777217 { content.push_char('x') }
   let written = fs.write(path, content).unwrap()

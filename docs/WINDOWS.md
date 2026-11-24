@@ -12,13 +12,16 @@ byte-identical to before the change (checked on all native-supported programs, n
 
 | Part | Content |
 |---|---|
-| Headers | DOS header + "cannot be run in DOS mode" stub, PE signature, COFF header (AMD64, `EXECUTABLE_IMAGE`, `LARGE_ADDRESS_AWARE`), PE32+ optional header, 16 data directories (import table, IAT), subsystem console, 6.0 versions |
+| Headers | DOS header + "cannot be run in DOS mode" stub, PE signature, COFF header (AMD64, `EXECUTABLE_IMAGE`, `LARGE_ADDRESS_AWARE`), PE32+ optional header, 16 data directories (import table, exception table, base relocations, IAT), subsystem console, 6.0 versions |
 | `.text` | code (R+X) |
 | `.rdata` | string/text constants (R) |
 | `.data` | heap state: free lists and debug counters, zero-filled (R+W) |
 | `.idata` | import directory, ILT, IAT, hint/name table for `KERNEL32.dll` (R+W) |
+| `.pdata` | one `RUNTIME_FUNCTION` per generated function, sorted (R); exception directory |
+| `.xdata` | `UNWIND_INFO` records (R) |
+| `.reloc` | empty base relocation directory (R, discardable): the image is position independent |
 
-Image base `0x140000000`, section alignment 0x1000, file alignment 0x200, timestamp 0 (reproducible output),
+Preferred image base `0x140000000` (ASLR may load it elsewhere), section alignment 0x1000, file alignment 0x200, timestamp 0 (reproducible output),
 checksum 0, stack 8 MiB reserve **and** commit.
 
 Imports (all from kernel32.dll): `GetStdHandle`, `WriteFile`, `ExitProcess`, `VirtualAlloc`, `VirtualFree`,
@@ -62,15 +65,31 @@ Everything below was run on Linux. **The result has not been run on real Windows
 
 Not verified / known gaps:
 
-* Real Windows (any version): wine implements kernel32 but is not the Windows loader. Things only real Windows
+* Real Windows, one machine: Windows Server 2022 (build 20348) in a QEMU VM, driven by `tests/windows_vm_smoke.sh`
+  (`~/vm-windows/run-vm.sh` boots it, `host.py` and the guest's `agent.ps1` pass jobs). Measured there with
+  `tests/windows_vm_smoke.ps1`: 5 programs (`01_lists`, fib, sort, textops, hashmap) print exactly the C backend's
+  output with exit code 0; every image has the ASLR flags; the loader relocated the image to `0x7FF6E88D0000` (it
+  asks for `0x140000000`; Windows picks the bias once per boot, so one boot gives one base); and for every function of
+  the 6 images `RtlLookupFunctionEntry` finds its entry and `RtlVirtualUnwind`, started after the prologue on a
+  synthetic frame, returns the planted caller rip/rsp/rbp. Result: 0 failures. Not tested on other Windows versions.
+* Other Windows versions: wine implements kernel32 but is not the Windows loader. Things only real Windows
   checks include: Windows Defender / SmartScreen reaction to an unsigned hand-made PE, the strictness of the loader
   on header fields, and behaviour under exploit protection.
-* **Fixed image base, no relocations, no ASLR** (`DYNAMIC_BASE` is not set). Heap state addresses are absolute
-  imm64 in the code. It loads wherever `0x140000000` is free (normal for a fresh process); if the system forces
-  relocation (mandatory ASLR) the program cannot start. Fix: PE `.reloc` with DIR64 entries for those immediates
-  (or rip-relative addressing of the state) and then set `DYNAMIC_BASE | HIGH_ENTROPY_VA`.
-* No `.pdata` / unwind info: fine for these programs (no SEH, no exceptions), but a debugger or the OS cannot unwind
-  through Yerux frames, and structured exception handling would need it (planned for M9).
+* **ASLR and unwind information (done).** The image sets `DYNAMIC_BASE | HIGH_ENTROPY_VA | NX_COMPAT`. The code holds
+  no absolute address: the heap state (`.data`), text literals, vtables and the IAT are reached with
+  `lea r, [rip+disp]` / rip-relative operands, so the base relocation directory (`.reloc`) is present but empty (one
+  block header) and the loader can rebase the image anywhere without patching code. `.pdata` has one
+  `RUNTIME_FUNCTION` per generated function and `.xdata` the `UNWIND_INFO` (shared between functions with the same
+  frame): a framed function (`push rbp; mov rbp, rsp; sub rsp, N`) has the codes ALLOC (small, or large with a 16- or
+  32-bit size), SET_FPREG (rbp) and PUSH_NONVOL (rbp); a frameless one has none. Limits: the callee-saved registers
+  the prologue stores with `mov` are not described (an unwinder recovers rip, rsp and rbp exactly, not rbx/r12-r15 of
+  the caller); the runtime helpers (allocator, API stubs, panic routines) have no entry and are treated as leaf
+  code; epilogues (`leave; ret`) are not in the unwinder's recognised epilogue forms, so an asynchronous unwind landing
+  exactly there is wrong; shrink-wrapping is off on Windows (code before the prologue would be described by the
+  prologue's unwind codes). Programs do not use SEH: panics still end the process.
+  Verification: `tests/pe_layout.sh` (in `run_all.sh`; `tests/pe_check.py` checks flags, `.reloc`, sorted and
+  in-range `.pdata`, well-formed `.xdata`, no `movabs` of an image address) and, on a real Windows Server 2022 VM,
+  `tests/windows_vm_smoke.sh` / `tests/windows_vm_smoke.ps1` (see below).
 * The stack is committed up front (8 MiB) instead of using the guard page, so large frames need no `__chkstk` probes.
   Deep recursion beyond 8 MiB crashes with an access violation instead of a clean message (Linux: SIGSEGV too).
 * `WriteFile` is not retried on a short write (does not happen on console, files and pipes in synchronous mode).

@@ -1,0 +1,23 @@
+// Raw Linux memory services use x86-64 intrinsic numbers on both native targets.
+fn main() {
+    let page = __syscall(9, 0, 4096, 3, 34, -1, 0)
+    print(page > 0)
+    if page <= 0 {
+        return
+    }
+
+    print(__load64(page))
+    __store64(page, 42)
+    let grown = __syscall(25, page, 4096, 8192, 1, 0, 0)
+    print(grown > 0)
+    if grown <= 0 {
+        let cleanup = __syscall(11, page, 4096, 0, 0, 0, 0)
+        return
+    }
+
+    print(__load64(grown))
+    print(__load64(grown + 4096))
+    print(__syscall(10, grown, 8192, 1, 0, 0, 0))
+    print(__load64(grown))
+    print(__syscall(11, grown, 8192, 0, 0, 0, 0))
+}
