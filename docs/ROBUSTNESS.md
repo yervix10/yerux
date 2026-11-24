@@ -144,3 +144,10 @@ subnormals and signed zero and reports an out-of-range error when rounding overf
 `tests/std_json_float_limits.yx` checks exact bits, halfway rounding, overflow, long decimals
 and round trips in both backends. A separate comparison against Python's binary64 conversion
 matched all 6,000 seeded decimal inputs in each backend (seed 27015).
+
+### Open — selfhost lexer and large hexadecimal UInt64 literals
+
+`fn main() { print(0x8000000000000000u64) }` is valid in the Rust compiler.
+The selfhost lexer accumulates hexadecimal digits in a signed `Int` and panics
+when the literal exceeds its range. The JSON rounding regression uses the
+equivalent decimal spelling `9223372036854775808u64`, which the lexer supports.
