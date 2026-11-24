@@ -57,8 +57,8 @@ done
 [[ -n ${SELFHOST_ERRORS:-} ]] && cp "$tmp/errors.tsv" "$SELFHOST_ERRORS"
 printf 'selfhost error corpus: %d of %d tests/e*.yx give the same first error as the Rust compiler (%d differ in wording, %d fail another way, %d are accepted)\n' \
   "$same" "$errors_total" "$differs" "$other" "$accepts"
-if [[ $same -lt ${SELFHOST_ERROR_FLOOR:-68} ]]; then
-  printf 'selfhost error corpus: fell below %d matching diagnostics\n' "${SELFHOST_ERROR_FLOOR:-68}" >&2
+if [[ $same -lt ${SELFHOST_ERROR_FLOOR:-90} ]]; then
+  printf 'selfhost error corpus: fell below %d matching diagnostics\n' "${SELFHOST_ERROR_FLOOR:-90}" >&2
   exit 1
 fi
 cp -R examples/project "$tmp/project"
@@ -241,6 +241,7 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
       cat "$tmp/source.err" >&2
     else
       skipped=$((skipped + 1))
+      printf 'selfhost codegen: outside subset: %s\n' "$file" >&2
       record_rejection "$tmp/source.err"
     fi
     continue
@@ -268,6 +269,7 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
   if [[ $status != 0 ]]; then
     if [[ ($status == 1 || $status == 3) ]] && ! required "$file"; then
       skipped=$((skipped + 1))
+      printf 'selfhost codegen: outside subset: %s\n' "$file" >&2
       record_rejection "$tmp/codegen.err"
     else
       fail "generator exited $status"
@@ -316,5 +318,5 @@ if ((skipped > 0)); then
     printf '%4d  %s\n' "${reasons[$category]}" "$category"
   done | sort -k1,1nr -k2
 fi
-[[ $identical -ge 458 && $panics -ge 101 && $skipped == 0 && $rejections == 1 &&
+[[ $identical -ge 483 && $panics -ge 101 && $skipped == 0 && $rejections == 1 &&
    $failures == 0 && $concurrency_matches == "${#concurrency_cases[@]}" ]]

@@ -1040,6 +1040,14 @@ fn option_result_method(gen: mut Generator, tree: view List<ast.AstNode>, receiv
     let default = temp(gen, tree, ty, transfer(gen, tree, fallback))
     return temp(gen, tree, ty, "{owned.code}.tag == 1 ? {transfer(gen, tree, payload)} : {transfer(gen, tree, default)}")
   }
+  if name == "ok_or" && base == "Option" {
+    let message = expression(gen, tree, args + 1)
+    let error = temp(gen, tree, String.from("String"), "nx_str_from({text_view(message)})")
+    prepare_type(gen, tree, ty)
+    let c = c_type(gen, tree, ty)
+    return temp(gen, tree, ty,
+      "{owned.code}.tag == 1 ? ({c}){{ .tag = 1, .v1.p0 = {transfer(gen, tree, payload)} }} : ({c}){{ .tag = 2, .v2.p0 = {transfer(gen, tree, error)} }}")
+  }
   if name == "or" && base == "Option" {
     let arg = expression(gen, tree, args + 1)
     return temp(gen, tree, ty, "{owned.code}.tag == 1 ? {transfer(gen, tree, owned)} : {transfer(gen, tree, arg)}")
@@ -1372,6 +1380,10 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
     }
     if name == "assert_eq" {
       let left = expression(gen, tree, args + 1)
+      if left.ty == "String" || left.ty == "Text" {
+        let right = expression(gen, tree, tree.at(args + 1).end)
+        return temp(gen, tree, ty, "nx_assert(sc_compare({text_view(left)}, {text_view(right)}) == 0)")
+      }
       let saved = temp(gen, tree, left.ty, left.code)
       let right = expression(gen, tree, tree.at(args + 1).end)
       return temp(gen, tree, ty, "nx_assert({saved.code} == {right.code})")

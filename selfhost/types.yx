@@ -46,6 +46,7 @@ struct Types {
   defer_floor: Int,
   frozen: List<Frozen>,
   site_span: String,
+  operand: Bool,
   trace: Bool,
   expressions: List<String>,
   borrowed_closures: List<Bool>,
@@ -1250,10 +1251,14 @@ fn binary(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view
   var lhs = unknown()
   var rhs = unknown()
   if scalar_literal(tree, left) && !scalar_literal(tree, right) {
+    types.operand = true
     rhs = infer(types, tree, right, hint)
+    types.operand = true
     lhs = infer(types, tree, left, rhs)
   } else {
+    types.operand = true
     lhs = infer(types, tree, left, hint)
+    types.operand = true
     rhs = infer(types, tree, right, lhs)
   }
   let a = numeric_type(lhs)
@@ -1529,8 +1534,152 @@ fn const_type(types: mut Types, tree: view List<ast.AstNode>, name: view String)
   return unknown()
 }
 
+// Integer intervals, as [lo, hi], or empty when the expression's range is not known. Only facts that
+// cannot be refined by control flow are used: literals, immutable `let` and `for` variables over literal
+// bounds, variables declared `Int<lo..hi>`, and + - * of those.
+fn bound_pair(spelling: view String) -> List<Int> {
+  var pair = List<Int>.new()
+  if !spelling.starts_with("Int<") || !spelling.ends_with(">") { return pair }
+  let parts = spelling.slice(4, spelling.len() - 1).split("..")
+  if parts.len() != 2 { return pair }
+  var lo = 0 - 4000000000000000000
+  var hi = 4000000000000000000
+  if parts.at(0).len() > 0 && !parts.at(0).parse_int(lo) { return pair }
+  if parts.at(1).len() > 0 && !parts.at(1).parse_int(hi) { return pair }
+  pair.push(lo)
+  pair.push(hi)
+  return pair
+}
+
+fn literal_value(tree: view List<ast.AstNode>, node: Int, out: mut Int) -> Bool {
+  if tree.at(node).tag == "Int" { return tree.at(ast.child(tree, node, 0)).tag.parse_int(out) }
+  if tree.at(node).tag == "Un" {
+    let sign = ast.name_at(tree, node, 0)
+    if sign != "-" { return false }
+    let inner = ast.child(tree, node, 1)
+    var n = 0
+    if tree.at(inner).tag == "Int" && tree.at(ast.child(tree, inner, 0)).tag.parse_int(n) {
+      out = 0 - n
+      return true
+    }
+  }
+  return false
+}
+
+// A variable whose value control flow can narrow or change: it is assigned, or it appears in a condition or
+// a `match` subject somewhere. Its interval is not a fact about every use, so no error is derived from it.
+fn refined(types: view Types, tree: view List<ast.AstNode>, id: Int) -> Bool {
+  for i in 0..tree.len() {
+    let tag = String.from(tree.at(i).tag)
+    var head = -1
+    if tag == "If" || tag == "IfExpr" || tag == "While" || tag == "Match" || tag == "MatchExpr" || tag == "Assign" ||
+        tag == "Bin" || tag == "Un" || tag == "Guard" {
+      if tree.at(i).end > i + 1 { head = ast.child(tree, i, 0) }
+    }
+    if tag == "Bin" || tag == "Un" {
+      head = -1
+      if tag == "Bin" {
+        let op = ast.name_at(tree, i, 0)
+        if op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=" || op == "&&" || op == "||" {
+          head = i
+        }
+      }
+    }
+    if head >= 0 {
+      for j in head..tree.at(head).end {
+        if types.identities.at(j) == id { return true }
+      }
+    }
+  }
+  return false
+}
+
+fn interval(types: view Types, tree: view List<ast.AstNode>, node: Int, depth: Int) -> List<Int> {
+  var none = List<Int>.new()
+  if depth > 8 { return none }
+  var n = 0
+  if literal_value(tree, node, n) {
+    none.push(n)
+    none.push(n)
+    return none
+  }
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Var" {
+    let id = types.identities.at(node)
+    if id < 0 || refined(types, tree, id) { return none }
+    let declared = bound_pair(types.bindings.at(id))
+    if declared.len() == 2 { return declared }
+    let decl = types.declarations.at(id)
+    if tree.at(decl).tag == "Let" && tree.at(ast.child(tree, decl, 1)).tag == "false" {
+      return interval(types, tree, ast.child(tree, decl, 2), depth + 1)
+    }
+    if tree.at(decl).tag == "For" && tree.at(ast.child(tree, decl, 2)).tag == "false" {
+      let iter = ast.child(tree, decl, 3)
+      if tree.at(iter).tag == "IterRange" {
+        let first = interval(types, tree, ast.child(tree, iter, 0), depth + 1)
+        let last = interval(types, tree, ast.child(tree, iter, 1), depth + 1)
+        if first.len() == 2 && last.len() == 2 {
+          var top = last.at(1)
+          if tree.at(ast.child(tree, iter, 2)).tag != "true" { top = top - 1 }
+          if first.at(0) <= top {
+            none.push(first.at(0))
+            none.push(top)
+          }
+        }
+      }
+    }
+    return none
+  }
+  if tag == "Bin" {
+    let op = ast.name_at(tree, node, 0)
+    if op != "+" && op != "-" && op != "*" { return none }
+    let a = interval(types, tree, ast.child(tree, node, 1), depth + 1)
+    let b = interval(types, tree, ast.child(tree, node, 2), depth + 1)
+    if a.len() != 2 || b.len() != 2 { return none }
+    var lo = 0
+    var hi = 0
+    if op == "+" {
+      lo = a.at(0) + b.at(0)
+      hi = a.at(1) + b.at(1)
+    } else if op == "-" {
+      lo = a.at(0) - b.at(1)
+      hi = a.at(1) - b.at(0)
+    } else {
+      var corners = List<Int>.new()
+      corners.push(a.at(0) * b.at(0))
+      corners.push(a.at(0) * b.at(1))
+      corners.push(a.at(1) * b.at(0))
+      corners.push(a.at(1) * b.at(1))
+      lo = corners.at(0)
+      hi = corners.at(0)
+      for c in corners {
+        if c < lo { lo = c }
+        if c > hi { hi = c }
+      }
+    }
+    if lo < 0 - 1000000000000000000 || hi > 1000000000000000000 { return none }
+    none.push(lo)
+    none.push(hi)
+  }
+  return none
+}
+
+fn check_slot(types: mut Types, tree: view List<ast.AstNode>, node: Int, expected: view String) {
+  let want = bound_pair(expected)
+  if want.len() != 2 { return }
+  let have = interval(types, tree, node, 0)
+  if have.len() != 2 { return }
+  if have.at(0) >= want.at(0) && have.at(1) <= want.at(1) { return }
+  var n = 0
+  if literal_value(tree, node, n) { issue(types, "the value {n} does not fit {expected}") }
+  else { issue(types, "this value may be outside {expected}") }
+}
+
 fn infer(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: view String) -> String {
+  let operand = types.operand
+  types.operand = false
   let ty = infer_expr(types, tree, index, hint)
+  if !operand && hint.starts_with("Int<") && integer(numeric_type(ty)) { check_slot(types, tree, index, hint) }
   let here = span_of(tree, index)
   if here != "" { types.site_span = move here }
   if !types.trace { types.expressions.set(index, String.from(ty)) }
@@ -1557,7 +1706,14 @@ fn infer_field(types: mut Types, tree: view List<ast.AstNode>, index: Int, acces
     read_place(types, binding, root, place)
   } else if tree.at(node).tag == "Field" {
     receiver = infer_field(types, tree, node, access, unknown())
-  } else { receiver = infer(types, tree, node, unknown()) }
+  } else {
+    receiver = infer(types, tree, node, unknown())
+    // `move t.s` parses as `(move t).s`
+    if tree.at(node).tag == "Move" && owns_value(types, receiver) {
+      let held = ast.name_at(tree, node, 0)
+      issue(types, "cannot move '{held}.{name}' out of '{held}': a field cannot be moved out of an owned {type_terms.pretty(receiver)}")
+    }
+  }
   if !types.trace { types.expressions.set(node, String.from(receiver)) }
   let shape = shape_index(types, receiver)
   if shape >= 0 && !types.shapes.at(shape).is_enum {
@@ -1675,10 +1831,11 @@ fn bootstrap_call(types: mut Types, tree: view List<ast.AstNode>, name: view Str
     }
     let lhs = infer(types, tree, args + 1, unknown())
     let number = numeric_type(lhs)
-    if !integer(number) && !floating(number) && lhs != "Bool" && lhs != "?" {
-      issue(types, "assert_eq compares numbers or Bool values, not {lhs}")
+    if !integer(number) && !floating(number) && lhs != "Bool" && lhs != "?" && lhs != "String" && lhs != "Text" {
+      issue(types, "assert_eq compares numbers, Bool or String values, not {lhs}")
     }
-    expect_type(types, lhs, infer(types, tree, tree.at(args + 1).end, lhs))
+    let rhs = infer(types, tree, tree.at(args + 1).end, lhs)
+    if !((lhs == "String" || lhs == "Text") && (rhs == "String" || rhs == "Text")) { expect_type(types, lhs, rhs) }
     return unit()
   }
   if math_arity(name) != 0 { return check_math(types, tree, name, args, String.new()) }
@@ -1870,6 +2027,12 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     if owner != "?" { return member(types, tree, owner, name, args, -1, hint) }
     let receiver = infer(types, tree, node, unknown())
     let handle = type_terms.base(receiver)
+    if name == "drop" && child_count(tree, args) == 0 {
+      let held = shape_index(types, receiver)
+      if (held >= 0 && types.shapes.at(held).user_drop) || types.generics.contains(receiver) {
+        issue(types, "`drop` of {type_terms.pretty(receiver)} cannot be called directly")
+      }
+    }
     if (name == "get" || name == "locked_value") && (handle == "Shared" || handle == "Locked") {
       types.box_places.set(index, true)
     }
@@ -1912,6 +2075,7 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
       if tree.at(value).tag == "Int" || tree.at(value).tag == "NumT" {
         return literal_integer(types, tree, value, hint, true)
       }
+      types.operand = true
       let ty = numeric_type(infer(types, tree, value, hint))
       if ty.starts_with("UInt") {
         issue(types, "cannot negate a {ty}: unsigned numbers have no minus sign")
@@ -1962,6 +2126,26 @@ fn whole_pattern(tree: view List<ast.AstNode>, node: Int) -> Bool {
   return node < 0 || tree.at(node).tag == "_" || tree.at(node).tag == "Wild"
 }
 
+// The names a pattern binds (an or-pattern contributes its first alternative).
+fn pattern_names(tree: view List<ast.AstNode>, node: Int, out: mut List<String>) {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Bind" || tag == "UnpackBind" {
+    let name = ast.name_at(tree, node, 0)
+    if name != "_" { out.push(move name) }
+    if tag == "Bind" { pattern_names(tree, ast.child(tree, node, 1), out) }
+  } else if tag == "Variant" || tag == "TuplePat" || tag == "UnpackTuple" || tag == "Or" {
+    var offset = 0
+    if tag == "Variant" { offset = 1 }
+    let items = ast.child(tree, node, offset)
+    var i = items + 1
+    while i < tree.at(items).end {
+      pattern_names(tree, i, out)
+      if tag == "Or" { break }
+      i = tree.at(i).end
+    }
+  }
+}
+
 fn check_pattern(types: mut Types, tree: view List<ast.AstNode>, node: Int, subject: view String, mode: view String, borrows: mut Bool) {
   let tag = String.from(tree.at(node).tag)
   if tag == "Bind" {
@@ -1977,8 +2161,20 @@ fn check_pattern(types: mut Types, tree: view List<ast.AstNode>, node: Int, subj
   } else if tag == "Or" {
     let items = ast.child(tree, node, 0)
     var i = items + 1
+    var first = List<String>.new()
+    var seen_first = false
     while i < tree.at(items).end {
       check_pattern(types, tree, i, subject, mode, borrows)
+      var names = List<String>.new()
+      pattern_names(tree, i, names)
+      if !seen_first {
+        first = move names
+        seen_first = true
+      } else {
+        var same = names.len() == first.len()
+        for n in names { if !first.contains(n) { same = false } }
+        if !same { issue(types, String.from("every alternative of an or-pattern must bind the same names")) }
+      }
       i = tree.at(i).end
     }
   } else if tag == "Variant" {
@@ -2259,11 +2455,22 @@ fn check_loop(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
       expect_type(types, lo, hi)
       element = numeric_type(lo)
       let step = ast.child(tree, index, 4)
-      if tree.at(step).tag != "_" { expect_type(types, element, infer(types, tree, step, element)) }
+      if tree.at(step).tag != "_" {
+        expect_type(types, element, infer(types, tree, step, element))
+        var literal_step = 1
+        if literal_value(tree, step, literal_step) && literal_step <= 0 {
+          issue(types, String.from("the step of a `for` loop must be positive"))
+        }
+      }
     } else {
       let iterable = infer(types, tree, iter, unknown())
       element = type_terms.element(iterable)
-      if iterable == "Chars" { element = String.from("Char") }
+      if iterable == "Chars" {
+        element = String.from("Char")
+        if tree.at(ast.child(tree, index, 2)).tag == "true" {
+          issue(types, String.from("a `for` over `chars()` cannot be `mut`: characters are read-only"))
+        }
+      }
       let iterable_base = type_terms.base(iterable)
       if iterable_base == "Pieces" {
         let piece_args = type_terms.arguments(iterable)
@@ -2403,6 +2610,67 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
 fn borrows_element(types: view Types, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Bool {
   if tree.at(node).tag != "Method" || tree.at(ast.child(tree, node, 1)).tag != "6174" { return false }
   return owns_value(types, ty) && root_place(types, tree, node) >= 0
+}
+
+// Value of a `const` initializer (literals, earlier consts, + - * / % and unary minus), checked like run-time
+// arithmetic. False when the value is not an integer we can compute; errors are reported here.
+fn fold_checked(types: mut Types, tree: view List<ast.AstNode>, node: Int, names: view List<String>,
+    values: view List<Int>, later: view List<String>, out: mut Int) -> Bool {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Int" { return tree.at(ast.child(tree, node, 0)).tag.parse_int(out) }
+  if tag == "Call" || tag == "Method" {
+    issue(types, String.from("a const must be computed from literals, other consts and arithmetic"))
+    return false
+  }
+  if tag == "Var" {
+    let name = ast.name_at(tree, node, 0)
+    for i in 0..names.len() {
+      if names.at(i) == name {
+        out = values.at(i)
+        return true
+      }
+    }
+    if later.contains(name) { issue(types, "const '{name}' is used before its definition") }
+    return false
+  }
+  if tag == "Un" {
+    let op = ast.name_at(tree, node, 0)
+    var inner = 0
+    if op != "-" || !fold_checked(types, tree, ast.child(tree, node, 1), names, values, later, inner) { return false }
+    out = 0 - inner
+    return true
+  }
+  if tag == "Bin" {
+    let op = ast.name_at(tree, node, 0)
+    var a = 0
+    var b = 0
+    if !fold_checked(types, tree, ast.child(tree, node, 1), names, values, later, a) { return false }
+    if !fold_checked(types, tree, ast.child(tree, node, 2), names, values, later, b) { return false }
+    let top = 9223372036854775807
+    var overflow = false
+    if op == "+" {
+      if (b > 0 && a > top - b) || (b < 0 && a < 0 - top - 1 - b) { overflow = true } else { out = a + b }
+    } else if op == "-" {
+      if (b < 0 && a > top + b) || (b > 0 && a < 0 - top - 1 + b) { overflow = true } else { out = a - b }
+    } else if op == "*" {
+      let wide = a.to_float() * b.to_float()
+      if wide > 9.2e18 || wide < 0.0 - 9.2e18 { overflow = true } else { out = a * b }
+    } else if op == "/" || op == "%" {
+      if b == 0 {
+        issue(types, String.from("division by zero while evaluating the constant"))
+        return false
+      }
+      if b == 0 - 1 && a == 0 - top - 1 { overflow = true }
+      else if op == "/" { out = a / b }
+      else { out = a % b }
+    } else { return false }
+    if overflow {
+      issue(types, String.from("this overflows while evaluating the constant"))
+      return false
+    }
+    return true
+  }
+  return false
 }
 
 fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
@@ -2687,6 +2955,7 @@ fn declare_prelude(types: mut Types) {
   prelude_method(types, option, "unwrap", "Own", "T", "", "Own")
   prelude_method(types, option, "expect", "Own", "T", "String", "View")
   prelude_method(types, option, "unwrap_or", "Own", "T", "T", "Own")
+  prelude_method(types, option, "ok_or", "Own", "Result<T, String>", "String", "View")
   prelude_method(types, option, "or", "Own", "Option<T>", "Option<T>", "Own")
   let result = String.from("Result<T, E>")
   prelude_method(types, result, "clone", "View", "Result<T, E>", "", "Own")
@@ -2821,7 +3090,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     function_params: -1, impl_params: -1, return_type: unknown(),
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
-    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(),
+    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(), operand: false,
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),
@@ -2920,6 +3189,15 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     }
     i = tree.at(i).end
   }
+  var const_names = List<String>.new()
+  var const_values = List<Int>.new()
+  var const_later = List<String>.new()
+  var scan = items + 1
+  while scan < tree.at(items).end {
+    let item = ast.child(tree, scan, 2)
+    if tree.at(item).tag == "Const" { const_later.push(ast.name_at(tree, item, 0)) }
+    scan = tree.at(scan).end
+  }
   var constant = items + 1
   while constant < tree.at(items).end {
     let item = ast.child(tree, constant, 2)
@@ -2928,6 +3206,19 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
       var declared = unknown()
       if tree.at(kind).tag != "_" { declared = source_type(types, tree, kind) }
       let found = infer(types, tree, ast.child(tree, item, 2), declared)
+      var value = 0
+      let const_name = ast.name_at(tree, item, 0)
+      // consts defined further down are "later" until their own turn
+      var pending = List<String>.new()
+      var passed = false
+      for known in const_later {
+        if passed { pending.push(String.from(known)) }
+        if known == const_name { passed = true }
+      }
+      if fold_checked(types, tree, ast.child(tree, item, 2), const_names, const_values, pending, value) {
+        const_names.push(String.from(const_name))
+        const_values.push(value)
+      }
     }
     constant = tree.at(constant).end
   }

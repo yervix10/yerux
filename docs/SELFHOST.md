@@ -261,9 +261,9 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilt 7 of 7 executables with byte-identical C. The
-latest run matched **465 of 466 candidates**, including 102 runtime
+latest run matched **483 of 484 candidates**, including 103 runtime
 panics. It reported zero candidates outside the supported subset, one
-expected type rejection (`rejected_types.yx`, the 466th) and zero mismatches.
+expected type rejection (`rejected_types.yx`, the 484th) and zero mismatches.
 The previous run matched 458 of 459 candidates with 101 matching runtime
 panics.
 
@@ -277,15 +277,23 @@ draws it. Limits: the span is the token of that expression, not the whole
 expression; errors in imported modules and in the prelude are printed without a
 span. `tests/selfhost/spans/bad_*.yx` with `.err` files fix three drawings.
 
-Error corpus (`tests/e*.yx`, 219 programs the Rust compiler rejects): the
-self-hosted driver gives the **same first error as the Rust compiler for 68**,
-rejects 30 with different wording, fails another way on 48 (parser errors that
+Error corpus (`tests/e*.yx`, 224 programs the Rust compiler rejects): the
+self-hosted driver gives the **same first error as the Rust compiler for 90**,
+rejects 31 with different wording, fails another way on 47 (parser errors that
 print `SyntaxError:N`, C compiler errors, bootstrap `codegen:` limits) and
-**accepts 73**. The accepted ones are checks the self-hosted type stage does
-not implement yet (integer range analysis `Int<a..b>`, `const` evaluation,
-object safety, slice type placement, `Drop` rules, thread transfer rules...).
+**accepts 56**. Newly implemented in the type stage: provable `Int<a..b>`
+range violations (literals, immutable `let`s, `for` variables over literal
+bounds and `+ - *` of those, at returns, arguments, fields, `push` and
+annotated `let`s; a variable that is assigned or appears in a condition or
+`match` subject is never judged, so flow narrowing stays sound), `const`
+evaluation (calls rejected, forward use, checked overflow and division by
+zero), moving a field out of an owned struct, calling `drop` directly,
+negative `for` steps, `for mut` over `chars()`, and or-patterns that bind
+different names. Still accepted: flow-sensitive range facts (`if n > 5`
+narrowing, `var` increments), object safety (`dyn`), slice type placement,
+`Drop` self-replacement, thread transfer rules, `unsafe` for FFI.
 `tests/selfhost_codegen.sh` prints these counts and fails if the matching
-number falls below 68.
+number falls below 90 (the program floor is now 483).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
@@ -329,7 +337,7 @@ and category for each unsupported file.
 
 As of 2026-11-23, the driver compiles all seven `selfhost/*.yx` stages
 and itself without the Rust compiler (`--stage2`), and reproduces itself
-byte for byte. It builds `examples/project` and matches 465 program executions in the corpus.
+byte for byte. It builds `examples/project` and matches 483 program executions in the corpus.
 Replacing the default compiler requires closing these gaps.
 
 1. native
