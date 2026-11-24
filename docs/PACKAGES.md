@@ -69,6 +69,13 @@ ciclos producen errores. Las fuentes disponibles son rutas y repositorios Git.
 `src/curves.yx` del mismo paquete. Se aplican las reglas habituales de
 visibilidad de `pub` y los alias de `import ... as ...`.
 
+Un import local (`import util`) se busca en la carpeta del archivo que se
+compila, `<root>` (SPEC.md, sección 6). En un proyecto el archivo principal es
+`src/main.yx`, así que los imports locales se resuelven en `src/`. Un
+`yerux run main.yx` desde la raíz del paquete no ve `src/`, y falla con
+`cannot find module`. Los nombres de dependencias se resuelven con
+`src/<nombre>.yx` o `src/lib.yx`; tests/spec_conformance.sh lo verifica.
+
 Cada módulo puede importar módulos locales y dependencias directas de su
 propio paquete. Para importar una dependencia transitiva desde la aplicación,
 declárala también en el manifiesto de la aplicación. Los comandos que reciben

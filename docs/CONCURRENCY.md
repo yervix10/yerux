@@ -190,6 +190,12 @@ atomic update workloads with serial expected results.
 > without `move`, `Locked.new_ordered`, `try_with`, `Runtime.spawn_detached`, `lock x { }` are **not**
 > implemented and not part of the frozen surface.
 
+> **Status of sections 1-12.** These sections are the original design. What the compiler does today,
+> checked by tests/spec_conformance.sh: `spawn { }` without `move` is an error ("spawn requires a
+> move closure"); `Channel<T>.new(capacity: n)` is a parse error (use `Sender<T>.bounded(n)`); `Task<T>` is an
+> unknown type (use `JoinHandle<T>`); `parallel for` rejects `step`. The implemented forms are in
+> "Runtime implementation status" and "Current APIs" above, and they win where they differ.
+
 ## 1. Motivation
 
 - Parallelism is where the language promise ("as fast as Rust, safer, gentler") is most at risk. Rust gets data-race freedom through `Send`, `Sync`, `'static`, `Arc`, `Mutex` guards and lifetimes in scoped threads. That is the steepest part of its learning curve.
@@ -198,7 +204,7 @@ atomic update workloads with serial expected results.
 
 ## 2. The model in five rules
 
-1. A **task** is started by `spawn` inside a `scope` block. All tasks of a scope are joined before the scope ends. Tasks cannot outlive their scope, so a task may *borrow* from the enclosing function.
+1. A **task** is started by `spawn` inside a `scope` block. All tasks of a scope are joined before the scope ends (a standalone `spawn` statement is joined when its enclosing block exits, see SPEC.md Threads). Tasks cannot outlive their scope, so a task may *borrow* from the enclosing function.
 2. A task body is a closure. What it uses from outside is either **moved in** (`move x`) or **borrowed** (read-only, or `mut` if nobody else can touch it meanwhile).
 3. While any task of a scope may be running, a variable lent to a task read-only is frozen for the parent (it cannot be written), and a variable lent `mut` is unusable by the parent. This is the same rule as "a variable lent as `mut` cannot appear twice in one call", extended across the scope.
 4. To share one value between tasks that **outlive no common scope**, or that need **simultaneous access**, use one of three library types: `Shared<T>` (read-only), `Locked<T>` (mutual exclusion), `Atomic<Int>` (lock-free counter/flag). They are the only types that can be reached from two tasks at once.
