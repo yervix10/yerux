@@ -1,0 +1,31 @@
+// mdconv: converts Markdown to an HTML fragment.
+//
+//   mdconv [FILE]        reads FILE, or standard input when no file is given; writes HTML to stdout
+//
+// Exit status: 0 ok, 1 unreadable input.
+import render
+import std.args
+import std.io
+
+fn main() {
+  var source = String.new()
+  let argv = args.parse_process()
+  if argv.subcommand.len() > 0 {
+    match io.read_file(argv.subcommand) {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("mdconv: {argv.subcommand}: {e.message}")
+        io.exit(1)
+      }
+    }
+  } else {
+    match io.read_all() {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("mdconv: {e.message}")
+        io.exit(1)
+      }
+    }
+  }
+  print(render.to_html(source).trim_end())
+}

@@ -1,0 +1,41 @@
+// The document model of mdconv: a block tree whose leaves hold inline spans.
+// Every recursive child sits inside a List, so the enums have a known size.
+
+pub enum Inline {
+  Text(String),
+  Code(String),
+  Strong(List<Inline>),
+  Emph(List<Inline>),
+  // destination, label
+  Link(String, List<Inline>),
+  // source, alternative text
+  Image(String, String),
+}
+
+pub enum Block {
+  // level 1..6
+  Heading(Int, List<Inline>),
+  Para(List<Inline>),
+  // language (may be empty), literal text without the fences
+  Fence(String, String),
+  Quote(List<Block>),
+  // ordered?, one inline list per item
+  ListBlock(Bool, List<List<Inline>>),
+  Rule,
+}
+
+// Plain text of a span list, used for heading ids and for tests.
+pub fn plain(spans: view List<Inline>) -> String {
+  var out = String.new()
+  for s in spans {
+    match s {
+      Text(t) => { out.push_str(t) }
+      Code(t) => { out.push_str(t) }
+      Strong(inner) => { out.push_str(plain(inner)) }
+      Emph(inner) => { out.push_str(plain(inner)) }
+      Link(_, label) => { out.push_str(plain(label)) }
+      Image(_, alt) => { out.push_str(alt) }
+    }
+  }
+  return out
+}

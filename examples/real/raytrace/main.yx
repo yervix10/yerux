@@ -1,0 +1,54 @@
+// raytrace: renders the demo scene to a PPM image.
+//
+//   raytrace WIDTH HEIGHT [FILE]     writes P3 PPM to FILE, or to standard output
+//
+// Exit status: 0 ok, 1 unwritable output, 2 usage error.
+import demo
+import ppm
+import render
+import std.env
+import std.io
+import std.text
+
+fn main() {
+  let argv = env.args()
+  if argv.len() < 3 || argv.len() > 4 {
+    io.eprintln("usage: raytrace WIDTH HEIGHT [FILE]")
+    io.exit(2)
+  }
+  var dims = List<Int>.new()
+  for i in 1..3 {
+    match text.parse_int(argv.at(i)) {
+      Ok(n) => {
+        if n < 1 || n > 4000 {
+          io.eprintln("raytrace: size must be between 1 and 4000")
+          io.exit(2)
+        }
+        dims.push(n)
+      }
+      Err(e) => {
+        io.eprintln("raytrace: {e}")
+        io.exit(2)
+      }
+    }
+  }
+  let img = render.render(demo.demo_scene(), dims.at(0), dims.at(1), 0.8)
+  let data = ppm.encode(img)
+  if argv.len() == 4 {
+    match io.write_file(argv.at(3), data) {
+      Ok(_) => {}
+      Err(e) => {
+        io.eprintln("raytrace: {argv.at(3)}: {e.message}")
+        io.exit(1)
+      }
+    }
+  } else {
+    match io.write_stdout(data) {
+      Ok(_) => {}
+      Err(e) => {
+        io.eprintln("raytrace: {e.message}")
+        io.exit(1)
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+// The demonstration scene: a checker-free ground plane, a matte red sphere, a blue sphere and a mirror.
+import scene
+import vec
+
+pub fn demo_scene() -> scene.Scene {
+  var objects = List<scene.Object>.new()
+  objects.push(scene.Object {
+    shape: scene.Shape.Plane(vec.v3(0.0, -1.0, 0.0), vec.v3(0.0, 1.0, 0.0)),
+    surface: scene.Surface.Matte(vec.v3(0.6, 0.6, 0.6)),
+  })
+  objects.push(scene.Object {
+    shape: scene.Shape.Sphere(vec.v3(-1.0, 0.0, 4.0), 1.0),
+    surface: scene.Surface.Matte(vec.v3(0.9, 0.2, 0.2)),
+  })
+  objects.push(scene.Object {
+    shape: scene.Shape.Sphere(vec.v3(0.0, -0.5, 2.5), 0.5),
+    surface: scene.Surface.Matte(vec.v3(0.2, 0.3, 0.9)),
+  })
+  objects.push(scene.Object {
+    shape: scene.Shape.Sphere(vec.v3(1.0, 0.0, 5.0), 1.0),
+    surface: scene.Surface.Mirror(vec.v3(0.95, 0.95, 0.95), 0.7),
+  })
+  return scene.Scene {
+    objects: move objects,
+    light: scene.Light { position: vec.v3(-3.0, 4.0, -1.0), intensity: 0.9 },
+    sky_top: vec.v3(0.5, 0.7, 1.0),
+    sky_bottom: vec.v3(1.0, 1.0, 1.0),
+  }
+}
