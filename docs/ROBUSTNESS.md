@@ -83,9 +83,8 @@ Known difference, not changed: `String.reserve(9223372036854775807)` reports `ou
 
 ### Decoder audit
 
-There is no separate `std.url` module. TOML's supported escapes and literal bytes are converted to Unicode scalars
-by `unquote`, so it cannot emit malformed UTF-8. It does misdecode non-ASCII literals. For example,
-`toml.get_string("name = \"é\"", "name")` returns `"Ã©"`. CSV preserves valid UTF-8 because its delimiters are ASCII.
+There is no separate `std.url` module. CSV preserves valid UTF-8 because its delimiters are ASCII.
+The second round fixed TOML's handling of malformed headers and non-ASCII literals.
 
 Some interfaces carry arbitrary bytes in a String. For example, `compress.decompress` accepts an RLE pair assembled
 with `push_byte(1)` and `push_byte(255)` and returns byte 255, as permitted by its byte-oriented format.
@@ -98,7 +97,50 @@ bytes. Moving these byte-oriented interfaces to byte buffers requires a separate
 * Backends: 0 disagreements between C, native and native `--no-opt` once the harnesses ignore the native-only
   location lines.
 * Runtime: 1 inconsistency fixed (negative allocation sizes); ASAN/UBSAN and TSAN clean on the real programs.
-* Stdlib: four decoder and timeout findings closed. TOML's Unicode decoding and the byte-oriented interfaces
-  listed above remain open.
+* Stdlib: the four decoder and timeout findings of the first round are closed. The byte-oriented interfaces
+  listed above still use String.
 * Open: the `String.reserve` message difference above. Fuzzers are bounded in time, so a longer run with new
   seeds is the next step (`python3 tests/fuzz.py -n 5000 --seed N`).
+
+## 6. Second robustness round
+
+| Run | Seed | Cases and result |
+|---|---|---|
+| `python3 tests/fuzz_text.py --cases 10000 --seed 703513 --asan --timeout 90` | 703513 | 10,000 inputs each for JSON, TOML, HTTP, hex and base64. 50,000 cases each in C, x86-64 native and ASan/UBSan C. Zero model failures or output differences. |
+| `tests/http_server_fuzz.yx` built and run with arguments `20000 411091` on both backends | 411091 | Each backend checked 20,000 requests and 117,200 prefixes and answered 884 loopback requests. No invariant violations, unstable parser verdicts, HTTP/parser status differences or backend differences. |
+| `python3 tests/fuzz_parse.py -n 10000 --seed 381924 -j 3 --fmt-properties` | 381924 | 10,063 sources, zero failures. Formatter properties on checked inputs include well-formed UTF-8, idempotence and preservation of C output. |
+| `python3 tests/fuzz/mutate_compile.py --cases 12000 --seed 909211 -j 2 --timeout 15` | 909211 | 12,000 corpus mutations, 805 accepted by the checker, zero timeouts or diagnostic/crash failures. |
+| `python3 tests/fuzz.py -n 5000 --seed 761829 -j 3` | 761829 | 5,000 scalar programs across C, native and native without optimization. The 2,692 intentional panics agreed across the three modes. Zero mismatches or skips. |
+
+Valgrind Memcheck with origin tracking replayed the first 5,000 stdlib cases on C and native with identical output
+and zero errors. The dynamically linked C run freed all 273,954 allocations. Native uses its own allocator, so
+that C heap count does not measure native allocations.
+
+### Fixed and covered by regressions
+
+- **TOML header panic.** `toml.get_string("[é\nname = \"wrong\"\n", "name")` cut a byte inside `é`.
+  A bare `[` also reached the invalid slice path. Malformed headers now return the getter's default.
+  `tests/std_toml_hostile.yx` exercises both paths.
+- **TOML Unicode decoding.** `toml.get_string("name = \"é\"", "name")` returned `Ã©`, and quoted array items
+  behaved the same way. The getters validate UTF-8 and preserve the bytes of literal characters. Regressions
+  cover strings, arrays and invalid UTF-8 in `tests/std_toml.yx` and `tests/std_toml_hostile.yx`.
+- **TOML multiline array cost.** Give `toml.get_array` a value made from `"items = [\n"`, 40,000 lines
+  of `"0,\n"` and a final `"1]\n"`. Rescanning the accumulated text exceeded a 5-second native run
+  budget. Each line is now scanned once. The same input returned all 40,001 items in about 0.02 seconds
+  on the test host and is covered by `tests/std_toml_hostile.yx`.
+- **JSON silent overflow.** `json.parse("1e999")` produced a non-finite Float, which the writer emitted as
+  `null`. The reader now reports an out-of-range error. The writer still emits `null` for non-finite values
+  supplied directly by callers.
+- **JSON error-location panic.** Build the five-byte input `22 ff 5c 71 22` with `String.push_byte`,
+  then pass the parse error's offset to `json.line_col`. Counting characters used to panic at byte `ff`.
+  The helper now counts bytes for malformed input. Both JSON fixes are covered by `tests/std_json.yx`.
+
+### Open: JSON conversion near the limits of Float
+
+`json.parse("1e300")` followed by `json.to_string` produced `1.0000000000000006e300` in C and native.
+Parsing and serializing that result produced `1.000000000000001e300`. Parsing `9.9e-309` produces
+`0.0`, and `1.7976931348623157e308` is rejected by the new finite check. The shared `text.parse_float`
+uses approximate decimal scaling outside its short fast path (including division by a power of ten that
+can overflow). Exact behavior across the full domain requires a correctly rounded decimal-to-binary
+fallback and tests at the normal, subnormal and overflow boundaries. The randomized exact round-trip
+oracle in this round covers modest dyadic values. The explicit overflow regression checks rejection.
