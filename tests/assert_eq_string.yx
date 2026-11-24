@@ -1,0 +1,10 @@
+fn name() -> String { return String.from("abc") }
+fn main() {
+  let s = name()
+  assert_eq(s, "abc")
+  let t = String.from("abc")
+  assert_eq(s, t)
+  let a: Text = "a"
+  assert_eq(a, "a")
+  print("ok")
+}

@@ -1,4 +1,7 @@
+struct P { x: Int }
+
 fn main() {
-  let a: Text = "a"
-  assert_eq(a, "a")
+  let a = P { x: 1 }
+  let b = P { x: 1 }
+  assert_eq(a, b)
 }

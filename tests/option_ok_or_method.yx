@@ -1,0 +1,22 @@
+// `ok_or` exists both as a method and as the older free function; both give the same result.
+fn first_even(l: view List<Int>) -> Option<Int> {
+  for x in l { if x % 2 == 0 { return Some(x) } }
+  return None
+}
+
+fn run(l: view List<Int>) -> Result<Int, String> {
+  let n = first_even(l).ok_or("no even number")?
+  return Ok(n)
+}
+
+fn main() {
+  var a = List<Int>.new()
+  a.push(3)
+  a.push(4)
+  match run(a) { Ok(n) => { print("method ok {n}") } Err(e) => { print("method err {e}") } }
+  var b = List<Int>.new()
+  b.push(3)
+  match run(b) { Ok(n) => { print("method ok {n}") } Err(e) => { print("method err {e}") } }
+  match ok_or(first_even(a), "free") { Ok(n) => { print("free ok {n}") } Err(e) => { print("free err {e}") } }
+  match ok_or(first_even(b), "free") { Ok(n) => { print("free ok {n}") } Err(e) => { print("free err {e}") } }
+}

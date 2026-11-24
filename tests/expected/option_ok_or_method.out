@@ -1,0 +1,4 @@
+method ok 4
+method err no even number
+free ok 4
+free err free

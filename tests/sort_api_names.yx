@@ -1,0 +1,33 @@
+// The sort names are final: `l.sort()` is `sort.unstable(l)` (in place; equal Ordered values are
+// indistinguishable, so stability cannot be observed); `sort.stable_by` keeps the order of equal keys.
+import std.sort
+
+struct Item { key: Int, tag: Int }
+
+fn main() {
+  var a = List<Int>.new()
+  var b = List<Int>.new()
+  var c = List<Int>.new()
+  for x in [5, 3, 9, 1, 3, 7, 1] {
+    a.push(x)
+    b.push(x)
+    c.push(x)
+  }
+  a.sort()
+  sort.unstable(b)
+  sort.stable(c)
+  assert(a.is_sorted())
+  for i in 0..a.len() {
+    assert_eq(a.at(i), b.at(i))
+    assert_eq(a.at(i), c.at(i))
+  }
+  var items = List<Item>.new()
+  for i in 0..20 { items.push(Item { key: i % 3, tag: i }) }
+  sort.stable_by(items, |p, q| p.key - q.key)
+  for i in 1..items.len() {
+    let p = items.at(i - 1)
+    let q = items.at(i)
+    assert(p.key < q.key || (p.key == q.key && p.tag < q.tag))
+  }
+  print("sort names ok")
+}
