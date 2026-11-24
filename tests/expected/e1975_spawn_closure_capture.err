@@ -1,0 +1,7 @@
+error: spawn cannot transfer 'callback' of type fn() -> Int
+ --> tests/e1975_spawn_closure_capture.yx:4:18
+  |
+4 |     let worker = spawn move || callback()
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

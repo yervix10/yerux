@@ -1,0 +1,32 @@
+import std.io
+import std.process
+
+fn main() {
+  var cmd = process.command("/bin/sh")
+  var args = List<String>.new()
+  cmd.add_args(args)
+  args.push(String.from("-c"))
+  args.push(String.from("test \"$#\" -eq 2 && test -z \"$1\" && test \"$2\" = '雪' || exit 1; printf '\\377\\000'; printf '\\377' >&2"))
+  args.push(String.from("sh"))
+  args.push(String.from(""))
+  args.push(String.from("雪"))
+  cmd.add_args(args)
+  cmd.set_stdout(process.Stdio.Piped)
+  cmd.set_stderr(process.Stdio.Piped)
+  var child = process.start(cmd).unwrap()
+
+  var empty = List<UInt8>.new()
+  assert(child.read_stdout_into(empty).unwrap() == 0)
+  var byte: [UInt8; 1] = [0.to_uint8()]
+  assert(child.read_stdout_into(byte).unwrap() == 1)
+  assert(byte[0].to_int() == 255)
+  assert(child.read_stdout_into(byte).unwrap() == 1)
+  assert(byte[0].to_int() == 0)
+  assert(child.read_stdout_into(byte).unwrap() == 0)
+  match child.read_stderr() {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.InvalidData) }
+  }
+  assert(child.wait().unwrap().code == 0)
+  print("process pipes ok")
+}

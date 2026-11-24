@@ -1,0 +1,20 @@
+import std.args
+import std.env
+
+fn main() {
+  let argv = env.args_utf8().unwrap()
+  assert(argv.len() == 7)
+  assert(argv.at(2) == "--label=雪")
+  assert(argv.at(5) == "")
+
+  let parsed = args.parse_process()
+  assert(parsed.flags.len() == 1)
+  assert(args.has_flag(parsed, "flag"))
+  let label = args.option(parsed, "label").unwrap()
+  assert(label == "雪")
+  assert(parsed.subcommand == "é")
+  assert(parsed.positionals.len() == 2)
+  assert(parsed.positionals.at(0) == "")
+  assert(parsed.positionals.at(1) == "-literal")
+  print("arguments ok")
+}

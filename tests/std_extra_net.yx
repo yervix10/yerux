@@ -1,0 +1,35 @@
+import std.net
+
+fn main() {
+  let addr = net.address("127.0.0.1", 0).unwrap()
+  let listener = net.listen(addr).unwrap()
+  let local = net.listener_local_addr(listener).unwrap()
+  let tx = net.connect(local).unwrap()
+  let rx = net.accept(listener).unwrap()
+  assert(net.set_read_timeout(rx, 1000).is_ok())
+
+  var empty = List<UInt8>.new()
+  assert(net.write_bytes(tx, empty).unwrap() == 0)
+  assert(net.read_into(rx, empty).unwrap() == 0)
+
+  // One byte past the write buffer boundary, including bytes that are not text.
+  let size = 16385
+  var bytes = List<UInt8>.new()
+  for i in 0..size { bytes.push((i % 256).to_uint8()) }
+  assert(net.write_bytes(tx, bytes).unwrap() == size)
+  assert(net.close_stream(move tx).is_ok())
+
+  var buf: [UInt8; 256] = [0.to_uint8(); 256]
+  var received = 0
+  while received < size {
+    let n = net.read_into(rx, buf).unwrap()
+    assert(n > 0)
+    for i in 0..n { assert(buf[i] == ((received + i) % 256).to_uint8()) }
+    received = received + n
+  }
+  assert(received == size)
+  assert(net.read_into(rx, buf).unwrap() == 0)
+  assert(net.close_stream(move rx).is_ok())
+  assert(net.close_listener(move listener).is_ok())
+  print("socket bytes ok")
+}

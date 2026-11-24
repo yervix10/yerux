@@ -1,0 +1,11 @@
+error: this value may be outside Int<0..4>
+ --> tests/e1978_range_upper_guard.yx:3:10
+  |
+3 |   return n
+  |          ^
+  = the compiler can only prove that it has type Int<-8..4>
+  = Int<0..4> holds the values from 0 to 4 (both ends included)
+  = help: test it first: `if n >= 0 && n <= 4 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<0..4>.try_from(n)` gives a Result, `Int<0..4>.from(n)` panics when it does not fit
+
+1 error(s). Nothing was generated.

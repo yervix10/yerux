@@ -1,0 +1,9 @@
+error: import cycle: e1976_entry_import_cycle -> extra_modules.cycle_link -> e1976_entry_import_cycle
+ --> tests/extra_modules/cycle_link.yx:1:1
+  |
+1 | import e1976_entry_import_cycle
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = modules cannot import each other, directly or through others
+  = help: move what they share into a third module that both of them import
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+error: spawn cannot transfer 'batch' of type [LocalToken; 1]
+ --> tests/e1974_spawn_array_thread_bound.yx:7:18
+  |
+7 |     let worker = spawn move || batch[0].n
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

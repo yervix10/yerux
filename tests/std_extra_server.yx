@@ -1,0 +1,15 @@
+import std.http.server
+
+fn main() {
+  let stop = server.stop_handle()
+  let shared = stop.share()
+  let independent = server.stop_handle()
+  assert(!stop.requested())
+  assert(!shared.requested())
+  shared.request()
+  assert(stop.requested())
+  stop.request()
+  assert(shared.requested())
+  assert(!independent.requested())
+  print("stop state ok")
+}
