@@ -36,6 +36,8 @@ fn main() {
   show("tru")
   show("[1] x")
   show("9223372036854775808")
+  show("1e999")
+  show("[-1e999]")
   show("[\n  1,\n  oops\n]")
 
   var invalid_value = String.from("[\"")
@@ -52,6 +54,10 @@ fn main() {
     Ok(_) => { print("invalid key accepted") }
     Err(e) => { print("invalid key at {e.offset}: {e.message}") }
   }
+  var invalid_escape = String.from("\"")
+  invalid_escape.push_byte(255)
+  invalid_escape.push_str("\\q\"")
+  show(invalid_escape)
 
   // pretty output
   match json.parse("{{\"a\":[1,{{\"b\":[]}},\"é\\u0001\"],\"c\":{{}},\"d\":2.0}}") {

@@ -813,13 +813,13 @@ manifest subset via dotted-key accessors.
 
 | Function | Notes |
 |----------|-------|
-| `parse(text: view String) -> Result<Value, Error>` | RFC 8259: any whitespace around the value, `\uXXXX` escapes with surrogate pairs, and validation of UTF-8 in string values and object keys. Invalid UTF-8 is reported at the string's opening quote. A number without fraction or exponent is `Int` (outside the `Int` range it is an error), otherwise `Float`; leading zeros, a bare `-`, `1.`, `1e`, control characters in strings, trailing text and nesting deeper than 200 levels are errors |
+| `parse(text: view String) -> Result<Value, Error>` | RFC 8259: any whitespace around the value, `\uXXXX` escapes with surrogate pairs, and validation of UTF-8 in string values and object keys. Invalid UTF-8 is reported at the string's opening quote. A number without fraction or exponent is `Int`, otherwise `Float`. Integer overflow and floating-point results that are not finite return errors. Leading zeros, a bare `-`, `1.`, `1e`, control characters in strings, trailing text and nesting deeper than 200 levels are errors |
 | `Error { offset: Int, message: String }` | `offset` is a byte offset into the text |
 | `to_string(v) -> String` | compact, one line |
 | `to_pretty(v) -> String` | two-space indent, one element per line; empty arrays and objects stay `[]` and `{}` |
 | `quote(s) -> String` | a JSON string literal with escapes (`\"`, `\\`, `\n`, `\t`, `\r`, other control characters as `\u00XX`) |
 | `type_name(v) -> Text` | `"null"`, `"boolean"`, `"number"`, `"string"`, `"array"`, `"object"` |
-| `line_col(text, offset) -> (Int, Int)` | 1-based line and column in characters, for messages |
+| `line_col(text, offset) -> (Int, Int)` | 1-based line and column for messages. Columns count characters for valid UTF-8 and bytes for malformed text |
 
 A `Float` that is NaN or infinite has no JSON spelling and is written as `null`. Tests: tests/std_json.yx (C and native); `examples/real/jql` is built on it.
 

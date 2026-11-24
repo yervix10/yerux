@@ -57,18 +57,22 @@ pub fn find(members: view List<Member>, key: view String) -> Int {
   return found
 }
 
-// 1-based line and column (in characters) of a byte offset, for messages.
+// 1-based line and column of a byte offset. On malformed UTF-8, count columns in bytes.
 pub fn line_col(src: view String, offset: Int) -> (Int, Int) {
   var line = 1
   var col = 1
   var i = 0
+  let utf8 = io.valid_utf8(src)
   while i < offset && i < src.len() {
-    let c = src.char_at(i)
-    if c == '\n' {
+    if src.byte(i) == 10 {
       line = line + 1
       col = 1
     } else { col = col + 1 }
-    i = i + c.utf8_len()
+    if utf8 {
+      i = i + src.char_at(i).utf8_len()
+    } else {
+      i = i + 1
+    }
   }
   return (line, col)
 }
@@ -164,7 +168,10 @@ fn parse_number(r: mut Reader) -> Result<Value, Error> {
   let spelling = r.text.slice(start, r.pos)
   if real {
     match text.parse_float(spelling) {
-      Ok(f) => { return Ok(Value.Float(f)) }
+      Ok(f) => {
+        if !finite(f) { return Err(fault(start, "floating-point number out of range")) }
+        return Ok(Value.Float(f))
+      }
       Err(_) => { return Err(fault(start, "invalid number")) }
     }
   }
@@ -337,10 +344,14 @@ fn hex_digit(n: Int) -> Int {
   return 97 + n - 10
 }
 
+fn finite(f: Float) -> Bool {
+  return f == f && f <= 1.7976931348623157e308 && f >= -1.7976931348623157e308
+}
+
 // A Float keeps its fraction (3.0 prints `3.0`), so a round trip keeps its type; NaN and infinities have no
 // JSON spelling and become null.
 fn number(f: Float) -> String {
-  if f != f || f > 1.7976931348623157e308 || f < -1.7976931348623157e308 { return String.from("null") }
+  if !finite(f) { return String.from("null") }
   return "{f}"
 }
 
