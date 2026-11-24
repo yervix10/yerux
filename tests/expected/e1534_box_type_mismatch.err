@@ -1,0 +1,8 @@
+error: expected Box<Int> but this is Box<String>
+ --> tests/e1534_box_type_mismatch.yx:3:21
+  |
+3 |   let b: Box<Int> = Box.new(String.from("a"))
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+1 error(s). Nothing was generated.

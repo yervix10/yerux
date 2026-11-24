@@ -1,0 +1,7 @@
+// A struct field must keep its declared type.
+struct P { n: Int }
+
+fn main() {
+  let p = P { n: String.from("a") }
+  print(p.n)
+}

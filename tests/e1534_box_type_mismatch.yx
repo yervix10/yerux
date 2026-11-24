@@ -1,0 +1,5 @@
+// A Box is invariant in its element type: Box<String> is not a Box<Int>.
+fn main() {
+  let b: Box<Int> = Box.new(String.from("a"))
+  print(b.get())
+}
