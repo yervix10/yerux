@@ -1,0 +1,60 @@
+// std.http.server: url_decode (plain, escapes, the plus flag, empty and bad input) and json answers
+// rendered with render()
+import std.http.server
+
+fn show(label: Text, o: Option<String>) {
+  match o {
+    Some(s) => {
+      print("{label}: [{s}] len={s.len()}")
+    }
+    None => {
+      print("{label}: none")
+    }
+  }
+}
+
+fn main() {
+  show("plain", server.url_decode("abc", false))
+  show("empty", server.url_decode("", false))
+  show("escapes", server.url_decode("%41%42%43", false))
+  show("plus on", server.url_decode("a+b", true))
+  show("plus off", server.url_decode("a+b", false))
+  show("space", server.url_decode("a%20b", false))
+  show("utf8 3-byte", server.url_decode("%E2%82%AC", false))
+  show("utf8 2-byte", server.url_decode("%C3%A9", false))
+  show("utf8 4-byte", server.url_decode("%F0%9F%98%80", false))
+  show("mixed case hex", server.url_decode("%e2%82%ac", false))
+  show("bad hex", server.url_decode("%zz", false))
+  show("truncated", server.url_decode("%4", false))
+  show("lone percent", server.url_decode("%", false))
+  show("trailing percent", server.url_decode("100%", false))
+  show("nul", server.url_decode("%00", false))
+  show("half escape", server.url_decode("ok%2", false))
+
+  let r = server.json(201, "hello")
+  print(r.status)
+  print(r.body)
+  for h in r.headers {
+    let lower = h.0.to_lower()
+    let ct = lower.eq("content-type")
+    if ct {
+      print(h.1)
+    }
+  }
+
+  let wire = server.render(r, false, false)
+  print(wire.starts_with("HTTP/1.1 201 Created\r\n"))
+  print(wire.contains("Content-Type: application/json\r\n"))
+  print(wire.contains("Content-Length: 5\r\n"))
+  print(wire.ends_with("\r\n\r\nhello"))
+
+  let head_only = server.render(r, true, true)
+  print(head_only.starts_with("HTTP/1.1 201 Created\r\n"))
+  print(head_only.ends_with("Connection: close\r\n\r\n"))
+  print(head_only.contains("hello"))
+
+  // a bodyless status carries no Content-Length and no body
+  let no_content = server.render(server.empty(204), false, false)
+  print(no_content.contains("Content-Length"))
+  print(no_content.ends_with("\r\n\r\n"))
+}
