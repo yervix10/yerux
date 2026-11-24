@@ -1,0 +1,325 @@
+// Strict JSON reader for jsonl (RFC 8259 grammar). Numbers keep their spelling. Strings are decoded to UTF-8. An
+// object whose key already occurs is an error, unlike the lenient reader of examples/real/json. Nesting is limited
+// to MAX_DEPTH. Offsets are byte offsets into the text given to `parse`.
+
+pub enum Value {
+  Null,
+  Bool(Bool),
+  Number(String),
+  Str(String),
+  Array(List<Box<Value>>),
+  Object(List<Member>),
+}
+
+pub struct Member {
+  key: String,
+  value: Box<Value>,
+}
+
+pub struct Issue {
+  offset: Int,
+  message: String,
+}
+
+pub const MAX_DEPTH: Int = 200
+
+fn issue(pos: Int, message: view String) -> Issue {
+  return Issue { offset: pos, message: String.from(message) }
+}
+
+// The byte at pos, or -1 at the end.
+fn peek(src: view String, pos: Int) -> Int {
+  if pos >= src.len() {
+    return -1
+  }
+  return src.byte(pos)
+}
+
+fn skip_ws(src: view String, pos: mut Int) {
+  while true {
+    let b = peek(src, pos)
+    if b != 32 && b != 9 && b != 13 {
+      return
+    }
+    pos = pos + 1
+  }
+}
+
+fn hex_value(b: Int) -> Int {
+  if b >= '0'.to_int() && b <= '9'.to_int() {
+    return b - '0'.to_int()
+  }
+  if b >= 'a'.to_int() && b <= 'f'.to_int() {
+    return b - 'a'.to_int() + 10
+  }
+  if b >= 'A'.to_int() && b <= 'F'.to_int() {
+    return b - 'A'.to_int() + 10
+  }
+  return -1
+}
+
+// Four hex digits after \u, as a code unit.
+fn hex4(src: view String, pos: mut Int) -> Result<Int, Issue> {
+  var v = 0
+  for _ in 0..4 {
+    let d = hex_value(peek(src, pos))
+    if d < 0 {
+      return Err(issue(pos, "bad \\u escape"))
+    }
+    v = v * 16 + d
+    pos = pos + 1
+  }
+  return Ok(move v)
+}
+
+// Appends the UTF-8 encoding of a code point.
+fn push_utf8(out: mut String, cp: Int) {
+  if cp < 128 {
+    out.push_byte(cp)
+  } else if cp < 2048 {
+    out.push_byte(192 + cp / 64)
+    out.push_byte(128 + cp % 64)
+  } else if cp < 65536 {
+    out.push_byte(224 + cp / 4096)
+    out.push_byte(128 + (cp / 64) % 64)
+    out.push_byte(128 + cp % 64)
+  } else {
+    out.push_byte(240 + cp / 262144)
+    out.push_byte(128 + (cp / 4096) % 64)
+    out.push_byte(128 + (cp / 64) % 64)
+    out.push_byte(128 + cp % 64)
+  }
+}
+
+// The string whose opening quote is at pos; on success pos is past the closing quote.
+fn parse_string(src: view String, pos: mut Int) -> Result<String, Issue> {
+  pos = pos + 1
+  var out = String.new()
+  while true {
+    let b = peek(src, pos)
+    if b < 0 {
+      return Err(issue(pos, "unterminated string"))
+    }
+    if b == '"'.to_int() {
+      pos = pos + 1
+      return Ok(move out)
+    }
+    if b < 32 {
+      return Err(issue(pos, "control character in string"))
+    }
+    if b != '\\'.to_int() {
+      out.push_byte(b)
+      pos = pos + 1
+    } else {
+      pos = pos + 1
+      let e = peek(src, pos)
+      pos = pos + 1
+      if e == '"'.to_int() || e == '\\'.to_int() || e == '/'.to_int() {
+        out.push_byte(e)
+      } else if e == 'b'.to_int() {
+        out.push_byte(8)
+      } else if e == 'f'.to_int() {
+        out.push_byte(12)
+      } else if e == 'n'.to_int() {
+        out.push_byte(10)
+      } else if e == 'r'.to_int() {
+        out.push_byte(13)
+      } else if e == 't'.to_int() {
+        out.push_byte(9)
+      } else if e == 'u'.to_int() {
+        var unit = hex4(src, pos)?
+        if unit >= 55296 && unit <= 56319 {
+          if peek(src, pos) != '\\'.to_int() || peek(src, pos + 1) != 'u'.to_int() {
+            return Err(issue(pos, "unpaired surrogate"))
+          }
+          pos = pos + 2
+          let low = hex4(src, pos)?
+          if low < 56320 || low > 57343 {
+            return Err(issue(pos, "unpaired surrogate"))
+          }
+          unit = 65536 + (unit - 55296) * 1024 + (low - 56320)
+        } else if unit >= 56320 && unit <= 57343 {
+          return Err(issue(pos, "unpaired surrogate"))
+        }
+        push_utf8(out, unit)
+      } else {
+        return Err(issue(pos - 1, "invalid escape"))
+      }
+    }
+  }
+  return Err(issue(pos, "unterminated string"))
+}
+
+fn digit_at(src: view String, pos: Int) -> Bool {
+  let b = peek(src, pos)
+  return b >= '0'.to_int() && b <= '9'.to_int()
+}
+
+// One number of the JSON grammar, returned with its spelling.
+fn parse_number(src: view String, pos: mut Int) -> Result<Value, Issue> {
+  let start = pos
+  if peek(src, pos) == '-'.to_int() {
+    pos = pos + 1
+  }
+  if peek(src, pos) == '0'.to_int() {
+    pos = pos + 1
+  } else if digit_at(src, pos) {
+    while digit_at(src, pos) {
+      pos = pos + 1
+    }
+  } else {
+    return Err(issue(pos, "expected a digit"))
+  }
+  if peek(src, pos) == '.'.to_int() {
+    pos = pos + 1
+    if !digit_at(src, pos) {
+      return Err(issue(pos, "expected a digit after '.'"))
+    }
+    while digit_at(src, pos) {
+      pos = pos + 1
+    }
+  }
+  let e = peek(src, pos)
+  if e == 'e'.to_int() || e == 'E'.to_int() {
+    pos = pos + 1
+    let s = peek(src, pos)
+    if s == '+'.to_int() || s == '-'.to_int() {
+      pos = pos + 1
+    }
+    if !digit_at(src, pos) {
+      return Err(issue(pos, "expected a digit in the exponent"))
+    }
+    while digit_at(src, pos) {
+      pos = pos + 1
+    }
+  }
+  return Ok(Value.Number(src.slice(start, pos)))
+}
+
+fn literal(src: view String, pos: mut Int, word: view String) -> Bool {
+  for i in 0..word.len() {
+    if peek(src, pos) != word.byte(i) {
+      return false
+    }
+    pos = pos + 1
+  }
+  return true
+}
+
+fn parse_array(src: view String, pos: mut Int, depth: Int) -> Result<Value, Issue> {
+  pos = pos + 1
+  var items = List<Box<Value>>.new()
+  skip_ws(src, pos)
+  if peek(src, pos) == ']'.to_int() {
+    pos = pos + 1
+    return Ok(Value.Array(move items))
+  }
+  while true {
+    let v = parse_value(src, pos, depth)?
+    items.push(Box.new(move v))
+    skip_ws(src, pos)
+    let c = peek(src, pos)
+    if c == ','.to_int() {
+      pos = pos + 1
+    } else if c == ']'.to_int() {
+      pos = pos + 1
+      return Ok(Value.Array(move items))
+    } else {
+      return Err(issue(pos, "expected ',' or ']' in array"))
+    }
+  }
+  return Err(issue(pos, "unreachable"))
+}
+
+fn parse_object(src: view String, pos: mut Int, depth: Int) -> Result<Value, Issue> {
+  pos = pos + 1
+  var members = List<Member>.new()
+  skip_ws(src, pos)
+  if peek(src, pos) == '}'.to_int() {
+    pos = pos + 1
+    return Ok(Value.Object(move members))
+  }
+  while true {
+    skip_ws(src, pos)
+    if peek(src, pos) != '"'.to_int() {
+      return Err(issue(pos, "expected a string key"))
+    }
+    let key_at = pos
+    let key = parse_string(src, pos)?
+    for i in 0..members.len() {
+      if members.at(i).key == key {
+        return Err(issue(key_at, "duplicate key"))
+      }
+    }
+    skip_ws(src, pos)
+    if peek(src, pos) != ':'.to_int() {
+      return Err(issue(pos, "expected ':' after key"))
+    }
+    pos = pos + 1
+    let v = parse_value(src, pos, depth)?
+    members.push(Member { key: move key, value: Box.new(move v) })
+    skip_ws(src, pos)
+    let c = peek(src, pos)
+    if c == ','.to_int() {
+      pos = pos + 1
+    } else if c == '}'.to_int() {
+      pos = pos + 1
+      return Ok(Value.Object(move members))
+    } else {
+      return Err(issue(pos, "expected ',' or '}}' in object"))
+    }
+  }
+  return Err(issue(pos, "unreachable"))
+}
+
+fn parse_value(src: view String, pos: mut Int, depth: Int) -> Result<Value, Issue> {
+  skip_ws(src, pos)
+  let b = peek(src, pos)
+  if b < 0 {
+    return Err(issue(pos, "unexpected end of input"))
+  }
+  if b == '{'.to_int() || b == '['.to_int() {
+    if depth >= MAX_DEPTH {
+      return Err(issue(pos, "nesting deeper than 200"))
+    }
+    if b == '{'.to_int() {
+      return parse_object(src, pos, depth + 1)
+    }
+    return parse_array(src, pos, depth + 1)
+  }
+  if b == '"'.to_int() {
+    let s = parse_string(src, pos)?
+    return Ok(Value.Str(move s))
+  }
+  if b == '-'.to_int() || digit_at(src, pos) {
+    return parse_number(src, pos)
+  }
+  let start = pos
+  if b == 't'.to_int() || b == 'f'.to_int() || b == 'n'.to_int() {
+    var word = "null"
+    if b == 't'.to_int() {
+      word = "true"
+    } else if b == 'f'.to_int() {
+      word = "false"
+    }
+    if !literal(src, pos, word) {
+      return Err(issue(start, "invalid literal"))
+    }
+    if b == 'n'.to_int() {
+      return Ok(Value.Null)
+    }
+    return Ok(Value.Bool(b == 't'.to_int()))
+  }
+  return Err(issue(pos, "unexpected character"))
+}
+
+// One JSON value spanning the whole text (surrounding whitespace allowed).
+pub fn parse(src: view String) -> Result<Value, Issue> {
+  var pos = 0
+  let v = parse_value(src, pos, 0)?
+  skip_ws(src, pos)
+  if pos < src.len() {
+    return Err(issue(pos, "trailing characters after the value"))
+  }
+  return Ok(move v)
+}

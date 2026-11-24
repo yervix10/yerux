@@ -1,0 +1,91 @@
+// The parallel part of schedsim: the service time of every job is computed by a pool of worker threads.
+//
+// Jobs are dealt round-robin to the workers over one bounded channel per worker. Each worker sends `job * 1000 +
+// service` back on an unbounded results channel and adds its job to a `Shared<Locked<Stats>>`. The service time of
+// a job depends only on the seed and the job number, and the statistics are sums, so the outcome does not depend on
+// the number of workers or on which worker finished first. The caller stores each result by its job number.
+import std.text
+
+pub struct Stats {
+  done: Int,
+  digest: Int,
+}
+
+// Result of a pool run: the service time of each job (1..40 ticks), the count of finished jobs, and a digest that
+// is a sum over jobs, so it is independent of the order of completion.
+pub struct Work {
+  svc: List<Int>,
+  done: Int,
+  digest: Int,
+}
+
+const MODULUS: Int = 1000000007
+
+// Service time of job j: a short pseudo-random computation, 1 + (value % 40).
+pub fn cost(seed: Int, j: Int) -> Int {
+  var x = (seed * 31 + j * 7919 + 1) % 2147483648
+  var acc = 0
+  for _ in 0..400 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    acc = (acc + x / 65536) % 1000003
+  }
+  return 1 + acc % 40
+}
+
+fn worker(inbox: Receiver<Int>, out: Sender<Int>, stats: Shared<Locked<Stats>>, seed: Int) -> Int {
+  var handled = 0
+  while true {
+    match inbox.recv() {
+      Some(j) => {
+        let s = cost(seed, j)
+        out.send(j * 1000 + s)
+        stats.with(|st| {
+          st.done = st.done + 1
+          st.digest = (st.digest + s * (j + 1)) % 1000000007
+        })
+        handled = handled + 1
+      }
+      None => { break }
+    }
+  }
+  return handled
+}
+
+// Service times of jobs 0..jobs-1 computed by `workers` threads (at least 1).
+pub fn run(jobs: Int, workers: Int, seed: Int) -> Work {
+  let stats = Shared.new(Locked.new(Stats { done: 0, digest: 0 }))
+  let (out, inbox) = Sender<Int>.unbounded()
+  var svc = List<Int>.new()
+  for _ in 0..jobs {
+    svc.push(0)
+  }
+  scope {
+    var senders = List<Sender<Int>>.new()
+    var handles = List<JoinHandle<Int>>.new()
+    for _ in 0..workers {
+      let (tx, rx) = Sender<Int>.bounded(16)
+      senders.push(move tx)
+      let st = stats.clone()
+      let o = out.clone()
+      let h = spawn move { return worker(move rx, move o, move st, seed) }
+      handles.push(move h)
+    }
+    for j in 0..jobs {
+      senders.at(j % workers).send(j)
+    }
+    for tx in senders {
+      tx.close()
+    }
+    for _ in 0..jobs {
+      let code = inbox.recv().unwrap()
+      svc[code / 1000] = code % 1000
+    }
+    while handles.len() > 0 {
+      let h = handles.pop()
+      let joined = h.join()
+    }
+  }
+  let done = stats.with_view(|st| st.done)
+  let digest = stats.with_view(|st| st.digest)
+  return Work { svc: move svc, done: done, digest: digest }
+}

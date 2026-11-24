@@ -1,0 +1,97 @@
+// Unit tests: `yerux test examples/real/jsonl/tests.yx`
+import canon
+import reader
+
+// Canonical text of `s`, or "error" when it is not valid JSON.
+fn norm(s: view String) -> String {
+  match reader.parse(s) {
+    Ok(v) => { return canon.canonical(v) }
+    Err(e) => { return String.from("error") }
+  }
+}
+
+// The message and byte offset of the error in `s`.
+fn problem(s: view String) -> String {
+  match reader.parse(s) {
+    Ok(v) => { return String.from("ok") }
+    Err(e) => {
+      var out = String.from(e.message)
+      out.push_str(" at ")
+      out.push_int(e.offset)
+      return out
+    }
+  }
+}
+
+test "scalars and whitespace" {
+  assert(norm("  null ").eq("null"))
+  assert(norm("true").eq("true"))
+  assert(norm("false").eq("false"))
+  assert(norm(" 42 ").eq("42"))
+}
+
+test "numbers keep their spelling and follow the grammar" {
+  assert(norm("-0.5e+10").eq("-0.5e+10"))
+  assert(norm("1E3").eq("1E3"))
+  assert(norm("12345678901234567890123").eq("12345678901234567890123"))
+  assert(norm("01").eq("error"))
+  assert(norm("1.").eq("error"))
+  assert(norm(".5").eq("error"))
+  assert(norm("+1").eq("error"))
+  assert(norm("1e").eq("error"))
+}
+
+test "string escapes decode and write back in short form" {
+  assert(norm("\"a\\nb\\t\\\"\\\\\\/\"").eq("\"a\\nb\\t\\\"\\\\/\""))
+  assert(norm("\"\\u0041\"").eq("\"A\""))
+  assert(norm("\"\\u0001\"").eq("\"\\u0001\""))
+  assert(norm("\"\\u00e9\"").eq("\"é\""))
+  assert(norm("\"\\ud83d\\ude00\"").eq("\"😀\""))
+}
+
+test "string errors: raw control characters, bad escapes, unpaired surrogates" {
+  assert(norm("\"a\tb\"").eq("error"))
+  assert(norm("\"\\x\"").eq("error"))
+  assert(norm("\"\\u12\"").eq("error"))
+  assert(norm("\"\\ud800\"").eq("error"))
+  assert(norm("\"\\udc00\"").eq("error"))
+  assert(norm("\"open").eq("error"))
+}
+
+test "objects are written with sorted keys and no spaces" {
+  assert(norm("{{ \"b\" : 1, \"a\": [ ], \"c\":{{\"z\":true,\"y\":null}} }}").eq("{{\"a\":[],\"b\":1,\"c\":{{\"y\":null,\"z\":true}}}}"))
+  assert(norm("{{}}").eq("{{}}"))
+  assert(norm("[ {{\"k\":1}}, [ ] ]").eq("[{{\"k\":1}},[]]"))
+}
+
+test "a repeated key is an error at the second key" {
+  assert(problem("{{\"k\":1,\"k\":2}}").eq("duplicate key at 7"))
+  assert(norm("{{\"k\":1,\"j\":{{\"k\":2}}}}").eq("{{\"j\":{{\"k\":2}},\"k\":1}}"))
+}
+
+test "trailing characters, missing separators and literals" {
+  assert(problem("1 2").eq("trailing characters after the value at 2"))
+  assert(problem("[1 2]").eq("expected ',' or ']' in array at 3"))
+  assert(problem("{{\"a\" 1}}").eq("expected ':' after key at 5"))
+  assert(problem("tru").eq("invalid literal at 0"))
+  assert(problem("[1,]").eq("unexpected character at 3"))
+  assert(problem("").eq("unexpected end of input at 0"))
+}
+
+test "nesting up to 200 levels is accepted, 201 is not" {
+  var ok = String.new()
+  var bad = String.new()
+  for _ in 0..200 {
+    ok.push_byte('['.to_int())
+    bad.push_byte('['.to_int())
+  }
+  bad.push_byte('['.to_int())
+  for _ in 0..200 {
+    ok.push_byte(']'.to_int())
+  }
+  for _ in 0..201 {
+    bad.push_byte(']'.to_int())
+  }
+  assert(norm(ok).len() == 400)
+  assert(problem(bad).eq("nesting deeper than 200 at 200"))
+}

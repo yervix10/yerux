@@ -1,0 +1,88 @@
+// schedsim: a discrete-event simulation of a FIFO scheduler with K servers. The service time of each job is computed
+// by a pool of worker threads (work.yx) and checked against a run with one worker; the event simulation (sim.yx) is
+// single-threaded. The report depends only on JOBS, SERVERS and SEED, not on WORKERS.
+//
+//   schedsim run JOBS SERVERS WORKERS SEED   print the report
+//   1 <= JOBS <= 100000, 1 <= SERVERS <= 16, 1 <= WORKERS <= 16; SEED is any integer.
+// Exit status: 0 ok, 1 the workers disagree with the single-worker run, 2 a usage error.
+import sim
+import std.args
+import std.io
+import std.text
+import work
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("schedsim: {msg}")
+  io.exit(code)
+}
+
+fn int_arg(s: view String, what: view String) -> Int {
+  match text.parse_int(s) {
+    Ok(v) => { return v }
+    Err(e) => {
+      fail("bad {what}: {e}", 2)
+      return 0
+    }
+  }
+}
+
+fn busy_line(busy: view List<Int>) -> String {
+  var line = String.from("busy:")
+  for b in busy {
+    line.push_str(" ")
+    line.push_int(b)
+  }
+  return line
+}
+
+fn cmd_run(names: view List<String>) -> Int {
+  if names.len() != 4 {
+    fail("usage: schedsim run JOBS SERVERS WORKERS SEED", 2)
+  }
+  let jobs = int_arg(names.at(0), "JOBS")
+  let servers = int_arg(names.at(1), "SERVERS")
+  let workers = int_arg(names.at(2), "WORKERS")
+  let seed = int_arg(names.at(3), "SEED")
+  if jobs < 1 || jobs > 100000 || servers < 1 || servers > 16 || workers < 1 || workers > 16 {
+    fail("JOBS must be 1..100000, SERVERS and WORKERS 1..16", 2)
+  }
+  let arrive = sim.arrivals(jobs, seed)
+  let pool = work.run(jobs, workers, seed)
+  let single = work.run(jobs, 1, seed)
+  var same = pool.digest == single.digest && pool.done == jobs && single.done == jobs
+  for j in 0..jobs {
+    if pool.svc.at(j) != single.svc.at(j) {
+      same = false
+    }
+  }
+  if !same {
+    fail("the worker pool disagrees with the single-worker run", 1)
+  }
+  let out = sim.run(arrive, pool.svc, servers)
+  var busy_sum = 0
+  for b in out.busy {
+    busy_sum = busy_sum + b
+  }
+  print("schedsim: jobs={jobs} servers={servers} seed={seed}")
+  print("service: done={pool.done} digest={pool.digest} (same as one worker)")
+  print("events={out.events} makespan={out.makespan}")
+  print("wait: total={out.total_wait} mean={out.total_wait / jobs} max={out.max_wait}")
+  print("utilization: {busy_sum * 1000 / (servers * out.makespan)} per mille")
+  print(busy_line(out.busy))
+  print("trace:")
+  for line in out.trace {
+    print("  {line}")
+  }
+  print("digest={out.digest}")
+  return 0
+}
+
+fn main() {
+  let p = args.parse_process()
+  let cmd = p.subcommand.clone()
+  let names = args.positionals(p)
+  if cmd.eq("run") {
+    io.exit(cmd_run(names))
+  }
+  fail("usage: schedsim run JOBS SERVERS WORKERS SEED", 2)
+}
