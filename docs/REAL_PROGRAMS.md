@@ -494,3 +494,56 @@ seeded random DAGs (20 with a cycle or a self dependency) whose `check` and `pla
     here". This is the same limit as datatool friction 5; bind first (`let a = env.args()`).
 23. **Build cost of `yerux test`.** A tests.yx with 11 `test` blocks takes about 25 s on the C backend (9 s native);
     with 4 blocks about 12 s. Each block is compiled separately. Not a defect, but it is the largest cost of the suite.
+
+## Round 8: sudoku, bcvm, chat
+
+### sudoku (`examples/real/sudoku/`)
+
+Sudoku generator and solver. `solve FILE` prints the solved grid, `count FILE` counts solutions up to 2, `gen SEED HOLES`
+writes a puzzle with exactly HOLES empty cells and a unique solution (from a 64-bit LCG), `check FILE` reports the first
+conflict. The solver is backtracking with minimum-remaining-values cell choice and bitmask row, column and box sets. The
+generator gives up after 40 attempts, so large HOLES (about 60 and up) can exit 1 with "gave up"; this is the policy, not a bug.
+
+Checked by `tests/sudoku.sh` (about 38 s): 11 unit tests on both backends; 92 commands on both backends with identical
+status, stdout and stderr; solve and count goldens from an independent Python solver; 40 seeded `gen` runs equal to the
+Python generator; exit statuses for bad input.
+
+### bcvm (`examples/real/bcvm/`)
+
+An expression language compiled to stack bytecode: lexer and precedence-climbing parser, a code generator with a
+disassembler, a stack VM with bounded stack and runtime errors, and a scripted step debugger (`s`, `c`, `b N`, `p`, `d`, `q`).
+Commands: `run FILE`, `dis FILE`, `debug FILE`.
+
+Checked by `tests/bcvm.sh` (about 20 s): 11 unit tests on both backends; 13 fixed programs and 60 corpus programs against an
+inline Python compiler and VM (run output and disassembly); debugger sessions; syntax and runtime error messages and
+statuses; C and native identical.
+
+### chat (`examples/real/chat/`)
+
+A TCP group chat: `serve PORT MAXCLIENTS` and `client HOST PORT`. Line protocol: `NICK`, `MSG`, `WHO`, `QUIT`. One thread per
+connection sends events over a channel to a single hub thread, which owns the name table and performs every broadcast.
+
+Checked by `tests/chat.sh` (about 56 s): 16 unit tests on both backends (protocol and hub as a pure state machine); scripted
+two-client sessions against goldens; about 20 seeded sessions against an independent Python socket model; C and native
+transcripts identical. The server exits by itself after MAXCLIENTS connections; the port is chosen by the script.
+
+### Round 8 frictions (not changed; minimal repros)
+
+24. **Struct destructuring is not supported.** `let P { a, b } = p` gives "expected '='".
+25. **No bitwise operators.** `let m = 6; print("{m & 3}")` gives "unexpected character '&'" (sudoku emulates masks with `/` and `%`).
+26. **A `const` of type String is rejected.** `const S: String = "x"` gives "a const must be computed from literals, other consts
+    and arithmetic".
+27. **`Text` has no `contains`.** `let s = "+-*"; s.contains("*")` gives "type Text has no method 'contains'".
+28. **Fields cannot be moved out of an owned struct.** `return Vm { code: p.code }` with `p: Prog` gives "cannot move 'p.code'
+    out of its struct" (bcvm moves the whole struct).
+29. **`==` on a call result.** `if kind_at(p) == Kind.Eof` gives "cannot use `==` here: ... not a variable" (bind with `let` first).
+30. **`assert_eq` and `==` on a String call result** fail the same way; `.eq` is the workaround (sudoku).
+31. **String `+` is not concatenation.** `s + "x"` on Strings gives "expected Int but this is String" (use interpolation).
+32. **`pub` on methods.** `pub fn` inside an `impl` gives "methods take no `pub`".
+33. **`view` at call sites.** `net.write(s, view line)` gives "unexpected keyword 'view' here".
+34. **String/Text mismatch and no `String.push`.** `String.push` is missing, and a `Text` parameter rejects a `String` with
+    "expected Text but this is String" (chat).
+35. **`match move` cannot bind an owned payload.** `match move r { Ok(Some(l)) => ... }` gives "cannot look inside an owned
+    payload in `match move`".
+36. **`IoError` has no timeout kind.** The chat server recognises a timeout by matching the message text.
+37. **A `JoinHandle` bound with `let _ =` joins immediately** instead of detaching.
