@@ -258,7 +258,7 @@ enum Maybe<T> { Some(T), None }
 - Not yet: explicit type arguments on calls, bounds on struct/enum parameters, generic methods, default type arguments.
 
 ## Function values and closures
-Function types use `fn(Param, ...) -> Result`; parameter modes (`view`, `mut`, or owned) are part of the signature. A function name can be passed where a matching function value is expected, and calls use the same `f(args)` syntax for named functions and function values:
+Function types use `fn(Param, ...) -> Result`; parameter modes (`view`, `mut`, or owned) are part of the signature. A top-level function with a concrete signature can be passed by name, including a public function qualified by its module. A generic call can infer a type parameter from the function value. Calls use the same `f(args)` syntax for named functions and function values:
 ```
 fn apply(f: view fn(Int) -> Int, x: Int) -> Int { return f(x) }
 fn double(x: Int) -> Int { return x * 2 }

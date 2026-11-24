@@ -1,0 +1,22 @@
+import std.sort
+import std.path
+
+fn compare(a: view Int, b: view Int) -> Int { return b - a }
+
+// Here T is inferred entirely from the argument, with no expected fn type.
+fn identity<T>(value: T) -> T { return move value }
+
+fn main() {
+    var values = List<Int>.new()
+    values.push(2)
+    values.push(1)
+    values.push(3)
+    sort.stable_by(values, compare)
+    print("{values}")
+
+    let compare = identity(compare)
+    sort.stable_by(values, compare)
+    print(compare(2, 5))
+    let join_path = identity(path.join)
+    print(join_path("a", "b"))
+}

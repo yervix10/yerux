@@ -396,8 +396,12 @@ the `?` operator are in section 4.
 
 ### 2.8 Function types and closures
 
-- A function type is written `fn(Param, ...) -> Result`. A function name is a value of its
-  function type: `apply(double, 4)` with `fn double(x: Int) -> Int`.
+- A function type is written `fn(Param, ...) -> Result`. A top-level function with a concrete
+  signature can be used by name as a value of that type, including a public function qualified
+  by its module or import alias. A generic call can infer a type parameter from the named
+  function value. For example, `sort.stable_by(values, compare)` borrows the comparator, and
+  `identity(compare)` infers the concrete function type of `compare`
+  (tests/named_fn_sort.yx).
 - Parameter modes are part of a function type: `fn(view [Int]) -> Int`.
 - A closure is `|a, b| expr`, `|a: Int| -> Int { ... }`, or `|| expr`. Its parameter types may be
   omitted when the expected function type supplies them.
@@ -1064,7 +1068,7 @@ backend and on `--native` by `tests/run_all.sh`.
 |---|---|---|---|
 | 1.3 Literals | literal forms and escapes | tests/spec_01_literals.yx | tests/expected/spec_01_literals.out |
 | 2.6 Range integers | widening, `try_from`, out-of-range `from` | tests/spec_02_range_int.yx | tests/expected/spec_02_range_int.out, `.code` = 101 |
-| 2.8 Function values | fn values, `view fn` parameters, borrowed capture | tests/spec_03_closures.yx | tests/expected/spec_03_closures.out |
+| 2.8 Function values | named functions, generic inference, `view fn` parameters, borrowed capture | tests/spec_03_closures.yx, tests/named_fn_sort.yx | tests/expected/spec_03_closures.out, tests/expected/named_fn_sort.out |
 | 3.3 Temporaries | `move`, owned parameter, borrowed `String` argument | tests/spec_04_ownership.yx | tests/expected/spec_04_ownership.out |
 | 4.2 `?` operator | `?` with `defer` on success and on error | tests/spec_05_result_defer.yx | tests/expected/spec_05_result_defer.out |
 | 4.3 Inspecting results | `context` with `?` and `unwrap` | tests/spec_06_context.yx | tests/expected/spec_06_context.out |

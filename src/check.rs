@@ -7679,7 +7679,8 @@ impl<'a> Checker<'a> {
         for k in order {
             let arg = &mut args[k];
             let (pmode, pat) = g.params[k];
-            if matches!(pat, Ty::Fn(_)) {
+            // A named function is a value even when the whole parameter type is inferred.
+            if matches!(pat, Ty::Fn(_) | Ty::Param(_)) {
                 self.norm_fn_arg(arg);
             }
             let t = if let EK::Closure { is_move, .. } = &arg.k {
