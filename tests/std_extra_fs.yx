@@ -1,0 +1,38 @@
+import std.env
+import std.fs
+import std.io
+import std.process
+
+fn main() {
+  let dir = "{env.temp_dir()}/yerux_extra_fs_{env.pid()}"
+  assert(fs.create_dir(dir).is_ok())
+  assert(fs.read_dir_entries_utf8(dir).unwrap().len() == 0)
+
+  let path = "{dir}/雪"
+  assert(fs.write(path, "").is_ok())
+  let entries = fs.read_dir_entries_utf8(dir).unwrap()
+  assert(entries.len() == 1)
+  assert(entries.at(0).name == "雪")
+  assert(fs.remove_file(path).is_ok())
+
+  // Create a raw filename through the OS without putting invalid bytes in a Yerux String.
+  var shell = process.command("/bin/sh")
+  shell.arg("-c")
+  shell.arg("touch -- \"$(printf '\\377')\"")
+  shell.set_dir(dir)
+  let created = process.run_command(shell).unwrap()
+  assert(created.status.code == 0)
+  let invalid = fs.read_dir_entries_utf8(dir)
+  var cleanup = process.command("/bin/sh")
+  cleanup.arg("-c")
+  cleanup.arg("rm -- \"$(printf '\\377')\"")
+  cleanup.set_dir(dir)
+  let removed = process.run_command(cleanup).unwrap()
+  assert(removed.status.code == 0)
+  assert(fs.remove_dir(dir).is_ok())
+  match invalid {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.InvalidData) }
+  }
+  print("directory names ok")
+}

@@ -1,0 +1,51 @@
+import std.caps
+import std.env
+import std.fs
+import std.io
+
+fn main() {
+  let all = caps.all()
+  let none = caps.none()
+
+  let dir = "{env.temp_dir()}/yerux_extra_caps_{env.pid()}"
+  assert(fs.create_dir(dir).is_ok())
+  let checked = all.fs.narrow(dir, true).unwrap()
+  assert(checked.write("entry", "").is_ok())
+  assert(checked.set_permissions("entry", 0).is_ok())
+  match checked.set_permissions("entry", 9223372036854775807) {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.InvalidInput) }
+  }
+  let readonly = checked.read_only()
+  match readonly.set_permissions("entry", 384) {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.PermissionDenied) }
+  }
+  assert(checked.remove_file("entry").is_ok())
+  assert(fs.remove_dir(dir).is_ok())
+
+  let name = "YERUX_TEST_EXTRA_REQUIRE"
+  assert(env.remove(name).is_ok())
+  match all.env.require(name) {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.NotFound) }
+  }
+  assert(env.set(name, "").is_ok())
+  let value = all.env.require(name).unwrap()
+  assert(value == "")
+  match none.env.require(name) {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.PermissionDenied) }
+  }
+  assert(env.remove(name).is_ok())
+
+  match none.net.connect_timeout("127.0.0.1", 1, 0) {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.PermissionDenied) }
+  }
+  match all.net.connect_timeout("127.0.0.1", 1, -1) {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.InvalidInput) }
+  }
+  print("capability boundaries ok")
+}
