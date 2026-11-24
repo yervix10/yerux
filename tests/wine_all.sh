@@ -34,6 +34,17 @@ for f in examples/*.yx tests/*.yx; do
     fail=$((fail+1))
   fi
 done
+# Wine may open host symlinks even when a PE requests the link itself.
+if "$Y" build tests/pe_remove_tree.yx --target windows -o "$TMP/remove.exe" >/dev/null &&
+   (cd "$TMP" && mkdir tree outside && printf 'keep\n' >outside/keep &&
+    ln -s ../outside tree/linked && ln -s outside root-link &&
+    timeout 60 "$WINE" "$TMP/remove.exe" tree && test -f outside/keep &&
+    timeout 60 "$WINE" "$TMP/remove.exe" root-link && test -f outside/keep); then
+  pass=$((pass+1))
+else
+  echo "FAIL remove_dir_all followed a host symlink or returned an unexpected error"
+  fail=$((fail+1))
+fi
 # panic message on stderr
 "$Y" build tests/n3_div0.yx --target windows -o "$TMP/p.exe" >/dev/null
 "$WINE" "$TMP/p.exe" >/dev/null 2>"$TMP/errout"; code=$?

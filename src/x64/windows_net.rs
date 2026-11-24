@@ -60,7 +60,8 @@ const SYMBOLS: [&[u8]; 17] = [
 ];
 
 const API_BASE: i64 = G_USER + 8 * crate::layout::GLOBAL_CELLS;
-const _: () = assert!(API_BASE + 8 * SYMBOLS.len() as i64 <= G_SIZE as i64);
+pub(super) const API_END: i64 = API_BASE + 8 * SYMBOLS.len() as i64;
+const _: () = assert!(API_END <= G_SIZE as i64);
 const SOL_SOCKET: i64 = 0xffff;
 const SO_ERROR: i64 = 0x1007;
 const SO_RCVTIMEO: i64 = 0x1006;

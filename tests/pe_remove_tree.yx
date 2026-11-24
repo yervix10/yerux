@@ -1,0 +1,41 @@
+import std.env
+import std.fs
+import std.io
+
+fn main() {
+  // Wine's harness passes a tree with a host Unix symlink. Such a link
+  // must not be followed outside the requested tree.
+  let args = env.args()
+  if args.len() == 2 {
+    match fs.remove_dir_all(args.at(1)) {
+      Ok(_) => { }
+      Err(e) => { assert(e.code == 40) }
+    }
+    return
+  }
+  let root = "yerux_pe_remove_tree {env.pid()}"
+  let outside = "{root} outside"
+  assert(fs.create_dir(root).is_ok())
+  assert(fs.create_dir(outside).is_ok())
+  assert(fs.create_dir("{root}/first").is_ok())
+  assert(fs.create_dir("{root}/first/second").is_ok())
+  assert(fs.create_dir("{root}/empty").is_ok())
+  assert(fs.write("{outside}/keep", "outside").is_ok())
+  assert(fs.write("{root}/first/second/deep", "inside").is_ok())
+  assert(fs.write("{root}/shallow", "inside").is_ok())
+
+  match fs.remove_dir_all(".") {
+    Ok(_) => { panic("removed the current directory") }
+    Err(e) => { assert(e.kind == io.IoErrorKind.InvalidInput) }
+  }
+  match fs.remove_dir_all("{root}/shallow") {
+    Ok(_) => { panic("removed a regular file as a tree") }
+    Err(e) => { assert(e.kind == io.IoErrorKind.NotDirectory) }
+  }
+  assert(fs.read_to_string("{root}/shallow").unwrap().eq("inside"))
+  assert(fs.remove_dir_all(root).is_ok())
+  assert(!fs.exists(root))
+  assert(fs.read_to_string("{outside}/keep").unwrap().eq("outside"))
+  assert(fs.remove_dir_all(outside).is_ok())
+  print("recursive directory removal ok")
+}

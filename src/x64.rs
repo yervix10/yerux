@@ -1,5 +1,6 @@
 mod windows_fs;
 mod windows_net;
+mod windows_relative;
 
 // Yerux native backend for x86-64 (Linux and Windows).
 // Hand-written machine-code assembler + runtime + executable writers: ELF64 (Linux, raw syscalls,
@@ -54,7 +55,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 36] = [
+const IMPORTS: [&str; 37] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -91,6 +92,7 @@ const IMPORTS: [&str; 36] = [
     "SetFilePointerEx",
     "SetFileInformationByHandle",
     "FlushFileBuffers",
+    "MultiByteToWideChar",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -128,6 +130,7 @@ const IMP_LOADLIBRARYEX: usize = 32;
 const IMP_SETFILEPOINTER: usize = 33;
 const IMP_SETFILEINFO: usize = 34;
 const IMP_FLUSHFILEBUFFERS: usize = 35;
+const IMP_MULTITOWIDE: usize = 36;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
@@ -136,7 +139,7 @@ pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
             let unsupported = match inst {
                 Inst::Syscall(_, args) => match constants[args[0]] {
                     Some(0 | 1 | 2 | 3 | 21 | 35 | 39 | 60 | 79 | 80 | 82..=84 | 87 | 228 | 231 | 332) => continue,
-                    Some(n) if windows_net::supports(n) || windows_fs::supports(n) => continue,
+                    Some(n) if windows_net::supports(n) || windows_fs::supports(n) || windows_relative::supports(n) => continue,
                     Some(n) => format!("raw system call {n}"),
                     None => "raw system call with a dynamic number".into(),
                 },
@@ -3352,6 +3355,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     let report = a.report;
     let sockets = (os == Os::Windows && windows_net::reachable(ir))
         .then(|| windows_net::Stubs::new(&mut a));
+    let relative_files = (os == Os::Windows && windows_relative::reachable(ir))
+        .then(|| windows_relative::Stubs::new(&mut a));
     let has_workers = ir.funcs.iter().any(|f| {
         f.blocks.iter().any(|b| {
             b.insts.iter().any(|i| {
@@ -3636,6 +3641,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     }
     if sockets.is_some() {
         windows_net::emit_init(&mut a, &mut data);
+    }
+    if relative_files.is_some() {
+        windows_relative::emit_init(&mut a, &mut data);
     }
     // Startup may append strings for Windows API discovery. The vtables and
     // Float constants follow all such strings in the read-only data section.
@@ -4730,6 +4738,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         let files = windows_fs::Stubs::new(&mut a);
         files.emit_dispatch(&mut a);
+        if let Some(relative_files) = &relative_files {
+            relative_files.emit_dispatch(&mut a);
+        }
         for (number, stub) in [
             (0, l_osread),
             (1, l_oswrite),
@@ -4759,6 +4770,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
 
         files.emit(&mut a, winerr);
+        let dos_errno = a.label();
+        if let Some(relative_files) = &relative_files {
+            relative_files.emit(&mut a, winerr, dos_errno);
+        }
 
         // GetLastError mapped to a negative errno in rax (a callee with its own frame).
         a.bind(winerr);
@@ -4777,6 +4792,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             ];
             a.win_prologue(0);
             a.call_iat(IMP_GETLASTERROR);
+            a.win_restore_frame();
+            a.bind(dos_errno);
             a.raw(&[0x89, 0xC0]); // zero-extend eax
             let labels = errors.map(|_| a.label());
             for ((_, codes), label) in errors.into_iter().zip(labels) {
@@ -4794,7 +4811,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
                 a.jmp(done);
             }
             a.bind(done);
-            a.win_epilogue();
+            a.ret();
         }
 
         // access(path, F_OK) and directory operations follow the same ANSI path

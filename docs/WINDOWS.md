@@ -118,33 +118,36 @@ Invoke-Expression (Invoke-RestMethod 'http://10.0.2.2:8000/agent.ps1')
 `python3 tests/windows_pe_audit.py` builds the runtime goldens in `tests/` and the standalone programs
 under `examples/`. Intentional compile-error examples and modules without `main` are excluded. The
 [audit snapshot](windows-pe-rejections.tsv) records each rejected source and its exact first diagnostic.
-The previous audit recorded 47 rejections of 515 programs. By `f7003c2` the corpus had grown to 524.
+The previous round added TCP, directory iteration and file positioning. This round adds the
+handle-relative operations used by `fs.remove_dir_all`.
 
-| Same corpus before and after | `f7003c2` | With TCP, directory iteration and file positioning |
+| Same corpus before and after | `8de0022` | With recursive tree removal |
 |---|---:|---:|
-| Test goldens rejected | 38/454 | 26/454 |
-| Example entry points rejected | 14/70 | 5/70 |
-| Total rejected | **52/524** | **31/524** |
+| Test goldens rejected | 26/458 | 22/458 |
+| Example entry points rejected | 5/70 | 5/70 |
+| Total rejected | **31/528** | **27/528** |
 
-The four new goldens also build for PE, giving **497/528 builds** in the updated corpus.
+The new `pe_remove_tree` golden also builds, giving **502/529 builds** in the updated corpus.
 A program can use several unsupported features. The table counts only its first diagnostic.
 
 | First compiler rejection | Before | After |
 |---|---:|---:|
-| TCP socket setup (`setsockopt`) | 18 | 0 |
-| Directory iteration (`getdents64`) | 14 | 0 |
-| File positioning (`lseek`) | 1 | 0 |
-| Handle-relative filesystem access (`openat`) | 0 | 9 |
-| Process handling (`wait4`) | 9 | 11 |
-| Raw poll (`ppoll`) | 0 | 1 |
+| Handle-relative filesystem access (`openat`) | 9 | 0 |
+| Process handling (`wait4`) | 11 | 12 |
 | Extern C | 6 | 6 |
-| Links and permissions (`readlink`, `chmod`) | 3 | 3 |
+| POSIX symbolic link creation (`symlink`) | 0 | 3 |
+| POSIX permissions (`chmod`) | 2 | 3 |
+| POSIX link reading (`readlink`) | 1 | 1 |
+| Raw poll (`ppoll`) | 1 | 1 |
 | Raw Linux memory mapping (`mmap`) | 1 | 1 |
 
-Wine 10.0 matched C on the three new PE regressions, loopback and randomized HTTP requests,
-and the `apiserver` and `webkv` examples. The Windows CI smoke suite requires the new TCP,
-directory and file-positioning regressions to build and run. The Windows Server figures above
-are from the earlier native Windows run.
+The Windows CI smoke suite requires `pe_remove_tree` and runs the `minidb` CLI through compaction
+and readback. `minidb` closes the log before replacing it and reopens it on demand. Under Wine
+10.0, both regressions matched C, and recursive removal preserved the targets of host Unix
+symlinks. The four newly buildable `fs_*` goldens all completed recursive cleanup under Wine.
+Their full output still differs over Linux `/proc/self/fd` counts, directory sizes and error codes
+for read-only or write-only handles and file/directory mismatches. The Windows Server figures
+above are from an earlier native Windows run.
 
 ## Other verification
 
@@ -197,11 +200,13 @@ are from the earlier native Windows run.
 * Executables use the console subsystem and the shared x86-64 register allocator. Subprocesses,
   extern C, raw Linux polling and runtime backtraces remain unavailable.
 * Path-taking Win32 file calls still use the ANSI code page. Native path syntax and separator rules
-  differ from the POSIX `std.path` conventions. Handle-relative traversal and recursive tree removal
-  still require unsupported syscalls. Replacing an open destination via `fs.rename` can
-  fail under Win32 sharing rules. In Wine, `minidb compact` encounters this when
-  it renames its new log over the still-open database. Windows ACLs, full POSIX mode
-  changes, and Linux `/proc/self/exe` semantics are outside the metadata subset.
+  differ from the POSIX `std.path` conventions. Recursive tree removal uses handle-relative NT
+  opens and deletion on filesystems that support `FileDispositionInformationEx`. It opens directory
+  reparse points without traversing them. Under Wine, it rejects a host Unix symlink when the resolved
+  handle name differs from the requested entry. Wine's host pathname resolution is outside the
+  Windows reparse-point guarantees. Replacing an open destination via `fs.rename` can fail under
+  Win32 sharing rules. Windows ACLs, POSIX link creation, full POSIX mode changes, and Linux
+  `/proc/self/exe` semantics are outside the filesystem subset.
 * `aarch64` Windows and 32-bit x86 are out of scope.
 
 

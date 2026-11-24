@@ -27,7 +27,7 @@ out="$("$Y" run "$T/with space/hello crlf.yx" --native 2>&1 | tr -d '\r')"
 if [ -n "$EXE" ]; then [ -f "$T/with space/hello crlf.exe" ] || fail "default output should be hello crlf.exe"; fi
 
 # These must execute on Windows CI, including panic location and explicit exit.
-required='^(io_prompt|io_stdin_bytes|io_exit|panic_option_expect|conc_spawn|conc_runtime|conc_channel_worker_panic|drop_worker|pe_fs|pe_fs_metadata|pe_net|pe_directory|pe_file_position)$'
+required='^(io_prompt|io_stdin_bytes|io_exit|panic_option_expect|conc_spawn|conc_runtime|conc_channel_worker_panic|drop_worker|pe_fs|pe_fs_metadata|pe_net|pe_directory|pe_file_position|pe_remove_tree)$'
 names=""
 if [ "${1:-}" = "--all" ]; then
   for f in examples/*.yx examples/real/*.yx tests/*.yx; do names="$names $f"; done
@@ -37,7 +37,7 @@ else
   names="$names tests/io_prompt.yx tests/io_stdin_bytes.yx tests/io_exit.yx tests/panic_option_expect.yx"
 fi
 if [ -n "$EXE" ] && [ "${1:-}" != "--all" ]; then
-  names="$names tests/conc_runtime.yx tests/conc_channel_worker_panic.yx tests/drop_worker.yx tests/pe_fs.yx tests/pe_fs_metadata.yx tests/pe_net.yx tests/pe_directory.yx tests/pe_file_position.yx"
+  names="$names tests/conc_runtime.yx tests/conc_channel_worker_panic.yx tests/drop_worker.yx tests/pe_fs.yx tests/pe_fs_metadata.yx tests/pe_net.yx tests/pe_directory.yx tests/pe_file_position.yx tests/pe_remove_tree.yx"
 fi
 for f in $names; do
   n="$(basename "$f" .yx)"
@@ -63,5 +63,15 @@ for f in $names; do
     fail "$n: output or exit code differs (code $code)"; diff "tests/expected/$n.out" "$T/out.lf" | head -n 5
   fi
 done
+
+if [ -n "$EXE" ]; then
+  if ! { "$Y" build examples/real/minidb/main.yx --native -o "$T/minidb.exe" &&
+         (cd "$T" && timeout 60 ./minidb.exe store.db put keep old &&
+          timeout 60 ./minidb.exe store.db put keep new && timeout 60 ./minidb.exe store.db compact &&
+          [ "$(timeout 60 ./minidb.exe store.db get keep | tr -d '\r')" = new ]); } >"$T/minidb.log" 2>&1; then
+    cat "$T/minidb.log"
+    fail "minidb compaction"
+  fi
+fi
 echo "win_smoke: $pass passed, $skip skipped (native backend limits), $fails failed"
 [ $fails -eq 0 ]
