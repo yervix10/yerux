@@ -106,3 +106,8 @@ HTTP/1.1 on loopback: an acceptor thread deals connections to three workers thro
 `examples/real/json`. A scripted client (std.http) and four concurrent client threads drive it, so the output is
 deterministic. The port comes from the process id and is retried when busy.
 
+
+## webkv
+
+`webkv/` is a key-value HTTP server with threads, channels, `std.net` and a client, with its own tests; see
+`docs/REAL_PROGRAMS.md` and `tests/webkv.sh`.

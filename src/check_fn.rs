@@ -835,7 +835,9 @@ impl<'a> Checker<'a> {
                     );
                     bad = true;
                 }
-                let mode = if spawning && self.types.owned(ty) {
+                // a spawned worker owns what it captured (owned values are moved in, scalars copied), so a nested
+                // spawn may capture it again
+                let mode = if spawning {
                     Mode::Own
                 } else if is_move {
                     Mode::Mut

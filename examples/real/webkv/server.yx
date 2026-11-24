@@ -1,0 +1,82 @@
+// The server: the calling thread accepts connections and deals them round-robin to worker threads through one
+// bounded channel per worker; each worker answers its connections one request at a time.
+import std.io
+import std.net
+import proto
+import router
+import store
+
+// Read one request from `peer`, answer it, close the connection.
+fn serve_one(peer: net.TcpStream, st: view store.Store) {
+  let answer = match proto.read_request(peer) {
+    Ok(req) => router.handle(st, req),
+    Err(e) => proto.reply(e.0, "text/plain", e.1)
+  }
+  let bytes = proto.render(answer)
+  match net.write(peer, bytes) {
+    Ok(n) => {}
+    Err(e) => {}
+  }
+  match net.close_stream(move peer) {
+    Ok(u) => {}
+    Err(e) => {}
+  }
+}
+
+fn worker(rx: Receiver<net.TcpStream>, st: Shared<store.Store>) -> Int {
+  var served = 0
+  while true {
+    match rx.recv() {
+      Some(peer) => {
+        serve_one(move peer, st.get())
+        served = served + 1
+      }
+      None => { break }
+    }
+  }
+  return served
+}
+
+pub fn pick_workers(n: Int) -> Int {
+  if n < 1 { return 1 }
+  if n > 16 { return 16 }
+  return n
+}
+
+// Accept `max_conns` connections (0 = forever), serve them with `workers` threads, return how many each worker
+// served. The listener is only borrowed: the caller keeps it (and closes it).
+pub fn run(listener: view net.TcpListener, st: Shared<store.Store>, workers: Int, max_conns: Int) -> List<Int> {
+  let n = pick_workers(workers)
+  var senders = List<Sender<net.TcpStream>>.new()
+  var counts = List<Int>.new()
+  scope {
+    var handles = List<JoinHandle<Int>>.new()
+    for i in 0..n {
+      let (tx, rx) = Sender<net.TcpStream>.bounded(16)
+      senders.push(move tx)
+      let mine = st.clone()
+      handles.push(spawn move || worker(move rx, move mine))
+    }
+    var accepted = 0
+    var next = 0
+    while max_conns == 0 || accepted < max_conns {
+      match net.accept(listener) {
+        Ok(peer) => {
+          senders.at(next).send(move peer)
+          next = (next + 1) % n
+          accepted = accepted + 1
+        }
+        Err(e) => { break }
+      }
+    }
+    for i in 0..senders.len() { senders.at(i).close() }
+    while !handles.is_empty() {
+      let h = handles.remove(0)
+      match h.join() {
+        Ok(c) => { counts.push(c) }
+        Err(e) => { counts.push(-1) }
+      }
+    }
+  }
+  return counts
+}

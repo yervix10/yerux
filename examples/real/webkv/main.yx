@@ -1,0 +1,98 @@
+// webkv: a small key-value HTTP server (std.net, threads, channels) and its own test client (std.http).
+//
+//   webkv                      self test: server + client threads on a loopback port, prints a report
+//   webkv serve PORT [WORKERS [MAX_CONNECTIONS]]
+//
+// Routes: GET/PUT/DELETE /kv/<key>   POST /incr/<key> (body = amount, default 1)   GET /stats   GET /health
+import std.env
+import std.io
+import std.net
+import client
+import server
+import store
+
+fn selftest() -> Int {
+  let workers = 3
+  let clients = 4
+  let rounds = 25
+  let a = net.address("127.0.0.1", 0).unwrap()
+  let listener = net.listen(a).unwrap()
+  let bound = net.listener_local_addr(listener).unwrap()
+  let port = bound.port
+  let st = Shared.new(store.new_store())
+  let probe = st.clone()
+  var served = List<Int>.new()
+  var failed = 0
+  scope {
+    // the clients run in their own thread: the sequential script, then `clients` threads hammering one counter
+    let driver = spawn move || {
+      let addr = net.address("127.0.0.1", port).unwrap()
+      var n = 0
+      var bad = client.script(addr, n)
+      var hs = List<JoinHandle<Int>>.new()
+      let p = port
+      let r = rounds
+      for c in 0..clients {
+        hs.push(spawn move || client.hammer(p, "total", r))
+      }
+      while !hs.is_empty() {
+        let h = hs.remove(0)
+        match h.join() {
+          Ok(b) => { bad = bad + b }
+          Err(e) => { bad = bad + 1 }
+        }
+      }
+      bad = bad + client.expect("counter after the race", client.get(addr, "/kv/total"), 200, "100")
+      bad = bad + client.expect("stats", client.get(addr, "/stats"), 200, "{{\"keys\":3,\"reads\":4,\"misses\":1,\"writes\":106,\"deletes\":1}}")
+      return bad
+    }
+    // 20 scripted requests + clients * rounds + 2 final checks
+    served = server.run(listener, move st, workers, 20 + clients * rounds + 2)
+    match driver.join() {
+      Ok(b) => { failed = b }
+      Err(e) => { failed = 1000 }
+    }
+  }
+  var total = 0
+  for i in 0..served.len() { total = total + served.at(i) }
+  print("workers: {served.len()}  connections served: {total}")
+  let s = store.stats(probe.get())
+  print("store: keys={s.keys} writes={s.writes} deletes={s.deletes}")
+  if failed == 0 { print("selftest passed") } else { print("selftest FAILED: {failed}") }
+  return failed
+}
+
+fn serve_cli(port: Int, workers: Int, max_conns: Int) -> Int {
+  let a = net.address("127.0.0.1", port).unwrap()
+  let listener = match net.listen(a) {
+    Ok(l) => move l,
+    Err(e) => {
+      print("cannot listen")
+      return 1
+    }
+  }
+  print("listening on 127.0.0.1:{port} with {server.pick_workers(workers)} workers")
+  let st = Shared.new(store.new_store())
+  let counts = server.run(listener, move st, workers, max_conns)
+  var total = 0
+  for i in 0..counts.len() { total = total + counts.at(i) }
+  print("served {total} connections")
+  return 0
+}
+
+fn main() {
+  let argv = env.args()
+  if argv.len() >= 2 && argv.at(1).eq("serve") {
+    var port = 8080
+    var workers = 4
+    var max_conns = 0
+    if argv.len() >= 3 && !argv.at(2).parse_int(port) { print("bad port"); return }
+    if argv.len() >= 4 && !argv.at(3).parse_int(workers) { print("bad workers"); return }
+    if argv.len() >= 5 && !argv.at(4).parse_int(max_conns) { print("bad connection count"); return }
+    let rc = serve_cli(port, workers, max_conns)
+    if rc != 0 { env.exit(rc) }
+    return
+  }
+  let failed = selftest()
+  if failed != 0 { env.exit(1) }
+}

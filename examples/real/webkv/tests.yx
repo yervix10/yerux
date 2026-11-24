@@ -1,0 +1,135 @@
+// yerux test examples/real/webkv/tests.yx
+import std.io
+import std.net
+import proto
+import router
+import server
+import store
+
+fn req(method: Text, path: Text, body: Text) -> proto.Request {
+  return proto.Request {
+    method: String.from(method),
+    path: String.from(path),
+    headers: List<(String, String)>.new(),
+    body: String.from(body),
+  }
+}
+
+// (a field of a temporary that owns memory cannot be read: keep the reply in a variable first)
+fn status_of(s: view store.Store, method: Text, path: Text, body: Text) -> Int {
+  let r = router.handle(s, req(method, path, body))
+  return r.status
+}
+
+fn body_of(s: view store.Store, method: Text, path: Text, body: Text) -> String {
+  let r = router.handle(s, req(method, path, body))
+  return r.body.clone()
+}
+
+test "parse_head reads the request line and the headers" {
+  let r = proto.parse_head("GET /kv/a HTTP/1.1\r\nHost: x\r\nContent-Length:  7 ").unwrap()
+  assert(r.method.eq("GET"))
+  assert(r.path.eq("/kv/a"))
+  assert(r.headers.len() == 2)
+  assert(proto.header(r, "content-length").unwrap().eq("7"))
+  assert(proto.header(r, "HOST").unwrap().eq("x"))
+  assert(proto.header(r, "accept").is_none())
+}
+
+test "parse_head rejects malformed heads" {
+  assert(proto.parse_head("GET /x").is_err())
+  assert(proto.parse_head("GET /x HTTP/2 extra HTTP/1.1").is_err())
+  assert(proto.parse_head("GET x HTTP/1.1").is_err())
+  assert(proto.parse_head("GET /x SPDY/3").is_err())
+  assert(proto.parse_head("GET /x HTTP/1.1\r\nno colon here").is_err())
+  assert(proto.parse_head("GET /x HTTP/1.1\r\n: empty name").is_err())
+}
+
+test "render frames a reply" {
+  let text = proto.render(proto.reply(404, "text/plain", "gone"))
+  assert(text.starts_with("HTTP/1.1 404 Not Found\r\n"))
+  assert(text.contains("Content-Length: 4\r\n"))
+  assert(text.contains("Connection: close\r\n\r\ngone"))
+  assert(proto.reason(299).eq("Internal Server Error"))
+}
+
+test "store keeps values, counts and deletes" {
+  let s = store.new_store()
+  assert(store.get(s, "a").is_none())
+  assert(store.put(s, "a", "1"))
+  assert(!store.put(s, "a", "2"))
+  assert(store.get(s, "a").unwrap().eq("2"))
+  assert(store.incr(s, "a", 5).unwrap() == 7)
+  assert(store.incr(s, "fresh", 3).unwrap() == 3)
+  assert(store.put(s, "text", "hello"))
+  assert(store.incr(s, "text", 1).is_none())
+  assert(store.delete(s, "a"))
+  assert(!store.delete(s, "a"))
+  let st = store.stats(s)
+  assert(st.keys == 2)
+  assert(st.deletes == 1)
+  assert(st.misses == 1)
+}
+
+test "router: methods, keys and statuses" {
+  let s = store.new_store()
+  assert(status_of(s, "PUT", "/kv/k", "v") == 201)
+  assert(status_of(s, "PUT", "/kv/k", "w") == 200)
+  assert(status_of(s, "GET", "/kv/k", "") == 200)
+  assert(body_of(s, "GET", "/kv/k", "").eq("w"))
+  assert(status_of(s, "GET", "/kv/missing", "") == 404)
+  assert(status_of(s, "DELETE", "/kv/k", "") == 204)
+  assert(status_of(s, "PATCH", "/kv/k", "") == 405)
+  assert(status_of(s, "GET", "/kv/", "") == 404)
+  assert(status_of(s, "GET", "/kv/a b", "") == 404)
+  assert(status_of(s, "GET", "/kv/a/b", "") == 404)
+  assert(body_of(s, "POST", "/incr/n", " 12 ").eq("12\n"))
+  assert(body_of(s, "POST", "/incr/n", "").eq("13\n"))
+  assert(status_of(s, "POST", "/incr/n", "x") == 400)
+  assert(status_of(s, "GET", "/incr/n", "") == 405)
+  assert(status_of(s, "GET", "/health", "") == 200)
+  assert(body_of(s, "GET", "/stats", "").starts_with("{{\"keys\":1"))
+}
+
+// Send raw bytes to a running server and return the status line of the answer.
+fn raw_status(port: Int, bytes: view String) -> String {
+  let a = net.address("127.0.0.1", port).unwrap()
+  let c = net.connect(a).unwrap()
+  net.write(c, bytes).unwrap()
+  let text = net.read(c, 4096).unwrap()
+  let eol = text.find("\r\n")
+  if eol < 0 { return String.from("(none)") }
+  return text.slice(0, eol)
+}
+
+test "server answers malformed and oversized requests with 4xx" {
+  let a = net.address("127.0.0.1", 0).unwrap()
+  let listener = net.listen(a).unwrap()
+  let bound = net.listener_local_addr(listener).unwrap()
+  let port = bound.port
+  let st = Shared.new(store.new_store())
+  var oversized = String.from("GET /health HTTP/1.1\r\nX-Pad: ")
+  for i in 0..9000 { oversized.push_byte(97) }
+  oversized.push_str("\r\n\r\n")
+  var seen = List<String>.new()
+  scope {
+    let client = spawn move || {
+      var out = List<String>.new()
+      out.push(raw_status(port, "BROKEN\r\n\r\n"))
+      out.push(raw_status(port, "GET /health HTTP/1.1\r\nContent-Length: nope\r\n\r\n"))
+      out.push(raw_status(port, oversized))
+      out.push(raw_status(port, "PUT /kv/x HTTP/1.1\r\nContent-Length: 999999\r\n\r\n"))
+      out.push(raw_status(port, "GET /health HTTP/1.1\r\n\r\n"))
+      return out
+    }
+    let counts = server.run(listener, move st, 2, 5)
+    assert(counts.len() == 2)
+    assert(counts.at(0) + counts.at(1) == 5)
+    seen = client.join().unwrap()
+  }
+  assert(seen.at(0).eq("HTTP/1.1 400 Bad Request"))
+  assert(seen.at(1).eq("HTTP/1.1 400 Bad Request"))
+  assert(seen.at(2).eq("HTTP/1.1 413 Payload Too Large"))
+  assert(seen.at(3).eq("HTTP/1.1 413 Payload Too Large"))
+  assert(seen.at(4).eq("HTTP/1.1 200 OK"))
+}

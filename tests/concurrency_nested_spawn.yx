@@ -1,0 +1,16 @@
+// a spawned worker owns its captured scalars, so a nested spawn can capture them again (it used to be rejected as "borrowed")
+fn work(n: Int) -> Int { return n + 1 }
+fn main() {
+  let k = 41
+  scope {
+    let outer = spawn move || {
+      var total = 0
+      scope {
+        let inner = spawn move || work(k)
+        total = inner.join().unwrap()
+      }
+      return total
+    }
+    print(outer.join().unwrap())
+  }
+}

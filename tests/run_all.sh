@@ -108,6 +108,7 @@ AUX=(
   "http|bash tests/http.sh"
   "lsp_cargo|cargo test -q --test lsp"
   "modules|bash tests/modules.sh"
+  "webkv|bash tests/webkv.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"
