@@ -1,0 +1,55 @@
+import std.io
+import std.text
+
+fn preguntar(mensaje: view String) -> Result<String, String> {
+    match io.prompt(mensaje) {
+        Ok(linea) => { return Ok(move linea) }
+        Err(error) => { return Err(error.show()) }
+    }
+}
+
+fn leer_numero(mensaje: view String) -> Result<Float, String> {
+    let linea = preguntar(mensaje)?
+    return text.parse_float(linea.trim())
+}
+
+fn calcular() -> Result<Float, String> {
+    print("=== CALCULADORA ===")
+
+    print("\n1. Sumar")
+    print("2. Restar")
+    print("3. Multiplicar")
+    print("4. Dividir")
+
+    let num1 = leer_numero("Ingresa el primer número: ")?
+    let num2 = leer_numero("Ingresa el segundo número: ")?
+
+    let linea = preguntar("Selecciona una operación: ")?
+    let opcion = linea.trim()
+    if opcion == "1" { return Ok(num1 + num2) }
+    if opcion == "2" { return Ok(num1 - num2) }
+    if opcion == "3" { return Ok(num1 * num2) }
+    if opcion == "4" {
+        if num2 == 0.0 { return Err(String.from("No se puede dividir entre cero")) }
+        return Ok(num1 / num2)
+    }
+    return Err(String.from("Opción no válida"))
+}
+
+fn ejecutar() -> Int {
+    match calcular() {
+        Ok(resultado) => {
+            print("Resultado: {resultado}")
+            return 0
+        }
+        Err(error) => {
+            io.eprintln("Error: {error}")
+            return 1
+        }
+    }
+}
+
+fn main() {
+    let estado = ejecutar()
+    if estado != 0 { io.exit(estado) }
+}

@@ -76,6 +76,7 @@ risk of the area, not the amount of code.
 | `std.regex`, `std.csv`, `std.toml` | Experimental | tests/std_regex.yx, tests/std_csv.yx, tests/std_toml.yx; grammar in REGEX_CSV_TOML.md still subject to change |
 | `std.args`, `std.env` | Stable-candidate | tests/std_args.yx, tests/std_env_typed.yx |
 | `std.io`, `std.fs`, `std.path`, `std.time` | Stable-candidate | docs/STDLIB_IO.md, docs/STDLIB_SYSTEM.md; tests/std_fs_metadata.yx, tests/time_duration.yx. Public helpers listed in 6.3 are Internal |
+| `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable-candidate | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |
 | `std.process` | Experimental | docs/STDLIB_PROCESS.md; tests/process_*.yx |
 | `std.net`, `std.http` | Experimental | docs/NET.md, docs/HTTP.md; tests/net_loopback.yx, tests/std_http_client.yx |
 | `std.sync` | Experimental | spinning primitives, docs/STDLIB_SYNC.md; tests/std_sync.yx |

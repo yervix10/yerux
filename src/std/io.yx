@@ -20,6 +20,7 @@ pub enum IoErrorKind {
     OutOfSpace,
     NotEmpty,
     Other,
+    UnexpectedEof,
 }
 
 pub struct IoError {
@@ -62,6 +63,9 @@ fn kind_code(k: IoErrorKind) -> Int {
         }
         Other => {
             return 10
+        }
+        UnexpectedEof => {
+            return 12
         }
     }
 }
@@ -474,6 +478,16 @@ fn write_fd(fd: Int, s: view String, what: Text) -> Result<Int, IoError> {
 // Write the bytes of `s` to standard output (no newline added; `print` adds one). Returns the byte count.
 pub fn write_stdout(s: view String) -> Result<Int, IoError> {
     return write_fd(1, s, "write stdout")
+}
+
+/// Write a prompt to stdout without a newline, then read one line from stdin.
+/// Return UnexpectedEof if no line remains.
+pub fn prompt(msg: view String) -> Result<String, IoError> {
+    let _ = write_stdout(msg)?
+    match read_line()? {
+        Some(line) => { return Ok(move line) }
+        None => { return Err(custom_error(IoErrorKind.UnexpectedEof, "end of input")) }
+    }
 }
 
 /// Write a List, array or slice of bytes to stdout without UTF-8 conversion.

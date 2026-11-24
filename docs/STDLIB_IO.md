@@ -21,7 +21,8 @@ Errors are values: nothing in this module aborts (a panic can still come from ar
 
 ```
 pub enum IoErrorKind { NotFound, PermissionDenied, AlreadyExists, IsDirectory, NotDirectory,
-                       InvalidInput, InvalidData, BrokenPipe, OutOfSpace, NotEmpty, Other }   // impl Equal
+                       InvalidInput, InvalidData, BrokenPipe, OutOfSpace, NotEmpty, Other,
+                       UnexpectedEof }   // impl Equal
 pub struct IoError { kind: IoErrorKind, code: Int, message: String }                    // impl Show (= message)
 ```
 `code` is the positive `errno` (0 for errors that did not come from the kernel, e.g. invalid UTF-8). `NotEmpty` is `ENOTEMPTY` (removing a non-empty directory). `message` reads like `open '/tmp/x': No such file or directory (os error 2)`.
@@ -29,6 +30,7 @@ pub struct IoError { kind: IoErrorKind, code: Int, message: String }            
 | Function | Result | Notes |
 |---|---|---|
 | `read_line()` | `Result<Option<String>, IoError>` | Next line of stdin without `\n` / `\r\n`; `Ok(None)` at end of input; a last line without newline is returned verbatim. |
+| `prompt(msg: view String)` | `Result<String, IoError>` | Writes `msg` to stdout before reading a line with the same line-ending rules as `read_line()`. Returns `UnexpectedEof` if no line remains. |
 | `read_stdin_bytes(buf)` | `Result<Int, IoError>` | Read into a mutable byte slice with no UTF-8 conversion. A non-empty buffer returns 0 at EOF. |
 | `read_all()` | `Result<String, IoError>` | Rest of stdin (`""` at end of input). |
 | `write_stdout(s)`, `write_stderr(s)` | `Result<Int, IoError>` | Raw write of the bytes of `s` (no newline), returns the byte count. |
@@ -48,6 +50,22 @@ pub struct IoError { kind: IoErrorKind, code: Int, message: String }            
 | `sleep_ms(ms)`, `sleep_ns(ns)` | | At least that long (restarted after a signal); `<= 0` returns at once. |
 
 `path` and `data` are `view String` parameters, so a `Text` literal works (the compiler lends a hidden copy). A temporary `String` stays alive through the call.
+
+`prompt` writes the message as given. An empty line returns an empty owned string.
+Write errors, read errors and invalid UTF-8 are propagated. EOF returns `UnexpectedEof`
+with error code 0. Use `?` to receive the owned line directly.
+
+```yerux
+import std.io
+
+fn greet() -> Result<Int, io.IoError> {
+    let name = io.prompt("Name: ")?
+    print("Hello, {name}!")
+    return Ok(0)
+}
+```
+
+For a complete program, see [the calculator](../examples/25_calculator.yx).
 
 Rules worth knowing:
 - **Strings stay UTF-8.** `read_line`, `read_all` and `read_file` validate their input (no overlong forms, no surrogates, nothing above U+10FFFF) and return `IoErrorKind.InvalidData` instead of building a String that `char_at` would later panic on. `args()` and `env_*` retain their lossy conversion (every non-ASCII byte of an invalid value becomes `?`). Use `env.args_utf8()` to reject malformed command-line arguments.
