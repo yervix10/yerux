@@ -76,7 +76,7 @@ Taken from the repository at the time of writing (re-measure with the commands s
 | Measure | Value | How |
 |---|---|---|
 | Rust compiler and tools | 43,866 lines in `src/` (`*.rs`, `syntax/`, `lsp/`) | `cat src/*.rs src/syntax/*.rs src/lsp/*.rs \| wc -l` |
-| Library written in Yerux | prelude 3,605 lines; 27 `std.*` modules, 7,781 lines | `src/prelude*.yx`, `src/std/*.yx` |
+| Library written in Yerux | prelude 3,791 lines; 30 `std.*` modules, 10,014 lines | `src/prelude*.yx`, `src/std/*.yx` |
 | Self-hosted compiler | 10,616 lines in 12 files (`selfhost/`) | `cat selfhost/*.yx \| wc -l` |
 | Test programs | 598 `tests/*.yx`, 63 `examples/*.yx`, 1,188 expected outputs, 45 scripts, 12 fuzzers/checkers in Python | `ls` |
 | Doc-tests | every `yerux` block of the book, GUIDE.md and STDLIB.md | `bash tests/doctests.sh` |
