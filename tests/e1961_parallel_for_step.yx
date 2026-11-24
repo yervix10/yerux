@@ -1,0 +1,6 @@
+// COMPATIBILITY.md section 10 item 7: explicit range steps are rejected in `parallel for`.
+fn main() {
+  var n = Atomic<Int>.new(0)
+  parallel for i in 0..10 step 2 { n.add(i) }
+  print(n.load())
+}

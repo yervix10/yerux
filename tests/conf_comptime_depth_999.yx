@@ -1,0 +1,10 @@
+// COMPATIBILITY.md section 10 item 5: 999 nested compile-time calls (1000 invocations) are accepted.
+fn f(n: Int) -> Int {
+  if n == 0 { return 0 }
+  return 1 + f(n - 1)
+}
+
+fn main() {
+  let c = comptime f(999)
+  print(c)
+}

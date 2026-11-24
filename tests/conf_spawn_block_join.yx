@@ -1,0 +1,22 @@
+// COMPATIBILITY.md section 10 item 11: a standalone `spawn` statement retains its handle until the
+// enclosing block exits (here an `if` block inside the scope), not until the scope ends.
+import std.time
+
+fn work(flag: view Shared<Atomic<Int>>) -> Int {
+  time.sleep(time.millis(200))
+  flag.get().store(1)
+  return 1
+}
+
+fn main() {
+  let flag = Shared.new(Atomic<Int>.new(0))
+  scope {
+    if true {
+      let f = flag.clone()
+      spawn move { work(f) }
+      print("inner end")
+    }
+    print("after if {flag.get().load()}")
+  }
+  print("after scope {flag.get().load()}")
+}

@@ -1,0 +1,6 @@
+// COMPATIBILITY.md section 10 item 6: `comptime fn` is not accepted today (parse error).
+comptime fn f(n: Int) -> Int { return n * 2 }
+
+fn main() {
+  print(f(3))
+}

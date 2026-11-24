@@ -1,0 +1,5 @@
+// COMPATIBILITY.md section 10 item 6: `comptime for` is not accepted today.
+fn main() {
+  comptime for i in 0..3 { print(i) }
+  print(1)
+}
