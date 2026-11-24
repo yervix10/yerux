@@ -46,6 +46,7 @@ struct Types {
   defer_floor: Int,
   frozen: List<Frozen>,
   site_span: String,
+  thread_bound: List<String>,
   operand: Bool,
   trace: Bool,
   expressions: List<String>,
@@ -241,10 +242,62 @@ pub fn function_parameter(part: view String) -> Parameter {
   return Parameter { mode: move mode, ty: part.slice(prefix, part.len()) }
 }
 
+// Does the subtree at `node` name `Self` as a type?
+fn mentions_self(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  for i in node..tree.at(node).end {
+    if tree.at(i).tag == "Type" {
+      let named = ast.name_at(tree, i, 0)
+      if named == "Self" { return true }
+    }
+  }
+  return false
+}
+
+// `dyn Trait` needs a declared trait whose methods borrow `self` and never mention `Self` elsewhere.
+fn check_object_safe(types: mut Types, tree: view List<ast.AstNode>, name: view String) {
+  let items = ast.child(tree, 0, 0)
+  var at = items + 1
+  while at < tree.at(items).end {
+    let decl = ast.child(tree, at, 2)
+    var declared = String.new()
+    if tree.at(decl).tag == "Trait" { declared = ast.name_at(tree, decl, 0) }
+    if tree.at(decl).tag == "Trait" && declared == name {
+      let methods = ast.child(tree, decl, 1)
+      var method = methods + 1
+      while method < tree.at(methods).end {
+        let method_name = ast.name_at(tree, method, 0)
+        let params = ast.child(tree, method, 2)
+        if params + 1 < tree.at(params).end && tree.at(params + 1).tag == "Self" {
+          let mode = String.from(tree.at(ast.child(tree, params + 1, 0)).tag)
+          if mode == "Own" {
+            issue_once(types, "trait '{name}' is not object-safe: method '{method_name}' takes self by value")
+            return
+          }
+        }
+        var uses_self = mentions_self(tree, ast.child(tree, method, 3))
+        var param = params + 1
+        while param < tree.at(params).end {
+          if tree.at(param).tag == "Param" && mentions_self(tree, param) { uses_self = true }
+          param = tree.at(param).end
+        }
+        if uses_self {
+          issue_once(types, "trait '{name}' is not object-safe: method '{method_name}' uses Self outside the receiver")
+          return
+        }
+        method = tree.at(method).end
+      }
+      return
+    }
+    at = tree.at(at).end
+  }
+  issue_once(types, "unknown trait '{name}'")
+}
+
 fn source_type(types: mut Types, tree: view List<ast.AstNode>, index: Int) -> String {
   if tree.at(index).tag == "_" { return unknown() }
   if tree.at(index).tag == "DynType" {
     let name = ast.name_at(tree, index, 0)
+    check_object_safe(types, tree, name)
     return "$dyn<{name}>"
   }
   if tree.at(index).tag == "BracketType" {
@@ -1498,6 +1551,7 @@ fn transferable(types: view Types, ty: view String, visited: mut List<String>) -
     if !transferable(types, part, visited) { return false }
   }
   let shape = shape_index(types, ty)
+  if shape >= 0 && types.thread_bound.contains(types.shapes.at(shape).name) { return false }
   if shape >= 0 {
     for field in types.shapes.at(shape).fields {
       if !transferable(types, instantiate(field.ty, types.shapes.at(shape).generics, ty), visited) {
@@ -2975,6 +3029,8 @@ fn declare_shapes(types: mut Types, tree: view List<ast.AstNode>, items: Int) {
     let decl = ast.child(tree, i, 2)
     let tag = String.from(tree.at(decl).tag)
     if tag == "Struct" || tag == "Enum" {
+      let attribute = ast.name_at(tree, i, 1)
+      if attribute == "thread_bound" { types.thread_bound.push(ast.name_at(tree, decl, 0)) }
       let generics = generic_names(tree, ast.child(tree, decl, 1))
       types.shapes.push(Shape {
         name: ast.name_at(tree, decl, 0), generics: move generics, fields: List<FieldType>.new(),
@@ -3041,6 +3097,9 @@ fn declare_function(types: mut Types, tree: view List<ast.AstNode>, node: Int, o
       let parameter = ast.name_at(tree, at, 0)
       if seen.contains(parameter) { issue_once(types, "duplicate parameter '{parameter}'") }
       else { seen.push(String.from(parameter)) }
+      if tree.at(ast.child(tree, at, 1)).tag == "Own" && tree.at(ast.child(tree, at, 2)).tag == "DynType" {
+        issue_once(types, String.from("dyn Trait requires Box or a view or mut parameter"))
+      }
     }
   }
   for at in params_node + 1..tree.at(params_node).end {
@@ -3090,7 +3149,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     function_params: -1, impl_params: -1, return_type: unknown(),
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
-    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(), operand: false,
+    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(), thread_bound: List<String>.new(), operand: false,
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),

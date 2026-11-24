@@ -310,7 +310,8 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
       }
       if tag != "Test" && tag != "Import" {
         if resolver.output.len() != 0 { resolver.output.push_str(",") }
-        resolver.output.push_str("Item(false,_,")
+        let attribute = String.from(tree.at(ast.child(tree, i, 1)).tag)
+        resolver.output.push_str("Item(false,{attribute},")
         linked_node(resolver, ctx, tree, bindings, decl, true)
         resolver.output.push_str(")")
       }

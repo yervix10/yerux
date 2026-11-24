@@ -2746,6 +2746,15 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
     }
     let base = expression(gen, tree, ast.child(tree, node, 0))
     let field = String.from(tree.at(ast.child(tree, node, 1)).tag)
+    let base_drop = drop_fn(gen, tree, base.ty)
+    if base_drop.len() != 0 && drop_fn(gen, tree, ty).len() == 0 && tree.at(ast.child(tree, node, 0)).tag == "Call" {
+      // a Copy field of an owning temporary: read it, then free the temporary at the end of the expression
+      let copied = temp(gen, tree, ty, "({base.code}).m{field}")
+      let id = gen.temp
+      gen.temp = id + 1
+      line(gen, "{{ {c_type(gen, tree, base.ty)} d{id} __attribute__((cleanup({base_drop}))) = {transfer(gen, tree, base)}; }}")
+      return move copied
+    }
     return Value { ty: move ty, code: "({base.code}).m{field}" }
   }
   if tag == "StructLit" { return struct_literal(gen, tree, node, ty) }

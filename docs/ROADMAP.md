@@ -101,10 +101,10 @@ all 14 concurrency cases. The remaining work to switch the default compiler
 is tracked in [SELFHOST.md](SELFHOST.md).
 Every program of the corpus, concurrency included, now compiles. Type
 errors of the self-hosted stages are drawn with `-->`, the source line and an
-underline (`tests/selfhost/spans/`). Measured on the 224 error programs
-`tests/e*.yx`: 90 give the same first error as the Rust compiler, 31 differ in
-wording, 47 fail another way and 56 are still accepted (flow-sensitive range
-analysis, object safety, thread transfer and similar checks are missing). Slices
+underline (`tests/selfhost/spans/`). Measured on the 228 error programs
+`tests/e*.yx`: 95 give the same first error as the Rust compiler, 32 differ in
+wording, 49 fail another way and 52 are still accepted (flow-sensitive range
+analysis, lock and `JoinHandle` escape rules and similar checks are missing). Slices
 held in variables and generic function items used as values are compile errors
 of the language itself (`e1003_slice_variable`), so there is nothing to lower.
 Left before it can be called self-hosted: the missing checks above, `extern`

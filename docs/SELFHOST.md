@@ -261,9 +261,9 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilt 7 of 7 executables with byte-identical C. The
-latest run matched **483 of 484 candidates**, including 103 runtime
+latest run matched **494 of 495 candidates**, including 103 runtime
 panics. It reported zero candidates outside the supported subset, one
-expected type rejection (`rejected_types.yx`, the 484th) and zero mismatches.
+expected type rejection (`rejected_types.yx`, the 495th) and zero mismatches.
 The previous run matched 458 of 459 candidates with 101 matching runtime
 panics.
 
@@ -277,11 +277,11 @@ draws it. Limits: the span is the token of that expression, not the whole
 expression; errors in imported modules and in the prelude are printed without a
 span. `tests/selfhost/spans/bad_*.yx` with `.err` files fix three drawings.
 
-Error corpus (`tests/e*.yx`, 224 programs the Rust compiler rejects): the
-self-hosted driver gives the **same first error as the Rust compiler for 90**,
-rejects 31 with different wording, fails another way on 47 (parser errors that
+Error corpus (`tests/e*.yx`, 228 programs the Rust compiler rejects): the
+self-hosted driver gives the **same first error as the Rust compiler for 95**,
+rejects 32 with different wording, fails another way on 49 (parser errors that
 print `SyntaxError:N`, C compiler errors, bootstrap `codegen:` limits) and
-**accepts 56**. Newly implemented in the type stage: provable `Int<a..b>`
+**accepts 52**. Newly implemented in the type stage: provable `Int<a..b>`
 range violations (literals, immutable `let`s, `for` variables over literal
 bounds and `+ - *` of those, at returns, arguments, fields, `push` and
 annotated `let`s; a variable that is assigned or appears in a condition or
@@ -289,11 +289,18 @@ annotated `let`s; a variable that is assigned or appears in a condition or
 evaluation (calls rejected, forward use, checked overflow and division by
 zero), moving a field out of an owned struct, calling `drop` directly,
 negative `for` steps, `for mut` over `chars()`, and or-patterns that bind
-different names. Still accepted: flow-sensitive range facts (`if n > 5`
-narrowing, `var` increments), object safety (`dyn`), slice type placement,
-`Drop` self-replacement, thread transfer rules, `unsafe` for FFI.
+different names. Round 3 added `dyn` rules (unknown trait, `self` by value,
+`Self` outside the receiver, a bare `dyn Trait` parameter) and
+`@thread_bound` types in `spawn` captures (the resolver now keeps item
+attributes). Still accepted: flow-sensitive range facts (`if n > 5`
+narrowing, `var` increments), slice type placement, `Drop` self-replacement,
+`Shared`/lock-with-thread-bound and `spawn` outside a `scope` (the latter
+needs to tell the root file from the library), `unsafe` for FFI. Limit:
+`derive Clone` on a recursive enum (`std.json.Value`) is not generated yet
+(the clone is inlined, so it would not terminate); the corpus test of
+`std.json` avoids `clone`.
 `tests/selfhost_codegen.sh` prints these counts and fails if the matching
-number falls below 90 (the program floor is now 483).
+number falls below 95 (the program floor is now 494).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
