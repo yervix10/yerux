@@ -47,6 +47,8 @@ struct Types {
   frozen: List<Frozen>,
   site_span: String,
   thread_bound: List<String>,
+  externs: List<String>,
+  in_drop: Bool,
   operand: Bool,
   trace: Bool,
   expressions: List<String>,
@@ -240,6 +242,23 @@ pub fn function_parameter(part: view String) -> Parameter {
   if prefix == 5 { mode = String.from("View") }
   else if prefix == 4 { mode = String.from("Mut") }
   return Parameter { mode: move mode, ty: part.slice(prefix, part.len()) }
+}
+
+// Is `node` the variable `self`?
+fn is_self_var(types: view Types, tree: view List<ast.AstNode>, node: Int) -> Bool {
+  if tree.at(node).tag != "Var" { return false }
+  let id = types.identities.at(node)
+  return id >= 0 && tree.at(types.declarations.at(id)).tag == "Self"
+}
+
+// Is `node` inside an `unsafe { .. }` block?
+fn inside_unsafe(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  var i = 0
+  while i < node {
+    if tree.at(i).tag == "Unsafe" && node < tree.at(i).end { return true }
+    i = i + 1
+  }
+  return false
 }
 
 // Does the subtree at `node` name `Self` as a type?
@@ -753,6 +772,9 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     var mode = String.from("View")
     if sig >= 0 && at < types.signatures.at(sig).args.len() { mode = String.from(types.signatures.at(sig).args.at(at).mode) }
     var actual = unknown()
+    if types.in_drop && mode == "Mut" && is_self_var(types, tree, i) {
+      issue(types, String.from("cannot replace or mutably lend all of `self` during Drop"))
+    }
     var rejected_move = false
     if types.verify_ownership && sig >= 0 && mode != "Own" && tree.at(i).tag == "Move" {
       let id = types.identities.at(i)
@@ -1044,6 +1066,7 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
   if owner.starts_with("Ptr<") {
     if receiver < 0 && name == "null" && child_count(tree, args) == 0 { return String.from(owner) }
     if receiver < 0 && name == "alloc" && child_count(tree, args) == 1 {
+      if !inside_unsafe(tree, args) { issue(types, "{owner}.alloc(n) requires an unsafe block") }
       let size = String.from("Int")
       expect_type(types, size, infer(types, tree, args + 1, size))
       return String.from(owner)
@@ -2021,6 +2044,12 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
       }
     } else { sig = signature_index(types, n, false) }
     let args = ast.child(tree, index, 1)
+    if id < 0 && types.externs.contains(n) && !inside_unsafe(tree, index) {
+      issue(types, "call to extern function '{n}' requires an unsafe block")
+    }
+    if id < 0 && n == "unchecked" && !inside_unsafe(tree, index) {
+      issue(types, String.from("`unchecked(x)` is only allowed in an `unsafe` block"))
+    }
     if id < 0 && sig < 0 {
       if n == "Some" {
         return nominal_constructor(types, tree, String.from("Option"), n, args, hint)
@@ -2145,6 +2174,9 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
 
 fn check_assignment(types: mut Types, tree: view List<ast.AstNode>, index: Int) {
   let target = ast.child(tree, index, 0)
+  if types.in_drop && is_self_var(types, tree, target) {
+    issue(types, String.from("cannot replace or mutably lend all of `self` during Drop"))
+  }
   var left = unknown()
   let binding = types.identities.at(target)
   if binding >= 0 && tree.at(target).tag == "Var" { left = String.from(types.bindings.at(binding)) }
@@ -3149,7 +3181,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     function_params: -1, impl_params: -1, return_type: unknown(),
     verify_ownership: verify_ownership, copy_params: List<String>.new(), ordered_params: List<String>.new(),
     modes: List<String>.new(), moved: List<Bool>.new(),
-    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(), thread_bound: List<String>.new(), operand: false,
+    loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(), thread_bound: List<String>.new(), externs: List<String>.new(), in_drop: false, operand: false,
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),
@@ -3229,6 +3261,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
       var foreign = list + 1
       while foreign < tree.at(list).end {
         let declared = declare_function(types, tree, foreign, String.new(), -1)
+        types.externs.push(ast.name_at(tree, foreign, 0))
         foreign = tree.at(foreign).end
       }
     } else if tree.at(decl).tag == "Trait" {
@@ -3289,7 +3322,11 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     types.return_type = String.from(state.expected)
     types.copy_params = copy_names(types.signatures.at(fun.signature).copy_params)
     types.ordered_params = copy_names(types.signatures.at(fun.signature).ordered_params)
+    let owner_shape = shape_index(types, types.signatures.at(fun.signature).owner)
+    types.in_drop = owner_shape >= 0 && types.shapes.at(owner_shape).user_drop &&
+      types.signatures.at(fun.signature).name == "drop" && types.signatures.at(fun.signature).receiver == "Mut"
     let exits = check_body(types, state, tree, ast.child(tree, fun.node, 4))
+    types.in_drop = false
   }
   var borrowed_closures = List<Bool>.new()
   for borrowing in types.borrowed_closures { borrowed_closures.push(borrowing) }

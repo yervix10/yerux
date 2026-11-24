@@ -1,0 +1,33 @@
+fn fib(n: Int) -> Int {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn gcd(a: Int, b: Int) -> Int {
+  var x = a
+  var y = b
+  while y != 0 {
+    let t = x % y
+    x = y
+    y = t
+  }
+  return x
+}
+
+fn main() {
+  print(fib(20))
+  print(gcd(48, 18))
+  var i = 0
+  var sum = 0
+  while i < 10 {
+    i = i + 1
+    if i % 2 == 0 { continue }
+    sum = sum + i
+    if sum > 20 { break }
+  }
+  print(sum)
+  print(-7 / 2)
+  print(-7 % 3)
+  print(1 < 2 && 3 > 4 || !false)
+  print("done")
+}
