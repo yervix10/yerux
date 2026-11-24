@@ -117,6 +117,7 @@ AUX=(
   "difftool|bash tests/difftool.sh"
   "edlite|bash tests/edlite.sh"
   "lisp|bash tests/lisp.sh"
+  "rxdfa|bash tests/rxdfa.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"

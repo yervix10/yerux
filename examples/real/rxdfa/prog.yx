@@ -1,0 +1,307 @@
+// Automata for rxdfa: a Thompson program built from the syntax tree, a leftmost-longest NFA simulation, and a lazily
+// built DFA (subset construction, one transition table row of 256 bytes per state).
+//
+// Assertions (^ and $) are resolved while following epsilon edges: `bol` is true at position 0 and `eol` is true at
+// the end of the text. A DFA state records the position-independent part of its thread set and whether it was
+// reached at position 0; its two accept flags are computed once, one for "not at the end" and one for "at the end".
+import parse
+import std.text
+
+// Instruction codes. Each instruction has x and y: Byte(x = byte, y = next), Set(x = class, y = next),
+// Split(x and y are both alternatives), Bol and Eol (y = next, taken only when the assertion holds), Match.
+fn op_byte() -> Int { return 0 }
+fn op_set() -> Int { return 1 }
+fn op_split() -> Int { return 2 }
+fn op_bol() -> Int { return 3 }
+fn op_eol() -> Int { return 4 }
+fn op_match() -> Int { return 5 }
+
+pub struct Prog {
+  op: List<Int>,
+  x: List<Int>,
+  y: List<Int>,
+  sets: List<List<Int>>,
+  start: Int,
+}
+
+// Leftmost-longest match: `start` and `end` are byte offsets.
+pub struct Span { start: Int, end: Int }
+
+fn inst(pr: mut Prog, code: Int, x: Int, y: Int) -> Int {
+  pr.op.push(code)
+  pr.x.push(x)
+  pr.y.push(y)
+  return pr.op.len() - 1
+}
+
+// Emits the code for node `n` followed by `next`, and returns its entry instruction. Built back to front, so no
+// patching is needed except for the loop entries of * and +.
+fn emit(pr: mut Prog, re: view parse.Re, n: Int, next: Int) -> Int {
+  var entry = next
+  match re.nodes.at(n) {
+    parse.Node.Byte(b) => {
+      entry = inst(pr, op_byte(), b, next)
+    }
+    parse.Node.Set(s) => {
+      entry = inst(pr, op_set(), s, next)
+    }
+    parse.Node.Cat(l, r) => {
+      let rest = emit(pr, re, r, next)
+      entry = emit(pr, re, l, rest)
+    }
+    parse.Node.Alt(l, r) => {
+      let a = emit(pr, re, l, next)
+      let b = emit(pr, re, r, next)
+      entry = inst(pr, op_split(), a, b)
+    }
+    parse.Node.Opt(a) => {
+      let body = emit(pr, re, a, next)
+      entry = inst(pr, op_split(), body, next)
+    }
+    parse.Node.Star(a) => {
+      let loop = inst(pr, op_split(), -1, next)
+      let body = emit(pr, re, a, loop)
+      pr.x.set(loop, body)
+      entry = loop
+    }
+    parse.Node.Plus(a) => {
+      let loop = inst(pr, op_split(), -1, next)
+      let body = emit(pr, re, a, loop)
+      pr.x.set(loop, body)
+      entry = body
+    }
+    parse.Node.Bol => {
+      entry = inst(pr, op_bol(), 0, next)
+    }
+    parse.Node.Eol => {
+      entry = inst(pr, op_eol(), 0, next)
+    }
+    parse.Node.Empty => {
+      entry = next
+    }
+  }
+  return entry
+}
+
+pub fn compile(re: view parse.Re) -> Prog {
+  var pr = Prog { op: List<Int>.new(), x: List<Int>.new(), y: List<Int>.new(), sets: re.sets.clone(), start: 0 }
+  let m = inst(pr, op_match(), 0, 0)
+  pr.start = emit(pr, re, re.root, m)
+  return pr
+}
+
+// Adds the epsilon closure of `pc` to `out`, following splits and the assertions that hold. `mark[pc] == 1` means
+// the instruction was already visited in this closure. Consuming instructions and Match are added to `out`.
+fn addthread(pr: view Prog, pc: Int, bol: Bool, eol: Bool, mark: mut List<Int>, out: mut List<Int>) {
+  if mark.get(pc) == 1 {
+    return
+  }
+  mark.set(pc, 1)
+  let code = pr.op.get(pc)
+  if code == op_split() {
+    addthread(pr, pr.x.get(pc), bol, eol, mark, out)
+    addthread(pr, pr.y.get(pc), bol, eol, mark, out)
+  } else if code == op_bol() {
+    if bol {
+      addthread(pr, pr.y.get(pc), bol, eol, mark, out)
+    }
+  } else if code == op_eol() {
+    if eol {
+      addthread(pr, pr.y.get(pc), bol, eol, mark, out)
+    }
+  } else {
+    out.push(pc)
+  }
+}
+
+fn fresh_mark(pr: view Prog) -> List<Int> {
+  var mark = List<Int>.new()
+  for k in 0..pr.op.len() {
+    mark.push(0)
+  }
+  return mark
+}
+
+// True when a Match instruction is in the thread list.
+fn has_match(pr: view Prog, threads: view List<Int>) -> Bool {
+  for pc in threads {
+    if pr.op.get(pc) == op_match() {
+      return true
+    }
+  }
+  return false
+}
+
+// The threads after consuming byte `b` from the threads `cur` (already closed at a position). With `close`, the
+// successors are closed at the next position, whose end is `eol`; otherwise they are kept as they are, unclosed, for
+// the DFA, whose states close their threads later.
+fn consume(pr: view Prog, cur: view List<Int>, b: Int, mark: mut List<Int>, out: mut List<Int>, close: Bool, eol: Bool) {
+  for pc in cur {
+    let code = pr.op.get(pc)
+    var ok = false
+    if code == op_byte() {
+      ok = pr.x.get(pc) == b
+    } else if code == op_set() {
+      ok = pr.sets.at(pr.x.get(pc)).get(b) == 1
+    }
+    if ok {
+      if close {
+        addthread(pr, pr.y.get(pc), false, eol, mark, out)
+      } else if mark.get(pr.y.get(pc)) == 0 {
+        mark.set(pr.y.get(pc), 1)
+        out.push(pr.y.get(pc))
+      }
+    }
+  }
+}
+
+// Longest match that starts at `s`, or -1 when no match starts there. NFA simulation over the thread lists.
+pub fn longest_at(pr: view Prog, t: view String, s: Int) -> Int {
+  let n = t.len()
+  var cur = List<Int>.new()
+  var mark = fresh_mark(pr)
+  addthread(pr, pr.start, s == 0, s == n, mark, cur)
+  var best = -1
+  var pos = s
+  while true {
+    if has_match(pr, cur) {
+      best = pos
+    }
+    if pos >= n || cur.len() == 0 {
+      break
+    }
+    var next = List<Int>.new()
+    var mark2 = fresh_mark(pr)
+    consume(pr, cur, t.byte(pos), mark2, next, true, pos + 1 == n)
+    cur = move next
+    pos = pos + 1
+  }
+  return best
+}
+
+// Leftmost match, with the longest end at that start. Returns a span with start -1 when there is no match.
+pub fn search(pr: view Prog, t: view String) -> Span {
+  for s in 0..(t.len() + 1) {
+    let e = longest_at(pr, t, s)
+    if e >= 0 {
+      return Span { start: s, end: e }
+    }
+  }
+  return Span { start: -1, end: -1 }
+}
+
+// Lazily built DFA. State k has the thread list `raw[k]` (not yet closed), `bol[k]` (1 when reached at position 0),
+// and `acc[k]`: bit 1 when Match is reachable not at the end, bit 2 when it is reachable at the end.
+// `trans[k * 256 + b]` is the next state after byte b, or -1 when not computed yet. With `unanch`, every state also
+// carries the start instruction, so the DFA finds a match anywhere in the text.
+pub struct Dfa {
+  unanch: Bool,
+  keys: Map<String, Int>,
+  raw: List<List<Int>>,
+  bol: List<Int>,
+  acc: List<Int>,
+  trans: List<Int>,
+  start: Int,
+}
+
+// The state for the thread list `raw` at `bol`, created when new.
+fn state(d: mut Dfa, pr: view Prog, raw: view List<Int>, bol: Int) -> Int {
+  var key = String.from("")
+  key.push_int(bol)
+  key.push_str(":")
+  for pc in raw {
+    key.push_int(pc)
+    key.push_str(",")
+  }
+  if d.keys.contains(key) {
+    return d.keys.get(key)
+  }
+  let id = d.raw.len()
+  var copy = List<Int>.new()
+  for pc in raw {
+    copy.push(pc)
+  }
+  var open = List<Int>.new()
+  var mark = fresh_mark(pr)
+  for pc in raw {
+    addthread(pr, pc, bol == 1, false, mark, open)
+  }
+  var closed = List<Int>.new()
+  var mark2 = fresh_mark(pr)
+  for pc in raw {
+    addthread(pr, pc, bol == 1, true, mark2, closed)
+  }
+  var acc = 0
+  if has_match(pr, open) {
+    acc = acc + 1
+  }
+  if has_match(pr, closed) {
+    acc = acc + 2
+  }
+  d.keys.insert(move key, id)
+  d.raw.push(move copy)
+  d.bol.push(bol)
+  d.acc.push(acc)
+  for b in 0..256 {
+    d.trans.push(-1)
+  }
+  return id
+}
+
+pub fn new_dfa(pr: view Prog, unanch: Bool) -> Dfa {
+  var d = Dfa { unanch: unanch, keys: Map<String, Int>.new(), raw: List<List<Int>>.new(), bol: List<Int>.new(), acc: List<Int>.new(), trans: List<Int>.new(), start: 0 }
+  var first = List<Int>.new()
+  first.push(pr.start)
+  d.start = state(d, pr, first, 1)
+  return d
+}
+
+// The state after byte `b` from state `s`, computed on first use.
+fn step(d: mut Dfa, pr: view Prog, s: Int, b: Int) -> Int {
+  let idx = s * 256 + b
+  let known = d.trans.get(idx)
+  if known >= 0 {
+    return known
+  }
+  var open = List<Int>.new()
+  var mark = fresh_mark(pr)
+  for pc in d.raw.at(s) {
+    addthread(pr, pc, d.bol.get(s) == 1, false, mark, open)
+  }
+  var next = List<Int>.new()
+  var mark2 = fresh_mark(pr)
+  consume(pr, open, b, mark2, next, false, false)
+  var targets = List<Int>.new()
+  for pc in next {
+    parse.add_unique(targets, pc)
+  }
+  if d.unanch {
+    parse.add_unique(targets, pr.start)
+  }
+  let to = state(d, pr, targets, 0)
+  d.trans.set(idx, to)
+  return to
+}
+
+// Whether the DFA accepts `t`: a match anywhere when unanchored, the whole text when anchored.
+pub fn accepts(d: mut Dfa, pr: view Prog, t: view String) -> Bool {
+  let n = t.len()
+  var s = d.start
+  var p = 0
+  while p < n {
+    if d.unanch && d.acc.get(s) % 2 == 1 {
+      return true
+    }
+    if d.raw.at(s).len() == 0 {
+      return false
+    }
+    s = step(d, pr, s, t.byte(p))
+    p = p + 1
+  }
+  return (d.acc.get(s) / 2) % 2 == 1
+}
+
+// Number of DFA states built so far.
+pub fn states(d: view Dfa) -> Int {
+  return d.raw.len()
+}

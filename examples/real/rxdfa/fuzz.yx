@@ -1,0 +1,191 @@
+// Differential checks: random patterns and texts, compared with std.regex (the oracle) and with the reference matcher
+// of parse.yx. Generated patterns stay inside the subset where std.regex is defined: no empty alternatives, no
+// repeats of anything that can match the empty text, and anchors only at the ends of the whole pattern.
+import parse
+import prog
+import std.regex
+import std.text
+
+// Linear congruential generator; `state` is updated, the result is in 0..bound-1.
+pub fn next(state: mut Int, bound: Int) -> Int {
+  state = (state * 1103515245 + 12345) % 2147483648
+  return (state / 65536) % bound
+}
+
+fn literal(state: mut Int) -> String {
+  let k = next(state, 3)
+  if k == 0 {
+    return String.from("a")
+  }
+  if k == 1 {
+    return String.from("b")
+  }
+  return String.from("c")
+}
+
+// One atom. Inside a group (`repeats` false) no piece carries a repeat, so a group always matches at least one byte
+// and may itself be repeated safely.
+fn atom(state: mut Int, depth: Int) -> String {
+  let k = next(state, 10)
+  if k < 4 {
+    return literal(state)
+  }
+  if k == 4 {
+    return String.from(".")
+  }
+  if k == 5 {
+    let c = next(state, 4)
+    if c == 0 {
+      return String.from("[ab]")
+    }
+    if c == 1 {
+      return String.from("[^a]")
+    }
+    if c == 2 {
+      return String.from("[a-c]")
+    }
+    return String.from("[^bc]")
+  }
+  if k == 6 {
+    return String.from("\\.")
+  }
+  if depth < 2 && k >= 7 {
+    var g = String.from("(")
+    g.push_str(alt(state, depth + 1, false))
+    g.push_str(")")
+    return g
+  }
+  return literal(state)
+}
+
+// An atom with an optional repeat. Repeats only at the top level.
+fn piece(state: mut Int, depth: Int, repeats: Bool) -> String {
+  var s = atom(state, depth)
+  if repeats && next(state, 3) == 0 {
+    let r = next(state, 3)
+    if r == 0 {
+      s.push_str("*")
+    } else if r == 1 {
+      s.push_str("+")
+    } else {
+      s.push_str("?")
+    }
+  }
+  return s
+}
+
+// One to three pieces.
+fn sequence(state: mut Int, depth: Int, repeats: Bool) -> String {
+  var s = String.from("")
+  let n = 1 + next(state, 3)
+  for k in 0..n {
+    s.push_str(piece(state, depth, repeats))
+  }
+  return s
+}
+
+// Sequences separated by `|`, one or two of them.
+fn alt(state: mut Int, depth: Int, repeats: Bool) -> String {
+  var s = sequence(state, depth, repeats)
+  if next(state, 3) == 0 {
+    s.push_str("|")
+    s.push_str(sequence(state, depth, repeats))
+  }
+  return s
+}
+
+// A whole pattern, with an optional `^` and `$` at its ends.
+pub fn make_pattern(state: mut Int) -> String {
+  var s = String.from("")
+  if next(state, 4) == 0 {
+    s.push_str("^")
+  }
+  s.push_str(alt(state, 0, true))
+  if next(state, 4) == 0 {
+    s.push_str("$")
+  }
+  return s
+}
+
+// A text of up to seven bytes from the alphabet of the patterns, plus `.` so that escapes can match.
+pub fn make_text(state: mut Int) -> String {
+  var s = String.from("")
+  let n = next(state, 8)
+  for k in 0..n {
+    let c = next(state, 4)
+    if c == 0 {
+      s.push_str("a")
+    } else if c == 1 {
+      s.push_str("b")
+    } else if c == 2 {
+      s.push_str("c")
+    } else {
+      s.push_str(".")
+    }
+  }
+  return s
+}
+
+// True when `v` is among the end positions.
+fn has(list: view List<Int>, v: Int) -> Bool {
+  for e in list {
+    if e == v {
+      return true
+    }
+  }
+  return false
+}
+
+// Checks one pattern and text. Returns an empty string when all the checks agree, else the first disagreement.
+pub fn check_case(pattern: view String, text: view String) -> String {
+  let parsed = match parse.parse(pattern) {
+    Ok(re) => move re
+    Err(e) => {
+      return "parser rejects a generated pattern: {e}"
+    }
+  }
+  let pr = prog.compile(parsed)
+  let oracle_is = regex.is_match(pattern, text)
+  var unanch = prog.new_dfa(pr, true)
+  let dfa_is = prog.accepts(unanch, pr, text)
+  if oracle_is != dfa_is {
+    return "is_match: std.regex {oracle_is}, dfa {dfa_is}"
+  }
+  var anch = prog.new_dfa(pr, false)
+  let full_dfa = prog.accepts(anch, pr, text)
+  let full_ref = has(parse.ends(parsed, parsed.root, text, 0), text.len())
+  if full_dfa != full_ref {
+    return "full match: reference {full_ref}, anchored dfa {full_dfa}"
+  }
+  let oracle_at = regex.find(pattern, text)
+  let span = prog.search(pr, text)
+  if oracle_at != span.start {
+    return "find: std.regex at {oracle_at}, nfa at {span.start}"
+  }
+  if span.start >= 0 {
+    var best = -1
+    for e in parse.ends(parsed, parsed.root, text, span.start) {
+      if e > best {
+        best = e
+      }
+    }
+    if best != span.end {
+      return "longest end at {span.start}: reference {best}, nfa {span.end}"
+    }
+  }
+  return ""
+}
+
+// Runs `n` generated cases from `seed`. Returns the number of cases, or the first failing pattern and text.
+pub fn run(n: Int, seed: Int) -> Result<Int, String> {
+  var state = seed
+  for k in 0..n {
+    let pattern = make_pattern(state)
+    let text = make_text(state)
+    let msg = check_case(pattern, text)
+    if msg.len() > 0 {
+      return Err("pattern '{pattern}' text '{text}': {msg}")
+    }
+  }
+  return Ok(n)
+}
