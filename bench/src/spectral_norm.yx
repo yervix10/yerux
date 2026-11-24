@@ -1,0 +1,50 @@
+// Power iteration on A transpose times A.
+fn multiply(src: view List<Float>, dst: mut List<Float>, transpose: Bool) {
+  let n = src.len()
+  var i = 0
+  while i < n {
+    var sum = 0.0
+    var j = 0
+    while j < n {
+      let k = i + j
+      var axis = i
+      if transpose { axis = j }
+      let denominator = k * (k + 1) / 2 + axis + 1
+      sum = sum + src.get(j) / denominator.to_float()
+      j = j + 1
+    }
+    dst.set(i, sum)
+    i = i + 1
+  }
+}
+
+fn main() {
+  let n = 1500
+  var u = List<Float>.new()
+  var v = List<Float>.new()
+  var tmp = List<Float>.new()
+  var i = 0
+  while i < n {
+    u.push(1.0)
+    v.push(0.0)
+    tmp.push(0.0)
+    i = i + 1
+  }
+  var round = 0
+  while round < 10 {
+    multiply(u, tmp, false)
+    multiply(tmp, v, true)
+    multiply(v, tmp, false)
+    multiply(tmp, u, true)
+    round = round + 1
+  }
+  var uv = 0.0
+  var vv = 0.0
+  i = 0
+  while i < n {
+    uv = uv + u.get(i) * v.get(i)
+    vv = vv + v.get(i) * v.get(i)
+    i = i + 1
+  }
+  print((sqrt(uv / vv) * 1000000000.0).to_int())
+}
