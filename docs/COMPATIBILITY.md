@@ -222,7 +222,8 @@ Experimental.
 | Fixed-size arrays `[T; N]`, slices `view [T]` / `mut [T]`, `chunks`, `windows`, `split_at_mut` | Stable-candidate | tests/slice_basic.yx, tests/slice_chunks.yx, tests/arr_const.yx, tests/comptime_arrays.yx, tests/range_array_loops.yx |
 | Sized integers, checked conversions `to_int8()` etc., wrapping ops, Float semantics and shortest printing (Numbers) | Stable-candidate | tests/num_sized.yx, tests/num_float_basic.yx, tests/num_panic_conv.yx, tests/num_math.yx |
 | Generics by monomorphisation, inference, bounds, generic `impl` blocks (Generics) | Stable-candidate | tests/gen_basic.yx, tests/gen_owned.yx, tests/gen_traits.yx, tests/gen_methods.yx, tests/mod_ok/generic_impls, tests/derive_basic.yx |
-| Explicit type arguments on calls, generic methods, default type arguments (Generics: "not yet") | Not yet available | listed as not implemented in SPEC.md |
+| Explicit type arguments on calls (`f<Int>(x)`) | Stable-candidate | tests/generic_explicit_args.yx, tests/e1518_explicit_type_args.yx |
+| Generic methods, default type arguments (Generics: "not yet") | Not yet available | listed as not implemented in SPEC.md |
 | Traits, `Box<dyn Trait>`, built-in traits `Equal`/`Ordered`/`Show`/`Hash`/`Copy` (Traits) | Stable-candidate | tests/dyn_shapes.yx, tests/dyn_handlers.yx, tests/dyn_call_order.yx, tests/mod_ok/dyn |
 | `Box<T>` and recursive types; iterative release of box chains (Box) | Stable-candidate | 27 tests use `Box<`; release of deep chains: tests/drop_flow.yx, tests/drop_generic.yx. Mutual recursion through `dyn` and join handles: Experimental (SPEC.md says not iterative) |
 | `match`: patterns, guards, ranges, or-patterns, exhaustiveness (Match, Enums and match) | Stable-candidate | tests/match_move_option_tuple.yx, tests/match_temp_text_arg.yx, tests/e772_range_match_not_exhaustive.yx, tests/e785_range_match_wildcard.yx |
@@ -281,8 +282,9 @@ corrected text now states).
    `impl<T: Label> Label for Pair<T, T>`. The root text no longer restricts it to the library. Evidence:
    `tests/conf_generic_impl_user.yx` (prints `(i1, i2)`).
 10. **Explicit type arguments.** *Resolved.* They are accepted on the constructors (`Shared<Int>.new`,
-    `Locked<Int>.new`, `Atomic<Int>.new`), and not on calls: `id<Int>(3)` is an error. The Threads text now says
-    so. Evidence: `tests/conf_type_args_ctor.yx`, and the call error in `tests/spec_conformance.sh` (item 10).
+    `Locked<Int>.new`, `Atomic<Int>.new`) and on calls of generic functions (`id<Int>(3)`, `conv<Int, Bool>(x, f)`:
+    all type parameters, in order). Evidence: `tests/conf_type_args_ctor.yx`, `tests/generic_explicit_args.yx`,
+    the errors in `tests/e1518_explicit_type_args.yx`.
 11. **Thread handle retention.** *Resolved.* A standalone `spawn` statement is joined when its enclosing block
     exits; a spawn directly in the scope is joined at scope end. docs/SPEC.md 5.1 and docs/CONCURRENCY.md now
     say so. Evidence: `tests/conf_spawn_block_join.yx` (`after if 1`: the worker finished before the `if` block ended).

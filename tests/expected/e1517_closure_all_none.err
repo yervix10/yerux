@@ -1,0 +1,25 @@
+error: cannot infer the type parameter R of 'apply'
+ --> tests/e1517_closure_all_none.yx:3:11
+  |
+3 |   let a = apply(9, |v| {
+  |           ^^^^^
+  = no argument has a type that mentions R
+  = help: give the function a parameter of that type
+
+error: cannot infer the type argument(s) T of Option.None
+ --> tests/e1517_closure_all_none.yx:4:23
+  |
+4 |     if v > 5 { return None }
+  |                       ^^^^
+  = nothing here says what type it should hold
+  = help: write them out, e.g. `Option<Int>.None`
+
+error: cannot infer the type argument(s) T of Option.None
+ --> tests/e1517_closure_all_none.yx:5:12
+  |
+5 |     return None
+  |            ^^^^
+  = nothing here says what type it should hold
+  = help: write them out, e.g. `Option<Int>.None`
+
+3 error(s). Nothing was generated.

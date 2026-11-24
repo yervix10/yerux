@@ -1,0 +1,20 @@
+// Explicit type arguments on calls: `f<Int>(x)`, also inside generic code, with closures, and next to `<` comparisons.
+fn first<T: Copy>(l: view List<T>) -> T { return l.get(0) }
+fn conv<A: Copy, B: Copy>(x: A, f: view fn(A) -> B) -> B { return f(x) }
+fn zero<T: Copy>(x: T) -> Int { return 0 }
+fn twice<T: Copy>(l: view List<T>) -> T { return first<T>(l) }
+
+fn main() {
+  var l = List<Int>.new()
+  l.push(8)
+  print(first<Int>(l))
+  print(twice<Int>(l))
+  print(conv<Int, Int>(4, |v| v * 3))
+  let a = 3
+  let b = 5
+  print(a < b)
+  if a < b && b > a { print("cmp") }
+  print(zero<Bool>(true))
+  let r = conv<Int, Bool>(7, |v| v > 5)
+  print(r)
+}

@@ -48,11 +48,21 @@ Owned type arguments work (`Stack<String>`), drops are generated per instantiati
 
 ## Not yet
 
-- Generic *methods* (`fn map<U>(view self, ..)` inside an impl): still "methods cannot be generic yet".
+- Generic *methods* (`fn map<U>(view self, ..)` inside an impl): still "methods cannot be generic yet". Design
+  (not implemented): a method's own type parameters are appended to the type parameters of its impl, so the
+  method becomes a generic function whose first parameter is `self` of the (abstract) impl type. `x.map(f)` is
+  resolved like any method call (by the receiver's type) and then handed to `generic_call` with the receiver
+  prepended: the receiver fixes the impl's parameters (`T` from `Stack<T>`), the other arguments (closures last)
+  fix the method's (`U`), bounds are checked as for free functions, and the instance is named
+  `Type.method<args>` like the existing impl instances. What is missing is the abstract header of a lazily
+  parsed impl method with both parameter lists (`parse_fn_at` takes one `subst`), and the instance's `self` type
+  after substitution. Until then, a free generic function does the job (`mutex_with(m, f)`, `ok_or(opt, e)`),
+  and `f<A, B>(..)` names the type arguments when they cannot be inferred.
 - Adding methods/impls to library types (`impl<T> Describe for List<T>`): still rejected ("cannot add methods to
   the built-in type"); wrap them in your own struct.
 - `impl<T> Drop for Stack<T>` (generic Drop) is rejected; `Ordered`/`Hash` cannot be derived.
 - Bodies of never-instantiated generic impls are not type-checked; errors show per instantiation.
-- Bounds on struct/enum parameters, explicit type arguments on calls and default type arguments.
+- Bounds on struct/enum parameters and default type arguments. (Explicit type arguments on calls exist since the
+  freeze rounds: `f<Int>(x)`, all parameters in order; `tests/generic_explicit_args.yx`.)
 
 Tests: `tests/generic_impls.yx`, `tests/mod_ok/generic_impls/`, `tests/e1035..e1037_generic_impl_*.yx`.

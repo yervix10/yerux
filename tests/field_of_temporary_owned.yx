@@ -1,0 +1,22 @@
+// A field that owns memory, read through a borrow from an owning temporary (`make(1).name.len()`): the temporary
+// lives to the end of the enclosing expression and is freed there.
+struct Rec { name: String, tags: List<String>, n: Int }
+
+fn make(n: Int) -> Rec {
+  var t = List<String>.new()
+  t.push(String.from("a"))
+  t.push(String.from("b"))
+  return Rec { name: String.from("rec{n}"), tags: move t, n: n }
+}
+
+fn show(s: view String) { print(s) }
+
+fn main() {
+  print(make(1).name.len())
+  print(make(2).tags.len())
+  print(make(3).name)
+  show(make(4).name)
+  var total = 0
+  for i in 0..4 { total = total + make(i).tags.len() + make(i).name.len() }
+  print(total)
+}

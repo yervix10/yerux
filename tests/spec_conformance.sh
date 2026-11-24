@@ -105,10 +105,10 @@ runs_as tests/conf_generic_impl_user.yx "(i1, i2)" "item 9: generic impl for a u
 
 # ---------------------------------------------------------------- 10. explicit type arguments
 lacks SPEC.md "Both sharing containers accept explicit type arguments," "item 10: old sentence removed"
-has SPEC.md "calls to generic functions do not yet" "item 10: root SPEC separates constructors from calls"
+has SPEC.md "calls to generic functions take them too" "item 10: root SPEC lists explicit type arguments on calls"
 runs_as tests/conf_type_args_ctor.yx "ok 5 1 2" "item 10: explicit type arguments on the constructors run"
-printf 'fn id<T>(x: T) -> T { return x }\nfn main() {\n  print(id<Int>(3))\n}\n' > "$S/t10.yx"
-rejects "$S/t10.yx" "cannot be used as a value yet" "item 10: explicit type argument on a call is rejected"
+printf 'fn id<T: Copy>(x: T) -> T { return x }\nfn main() {\n  print(id<Int>(3))\n}\n' > "$S/t10.yx"
+runs_as "$S/t10.yx" "3" "item 10: explicit type arguments on a call run"
 
 # ---------------------------------------------------------------- 11. thread handle retention
 has docs/SPEC.md "A standalone \`spawn\` statement retains its handle until the enclosing block exits" "item 11: docs/SPEC.md 5.1 states the retention rule"

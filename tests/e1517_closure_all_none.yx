@@ -1,0 +1,7 @@
+fn apply<T: Copy, R>(x: T, f: view fn(T) -> R) -> R { return f(x) }
+fn main() {
+  let a = apply(9, |v| {
+    if v > 5 { return None }
+    return None
+  })
+}
