@@ -1,0 +1,125 @@
+// Unit tests: `yerux test examples/real/bcvm/tests.yx` (and with --native). The language is in lex_parse.yx, the
+// bytecode and disassembler in codegen.yx, the machine in vm.yx. `print` output is not captured here; the tests read
+// variables (`let r = ...;`) after the run.
+import codegen
+import lex_parse
+import vm
+
+fn compile_src(src: view String) -> Result<codegen.Program, String> {
+  let stmts = lex_parse.parse(src)?
+  return codegen.compile(stmts)
+}
+
+// The value of the last variable `name` after running `src`, or "ERR: " and the message.
+fn value(src: view String, name: view String) -> String {
+  let prog = match compile_src(src) {
+    Ok(p) => move p
+    Err(e) => { return "ERR: {e}" }
+  }
+  var machine = vm.load(move prog)
+  match vm.run(machine) {
+    Ok(_) => { return "{vm.variable(machine, name)}" }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+// The disassembly of `src`, or "ERR: " and the message.
+fn dis(src: view String) -> String {
+  match compile_src(src) {
+    Ok(p) => { return codegen.disassemble(p.code) }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+// A nested source: "1 - (1 - (... (1)))" with `depth` pairs of parentheses.
+fn nested(depth: Int) -> String {
+  var s = String.from("let r = ")
+  for _ in 0..depth {
+    s.push_str("1 - (")
+  }
+  s.push_str("1")
+  for _ in 0..depth {
+    s.push_str(")")
+  }
+  s.push_str(";")
+  return s
+}
+
+test "lexer: tokens and the error byte" {
+  match lex_parse.lex("let x = 12;") {
+    Ok(toks) => { assert_eq(toks.len(), 6) }
+    Err(_) => { panic("unexpected lex error") }
+  }
+  match lex_parse.lex("print 1 # 2;") {
+    Ok(_) => { panic("'#' must not lex") }
+    Err(e) => { assert(e.eq("byte 8: unexpected byte 35")) }
+  }
+  match lex_parse.lex("let x = 9223372036854775808;") {
+    Ok(_) => { panic("literal must not fit") }
+    Err(e) => { assert(e.eq("byte 8: integer literal too large")) }
+  }
+}
+
+test "precedence: * before +, unary minus binds tighter than *" {
+  assert(value("let r = 2 + 3 * 4 - -1;", "r").eq("15"))
+  assert(value("let r = -2 * 3;", "r").eq("-6"))
+  assert(value("let r = - - 4;", "r").eq("4"))
+}
+
+test "left associativity and truncating division" {
+  assert(value("let r = 100 - 30 - 5;", "r").eq("65"))
+  assert(value("let r = 2 * 3 % 4;", "r").eq("2"))
+  assert(value("let r = -7 / 2;", "r").eq("-3"))
+  assert(value("let r = -7 % 3;", "r").eq("-1"))
+  assert(value("let r = 7 % -3;", "r").eq("1"))
+}
+
+test "comparisons give 0 or 1 and == binds loosest" {
+  assert(value("let r = 1 + 1 == 2;", "r").eq("1"))
+  assert(value("let r = 2 < 3 == 1;", "r").eq("1"))
+  assert(value("let r = 3 < 2;", "r").eq("0"))
+  assert(value("let r = 4 == 4 == 1;", "r").eq("1"))
+}
+
+test "variables: a let reads the earlier binding, then shadows it" {
+  assert(value("let x = 1; let x = x + 10; let r = x;", "r").eq("11"))
+  assert(value("let a = 2; let b = a * a; let r = a + b;", "r").eq("6"))
+}
+
+test "block scope: a let inside a block is not visible after it" {
+  assert(value("if 1 {{ let q = 2;}} let r = 1;", "r").eq("1"))
+  assert(value("if 1 {{ let q = 2;}} let r = q;", "r").eq("ERR: byte 27: undefined variable 'q'"))
+}
+
+test "compile errors: undefined variable and syntax errors with byte offsets" {
+  assert(value("let r = q;", "r").eq("ERR: byte 8: undefined variable 'q'"))
+  assert(value("let = 1;", "r").eq("ERR: byte 4: expected a name but found '='"))
+  assert(value("print 1 +;", "r").eq("ERR: byte 9: expected an expression but found ';'"))
+  assert(value("print 1", "r").eq("ERR: byte 7: expected ';' but found end of input"))
+  assert(value("if 1 {{ print 2;", "r").eq("ERR: byte 15: expected '}}' but found end of input"))
+}
+
+test "disassembly: encoding of let, print and if/else" {
+  assert(dis("let r = 2;").eq("0000 PUSH 2\n0001 STORE 0\n0002 HALT\n"))
+  assert(dis("print -3;").eq("0000 PUSH 3\n0001 NEG\n0002 PRINT\n0003 HALT\n"))
+  assert(dis("if 1 < 2 {{ print 1;}} else {{ print 2;}}").eq(
+    "0000 PUSH 1\n0001 PUSH 2\n0002 LT\n0003 JUMPIFZERO 7\n0004 PUSH 1\n0005 PRINT\n0006 JUMP 9\n0007 PUSH 2\n0008 PRINT\n0009 HALT\n"))
+}
+
+test "runtime: division by zero is reported at its instruction" {
+  assert(value("let r = 1 / (2 - 2);", "r").eq("ERR: bcvm: runtime error at instruction 4: division by zero"))
+  assert(value("let r = 1 % 0;", "r").eq("ERR: bcvm: runtime error at instruction 2: division by zero"))
+}
+
+test "runtime: 64-bit overflow is an error, not a panic" {
+  assert(value("let r = 9223372036854775807 + 1;", "r").eq("ERR: bcvm: runtime error at instruction 2: integer overflow"))
+  assert(value("let r = -9223372036854775807 - 1;", "r").eq("-9223372036854775808"))
+  assert(value("let r = -(-9223372036854775807 - 1);", "r").eq("ERR: bcvm: runtime error at instruction 4: integer overflow"))
+  assert(value("let r = 3037000500 * 3037000500;", "r").eq("ERR: bcvm: runtime error at instruction 2: integer overflow"))
+  assert(value("let r = 3037000499 * 3037000499;", "r").eq("9223372030926249001"))
+}
+
+test "runtime: the operand stack holds 256 values" {
+  assert(value(nested(100), "r").eq("1"))
+  assert(value(nested(300), "r").eq("ERR: bcvm: runtime error at instruction 256: stack overflow"))
+}

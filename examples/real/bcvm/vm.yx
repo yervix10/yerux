@@ -1,0 +1,213 @@
+// bcvm: the stack machine that runs the bytecode of codegen.yx.
+//
+// The operand stack holds at most STACK_MAX values. Integers are 64-bit: + - * unary- and / % are checked, and a result
+// that does not fit is "integer overflow" (Yerux's own operators would panic instead). `/` and `%` truncate toward
+// zero. A division by zero is "division by zero". Comparisons leave 1 (true) or 0 (false). Variables start at 0.
+//
+// step() executes one instruction and reports what happened. A fault leaves the program counter on the faulting
+// instruction, so the caller can name it.
+import codegen
+
+pub const STACK_MAX: Int = 256
+pub const MAX_INT: Int = 9223372036854775807
+pub const MIN_INT: Int = -9223372036854775807 - 1
+
+pub enum Step {
+  Next,
+  Halt,
+  Fault(String),
+}
+
+pub struct Vm {
+  prog: codegen.Program,
+  vars: List<Int>,
+  stack: List<Int>,
+  pc: Int,
+}
+
+// A machine at the first instruction of `prog`, with every variable set to 0.
+pub fn load(prog: codegen.Program) -> Vm {
+  var vars = List<Int>.new()
+  for _ in 0..prog.names.len() {
+    vars.push(0)
+  }
+  return Vm { prog: move prog, vars: move vars, stack: List<Int>.new(), pc: 0 }
+}
+
+// a * b, or "integer overflow".
+fn checked_mul(a: Int, b: Int) -> Result<Int, String> {
+  if a == 0 {
+    return Ok(0)
+  }
+  if a == -1 {
+    if b == MIN_INT {
+      return Err("integer overflow")
+    }
+    return Ok(0 - b)
+  }
+  let r = a.wrapping_mul(b)
+  if r / a != b {
+    return Err("integer overflow")
+  }
+  return Ok(r)
+}
+
+// The value of a binary instruction on a and b (a is the value pushed first), or the error it causes.
+fn binary(op: codegen.Op, a: Int, b: Int) -> Result<Int, String> {
+  match op {
+    Add => {
+      if (b > 0 && a > MAX_INT - b) || (b < 0 && a < MIN_INT - b) {
+        return Err("integer overflow")
+      }
+      return Ok(a + b)
+    }
+    Sub => {
+      if (b < 0 && a > MAX_INT + b) || (b > 0 && a < MIN_INT + b) {
+        return Err("integer overflow")
+      }
+      return Ok(a - b)
+    }
+    Mul => { return checked_mul(a, b) }
+    Div => {
+      if b == 0 {
+        return Err("division by zero")
+      }
+      if b == -1 && a == MIN_INT {
+        return Err("integer overflow")
+      }
+      return Ok(a / b)
+    }
+    Mod => {
+      if b == 0 {
+        return Err("division by zero")
+      }
+      if b == -1 {
+        return Ok(0)
+      }
+      return Ok(a % b)
+    }
+    Lt => {
+      if a < b {
+        return Ok(1)
+      }
+      return Ok(0)
+    }
+    Eq => {
+      if a == b {
+        return Ok(1)
+      }
+      return Ok(0)
+    }
+    _ => { return Err("not a binary instruction") }
+  }
+}
+
+fn negate(a: Int) -> Result<Int, String> {
+  if a == MIN_INT {
+    return Err("integer overflow")
+  }
+  return Ok(0 - a)
+}
+
+// Executes the instruction at the program counter.
+pub fn step(machine: mut Vm) -> Step {
+  if machine.pc < 0 || machine.pc >= machine.prog.code.len() {
+    return Step.Fault("program counter out of range")
+  }
+  let op = machine.prog.code.get(machine.pc)
+  match op {
+    Push(v) => {
+      if machine.stack.len() >= STACK_MAX {
+        return Step.Fault("stack overflow")
+      }
+      machine.stack.push(v)
+    }
+    Load(s) => {
+      if machine.stack.len() >= STACK_MAX {
+        return Step.Fault("stack overflow")
+      }
+      machine.stack.push(machine.vars.get(s))
+    }
+    Store(s) => {
+      if machine.stack.is_empty() {
+        return Step.Fault("stack underflow")
+      }
+      let v = machine.stack.pop()
+      machine.vars.set(s, v)
+    }
+    Neg => {
+      if machine.stack.is_empty() {
+        return Step.Fault("stack underflow")
+      }
+      let a = machine.stack.pop()
+      match negate(a) {
+        Ok(r) => { machine.stack.push(r) }
+        Err(e) => { return Step.Fault(move e) }
+      }
+    }
+    Add | Sub | Mul | Div | Mod | Lt | Eq => {
+      if machine.stack.len() < 2 {
+        return Step.Fault("stack underflow")
+      }
+      let b = machine.stack.pop()
+      let a = machine.stack.pop()
+      match binary(op, a, b) {
+        Ok(r) => { machine.stack.push(r) }
+        Err(e) => { return Step.Fault(move e) }
+      }
+    }
+    Print => {
+      if machine.stack.is_empty() {
+        return Step.Fault("stack underflow")
+      }
+      let v = machine.stack.pop()
+      print(v)
+    }
+    JumpIfZero(t) => {
+      if machine.stack.is_empty() {
+        return Step.Fault("stack underflow")
+      }
+      let v = machine.stack.pop()
+      if v == 0 {
+        machine.pc = t
+        return Step.Next
+      }
+    }
+    Jump(t) => {
+      machine.pc = t
+      return Step.Next
+    }
+    Halt => { return Step.Halt }
+  }
+  machine.pc = machine.pc + 1
+  return Step.Next
+}
+
+// Runs until HALT. A fault is the error, with the instruction index (see fault_text).
+pub fn run(machine: mut Vm) -> Result<Bool, String> {
+  while true {
+    match step(machine) {
+      Next => {}
+      Halt => { return Ok(true) }
+      Fault(msg) => { return Err(fault_text(machine, msg)) }
+    }
+  }
+  return Ok(true)
+}
+
+// The value of the last variable named `name`, or -1 when there is none.
+pub fn variable(machine: view Vm, name: view String) -> Int {
+  var i = machine.prog.names.len() - 1
+  while i >= 0 {
+    if machine.prog.names.at(i).eq(name) {
+      return machine.vars.get(i)
+    }
+    i = i - 1
+  }
+  return -1
+}
+
+// The runtime error message for a fault at the current instruction.
+pub fn fault_text(machine: view Vm, msg: view String) -> String {
+  return "bcvm: runtime error at instruction {machine.pc}: {msg}"
+}
