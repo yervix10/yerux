@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Emulate `yerux --target aarch64` output and compare it with the goldens / the x86-64 backend.
 
-usage: python3 tests/a64_emu.py [--network | --system] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
+usage: python3 tests/a64_emu.py [--network | --system | --process | --qemu] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
   default: every examples/*.yx and tests/*.yx that the native backend accepts (the e*.yx error programs are
   skipped). Per program the emulated aarch64 build must match tests/expected/<name>.out/.code (stdout, exit code)
   and the x86-64 native build's stderr. Unicorn fixtures also check instruction decoding in capstone.
   --network : run just the socket tests, using qemu-aarch64 for real Linux TCP.
   --system : run the console, filesystem, environment, and time fixtures under qemu-aarch64.
+  --process : run the process fixtures under qemu-aarch64.
+  --qemu : use qemu-aarch64 for every selected source.
   --debug-alloc : build with --native-debug-alloc and compare stderr (allocs/frees/live) with the x86-64 build.
 Needs: `cargo build --release` first. The system and socket tests need qemu-aarch64 on PATH.
 Other tests need `pip install unicorn capstone`."""
@@ -14,7 +16,7 @@ import argparse, os, shutil, struct, subprocess, sys, tempfile
 from concurrent.futures import ProcessPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-YERUX = os.path.join(ROOT, "target/release/yerux")
+YERUX = os.environ.get("YERUX", os.path.join(ROOT, "target/release/yerux"))
 STACK = 0x7F000000
 MMAP_BASE = 0x10000000
 MAX_INSNS = 400_000_000
@@ -28,6 +30,7 @@ SYSTEM_TESTS = (
     "std_kv", "std_kv_hostile", "std_log", "std_misc", "std_rand", "std_time_calendar",
     "time_clock", "time_duration",
 )
+PROCESS = ("process_basic", "process_leaks", "process_pipes", "process_timeout")
 SHRINK = {"02_fast": ("100000000", "20000"), "own_deep_box_drop": ("return 1000000", "return 2000"), "own_deep_scc_drop": ("return 1000000", "return 2000"), "own_deep_closure_drop": ("return 1000000", "return 2000")}  # loops too long for emulation
 
 
@@ -181,9 +184,9 @@ def a64_run(src, tmp, extra, check_decode=True, qemu=None):
 
 
 def check_one(args):
-    f, debug = args
+    f, debug, force_qemu = args
     name = os.path.basename(f)[:-3]
-    needs_qemu = name in NETWORK or name in SYSTEM_EXAMPLES or name in SYSTEM_TESTS
+    needs_qemu = force_qemu or name in NETWORK + SYSTEM_EXAMPLES + SYSTEM_TESTS + PROCESS
     qemu = shutil.which("qemu-aarch64") if needs_qemu else None
     if needs_qemu and qemu is None:
         return f, "SKIP", "qemu-aarch64 unavailable"
@@ -234,26 +237,30 @@ def main():
     group = ap.add_mutually_exclusive_group()
     group.add_argument("--network", action="store_true", help="run socket tests under QEMU")
     group.add_argument("--system", action="store_true", help="run system service tests under QEMU")
+    group.add_argument("--process", action="store_true", help="run process fixtures under QEMU")
+    group.add_argument("--qemu", action="store_true", help="run all selected programs under QEMU")
     ap.add_argument("--debug-alloc", action="store_true")
     ap.add_argument("-j", type=int, default=os.cpu_count() or 4)
     ap.add_argument("-k", default="")
     a = ap.parse_args()
-    selected = a.network or a.system
+    selected = a.network or a.system or a.process or a.qemu
     if a.network:
         files = [f"tests/{name}.yx" for name in NETWORK]
     elif a.system:
         files = [f"examples/{name}.yx" for name in SYSTEM_EXAMPLES]
         files.extend(f"tests/{name}.yx" for name in SYSTEM_TESTS)
+    elif a.process:
+        files = [f"tests/{name}.yx" for name in PROCESS]
     else:
         files = a.files
     if not files:
         for d in ("examples", "tests"):
             for fn in sorted(os.listdir(os.path.join(ROOT, d))):
-                if fn.endswith(".yx") and not (d == "examples" and fn[0] == "e" and fn[1].isdigit()):
+                if fn.endswith(".yx") and not (fn[0] == "e" and fn[1].isdigit()):
                     files.append(f"{d}/{fn}")
     files = [f for f in files if a.k in f]
     with ProcessPoolExecutor(a.j) as ex:
-        res = list(ex.map(check_one, [(f, a.debug_alloc) for f in files]))
+        res = list(ex.map(check_one, [(f, a.debug_alloc, a.qemu) for f in files]))
     fails = 0
     for f, st, msg in res:
         if st != "SKIP" or selected:

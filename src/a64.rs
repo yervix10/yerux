@@ -578,6 +578,9 @@ enum LinuxSyscall {
     UnlinkAt(i64),
     TwoPathsAt(i64),
     SymlinkAt,
+    Poll,
+    Dup2,
+    Fork,
     OpenAt { has_dirfd: bool },
 }
 
@@ -589,12 +592,15 @@ impl LinuxSyscall {
             1 => Direct(64), // write
             2 => OpenAt { has_dirfd: false },
             3 => Direct(57),      // close
+            7 => Poll,
             8 => Direct(62),      // lseek
             9 => Direct(222),     // mmap
             10 => Direct(226),    // mprotect
             11 => Direct(215),    // munmap
+            13 => Direct(134), // rt_sigaction
             21 => At(48),         // access -> faccessat
             25 => Direct(216),    // mremap
+            33 => Dup2,
             35 => Direct(101),    // nanosleep
             39 => Direct(172),    // getpid
             41 => Direct(198),    // socket
@@ -606,7 +612,12 @@ impl LinuxSyscall {
             51 => Direct(204),    // getsockname
             52 => Direct(205),    // getpeername
             54 => Direct(208),    // setsockopt
+            57 => Fork,
+            59 => Direct(221),    // execve
             60 => Direct(93),     // exit
+            61 => Direct(260),    // wait4
+            62 => Direct(129),    // kill
+            72 => Direct(25),     // fcntl
             74 => Direct(82),     // fsync
             77 => Direct(46),     // ftruncate
             79 => Direct(17),     // getcwd
@@ -626,6 +637,7 @@ impl LinuxSyscall {
             257 => OpenAt { has_dirfd: true },
             263 => Direct(35),  // unlinkat
             271 => Direct(73),  // ppoll
+            293 => Direct(59), // pipe2
             332 => Direct(291), // statx
             _ => return None,
         })
@@ -635,6 +647,60 @@ impl LinuxSyscall {
         const AT_FDCWD: i64 = -100;
         let number = match self {
             Self::Direct(number) => number,
+            Self::Poll => {
+                // ppoll takes a timespec instead of signed 32-bit milliseconds.
+                let call = a.label();
+                a.sub_imm(SP, SP, 16);
+                a.lsl_imm(X2, X2, 32);
+                a.asr_imm(X2, X2, 32);
+                a.mov(X3, X2);
+                a.mov_imm(X2, 0);
+                a.cmp(X3, XZR);
+                a.bcond(LT, call);
+                a.mov_imm(X4, 1000);
+                a.udiv(X5, X3, X4);
+                a.msub(X3, X5, X4, X3);
+                a.mov_imm(X4, 1_000_000);
+                a.mul(X3, X3, X4);
+                a.str_i(X5, SP, 0);
+                a.str_i(X3, SP, 8);
+                a.mov_sp(X2, SP);
+                a.bind(call);
+                a.mov_imm(X3, 0);
+                a.mov_imm(X4, 0);
+                a.mov_imm(X8, 73);
+                a.svc();
+                a.add_imm(SP, SP, 16);
+                return;
+            }
+            Self::Dup2 => {
+                // dup3 rejects equal descriptors; dup2 checks that fd is open.
+                let distinct = a.label();
+                let done = a.label();
+                a.cmp(X0, X1);
+                a.bcond(NE, distinct);
+                a.mov(X6, X0);
+                a.mov_imm(X1, 1); // F_GETFD
+                a.mov_imm(X8, 25);
+                a.svc();
+                a.cmp(X0, XZR);
+                a.bcond(LT, done);
+                a.mov(X0, X6);
+                a.b(done);
+                a.bind(distinct);
+                a.mov_imm(X2, 0);
+                a.mov_imm(X8, 24);
+                a.svc();
+                a.bind(done);
+                return;
+            }
+            Self::Fork => {
+                a.mov_imm(X0, 17); // clone(SIGCHLD, NULL, NULL, NULL, NULL)
+                for reg in [X1, X2, X3, X4] {
+                    a.mov_imm(reg, 0);
+                }
+                220
+            }
             Self::At(number) => {
                 a.mov(X3, X2);
                 a.mov(X2, X1);
