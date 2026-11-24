@@ -109,14 +109,15 @@ struct Map<K, V> {
     slots: List<Int>,
 }
 
-// Return the entry number, or encode the first free slot as -slot - 1.
-fn std__map_probe<K: Hash + Equal, V>(m: view Map<K, V>, h: Int, k: view K) -> Int {
+// Return the entry number, or -1 for a miss. Insertion encodes the free slot as -slot - 1.
+fn std__map_probe<K: Hash + Equal, V>(m: view Map<K, V>, h: Int, k: view K, want_slot: Bool) -> Int {
     let cap = m.slots.len()
     var i = h % cap
     while true {
         let e = m.slots.get(i)
         if e < 0 {
-            return -i - 1
+            if want_slot { return -1 - i }
+            return -1
         }
         if m.hashes.get(e) == h && m.keys.at(e).eq(k) {
             return e
@@ -150,9 +151,7 @@ impl<K: Hash + Equal, V> Map<K, V> {
 
     // Entry number of key `k` whose hash is `h`, or -1.
     fn find_hashed(view self, h: Int, k: view K) -> Int {
-        let e = std__map_probe(self, h, k)
-        if e < 0 { return -1 }
-        return e
+        return std__map_probe(self, h, k, false)
     }
 
     // Entry number of key `k` (use it with `m.vals.at(e)`), or -1.
@@ -190,7 +189,7 @@ impl<K: Hash + Equal, V> Map<K, V> {
     // Adds the entry, or replaces the value of an existing key (the old value is dropped).
     fn insert(mut self, k: K, v: V) {
         let h = k.hash()
-        let e = std__map_probe(self, h, k)
+        let e = std__map_probe(self, h, k, true)
         if e >= 0 {
             self.vals.set(e, move v)
             return
