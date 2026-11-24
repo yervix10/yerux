@@ -2991,8 +2991,13 @@ impl<'a> L<'a> {
         }
         // phase 2: borrowed element addresses, bounds-checked, right before the call
         let mut writeback = vec![];
+        let extern_c = matches!(target, CallTarget::Direct(n) if self.extern_ids.contains_key(n));
         for (i, (a, p)) in args.iter().zip(pre).enumerate() {
             match p {
+                // Backend Text values have an eight-byte length header. Pass the
+                // address of the NUL-terminated payload to C, even after storing
+                // a Text in a local or forwarding it through another function.
+                Arg::Val(v) if extern_c && a.ty == Ty::Text => vs.push(self.at(v, 8)),
                 Arg::Val(v) => vs.push(v),
                 Arg::Ref(idx) => {
                     let (base, off) = self.place_at(a, &mut idx.into_iter())?;
@@ -4277,7 +4282,7 @@ pub fn os_intrinsics_error(p: &IrProgram, allow_linux_os: bool) -> Option<String
         for b in &f.blocks {
             for i in &b.insts {
                 match i {
-                    Inst::Thread(..) | Inst::Atomic(..) => {
+                    Inst::Thread(..) | Inst::Atomic(..) if !allow_linux_os => {
                         return Some(format!(
                             "thread runtime intrinsics (used by function '{}')",
                             f.name

@@ -9,6 +9,8 @@
 // [x29 + 16 + 8*i] in the callee; result in x0.
 use crate::ir::*;
 
+mod threads;
+
 const X0: u32 = 0;
 const X1: u32 = 1;
 const X2: u32 = 2;
@@ -26,6 +28,7 @@ const X13: u32 = 13;
 const X15: u32 = 15;
 const X16: u32 = 16;
 const X17: u32 = 17;
+const X19: u32 = 19; // current worker context
 const X29: u32 = 29;
 const X30: u32 = 30;
 const XZR: u32 = 31; // zero register in most encodings
@@ -424,7 +427,7 @@ impl Asm {
     }
     fn sys_exit(&mut self, code: i64) {
         self.mov_imm(X0, code);
-        self.mov_imm(X8, 93);
+        self.mov_imm(X8, 94);
         self.svc();
     }
 
@@ -490,7 +493,7 @@ const D_DBG0: usize = D_MSG0 + PANIC_MSGS.len(); // "allocs: ", "frees: ", "live
 const D_RNG0: usize = D_DBG0 + 3; // ": ", " not in ", ".." (the message of a failed range conversion)
 const D_TEXT0: usize = D_DBG0 + 6; // user text literals start here
 
-const PANIC_MSGS: [&str; 14] = [
+const PANIC_MSGS: [&str; 17] = [
     "integer overflow in addition",
     "integer overflow in subtraction",
     "integer overflow in multiplication",
@@ -505,6 +508,9 @@ const PANIC_MSGS: [&str; 14] = [
     "assertion failed",
     "integer conversion out of range",
     "float is NaN or out of range for the integer type",
+    "could not start thread",
+    "second panic during worker cleanup",
+    "extern C calls from AArch64 Yerux workers require libc TLS",
 ];
 const P_ADD: usize = 0;
 const P_SUB: usize = 1;
@@ -520,11 +526,15 @@ const P_POP: usize = 10;
 const P_ASSERT: usize = 11;
 const P_CONV: usize = 12;
 const P_F2I: usize = 13;
+const P_THREAD_START: usize = 14;
+const P_DOUBLE_PANIC: usize = 15;
+const P_WORKER_FFI: usize = 16;
 const CHK_PANIC: [usize; 7] = [P_ADD, P_SUB, P_MUL, P_DIV, P_NEG, P_CONV, P_F2I];
 const FREED: i64 = 1 << 62; // debug builds tag the header of a block sitting on a free list
 
 // Runtime heap state: a second, writable PT_LOAD segment (zero-filled, no bytes in the file).
-const G: i64 = 0x600000;
+pub(crate) const GOT_REL: usize = 4096;
+pub(crate) const G: i64 = 0x600000;
 const G_BUMP: i32 = 0; // next free byte of the current arena
 const G_END: i32 = 8; // end of the current arena
 const G_NALLOC: i32 = 16; // debug counters
@@ -578,6 +588,9 @@ enum LinuxSyscall {
     UnlinkAt(i64),
     TwoPathsAt(i64),
     SymlinkAt,
+    Poll,
+    Dup2,
+    Fork,
     OpenAt { has_dirfd: bool },
 }
 
@@ -589,12 +602,15 @@ impl LinuxSyscall {
             1 => Direct(64), // write
             2 => OpenAt { has_dirfd: false },
             3 => Direct(57),      // close
+            7 => Poll,
             8 => Direct(62),      // lseek
             9 => Direct(222),     // mmap
             10 => Direct(226),    // mprotect
             11 => Direct(215),    // munmap
+            13 => Direct(134), // rt_sigaction
             21 => At(48),         // access -> faccessat
             25 => Direct(216),    // mremap
+            33 => Dup2,
             35 => Direct(101),    // nanosleep
             39 => Direct(172),    // getpid
             41 => Direct(198),    // socket
@@ -606,7 +622,12 @@ impl LinuxSyscall {
             51 => Direct(204),    // getsockname
             52 => Direct(205),    // getpeername
             54 => Direct(208),    // setsockopt
+            57 => Fork,
+            59 => Direct(221),    // execve
             60 => Direct(93),     // exit
+            61 => Direct(260),    // wait4
+            62 => Direct(129),    // kill
+            72 => Direct(25),     // fcntl
             74 => Direct(82),     // fsync
             77 => Direct(46),     // ftruncate
             79 => Direct(17),     // getcwd
@@ -626,6 +647,7 @@ impl LinuxSyscall {
             257 => OpenAt { has_dirfd: true },
             263 => Direct(35),  // unlinkat
             271 => Direct(73),  // ppoll
+            293 => Direct(59), // pipe2
             332 => Direct(291), // statx
             _ => return None,
         })
@@ -635,6 +657,60 @@ impl LinuxSyscall {
         const AT_FDCWD: i64 = -100;
         let number = match self {
             Self::Direct(number) => number,
+            Self::Poll => {
+                // ppoll takes a timespec instead of signed 32-bit milliseconds.
+                let call = a.label();
+                a.sub_imm(SP, SP, 16);
+                a.lsl_imm(X2, X2, 32);
+                a.asr_imm(X2, X2, 32);
+                a.mov(X3, X2);
+                a.mov_imm(X2, 0);
+                a.cmp(X3, XZR);
+                a.bcond(LT, call);
+                a.mov_imm(X4, 1000);
+                a.udiv(X5, X3, X4);
+                a.msub(X3, X5, X4, X3);
+                a.mov_imm(X4, 1_000_000);
+                a.mul(X3, X3, X4);
+                a.str_i(X5, SP, 0);
+                a.str_i(X3, SP, 8);
+                a.mov_sp(X2, SP);
+                a.bind(call);
+                a.mov_imm(X3, 0);
+                a.mov_imm(X4, 0);
+                a.mov_imm(X8, 73);
+                a.svc();
+                a.add_imm(SP, SP, 16);
+                return;
+            }
+            Self::Dup2 => {
+                // dup3 rejects equal descriptors; dup2 checks that fd is open.
+                let distinct = a.label();
+                let done = a.label();
+                a.cmp(X0, X1);
+                a.bcond(NE, distinct);
+                a.mov(X6, X0);
+                a.mov_imm(X1, 1); // F_GETFD
+                a.mov_imm(X8, 25);
+                a.svc();
+                a.cmp(X0, XZR);
+                a.bcond(LT, done);
+                a.mov(X0, X6);
+                a.b(done);
+                a.bind(distinct);
+                a.mov_imm(X2, 0);
+                a.mov_imm(X8, 24);
+                a.svc();
+                a.bind(done);
+                return;
+            }
+            Self::Fork => {
+                a.mov_imm(X0, 17); // clone(SIGCHLD, NULL, NULL, NULL, NULL)
+                for reg in [X1, X2, X3, X4] {
+                    a.mov_imm(reg, 0);
+                }
+                220
+            }
             Self::At(number) => {
                 a.mov(X3, X2);
                 a.mov(X2, X1);
@@ -741,6 +817,9 @@ pub fn validate_syscalls(ir: &IrProgram) -> Result<(), String> {
 
 pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let mut a = Asm::new();
+    let has_threads = ir.funcs.iter().flat_map(|f| &f.blocks)
+        .flat_map(|b| &b.insts).any(|i| matches!(i, Inst::Thread(..)));
+    let thread_runtime = has_threads.then(|| threads::Runtime::new(&mut a));
 
     let mut data: Vec<Vec<u8>> = vec![
         b"panic: ".to_vec(),
@@ -760,6 +839,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     for t in &ir.texts {
         let mut b = (t.len() as u64).to_le_bytes().to_vec();
         b.extend_from_slice(t);
+        b.push(0); // Text passed to C points here as a NUL-terminated string.
         data.push(b);
     }
 
@@ -789,6 +869,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.mov_sp(X1, SP);
     a.str_i(X1, X0, 0);
     a.mov_imm(X17, 0);
+    if has_threads {
+        a.mov_imm(X19, threads::MAIN_CONTEXT);
+    }
     a.bl(l_funcs[ir.main]);
     if debug_alloc {
         // report allocations, frees and the difference on stderr
@@ -820,6 +903,11 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     // panic stubs: "panic: <msg>\n" to stderr, exit(101)
     for (i, l) in l_panic.iter().enumerate() {
         a.bind(*l);
+        if let Some(rt) = &thread_runtime {
+            if !matches!(i, P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_DOUBLE_PANIC) {
+                rt.panic_probe(&mut a, l_panic[P_DOUBLE_PANIC]);
+            }
+        }
         a.lea_data(X1, D_PANIC);
         a.mov_imm(X2, 7);
         a.bl(l_write2);
@@ -829,7 +917,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.lea_data(X1, D_NL);
         a.mov_imm(X2, 1);
         a.bl(l_write2);
-        if report {
+        if report && i != P_DOUBLE_PANIC {
             a.bl(l_at);
         }
         a.sys_exit(101);
@@ -872,6 +960,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
 
     // range_panic: x9 = value, x10 = lo, x11 = hi. "panic: integer conversion out of range: V not in LO..HI", exit(101).
     a.bind(l_range_panic);
+    if let Some(rt) = &thread_runtime {
+        rt.panic_probe(&mut a, l_panic[P_DOUBLE_PANIC]);
+    }
     a.lea_data(X1, D_PANIC);
     a.mov_imm(X2, 7);
     a.bl(l_write2);
@@ -931,6 +1022,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
 
     // print_int: value in x0, fd in x6. Prints decimal + newline to stdout. Leaf routine.
     a.bind(l_print_int);
+    if has_threads {
+        threads::lock(&mut a, threads::PRINT_LOCK);
+    }
     a.sub_imm(SP, SP, 32);
     a.mov(X3, X0); // remember the sign
     a.cmp(X0, XZR);
@@ -964,10 +1058,16 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.mov_imm(X8, 64);
     a.svc();
     a.add_imm(SP, SP, 32);
+    if has_threads {
+        threads::unlock(&mut a, threads::PRINT_LOCK);
+    }
     a.ret();
 
     // print_bool: value in x0
     a.bind(l_print_bool);
+    if has_threads {
+        threads::lock(&mut a, threads::PRINT_LOCK);
+    }
     let (l_false, l_wr) = (a.label(), a.label());
     a.cbz(X0, l_false);
     a.lea_data(X1, D_TRUE);
@@ -978,28 +1078,43 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.mov_imm(X2, 6);
     a.bind(l_wr);
     a.sys_write(1);
+    if has_threads {
+        threads::unlock(&mut a, threads::PRINT_LOCK);
+    }
     a.ret();
 
     // print_text: x0 = pointer to [len][bytes]. Needs lr preserved (calls nothing, uses svc only).
     a.bind(l_print_text);
+    if has_threads {
+        threads::lock(&mut a, threads::PRINT_LOCK);
+    }
     a.ldr(X2, X0, 0);
     a.add_imm(X1, X0, 8);
     a.sys_write(1);
     a.lea_data(X1, D_NL);
     a.mov_imm(X2, 1);
     a.sys_write(1);
+    if has_threads {
+        threads::unlock(&mut a, threads::PRINT_LOCK);
+    }
     a.ret();
 
     // print_bytes: x1 = pointer, x2 = length. Writes the bytes (if any) and a newline.
     {
         let l_nl = a.label();
         a.bind(l_print_bytes);
+        if has_threads {
+            threads::lock(&mut a, threads::PRINT_LOCK);
+        }
         a.cbz(X2, l_nl);
         a.sys_write(1);
         a.bind(l_nl);
         a.lea_data(X1, D_NL);
         a.mov_imm(X2, 1);
         a.sys_write(1);
+        if has_threads {
+            threads::unlock(&mut a, threads::PRINT_LOCK);
+        }
         a.ret();
     }
 
@@ -1007,6 +1122,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     {
         let l_nl = a.label();
         a.bind(l_panic_bytes);
+        if let Some(rt) = &thread_runtime {
+            rt.panic_probe(&mut a, l_panic[P_DOUBLE_PANIC]);
+        }
         a.mov(X9, X1);
         a.mov(X10, X2);
         a.lea_data(X1, D_PANIC);
@@ -1027,7 +1145,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     }
 
     // ── heap runtime ──
-    // rt_mmap: x1 = length -> x0 = fresh zeroed pages (panics when the kernel refuses). Leaf; clobbers x0-x5, x8.
+    // rt_mmap: x1 = length -> x0 = fresh zeroed pages or a negative errno. Leaf; clobbers x0-x5, x8.
     a.bind(l_mmap);
     a.mov_imm(X0, 0);
     a.mov_imm(X2, 3); // PROT_READ | PROT_WRITE
@@ -1036,18 +1154,23 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.mov_imm(X5, 0);
     a.mov_imm(X8, 222);
     a.svc();
-    a.cmp(X0, XZR);
-    a.bcond(LT, l_panic[P_OOM]);
     a.ret();
+    if let Some(rt) = &thread_runtime {
+        rt.emit(&mut a, l_mmap, l_panic[P_THREAD_START]);
+    }
 
     // rt_alloc: x0 = bytes -> x0 = payload pointer. Block = [size header][payload].
     // Small blocks (<= 64 KiB) are power-of-two size classes served from per-class free lists,
     // then bumped out of 1 MiB arenas. Larger blocks get their own mmap (page rounded).
-    // Clobbers x0-x7, x9, x16. lr is kept in x7 (rt_mmap is a leaf that does not touch it).
+    // Clobbers x0-x13 and x16. lr is kept in x7 (rt_mmap is a leaf that does not touch it).
     {
         let (l_large, l_found, l_bump, l_newarena, l_done) =
             (a.label(), a.label(), a.label(), a.label(), a.label());
+        let l_oom = a.label();
         a.bind(l_alloc);
+        if has_threads {
+            threads::lock(&mut a, threads::HEAP_LOCK);
+        }
         a.mov(X7, X30);
         a.add_imm(X0, X0, 8);
         a.mov_imm(X16, SMALL_MAX);
@@ -1084,6 +1207,8 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.mov(X9, X1);
         a.mov_imm(X1, ARENA);
         a.bl(l_mmap);
+        a.cmp(X0, XZR);
+        a.bcond(LT, l_oom);
         a.mov(X1, X9);
         a.mov_imm(X6, G);
         a.str_i(X0, X6, G_BUMP);
@@ -1097,6 +1222,8 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.and_reg(X0, X0, X16);
         a.mov(X1, X0);
         a.bl(l_mmap);
+        a.cmp(X0, XZR);
+        a.bcond(LT, l_oom);
         a.str_i(X1, X0, 0); // header = mapping size
         a.add_imm(X0, X0, 8);
         a.bind(l_done);
@@ -1106,15 +1233,26 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
             a.add_imm(X4, X4, 1);
             a.str_i(X4, X6, G_NALLOC);
         }
+        if has_threads {
+            threads::unlock(&mut a, threads::HEAP_LOCK);
+        }
         a.mov(X30, X7);
         a.ret();
+        a.bind(l_oom);
+        if has_threads {
+            threads::unlock(&mut a, threads::HEAP_LOCK);
+        }
+        a.b(l_panic[P_OOM]);
     }
 
-    // rt_free: x0 = payload pointer (0 is ignored). Leaf; clobbers x0-x6, x8, x16.
+    // rt_free: x0 = payload pointer (0 is ignored). Leaf; clobbers x0-x6, x8, x10-x13 and x16.
     {
         let (l_ret, l_large, l_found) = (a.label(), a.label(), a.label());
         a.bind(l_free);
         a.cbz(X0, l_ret);
+        if has_threads {
+            threads::lock(&mut a, threads::HEAP_LOCK);
+        }
         if debug_alloc {
             a.mov_imm(X6, G);
             a.ldr_i(X4, X6, G_NFREE);
@@ -1125,7 +1263,13 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         if debug_alloc {
             a.mov_imm(X4, FREED);
             a.tst(X4, X1);
-            a.bcond(NE, l_panic[P_DOUBLE_FREE]);
+            let live = a.label();
+            a.bcond(EQ, live);
+            if has_threads {
+                threads::unlock(&mut a, threads::HEAP_LOCK);
+            }
+            a.b(l_panic[P_DOUBLE_FREE]);
+            a.bind(live);
         }
         a.mov_imm(X16, SMALL_MAX);
         a.cmp(X1, X16);
@@ -1145,8 +1289,14 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.ldr_i(X5, X4, 0);
         a.str_i(X5, X0, 0); // block.next = head
         a.str_i(X0, X4, 0); // head = block
+        if has_threads {
+            threads::unlock(&mut a, threads::HEAP_LOCK);
+        }
         a.ret();
         a.bind(l_large);
+        if has_threads {
+            threads::unlock(&mut a, threads::HEAP_LOCK);
+        }
         a.sub_imm(X0, X0, 8);
         a.mov_imm(X8, 215); // munmap(x0 = block, x1 = size)
         a.svc();
@@ -1369,8 +1519,19 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                 match ins {
                     Inst::Loc(_) => {}
                     Inst::Sel(..) => unreachable!("x86-64 if-conversion only"),
-                    Inst::Thread(..) | Inst::Atomic(..) => {
-                        unreachable!("rejected by os_intrinsics_error")
+                    Inst::Thread(op, d, args) => {
+                        for (reg, arg) in [X0, X1, X2].into_iter().zip(args) {
+                            a.ldr(reg, SP, slot(*arg));
+                        }
+                        thread_runtime.as_ref().unwrap().operation(&mut a, *op);
+                        a.str(X0, SP, slot(*d));
+                    }
+                    Inst::Atomic(op, d, args) => {
+                        for (reg, arg) in [X0, X1, X2].into_iter().zip(args) {
+                            a.ldr(reg, SP, slot(*arg));
+                        }
+                        threads::atomic(&mut a, *op);
+                        a.str(X0, SP, slot(*d));
                     }
                     Inst::Global(d, n) => {
                         a.mov_imm(X0, G + G_USER + 8 * *n as i64);
@@ -1618,9 +1779,51 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         a.lea_label(X0, l_funcs[*fid]);
                         a.str(X0, SP, slot(*d));
                     }
-                    Inst::Call(dst, _, args)
-                    | Inst::CallInd(dst, _, args)
-                    | Inst::ExternCall(dst, _, args, ..) => {
+                    Inst::ExternCall(dst, id, args, floats, ret_float) => {
+                        if has_threads {
+                            a.mov_imm(X9, threads::MAIN_CONTEXT);
+                            a.cmp(X19, X9);
+                            a.bcond(NE, l_panic[P_WORKER_FFI]);
+                        }
+                        // Linux AAPCS64: eight registers in each argument bank.
+                        // Arguments that overflow either bank spill in source order.
+                        let (mut gp, mut fp, mut spilled) = (0, 0, 0);
+                        let float_count = floats.iter().filter(|&&f| f).count();
+                        let stack_count = float_count.saturating_sub(8)
+                            + (args.len() - float_count).saturating_sub(8);
+                        let size = ((8 * stack_count + 15) & !15) as u32;
+                        if size != 0 {
+                            a.sub_sp_const(SP, SP, size, false);
+                        }
+                        for (&arg, &float) in args.iter().zip(floats) {
+                            let offset = slot(arg) + size;
+                            if float && fp < 8 {
+                                a.ldr(X9, SP, offset);
+                                a.fmov_dx(fp, X9);
+                                fp += 1;
+                            } else if !float && gp < 8 {
+                                a.ldr(gp, SP, offset);
+                                gp += 1;
+                            } else {
+                                a.ldr(X9, SP, offset);
+                                a.str(X9, SP, spilled);
+                                spilled += 8;
+                            }
+                        }
+                        a.mov_imm(X16, G + (GOT_REL + 8 * id) as i64);
+                        a.ldr_i(X16, X16, 0);
+                        a.blr(X16);
+                        if size != 0 {
+                            a.sub_sp_const(SP, SP, size, true);
+                        }
+                        if let Some(d) = dst {
+                            if *ret_float {
+                                a.fmov_xd(X0, 0);
+                            }
+                            a.str(X0, SP, slot(*d));
+                        }
+                    }
+                    Inst::Call(dst, _, args) | Inst::CallInd(dst, _, args) => {
                         let sz = ((8 * args.len() + 15) & !15) as u32;
                         if sz > 0 {
                             a.sub_sp_const(SP, SP, sz, false);
@@ -1637,9 +1840,6 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         }
                         a.bl(l_funcs[*fid])
                     }
-                            Inst::ExternCall(..) => {
-                                unreachable!("extern calls are unsupported on aarch64")
-                            }
                             Inst::CallInd(_, code, _) => {
                                 a.ldr(X16, SP, slot(*code) + sz);
                                 a.blr(X16);
@@ -1886,10 +2086,16 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
             blob.extend_from_slice(&d);
         }
     }
-    a.finalize(BASE + HDR, data_start, &offs);
     let entry = a.labels[l_start].unwrap();
-    a.code.extend_from_slice(&blob);
-    elf64(&a.code, entry)
+    if ir.externs.is_empty() {
+        a.finalize(BASE + HDR, data_start, &offs);
+        a.code.extend_from_slice(&blob);
+        elf64(&a.code, entry)
+    } else {
+        use crate::elfdyn::{write_image, Arch, HEADER_SIZE};
+        a.finalize(BASE + HEADER_SIZE as u64, data_start, &offs);
+        write_image(&a.code, &blob, entry, &ir.links, &ir.externs, Arch::A64)
+    }
 }
 
 // ───────────────────────── ELF64 writer ─────────────────────────

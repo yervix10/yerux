@@ -1,0 +1,17 @@
+// Exercise the low 32 bits of the C floating-point registers in both directions.
+link "libm.so.6"
+extern "C" {
+    fn fmaf(x: Float32, y: Float32, add: Float32) -> Float32
+    fn labs(x: Int) -> Int
+}
+
+fn main() {
+    unsafe {
+        let x: Float32 = -1.5
+        let y: Float32 = 4.0
+        let add: Float32 = 0.5
+        let result: Float32 = fmaf(x, y, add)
+        print(result == -5.5)
+        print(labs(-19))
+    }
+}

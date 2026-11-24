@@ -91,14 +91,14 @@ Pipeline: `AST -> Yerux IR -> machine code -> executable file`.
   `--target aarch64 [--native-debug-alloc]`; the debug build prints `allocs/frees/live` on stderr and detects double frees.
 - Runtime allocator mirrors x64: size classes 2^4..2^16 with free lists, 1 MiB arenas, larger blocks own an mmap;
   state lives in a zero-filled RW PT_LOAD at 0x600000.
-- Native programs can now use `std.io`, `std.fs`, `std.env`, `std.time` and blocking TCP through `std.net`.
-  See the [AArch64 system service coverage and limits](docs/BACKEND.md).
+- Native programs support `std.io`, `std.fs`, `std.env`, `std.time`, blocking TCP through `std.net`,
+  `std.process`, workers and scalar/variadic C imports. See the [AArch64 coverage and limits](docs/BACKEND.md).
 - Still the simple model: every vreg in a stack slot, args on the stack, no register allocation, no optimisations
   beyond `opt.rs` (shared IR pass); `MemCpy` is a byte loop. Not run on real hardware, only emulated.
 - Verification: `tests/a64_emu.py` (Unicorn + capstone) runs every example/test the native backend accepts and checks
   stdout + exit code against `tests/expected` and stderr against the x86-64 build (`--debug-alloc` compares the
-  allocator counters too). The system and socket fixtures use QEMU user-mode emulation and are also
-  part of `tests/run_all.sh` when `qemu-aarch64` is available. `tests/a64_all.sh` additionally runs the full
+  allocator counters too). The system, socket, process, worker and C import fixtures use QEMU user-mode
+  emulation and run through `tests/run_all.sh` when `qemu-aarch64` is available. `tests/a64_all.sh` additionally runs the full
   emulation corpus and `tests/a64_fuzz.py [--agg]` against x86-64. The Unicorn checks need
   `pip install unicorn capstone`.
 
@@ -153,8 +153,9 @@ Pipeline: `AST -> Yerux IR -> machine code -> executable file`.
 - Typed worker panic recovery walks stack records describing live owned
   locals and then releases the closure environment. Lock cleanup poisons a
   mutex when recovery follows a panic inside its protected closure.
-- The C oracle uses pthreads and C11 atomics. The aarch64 and Windows native
-  backends reject concurrency IR with a target-specific diagnostic.
+- The C oracle uses pthreads and C11 atomics. AArch64 Linux uses `clone`,
+  guarded stacks and acquire/release exclusive instructions. The Windows native
+  backend rejects concurrency IR with a target-specific diagnostic.
 - See [docs/CONCURRENCY.md](docs/CONCURRENCY.md) for language support and
   the remaining concurrency design.
 

@@ -110,7 +110,8 @@ printf '1.1.0\n116\n' >"$T/wanted"
 ./target/app | diff -u "$T/wanted" -
 "$Y" run --locked | diff -u "$T/wanted" -
 "$Y" run src/main.yx | diff -u "$T/wanted" -
-"$Y" test --locked | grep -q 'ok.*transitive dependency'
+# Consume stdout completely so grep cannot close the compiler's pipe early.
+"$Y" test --locked | grep 'ok.*transitive dependency' >/dev/null
 cmp "$T/original.lock" yerux.lock
 
 # Ignore higher releases on an ordinary build and keep the pinned revision even
@@ -161,7 +162,7 @@ pkg ../untagged untagged 0.2.0
 git -C ../untagged init -q
 git -C ../untagged add yerux.toml
 git -C ../untagged -c user.email=pkg@example.test -c user.name=Test commit -qm initial
-"$Y" add untagged --git ../untagged | grep -q 'HEAD'
+"$Y" add untagged --git ../untagged | grep 'HEAD' >/dev/null
 untagged_rev=$(git -C ../untagged rev-parse HEAD)
 grep -q "^rev = \"$untagged_rev\"$" yerux.lock
 "$Y" lock --locked

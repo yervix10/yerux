@@ -2170,13 +2170,6 @@ impl<'a> G<'a> {
                     continue;
                 }
                 self.mov_to(SYSV_ARG_REGS[gi], *arg);
-                // Yerux Text values point at a length-prefixed literal. C string
-                // parameters point at the first byte. Literal payloads are NUL
-                // terminated in the blob (see build below).
-                if let Loc::Text(t) = self.loc(*arg) {
-                    self.a.lea_data(SYSV_ARG_REGS[gi], D_TEXT0 + t);
-                    self.a.add_imm(SYSV_ARG_REGS[gi], 8);
-                }
                 gi += 1;
             }
         }
