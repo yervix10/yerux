@@ -1,0 +1,34 @@
+// COMPATIBILITY.md section 10 item 1: user `impl Drop` runs (C and native) and fs.File closes itself
+// (no explicit fs.close). Counts open descriptors through /proc/self/fd.
+import std.fs
+
+struct Tag { id: Int }
+impl Drop for Tag {
+  fn drop(mut self) { print("drop {self.id}") }
+}
+
+fn open_count() -> Int {
+  match fs.read_dir_entries("/proc/self/fd") {
+    Ok(l) => { return l.len() }
+    Err(e) => { return -1 }
+  }
+}
+
+fn scoped_open(path: view String, before: Int) {
+  let f = fs.open(path).unwrap()
+  print("inside {open_count() - before}")
+}
+
+fn main() {
+  let a = Tag { id: 1 }
+  let b = Tag { id: 2 }
+  print("body")
+  let before = open_count()
+  let w = fs.write("/tmp/yerux_conf_drop_user_fd.txt", "hi")
+  scoped_open("/tmp/yerux_conf_drop_user_fd.txt", before)
+  print("after {open_count() - before}")
+  let g = fs.open("/tmp/yerux_conf_drop_user_fd.txt").unwrap()
+  let r = fs.close(move g)
+  print("explicit {open_count() - before}")
+  let rm = fs.remove_file("/tmp/yerux_conf_drop_user_fd.txt")
+}

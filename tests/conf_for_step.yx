@@ -1,0 +1,4 @@
+// COMPATIBILITY.md section 10 item 7: `step` is accepted in a sequential `for` (not in `parallel for`).
+fn main() {
+  for i in 0..10 step 3 { print(i) }
+}

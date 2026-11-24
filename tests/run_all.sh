@@ -116,6 +116,7 @@ AUX=(
   "fmt|bash tests/fmt.sh"
   "sumtool|bash tests/sumtool.sh"
   "datatool|bash tests/datatool.sh"
+  "spec_conformance|bash tests/spec_conformance.sh"
   "minimake_errors|bash tests/minimake_errors.sh"
   "minimake_graph|bash tests/minimake_graph.sh"
   "yxscan|bash tests/yxscan.sh"

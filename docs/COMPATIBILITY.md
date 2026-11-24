@@ -245,38 +245,60 @@ Experimental.
 
 ## 10. Contradictions between docs/SPEC.md, the root SPEC.md and the other design documents
 
-Listed, not resolved. Each one needs a decision by the language owner.
+Resolved on the criterion the language owner authorised: the compiler and the tests as they behave today
+win, and the text that contradicts them is corrected. Each item below was checked with a probe program
+before its text was changed. Evidence is a test in `tests/` or a command. Regression guards:
+`tests/spec_conformance.sh` (doc text and probes; it failed before the corrections), and the
+`tests/conf_*.yx` and `tests/e1960`..`e1963` programs (behaviour; they pin the behaviour that the
+corrected text now states).
 
-1. **Drop.** The root SPEC.md says the language has no user `Drop` (file handles are closed with
-   `fs.close(move f)`, Standard I/O section) and, in its last section, that a struct may implement `Drop`
-   with `fn drop(mut self)`. Both cannot hold.
-2. **Const generics.** The root "Range integer types" section lists const generics as not implemented; the
-   root "Fixed-size arrays" section says `fn dot<const N: Int>` works. tests/arr_const.yx and
-   tests/e1023_const_generic_lengths.yx exercise the latter.
-3. **Version and milestones.** The root SPEC.md roadmap places "v0.5 Option/Result", "v0.6 effects" and
-   "v1.0 self-hosting"; docs/ROADMAP.md places self-hosting in M7 and the 1.0 release in M12, and the
-   current version is 0.5.0. The roadmap of the root file is outdated.
-4. **Module root.** The root SPEC.md says `<root>` is the folder of the file being compiled. docs/PACKAGES.md
-   says imports resolve in the package's `src/` with `src/lib.yx` as fallback. docs/SPEC.md section 6 does
-   not decide it.
-5. **Comptime budget.** The root SPEC.md says 20 million steps and recursion deeper than 1000 calls.
-   docs/COMPTIME.md proposes 10^8 steps and a 256 MiB memory limit. The 1000-call limit appears in no test.
-6. **Comptime keyword.** The root SPEC.md says no keyword is needed on functions. docs/COMPTIME.md proposes
-   `comptime fn`, `comptime for` and `comptime if`. docs/SPEC.md section 8 leaves them unspecified.
-7. **Parallel and step.** The root Threads section says explicit range steps are unsupported in
-   `parallel for`; the root Loops section says `for i in 0..100 step 5` is supported. They concern different
-   constructs, but the wording is ambiguous.
-8. **Std module list.** The root SPEC.md lists `std.text`, `std.math`, `std.sort`, `std.iter`, `std.fmt`,
-   `std.time`, `std.path`, `std.fs` and `std.env` as the embedded modules. docs/STDLIB.md lists 27 modules.
-9. **Generic `impl` for library and user code.** The root "Standard collections" section says library generic
-   `impl` blocks "exist only inside the library for now", while the "Generics" section says generic `impl`
-   blocks work for user types. Both may hold; the wording should say so.
-10. **Explicit type arguments.** The root "Generics" section lists them as "not yet", but the "Threads" section
-    says `Shared` and `Atomic` "accept explicit type arguments". Clarify whether this is a language feature or
-    library-only syntax.
-11. **Thread handle retention.** The root SPEC.md says a standalone `spawn` statement retains its handle until
-    the block exits. docs/SPEC.md section 5.1 does not state it; docs/CONCURRENCY.md says tasks are joined at
-    scope end. The three must agree before freezing.
-12. **Concurrency design vs implementation.** docs/CONCURRENCY.md describes `spawn { }` without `move`,
-    `Channel<T>.new`, `Task<T>` and work-stealing `parallel` scheduling; the root Threads section describes the
-    implemented forms. Section 1 of this document lists the same difference.
+1. **Drop.** *Resolved.* User `impl Drop` runs in both backends, and `fs.File` closes itself when dropped.
+   The root SPEC said there is no user `Drop`; that sentence is corrected.
+   Evidence: `tests/drop_basic.yx`, `tests/conf_drop_user_fd.yx` (the descriptor count goes back to 0 with no explicit close).
+   *Resolved:* yes.
+2. **Const generics.** *Resolved.* `fn dot<const N: Int>(a: [Int; N], ...)` works. The root "Range integer
+   types" list of unimplemented items no longer names const generics. Evidence: `tests/conf_const_generic_array.yx`
+   (prints 32), `tests/arr_const.yx`, `tests/e1023_const_generic_lengths.yx`.
+3. **Version and milestones.** *Resolved.* `yerux --version` is 0.5.0. The root roadmap now defers to
+   docs/ROADMAP.md: self-hosting is M7 and release 1.0 is M12. Evidence: `tests/spec_conformance.sh` (item 3 checks).
+4. **Module root.** *Resolved.* A single file resolves its imports in its own folder (`<root>`). In a project
+   the main file is `src/main.yx`, so local imports resolve in `src/`, and dependencies resolve through
+   `src/<name>.yx` or `src/lib.yx`. `yerux run main.yx` in a package root does not see `src/`. Evidence:
+   `tests/spec_conformance.sh` (item 4: scratch directories) and the text in docs/PACKAGES.md.
+5. **Comptime budget.** *Resolved.* The step budget is 20 000 000 (E-K2) and the call depth limit is 1000
+   (E-K6: 999 nested calls pass, 1000 are rejected). The 256 MiB memory budget is design only and is not
+   enforced; COMPTIME.md says so. The "10^8" statement in docs/SPEC.md was wrong and is removed.
+   Evidence: `tests/conf_comptime_depth_999.yx`, `tests/e1962_comptime_depth_1000.yx`, `examples/e53_comptime_budget.yx`.
+6. **Comptime keyword.** *Resolved.* Plain functions need no keyword, and `comptime f(..)` works. `comptime fn`
+   and `comptime for` are parse errors today, and COMPTIME.md records them as not implemented.
+   Evidence: `tests/e1960_comptime_fn_keyword.yx`, `tests/e1963_comptime_for_keyword.yx`.
+7. **Parallel and step.** *Resolved.* A sequential `for` accepts `step`. `parallel for` rejects it, and the
+   Threads section now says so. Evidence: `tests/conf_for_step.yx` (0 3 6 9), `tests/e1961_parallel_for_step.yx`.
+8. **Std module list.** *Resolved.* `src/std/` has 28 modules, and docs/STDLIB.md indexes all 28 (the item
+   text said 27, which was wrong). The root SPEC now says so instead of listing a subset. Evidence:
+   `tests/spec_conformance.sh` (item 8 counts the files).
+9. **Generic `impl` for library and user code.** *Resolved.* User types can use generic `impl`, for example
+   `impl<T: Label> Label for Pair<T, T>`. The root text no longer restricts it to the library. Evidence:
+   `tests/conf_generic_impl_user.yx` (prints `(i1, i2)`).
+10. **Explicit type arguments.** *Resolved.* They are accepted on the constructors (`Shared<Int>.new`,
+    `Locked<Int>.new`, `Atomic<Int>.new`), and not on calls: `id<Int>(3)` is an error. The Threads text now says
+    so. Evidence: `tests/conf_type_args_ctor.yx`, and the call error in `tests/spec_conformance.sh` (item 10).
+11. **Thread handle retention.** *Resolved.* A standalone `spawn` statement is joined when its enclosing block
+    exits; a spawn directly in the scope is joined at scope end. docs/SPEC.md 5.1 and docs/CONCURRENCY.md now
+    say so. Evidence: `tests/conf_spawn_block_join.yx` (`after if 1`: the worker finished before the `if` block ended).
+12. **Concurrency design vs implementation.** *Resolved.* docs/CONCURRENCY.md has a status note at the start of
+    sections 1-12. Today `spawn { }` without `move` is an error, `Channel<T>.new(capacity:)` is a parse error,
+    and `Task<T>` is an unknown type. The implemented forms are `spawn move`, `JoinHandle<T>`,
+    `Sender<T>.bounded(n)`. Evidence: the three error probes in `tests/spec_conformance.sh` (item 12).
+
+Compiler bug found while checking item 6 (not fixed, `src/` untouched): when a file has both a syntax error
+and a const that calls a function, only the const diagnostic is printed. Repro:
+
+```
+comptime fn f(n: Int) -> Int { return n }
+const X = f(4)
+fn main() { print(X) }
+```
+
+`yerux check` reports `a const must be computed from literals...` at line 2 and never reports the parse error
+on line 1, which is `expected 'fn', 'struct', 'enum', 'trait' or 'impl'` when the const is removed.

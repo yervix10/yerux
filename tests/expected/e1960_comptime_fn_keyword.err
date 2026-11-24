@@ -1,0 +1,7 @@
+error: expected 'fn', 'struct', 'enum', 'trait' or 'impl'
+ --> tests/e1960_comptime_fn_keyword.yx:2:1
+  |
+2 | comptime fn f(n: Int) -> Int { return n * 2 }
+  | ^^^^^^^^
+
+1 error(s). Nothing was generated.

@@ -762,6 +762,7 @@ fn if_stmt(p: mut Parser) -> String {
 }
 
 fn loop_stmt(p: mut Parser, label: view String, is_parallel: Bool) -> String {
+  let line = p.tokens.at(p.i).line
   if !is_parallel && eat_kw(p, "while") {
     let cond = parse_expr(p)
     return node3("While", label, cond, block(p))
@@ -784,7 +785,10 @@ fn loop_stmt(p: mut Parser, label: view String, is_parallel: Bool) -> String {
   if eat_kw(p, "step") { step = parse_expr(p) }
   let body = block(p)
   if is_parallel {
-    if mutable || step != "_" { p.failed = true }
+    if mutable || step != "_" {
+      if !p.failed { p.error_line = line }
+      p.failed = true
+    }
     if end != "_" {
       let closure = "Closure(false,false,true,false,[Param({n},Own,Type(496e74,[]))],_,{body})"
       return "Expr(Call(5f5f706172616c6c656c5f72616e6765,[{first},{end},Bool({inclusive}),{closure}]))"

@@ -1,0 +1,14 @@
+// COMPATIBILITY.md section 10 item 9: generic `impl` blocks work for user types, not only in the library.
+trait Label { fn label(view self) -> String }
+struct Pair<A, B> { a: A, b: B }
+impl<T: Label> Label for Pair<T, T> {
+  fn label(view self) -> String { return "({self.a.label()}, {self.b.label()})" }
+}
+impl Label for Int {
+  fn label(view self) -> String { return "i{self}" }
+}
+
+fn main() {
+  let p = Pair { a: 1, b: 2 }
+  print(p.label())
+}

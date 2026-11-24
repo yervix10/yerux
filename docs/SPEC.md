@@ -681,6 +681,10 @@ section lists only what the tests fix. Anything not listed is **no especificado*
 
 - `spawn` is legal only inside a `scope { }` block; elsewhere it is an error
   (tests/e745_spawn_requires_scope.yx).
+- A standalone `spawn` statement retains its handle until the enclosing block exits, so the task is
+  joined at the end of that block (an `if` inside the scope: the task finishes before the statement after
+  the `if`), and tasks spawned directly in the scope are joined when the scope ends
+  (tests/conf_spawn_block_join.yx). Dropping the handle waits for it.
 - The task body is a `move` closure; `spawn` without `move` is an error
   (tests/e742_spawn_requires_move.yx). Both `spawn move { ... }` (tests/conc_sharing.yx) and
   `spawn move || expr` (tests/e745_spawn_requires_scope.yx) appear in tests.
@@ -919,8 +923,8 @@ inside functions. Both use the language's own semantics; the compiler evaluates 
 - `comptime expr` evaluates `expr` during compilation. Its value must be `Int`, `Char` or `Bool`;
   other types are rejected with E-K3 (tests/e966_comptime_string.yx, tests/e1028_comptime_array_result.yx).
 - Inside the evaluated code, recursion, `while` loops and calls to ordinary functions are allowed
-  (tests/comptime_basic.yx: `fib`, `fact`, `is_prime`). No `comptime fn` keyword appears in tests;
-  whether it exists is **no especificado**.
+  (tests/comptime_basic.yx: `fib`, `fact`, `is_prime`). `comptime fn` is a parse error today
+  (tests/e1960_comptime_fn_keyword.yx); ordinary functions are called as `comptime f(..)`.
 - Arrays may be built and indexed inside comptime code, including array parameters and results
   (tests/comptime_arrays.yx). An array returned from `comptime` to runtime is not allowed (see above).
 - `comptime assert(cond)` and `assert_eq(comptime f(), v)` are accepted (tests/comptime_basic.yx,
@@ -1049,8 +1053,9 @@ unfixed point that no test pins down. The implemented behaviour in sections 1-9 
 7. **FFI on other targets.** aarch64 and Windows reject `extern "C"` (section 7.4). Their ABIs are pending.
 8. **Compile-time surface.** `comptime fn`, `comptime for`, `comptime if`, reflection, comptime
    allocators (COMPTIME.md part B) and serialised constants of other types are pending (section 8).
-9. **Compile-time budgets.** COMPTIME.md proposes a step limit of 10^8 with a 256 MiB memory limit.
-   No test in `tests/` fixes a limit; `examples/e53_comptime_budget.yx` uses a different one. Pending.
+9. **Compile-time budgets.** The compiler enforces a step budget of 20 000 000 (E-K2, tests/e1962_comptime_depth_1000.yx
+   covers the depth limit of 1000 nested calls, E-K6). COMPTIME.md describes a 256 MiB memory budget that is
+   not enforced yet. `examples/e53_comptime_budget.yx` (an endless loop) reaches that same E-K2 limit.
 10. **Module search order.** Whether `src/<name>.yx` or `src/lib.yx` is tried first for a package
     import (PACKAGES.md) is not tested. Pending.
 11. **Standard library coverage.** STDLIB.md lists APIs that no test calls, and `prelude_parallel.yx`
