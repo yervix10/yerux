@@ -1,0 +1,33 @@
+// std.args: option_int over present, missing, invalid, empty, overflow and flag-only options
+import std.args
+
+fn show(label: Text, o: Option<Int>) {
+  match o {
+    Some(n) => {
+      print("{label}: Some({n})")
+    }
+    None => {
+      print("{label}: None")
+    }
+  }
+}
+
+fn main() {
+  var argv = List<String>.new()
+  for w in ["tool", "--count=12", "--neg=-7", "--zero=0", "--max=9223372036854775807", "--huge=99999999999999999999", "--junk=abc", "--empty=", "--spaces= 7", "--verbose", "run"] {
+    argv.push(String.from(w))
+  }
+  let p = args.parse(argv)
+  show("count", args.option_int(p, "count"))
+  show("neg", args.option_int(p, "neg"))
+  show("zero", args.option_int(p, "zero"))
+  show("max", args.option_int(p, "max"))
+  show("huge", args.option_int(p, "huge"))
+  show("junk", args.option_int(p, "junk"))
+  show("empty", args.option_int(p, "empty"))
+  show("spaces", args.option_int(p, "spaces"))
+  show("verbose", args.option_int(p, "verbose"))
+  show("missing", args.option_int(p, "missing"))
+  // a leading "--" is accepted by option() as well
+  show("double", args.option_int(p, "--count"))
+}

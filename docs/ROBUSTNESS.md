@@ -70,11 +70,62 @@ Boundary cases tried on both backends (`Ptr<UInt8>.alloc(n)` and the collections
 Known difference, not changed: `String.reserve(9223372036854775807)` reports `out of memory` on the C backend and
 `integer overflow in multiplication` natively (both exit 101).
 
-## 4. Status
+## 4. Findings of the stdlib coverage round
+
+The golden tests added over `src/std/*.yx` (27 public functions that had no test) found two stdlib defects. Both
+reproduce on the C and the native backend; neither is fixed here, and the tests that touch them accept either
+behaviour so the goldens survive a fix.
+
+### `std.http.server.url_decode` can build a String that is not valid UTF-8
+
+The I/O invariant "Strings stay UTF-8 … instead of building a String that `char_at` would later panic on"
+(docs/STDLIB_IO.md) is broken by the percent decoder: every percent-encoded byte is copied into the result with
+no validation, so a sequence that is not valid UTF-8 becomes part of the String. The first UTF-8-strict
+operation on that value panics.
+
+```yerux
+import std.http.server
+import std.text
+
+fn main() {
+  let s = server.url_decode("%FF", false).unwrap()  // Some, len 1, byte 0xFF (a truncated lead, "%C3", behaves the same)
+  print(text.chars(s).len())                        // panic: invalid UTF-8 sequence, exit 101
+}
+```
+
+The same value reaches programs through the parser: `server.parse("GET /%FF HTTP/1.1\r\nHost: h\r\n\r\n", 0,
+server.config())` returns `Done` with `req.path` holding byte `0xFF` (`raw_path` stays `/%FF`), so a handler that
+iterates the path panics, and `server.query_param` on `?k=%FF` returns `Some` with the same invalid byte.
+`io.read_file` rejects such input with `IoErrorKind.InvalidData`; `url_decode` (and therefore the path and query
+decoding of `server.parse`) should validate before returning, or reject the request.
+
+### `net.set_accept_timeout` expiry reports code 11 instead of the documented 110
+
+`socket_io_error` maps `EAGAIN` from a timed-out read or write to errno 110 so that every expired socket
+operation reports `ETIMEDOUT` (docs/NET.md, "Timeouts and addresses"; asserted by `tests/net_timeouts.yx`).
+`accept` does not use that helper: once `SO_RCVTIMEO` expires it reports the raw errno 11 with the message
+"Unknown error (os error 11)", while its own doc comment in `src/std/net.yx` and docs/NET.md promise code 110.
+
+```yx
+import std.net
+
+fn main() {
+  let l = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
+  let _ = net.set_accept_timeout(l, 30)
+  match net.accept(l) {
+    Ok(s) => { print("connected") }
+    Err(e) => { print(e.code) }  // 11 (EAGAIN); the documentation says 110 (ETIMEDOUT)
+  }
+}
+```
+
+`tests/std_net_accept.yx` prints `true` for `e.code == 11 || e.code == 110`, so it keeps passing either way.
+
+## 5. Status
 
 * Compiler: 0 crashes or hangs in about 19,000 fuzz cases; 0 ownership-checker soundness holes.
 * Backends: 0 disagreements between C, native and native `--no-opt` once the harnesses ignore the native-only
   location lines.
 * Runtime: 1 inconsistency fixed (negative allocation sizes); ASAN/UBSAN and TSAN clean on the real programs.
-* Open: the `String.reserve` message difference above; fuzzers are bounded in time, so a longer run with new seeds is
-  the next step (`/tmp`-style batch: `python3 tests/fuzz.py -n 5000 --seed N`).
+* Open: the `String.reserve` message difference above; the two stdlib findings of section 4; fuzzers are bounded in
+  time, so a longer run with new seeds is the next step (`/tmp`-style batch: `python3 tests/fuzz.py -n 5000 --seed N`).

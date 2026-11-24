@@ -1,0 +1,15 @@
+limit=5 ok true
+limit=4 file exceeds read limit
+limit=0 file exceeds read limit
+limit=-1 file read limit must be 0..16 MiB
+limit=16MiB+1 file read limit must be 0..16 MiB
+limit=16MiB ok 5
+empty limit=0 ok 0
+missing notfound true
+line1 [l1]
+line2 [l2]
+line3 [l3]
+line4 eof
+rest []
+empty line eof
+empty rest 0

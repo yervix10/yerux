@@ -1,0 +1,28 @@
+plain: [abc] len=3
+empty: [] len=0
+escapes: [ABC] len=3
+plus on: [a b] len=3
+plus off: [a+b] len=3
+space: [a b] len=3
+utf8 3-byte: [€] len=3
+utf8 2-byte: [é] len=2
+utf8 4-byte: [😀] len=4
+mixed case hex: [€] len=3
+bad hex: none
+truncated: none
+lone percent: none
+trailing percent: none
+nul: none
+half escape: none
+201
+hello
+application/json
+true
+true
+true
+true
+true
+true
+false
+false
+true

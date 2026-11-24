@@ -1,0 +1,8 @@
+set 30ms: ok 0
+expired
+code 11 or 110 true
+kind other true
+waited >= 20ms true
+waited < 2s true
+accepted peer
+negative true

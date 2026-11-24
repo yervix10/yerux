@@ -1,0 +1,134 @@
+// std.fs: read_to_string_limit at, below and beyond the limit (and its invalid limits) and the
+// buffered reader built with fs.reader over an open File
+import std.fs
+import std.io
+
+fn line(label: Text, r: Result<Option<String>, io.IoError>) {
+  match r {
+    Ok(o) => {
+      match o {
+        Some(l) => {
+          print("{label} [{l}]")
+        }
+        None => {
+          print("{label} eof")
+        }
+      }
+    }
+    Err(e) => {
+      print("{label} err {e}")
+    }
+  }
+}
+
+fn main() {
+  let dir = "/tmp/yerux_fs_limit_reader_{io.process_id()}"
+  let _ = fs.create_dir(dir)
+  let p = "{dir}/data.txt"
+  let empty = "{dir}/empty.txt"
+  let missing = "{dir}/missing.txt"
+
+  let _ = fs.write(p, "hello")
+  let _ = fs.write(empty, "")
+
+  // exactly at the limit, one below, zero, negative and above the 16 MiB ceiling
+  match fs.read_to_string_limit(p, 5) {
+    Ok(s) => {
+      let eq = s.eq("hello")
+      print("limit=5 ok {eq}")
+    }
+    Err(e) => {
+      print("limit=5 {e}")
+    }
+  }
+  match fs.read_to_string_limit(p, 4) {
+    Ok(s) => {
+      print("limit=4 unexpected {s}")
+    }
+    Err(e) => {
+      print("limit=4 {e.message}")
+    }
+  }
+  match fs.read_to_string_limit(p, 0) {
+    Ok(s) => {
+      print("limit=0 unexpected {s}")
+    }
+    Err(e) => {
+      print("limit=0 {e.message}")
+    }
+  }
+  match fs.read_to_string_limit(p, -1) {
+    Ok(s) => {
+      print("limit=-1 unexpected {s}")
+    }
+    Err(e) => {
+      print("limit=-1 {e.message}")
+    }
+  }
+  match fs.read_to_string_limit(p, 16777217) {
+    Ok(s) => {
+      print("limit=16MiB+1 unexpected {s}")
+    }
+    Err(e) => {
+      print("limit=16MiB+1 {e.message}")
+    }
+  }
+  match fs.read_to_string_limit(p, 16777216) {
+    Ok(s) => {
+      print("limit=16MiB ok {s.len()}")
+    }
+    Err(e) => {
+      print("limit=16MiB {e.message}")
+    }
+  }
+  match fs.read_to_string_limit(empty, 0) {
+    Ok(s) => {
+      print("empty limit=0 ok {s.len()}")
+    }
+    Err(e) => {
+      print("empty limit=0 {e}")
+    }
+  }
+  match fs.read_to_string_limit(missing, 10) {
+    Ok(s) => {
+      print("missing unexpected {s}")
+    }
+    Err(e) => {
+      print("missing notfound {e.kind == io.IoErrorKind.NotFound}")
+    }
+  }
+
+  // fs.reader: lines, CRLF stripping, EOF, then the rest of the file
+  let _ = fs.write(p, "l1\nl2\r\nl3")
+  let f = fs.open(p).unwrap()
+  var r = fs.reader(move f)
+  line("line1", r.read_line())
+  line("line2", r.read_line())
+  line("line3", r.read_line())
+  line("line4", r.read_line())
+  match r.read_to_string() {
+    Ok(s) => {
+      print("rest [{s}]")
+    }
+    Err(e) => {
+      print("rest err {e}")
+    }
+  }
+
+  // an empty file: the first read is EOF
+  let ef = fs.open(empty).unwrap()
+  var er = fs.reader(move ef)
+  line("empty line", er.read_line())
+  match er.read_to_string() {
+    Ok(s) => {
+      print("empty rest {s.len()}")
+    }
+    Err(e) => {
+      print("empty rest err {e}")
+    }
+  }
+
+  let _ = fs.remove_file(p)
+  let _ = fs.remove_file(empty)
+  let _ = fs.remove_dir(dir)
+}

@@ -1,0 +1,65 @@
+// std.net: set_accept_timeout bounds accept (expiry is an error, then a real connection is accepted),
+// and a negative timeout is InvalidInput. The expiry code is 11 today although the documentation says
+// 110 (docs/ROBUSTNESS.md), so the test accepts either.
+import std.net
+import std.io
+import std.time
+
+fn report(label: Text, r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => {
+      print("{label}: ok {n}")
+    }
+    Err(e) => {
+      print("{label}: {e}")
+    }
+  }
+}
+
+fn main() {
+  let l = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
+  report("set 30ms", net.set_accept_timeout(l, 30))
+
+  let t0 = time.monotonic_ns()
+  match net.accept(l) {
+    Ok(s) => {
+      print("unexpected connection")
+      let _ = net.close_stream(move s)
+    }
+    Err(e) => {
+      print("expired")
+      print("code 11 or 110 {e.code == 11 || e.code == 110}")
+      print("kind other {e.kind == io.IoErrorKind.Other}")
+    }
+  }
+  let waited = time.monotonic_ns() - t0
+  print("waited >= 20ms {waited >= 20000000}")
+  print("waited < 2s {waited < 2000000000}")
+
+  // the same listener accepts a real peer afterwards
+  let bound = net.listener_local_addr(l).unwrap()
+  let c = net.connect(bound).unwrap()
+  match net.accept(l) {
+    Ok(s) => {
+      print("accepted peer")
+      let _ = net.close_stream(move s)
+    }
+    Err(e) => {
+      print("unexpected {e}")
+    }
+  }
+  let _ = net.close_stream(move c)
+  let _ = net.close_listener(move l)
+
+  // a negative timeout is refused before touching the socket
+  let l2 = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
+  match net.set_accept_timeout(l2, -1) {
+    Ok(n) => {
+      print("negative accepted {n}")
+    }
+    Err(e) => {
+      print("negative {e.kind == io.IoErrorKind.InvalidInput}")
+    }
+  }
+  let _ = net.close_listener(move l2)
+}

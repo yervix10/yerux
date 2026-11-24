@@ -1,0 +1,49 @@
+// std.sort: lower_bound_by/upper_bound_by on empty, singleton, duplicate and all-equal lists, and their
+// agreement with the Ordered forms
+import std.sort
+
+fn main() {
+  var e = List<Int>.new()
+  print(sort.lower_bound_by(e, |x: view Int| -> Int { return x - 1 }))
+  print(sort.upper_bound_by(e, |x: view Int| -> Int { return x - 1 }))
+
+  var one = List<Int>.new()
+  one.push(5)
+  print(sort.lower_bound_by(one, |x: view Int| -> Int { return x - 4 }))
+  print(sort.upper_bound_by(one, |x: view Int| -> Int { return x - 4 }))
+  print(sort.lower_bound_by(one, |x: view Int| -> Int { return x - 5 }))
+  print(sort.upper_bound_by(one, |x: view Int| -> Int { return x - 5 }))
+  print(sort.lower_bound_by(one, |x: view Int| -> Int { return x - 6 }))
+  print(sort.upper_bound_by(one, |x: view Int| -> Int { return x - 6 }))
+
+  var l = List<Int>.new()
+  for v in [1, 3, 3, 3, 7, 9] {
+    l.push(v)
+  }
+  print(sort.lower_bound_by(l, |x: view Int| -> Int { return x - 0 }))
+  print(sort.upper_bound_by(l, |x: view Int| -> Int { return x - 0 }))
+  print(sort.lower_bound_by(l, |x: view Int| -> Int { return x - 2 }))
+  print(sort.upper_bound_by(l, |x: view Int| -> Int { return x - 2 }))
+  print(sort.lower_bound_by(l, |x: view Int| -> Int { return x - 3 }))
+  print(sort.upper_bound_by(l, |x: view Int| -> Int { return x - 3 }))
+  print(sort.lower_bound_by(l, |x: view Int| -> Int { return x - 5 }))
+  print(sort.upper_bound_by(l, |x: view Int| -> Int { return x - 5 }))
+  print(sort.lower_bound_by(l, |x: view Int| -> Int { return x - 10 }))
+  print(sort.upper_bound_by(l, |x: view Int| -> Int { return x - 10 }))
+
+  // agreement with the Ordered wrappers
+  print(sort.lower_bound(l, 3) == sort.lower_bound_by(l, |x: view Int| -> Int { return x - 3 }))
+  print(sort.upper_bound(l, 3) == sort.upper_bound_by(l, |x: view Int| -> Int { return x - 3 }))
+  print(sort.lower_bound(l, 100) == sort.lower_bound_by(l, |x: view Int| -> Int { return x - 100 }))
+  print(sort.upper_bound(l, 0) == sort.upper_bound_by(l, |x: view Int| -> Int { return x - 0 }))
+
+  // the probe may order by a key of the element instead of the element itself
+  var ws = List<String>.new()
+  for w in ["a", "bb", "cc", "ddd", "eee"] {
+    ws.push(String.from(w))
+  }
+  print(sort.lower_bound_by(ws, |x: view String| -> Int { return x.len() - 3 }))
+  print(sort.upper_bound_by(ws, |x: view String| -> Int { return x.len() - 3 }))
+  print(sort.lower_bound_by(ws, |x: view String| -> Int { return x.len() - 1 }))
+  print(sort.upper_bound_by(ws, |x: view String| -> Int { return x.len() - 1 }))
+}
