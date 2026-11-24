@@ -268,28 +268,11 @@ fn native_build(
         opt::run(&mut ir);
         profile_stage("native optimization", start);
     }
-    if !target.is_empty() && target != "linux" {
-        let aarch64 = target == "aarch64";
-        if aarch64 {
-            a64::discard_unused_functions(&mut ir);
-        }
-        let mut unsupported = ir::os_intrinsics_error(&ir, aarch64);
-        if aarch64 && unsupported.is_none() {
-            unsupported = a64::validate_syscalls(&ir).err();
-        }
-        if let Some(what) = unsupported {
-            eprintln!("error: native backend: {} is not supported on the {} target yet (available on x86-64 Linux)", what, target);
-            exit(1);
-        }
-    }
-    // --target aarch64 selects the AArch64 Linux backend, --target windows the x86-64 Windows (PE32+)
-    // one (default: x86-64 Linux)
     let start = Instant::now();
-    let exe = match target {
-        "aarch64" => a64::compile(&ir, debug_alloc),
-        "windows" => x64::compile_os(&ir, debug_alloc, x64::Os::Windows),
-        _ => x64::compile(&ir, debug_alloc),
-    };
+    let exe = compile_native_ir(&mut ir, target, debug_alloc).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        exit(1);
+    });
     profile_stage("native code generation", start);
     fs::write(out, &exe).expect("could not write the executable");
     #[cfg(unix)]
@@ -297,6 +280,51 @@ fn native_build(
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(out, fs::Permissions::from_mode(0o755)).expect("chmod failed");
     }
+}
+
+fn host_native_target() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "aarch64"
+    } else {
+        "linux"
+    }
+}
+
+fn host_native_label() -> &'static str {
+    match host_native_target() {
+        "aarch64" => "AArch64 Linux ELF",
+        "windows" => "Windows PE",
+        _ => "x86-64 Linux ELF",
+    }
+}
+
+fn compile_native_ir(
+    ir: &mut ir::IrProgram,
+    target: &str,
+    debug_alloc: bool,
+) -> Result<Vec<u8>, String> {
+    if !matches!(target, "" | "linux") {
+        let aarch64 = target == "aarch64";
+        if aarch64 {
+            a64::discard_unused_functions(ir);
+        }
+        let mut unsupported = ir::os_intrinsics_error(ir, aarch64);
+        if aarch64 && unsupported.is_none() {
+            unsupported = a64::validate_syscalls(ir).err();
+        }
+        if let Some(what) = unsupported {
+            return Err(format!(
+                "error: native backend: {what} is not supported on the {target} target yet (available on x86-64 Linux)"
+            ));
+        }
+    }
+    Ok(match target {
+        "aarch64" => a64::compile(ir, debug_alloc),
+        "windows" => x64::compile_os(ir, debug_alloc, x64::Os::Windows),
+        _ => x64::compile(ir, debug_alloc),
+    })
 }
 
 const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--obj mod.yxo] [--separate] [--no-opt] [--native-debug-alloc]
@@ -426,15 +454,14 @@ fn doctor() -> i32 {
     }
     println!(
         "  native:      writes {} executables itself (no linker needed){}",
-        if cfg!(windows) {
-            "Windows PE"
-        } else {
-            "x86-64 Linux ELF"
-        },
-        if cfg!(target_arch = "x86_64") {
+        host_native_label(),
+        if cfg!(any(
+            target_arch = "x86_64",
+            all(target_os = "linux", target_arch = "aarch64")
+        )) {
             ""
         } else {
-            "; this build is not x86-64, use the C backend"
+            "; use the C backend on this host"
         }
     );
     println!("  platform:    {} / {}", env::consts::OS, env::consts::ARCH);
@@ -667,9 +694,7 @@ fn compile_file(args: &[String]) {
         .map(|s| s.as_str())
         .unwrap_or("");
     let want_native = debug_alloc || args.iter().any(|a| a == "--native");
-    // On a Windows host the native backend produces Windows executables, and without any C compiler the
-    // native backend is used instead of failing (`yerux doctor` explains what is missing).
-    let host_windows = cfg!(windows) && matches!(explicit_target, "" | "windows");
+    // If there is no C compiler, use the host's native backend.
     let auto_native = cmd != "c"
         && cmd != "check"
         && cmd != "ir"
@@ -679,15 +704,11 @@ fn compile_file(args: &[String]) {
     if auto_native {
         eprintln!(
             "note: no C compiler found, using the native backend ({})",
-            if cfg!(windows) {
-                "Windows .exe"
-            } else {
-                "x86-64 Linux"
-            }
+            host_native_label()
         );
     }
-    let target = if explicit_target.is_empty() && (want_native || auto_native) && host_windows {
-        "windows"
+    let target = if explicit_target.is_empty() && (want_native || auto_native) {
+        host_native_target()
     } else {
         explicit_target
     };
@@ -841,15 +862,8 @@ fn build_block_exe(
         if optimize {
             opt::run(&mut ir);
         }
-        let bytes = x64::compile_os(
-            &ir,
-            false,
-            if cfg!(windows) {
-                x64::Os::Windows
-            } else {
-                x64::Os::Linux
-            },
-        );
+        let bytes =
+            compile_native_ir(&mut ir, host_native_target(), false).map_err(|e| vec![e])?;
         fs::write(&exe, &bytes).map_err(|e| vec![format!("error: {}", e)])?;
         #[cfg(unix)]
         {
