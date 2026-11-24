@@ -1,0 +1,27 @@
+// Path and handle metadata, with portable assertions over the common fields.
+import std.fs
+import std.io
+
+fn main() {
+    let name = "yerux_pe_metadata_{io.process_id()}"
+    let _ = fs.create_dir(name).unwrap()
+    let directory = fs.metadata(name).unwrap()
+    print(directory.kind == fs.FileKind.Dir)
+    let path = "{name}/data.txt"
+    print(!fs.exists(path))
+    let _ = fs.write(path, "contents").unwrap()
+
+    let path_info = fs.metadata(path).unwrap()
+    let link_info = fs.symlink_metadata(path).unwrap()
+    let file = fs.open(path).unwrap()
+    let handle_info = file.metadata().unwrap()
+    print(path_info.kind == fs.FileKind.File)
+    print(path_info.size)
+    print(path_info.modified_ns > 1700000000000000000)
+    print(path_info.modified_ns == link_info.modified_ns)
+    print(path_info.modified_ns == handle_info.modified_ns)
+    print(path_info.size == handle_info.size)
+    let _ = fs.close(move file).unwrap()
+    let _ = fs.remove_file(path).unwrap()
+    let _ = fs.remove_dir(name).unwrap()
+}

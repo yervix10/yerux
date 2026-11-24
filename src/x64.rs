@@ -51,7 +51,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 31] = [
+const IMPORTS: [&str; 32] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -83,6 +83,7 @@ const IMPORTS: [&str; 31] = [
     "CreateDirectoryA",
     "RemoveDirectoryA",
     "GetFileInformationByHandleEx",
+    "GetFileInformationByHandle",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -115,6 +116,7 @@ const IMP_SETCURRENTDIRECTORY: usize = 27;
 const IMP_CREATEDIRECTORY: usize = 28;
 const IMP_REMOVEDIRECTORY: usize = 29;
 const IMP_GETFILEINFOEX: usize = 30;
+const IMP_GETFILEINFO: usize = 31;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
@@ -122,7 +124,7 @@ pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
         for inst in f.blocks.iter().flat_map(|b| &b.insts) {
             let unsupported = match inst {
                 Inst::Syscall(_, args) => match constants[args[0]] {
-                    Some(0 | 1 | 2 | 3 | 21 | 35 | 39 | 60 | 79 | 80 | 82..=84 | 87 | 228 | 231) => continue,
+                    Some(0 | 1 | 2 | 3 | 21 | 35 | 39 | 60 | 79 | 80 | 82..=84 | 87 | 228 | 231 | 332) => continue,
                     Some(n) => format!("raw system call {n}"),
                     None => "raw system call with a dynamic number".into(),
                 },
@@ -4702,6 +4704,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         let (pid, clock, nap) = (a.label(), a.label(), a.label());
         let (access, getcwd, chdir, mkdir, rmdir) =
             (a.label(), a.label(), a.label(), a.label(), a.label());
+        let statx = a.label();
         let (open, close, unlink, rename, winerr) = (a.label(), a.label(), a.label(), a.label(), a.label());
         for (number, stub) in [
             (0, l_osread),
@@ -4720,6 +4723,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             (87, unlink),
             (228, clock),
             (231, l_osexit),
+            (332, statx),
         ] {
             a.cmp_imm(RAX, number);
             a.jcc(CC_E, stub);
@@ -4843,6 +4847,129 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             a.mov_rr(RDI, RSI);
             a.call(l_osfree);
             a.ld(RAX, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // The std.fs statx subset: AT_FDCWD with optional AT_SYMLINK_NOFOLLOW,
+        // or an existing handle with AT_EMPTY_PATH. Other dir-fd paths fail.
+        a.bind(statx);
+        {
+            let (bad_args, query, handle, api_error, closed, encode, date) =
+                (a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+            const INFO: i32 = 56; // BY_HANDLE_FILE_INFORMATION, 52 bytes
+            a.win_prologue(80);
+            a.mov_rr(RBX, R8); // destination statx
+            a.cmp_imm(RDI, -100); // AT_FDCWD
+            a.jcc(CC_NE, handle);
+            a.mov_rr(RAX, RDX);
+            a.and_imm(RAX, !256); // AT_SYMLINK_NOFOLLOW is the only accepted path flag
+            a.jcc(CC_NE, bad_args);
+            a.mov_imm(RAX, 0x0200_0000); // FILE_FLAG_BACKUP_SEMANTICS
+            a.mov_imm(RCX, 0x0220_0000); // also FILE_FLAG_OPEN_REPARSE_POINT
+            a.test_rr(RDX);
+            a.cmov_rr(CC_NE, RAX, RCX);
+            a.st(RSP, 40, RAX);
+            a.mov_imm(RAX, 3); // OPEN_EXISTING
+            a.st(RSP, 32, RAX);
+            a.mov_imm(R9, 0); // default security, no template
+            a.st(RSP, 48, R9);
+            a.mov_rr(RCX, RSI);
+            a.mov_imm(RDX, 0x80); // FILE_READ_ATTRIBUTES
+            a.mov_imm(R8, 7); // share read, write and delete
+            a.call_iat(IMP_CREATEFILE);
+            a.cmp_imm(RAX, -1);
+            a.jcc(CC_E, api_error);
+            a.mov_rr(RSI, RAX);
+            a.jmp(query);
+
+            a.bind(handle);
+            a.cmp_imm(RDX, 4096); // AT_EMPTY_PATH
+            a.jcc(CC_NE, bad_args);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.test_rax();
+            a.jcc(CC_NE, bad_args);
+            a.mov_rr(RSI, RDI); // borrowed handle
+
+            a.bind(query);
+            a.mov_rr(RCX, RSI);
+            a.lea(RDX, RSP, INFO);
+            a.call_iat(IMP_GETFILEINFO);
+            a.raw(&[0x85, 0xC0]); // test eax, eax
+            a.mov_imm(RAX, 0);
+            let close_path = a.label();
+            a.jcc(CC_NE, close_path);
+            a.call(winerr);
+            a.bind(close_path);
+            a.cmp_imm(RDI, -100);
+            a.jcc(CC_NE, closed);
+            a.st(RSP, 48, RAX);
+            a.mov_rr(RCX, RSI);
+            a.call_iat(IMP_CLOSEHANDLE);
+            a.ld(RAX, RSP, 48);
+            a.bind(closed);
+            a.test_rax();
+            a.jcc(CC_E, encode);
+            a.win_epilogue();
+
+            a.bind(bad_args);
+            a.mov_imm(RAX, -22); // EINVAL
+            a.win_epilogue();
+            a.bind(api_error);
+            a.call(winerr);
+            a.win_epilogue();
+
+            a.bind(encode);
+            a.mov_rr(RDI, RBX);
+            a.mov_imm(RAX, 0);
+            a.mov_imm(RCX, 32); // 256-byte struct statx
+            a.raw(&[0xF3, 0x48, 0xAB]); // rep stosq
+            a.mov_imm(RAX, 0x347); // TYPE | MODE | NLINK | MTIME | INO | SIZE
+            a.st32(RBX, 0, RAX);
+            a.ld32(RAX, RSP, INFO + 40);
+            a.st32(RBX, 16, RAX); // nlink
+            a.ld32(RAX, RSP, INFO + 28);
+            a.st32(RBX, 140, RAX); // volume serial as device minor
+            for (high, low, output) in [(44, 48, 32), (32, 36, 40)] {
+                a.ld32(RAX, RSP, INFO + high);
+                a.shl(RAX, 32);
+                a.ld32(RCX, RSP, INFO + low);
+                a.alu(0x09, RAX, RCX);
+                a.st(RBX, output, RAX); // inode / size
+            }
+
+            a.ld32(RAX, RSP, INFO);
+            a.mov_imm(RCX, 0o100644); // regular file
+            a.mov_imm(RDX, 0o040755);
+            a.mov_rr(R8, RAX);
+            a.and_imm(R8, 0x10); // FILE_ATTRIBUTE_DIRECTORY
+            a.cmov_rr(CC_NE, RCX, RDX);
+            a.mov_imm(RDX, 0o120777);
+            a.mov_rr(R8, RAX);
+            a.and_imm(R8, 0x400); // FILE_ATTRIBUTE_REPARSE_POINT
+            a.cmov_rr(CC_NE, RCX, RDX);
+            a.and_imm(RAX, 1); // FILE_ATTRIBUTE_READONLY
+            a.mov_rr(RDX, RCX);
+            a.mov_imm(R8, !0o222);
+            a.alu(0x21, RDX, R8);
+            a.test_rax();
+            a.cmov_rr(CC_NE, RCX, RDX);
+            a.mov16_mem(RBX, 28, RCX);
+
+            a.ld(RAX, RSP, INFO + 20); // ftLastWriteTime, 100 ns ticks from 1601
+            a.mov_imm(RCX, 116_444_736_000_000_000);
+            a.alu(0x29, RAX, RCX);
+            a.mov_imm(RCX, 10_000_000);
+            a.raw(&[0x48, 0x99]); // cqo
+            a.f7(7, RCX); // idiv rcx
+            a.test_rr(RDX);
+            a.jcc(CC_NS, date);
+            a.sub_imm(RAX, 1);
+            a.alu(0x01, RDX, RCX);
+            a.bind(date);
+            a.st(RBX, 112, RAX); // stx_mtime.tv_sec
+            a.raw(&[0x48, 0x6B, 0xD2, 100]); // imul rdx, rdx, 100
+            a.st32(RBX, 120, RDX); // stx_mtime.tv_nsec
+            a.mov_imm(RAX, 0);
             a.win_epilogue();
         }
 
