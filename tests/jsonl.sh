@@ -79,5 +79,12 @@ done <"$T/corpus.jsonl"
 "$T/jsonl-n" "$T/corpus.jsonl" >"$T/n1.out" 2>/dev/null; sn=$?
 [ "$sc" = "$sn" ] && cmp -s "$T/c1.out" "$T/n1.out" || { echo "FAIL jsonl corpus output differs between backends"; fail=1; }
 "$T/jsonl-c" "$T/c1.out" >"$T/c2.out" 2>"$T/c2.err"; [ $? = 0 ] && cmp -s "$T/c1.out" "$T/c2.out" || { echo "FAIL jsonl canonical output is not a fixed point"; fail=1; }
+# Regression: a file that is not UTF-8 is rejected as a whole, and the reason is reported (it was printed as a bare
+# "cannot read" before).
+printf '["\377"]\n' >"$T/bad8.jsonl"
+for b in c n; do
+  "$T/jsonl-$b" "$T/bad8.jsonl" >/dev/null 2>"$T/bad8.$b.err"; st=$?
+  [ $st = 1 ] && grep -q "valid UTF-8" "$T/bad8.$b.err" || { echo "FAIL jsonl invalid UTF-8 report ($b): status $st"; cat "$T/bad8.$b.err"; fail=1; }
+done
 [ $fail = 0 ] && echo "jsonl: ok ($n corpus lines, $valid valid, all verdicts match examples/real/json)"
 exit $fail

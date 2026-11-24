@@ -52,12 +52,12 @@ fn main() {
   if path.eq("-") {
     match io.read_all() {
       Ok(s) => { text = move s }
-      Err(e) => { fail("cannot read standard input", 1) }
+      Err(e) => { fail("cannot read standard input: {e}", 1) }
     }
   } else {
     match fs.read_to_string(path) {
       Ok(s) => { text = move s }
-      Err(e) => { fail("cannot read {path}", 1) }
+      Err(e) => { fail("cannot read {path}: {e}", 1) }
     }
   }
   var invalid = 0
