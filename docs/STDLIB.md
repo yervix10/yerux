@@ -607,9 +607,9 @@ fn main() {
 ## Concurrency types (`src/prelude_threads.yx`, docs/CONCURRENCY.md)
 
 `scope { .. }` joins every task started inside it; `spawn move { .. }` / `spawn move || expr` starts a thread and
-returns a `JoinHandle<T>` whose `join()` gives `Result<T, ThreadPanic>`. Shared state: `Atomic<Int>` / `Atomic<Bool>`
+returns a `JoinHandle<T>` whose `join()` gives `Result<T, ThreadPanic>` (`ThreadPanic.show()` is `worker panicked`). Shared state: `Atomic<Int>` / `Atomic<Bool>`
 (`new`, `load`, `store`, `add`, `add_wrapping`, `swap`, `compare_swap`), `Locked<T>` (`new`, `with(|v| ..)`,
-`with_view(|v| ..)`, `take`), `Shared<T>` (`new`, `clone` = reference-count bump, `get`, and the methods of its
+`with_view(|v| ..)` = read-only view under the same exclusive lock as `with`, `take`), `Shared<T>` (`new`, `clone` = reference-count bump, `get`, and the methods of its
 content). `Mutex<T>` (facade over `Locked`: `mutex_update`, `mutex_with`, `mutex_with_view`) and `RwLock<T>` (`rwlock_read`,
 `rwlock_write`; spinning, no fairness). Channels: `Sender<T>.bounded(n)` / `.unbounded()` return `(Sender<T>, Receiver<T>)`;
 `send(v) -> Bool`, `recv() -> Option<T>` (None when closed and drained), `recv_timeout(ms)`, `close()`, `clone()` on the sender,

@@ -181,6 +181,15 @@ backends and checks native allocation counters. `tests/fuzz.py --conc`
 compares the C and native backends on generated concurrent allocation and
 atomic update workloads with serial expected results.
 
+> **Frozen surface (1.0).** Only the forms in "Runtime implementation status" and "Current APIs and runnable
+> examples" above are the concurrency API: `spawn move` returning `JoinHandle<T>`, `join() -> Result<T, ThreadPanic>`
+> (`ThreadPanic` shows as `worker panicked`; tests/conc_freeze_api.yx), `Sender<T>.bounded(n)` / `.unbounded()`,
+> `thread_pool_new(n)`, `Shared`, `Locked`, `Mutex`, `RwLock`, `Atomic`. `with_view` and `mutex_with_view` are
+> read-only *views* taken under the same exclusive lock as `with`; concurrent readers use `RwLock`
+> (`rwlock_read`). Sections 1 onwards are the original design: `Task<T>`, `Channel<T>.new(capacity:)`, `spawn { }`
+> without `move`, `Locked.new_ordered`, `try_with`, `Runtime.spawn_detached`, `lock x { }` are **not**
+> implemented and not part of the frozen surface.
+
 ## 1. Motivation
 
 - Parallelism is where the language promise ("as fast as Rust, safer, gentler") is most at risk. Rust gets data-race freedom through `Send`, `Sync`, `'static`, `Arc`, `Mutex` guards and lifetimes in scoped threads. That is the steepest part of its learning curve.
