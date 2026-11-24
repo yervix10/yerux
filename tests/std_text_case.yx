@@ -1,0 +1,60 @@
+// std.text: is_upper/is_lower/is_ascii classification and starts_with/ends_with/contains with empty,
+// UTF-8 and boundary inputs
+import std.text
+
+fn main() {
+  // classification: ASCII letters, digits, and non-ASCII characters
+  print(text.is_upper('A'))
+  print(text.is_upper('Z'))
+  print(text.is_upper('a'))
+  print(text.is_upper('é'))
+  print(text.is_upper('€'))
+  print(text.is_lower('a'))
+  print(text.is_lower('z'))
+  print(text.is_lower('A'))
+  print(text.is_lower('Ω'))
+  print(text.is_lower('ß'))
+  print(text.is_ascii('a'))
+  print(text.is_ascii('~'))
+  print(text.is_ascii(' '))
+  print(text.is_ascii('é'))
+  print(text.is_ascii('€'))
+  print(text.is_ascii('😀'))
+  print(text.is_ascii(Char.from_int(127)))
+  print(text.is_ascii(Char.from_int(128)))
+  print(text.is_ascii(Char.from_int(0)))
+
+  let s = String.from("héllo wörld")
+  let empty = String.from("")
+
+  // starts_with: empty needle and haystack, UTF-8 boundaries, overlong needle
+  print(text.starts_with(s, ""))
+  print(text.starts_with(empty, ""))
+  print(text.starts_with(s, "héllo"))
+  print(text.starts_with(s, "héll"))
+  print(text.starts_with(s, "hello"))
+  print(text.starts_with(s, "héllo wörld"))
+  print(text.starts_with(s, "héllo wörld!"))
+  print(text.starts_with(empty, "a"))
+
+  // ends_with: the same edges from the other side
+  print(text.ends_with(s, ""))
+  print(text.ends_with(empty, ""))
+  print(text.ends_with(s, "wörld"))
+  print(text.ends_with(s, "örld"))
+  print(text.ends_with(s, "wörl"))
+  print(text.ends_with(s, "wör"))
+  print(text.ends_with(s, "héllo wörld"))
+  print(text.ends_with(s, "héllo wörld!"))
+  print(text.ends_with(empty, "a"))
+
+  // contains: the empty needle is everywhere, UTF-8 interior, missing
+  print(text.contains(s, ""))
+  print(text.contains(empty, ""))
+  print(text.contains(s, "llo w"))
+  print(text.contains(s, "ö"))
+  print(text.contains(s, "wö"))
+  print(text.contains(s, "héllo wörld"))
+  print(text.contains(s, "x"))
+  print(text.contains(empty, "a"))
+}
