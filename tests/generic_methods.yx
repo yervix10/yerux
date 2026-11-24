@@ -1,0 +1,32 @@
+// Methods with type parameters of their own: `fn map<U>(view self, f: view fn(T) -> U) -> U`, in a generic impl and in a
+// plain one; called as `recv.map(f)`.
+struct Wrap<T> { v: T }
+impl<T: Copy> Wrap<T> {
+  fn get(view self) -> T { return self.v }
+  fn map<U>(view self, f: view fn(T) -> U) -> U { return f(self.v) }
+}
+struct Plain { n: Int }
+impl Plain {
+  fn conv<R>(view self, f: view fn(Int) -> R) -> R { return f(self.n) }
+}
+struct Bag { items: List<String> }
+impl Bag {
+  fn total<R: Copy>(view self, f: view fn(view String) -> R, zero: R, add: view fn(R, R) -> R) -> R {
+    var acc = zero
+    for i in 0..self.items.len() { acc = add(acc, f(self.items.at(i))) }
+    return acc
+  }
+}
+
+fn main() {
+  var bag = Bag { items: List<String>.new() }
+  bag.items.push(String.from("ab"))
+  bag.items.push(String.from("cde"))
+  print(bag.total(|s| s.len(), 0, |a, b| a + b))
+  let w = Wrap<Int> { v: 4 }
+  print(w.map(|x| x * 2))
+  print(w.map(|x| x > 3))
+  let p = Plain { n: 5 }
+  print(p.conv(|x| x + 1))
+  print(p.conv(|x| "n{x}"))
+}

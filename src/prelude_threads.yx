@@ -258,6 +258,22 @@ impl<T> Mutex<T> {
     fn new(value: T) -> Mutex<T> {
         return Mutex<T> { inner: Locked.new(move value) }
     }
+
+    // Method forms of mutex_with / mutex_with_view / mutex_update (same lock, same rules).
+    fn with<R>(view self, body: view fn(mut T) -> R) -> R {
+        return self.inner.with(body)
+    }
+
+    fn with_view<R>(view self, body: view fn(view T) -> R) -> R {
+        return self.inner.with_view(body)
+    }
+
+    fn update(view self, body: view fn(mut T)) {
+        self.inner.with(|value| {
+            body(value)
+            return 0
+        })
+    }
 }
 
 fn mutex_with<T, R>(lock: view Mutex<T>, body: view fn(mut T) -> R) -> R {
