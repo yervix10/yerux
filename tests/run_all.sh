@@ -74,7 +74,7 @@ matches() { # name -> 0 when no pattern is given or one matches
 # ---- programs ----
 progs=()
 all=()
-for f in examples/*.yx examples/real/*.yx examples/real/minilang/minilang.yx tests/*.yx; do
+for f in examples/*.yx examples/real/*.yx examples/real/minilang/minilang.yx examples/real/jql/jql.yx tests/*.yx; do
   [ -e "$f" ] && all+=("$f")
 done
 i=0

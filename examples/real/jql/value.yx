@@ -1,0 +1,44 @@
+// The JSON data model shared by the reader, the writer and the evaluator.
+// Objects keep their keys in source order (a list of entries, not a map).
+
+pub enum Json {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  Str(String),
+  Arr(List<Json>),
+  Obj(List<Entry>),
+}
+
+pub struct Entry { key: String, value: Json }
+
+derive Clone for Json
+derive Clone for Entry
+
+// Every failure of the program: where it happened (a byte offset into the text that was being read, or -1) and why.
+pub struct Fault { offset: Int, message: String }
+
+pub fn fault(offset: Int, message: view String) -> Fault {
+  return Fault { offset: offset, message: String.from(message) }
+}
+
+pub fn type_name(v: view Json) -> Text {
+  match v {
+    Null => { return "null" }
+    Bool(_) => { return "boolean" }
+    Int(_) => { return "number" }
+    Float(_) => { return "number" }
+    Str(_) => { return "string" }
+    Arr(_) => { return "array" }
+    Obj(_) => { return "object" }
+  }
+}
+
+pub fn truthy(v: view Json) -> Bool {
+  match v {
+    Null => { return false }
+    Bool(b) => { return b }
+    _ => { return true }
+  }
+}

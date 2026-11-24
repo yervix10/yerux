@@ -1,0 +1,2 @@
+-c
+{names: [.items[] | select(.n >= 2) | .t | ascii_upcase], total: (.items | map(.n) | add), sorted: (.items | map(.n) | sort | reverse), flags: [(.ok and (.items | length) > 2), has("name")], big: (9223372036854775807 + 1), q: (7 / 2), r: "ab" * 2}

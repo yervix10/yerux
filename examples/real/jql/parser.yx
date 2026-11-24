@@ -1,0 +1,355 @@
+// Tokens -> Expr. Precedence, loosest first:  |   ,   or   and   == != < <= > >=   + -   * / %   unary -   postfix.
+import lexer
+import ast
+import value
+
+struct Parser { tokens: List<lexer.Token>, pos: Int, depth: Int }
+
+pub fn parse(tokens: List<lexer.Token>) -> Result<ast.Expr, value.Fault> {
+  var p = Parser { tokens: move tokens, pos: 0, depth: 0 }
+  let e = parse_pipe(p)?
+  if code(p.tokens.at(p.pos).kind) != END {
+    return Err(unexpected(p, "the end of the query"))
+  }
+  return Ok(move e)
+}
+
+// token codes: variants carry data, so they are compared through a number
+const DOT: Int = 0
+const PIPE: Int = 1
+const COMMA: Int = 2
+const COLON: Int = 3
+const LPAREN: Int = 4
+const RPAREN: Int = 5
+const LBRACKET: Int = 6
+const RBRACKET: Int = 7
+const LBRACE: Int = 8
+const RBRACE: Int = 9
+const PLUS: Int = 10
+const MINUS: Int = 11
+const STAR: Int = 12
+const SLASH: Int = 13
+const PERCENT: Int = 14
+const EQEQ: Int = 15
+const NOTEQ: Int = 16
+const LESS: Int = 17
+const LESSEQ: Int = 18
+const GREATER: Int = 19
+const GREATEREQ: Int = 20
+const NUMBER: Int = 21
+const STRING: Int = 22
+const NAME: Int = 23
+const END: Int = 24
+
+fn code(t: view lexer.Tok) -> Int {
+  match t {
+    Dot => { return DOT }
+    Pipe => { return PIPE }
+    Comma => { return COMMA }
+    Colon => { return COLON }
+    LParen => { return LPAREN }
+    RParen => { return RPAREN }
+    LBracket => { return LBRACKET }
+    RBracket => { return RBRACKET }
+    LBrace => { return LBRACE }
+    RBrace => { return RBRACE }
+    Plus => { return PLUS }
+    Minus => { return MINUS }
+    Star => { return STAR }
+    Slash => { return SLASH }
+    Percent => { return PERCENT }
+    EqEq => { return EQEQ }
+    NotEq => { return NOTEQ }
+    Less => { return LESS }
+    LessEq => { return LESSEQ }
+    Greater => { return GREATER }
+    GreaterEq => { return GREATEREQ }
+    Int(_) => { return NUMBER }
+    Float(_) => { return NUMBER }
+    Str(_) => { return STRING }
+    Name(_) => { return NAME }
+    End => { return END }
+  }
+}
+
+fn here(p: view Parser) -> Int { return code(p.tokens.at(p.pos).kind) }
+
+fn accept(p: mut Parser, which: Int) -> Bool {
+  if here(p) != which { return false }
+  p.pos = p.pos + 1
+  return true
+}
+
+fn unexpected(p: view Parser, wanted: view String) -> value.Fault {
+  let t = p.tokens.at(p.pos)
+  return value.fault(t.offset, "expected {wanted}, found {lexer.describe(t.kind)}")
+}
+
+fn expect(p: mut Parser, which: Int, wanted: view String) -> Result<Bool, value.Fault> {
+  if !accept(p, which) { return Err(unexpected(p, wanted)) }
+  return Ok(true)
+}
+
+fn is_word(p: view Parser, word: Text) -> Bool {
+  if here(p) != NAME { return false }
+  match p.tokens.at(p.pos).kind {
+    Name(n) => { return n.eq(word) }
+    _ => { return false }
+  }
+}
+
+fn accept_word(p: mut Parser, word: Text) -> Bool {
+  if !is_word(p, word) { return false }
+  p.pos = p.pos + 1
+  return true
+}
+
+fn boxed(e: ast.Expr) -> Box<ast.Expr> { return Box.new(move e) }
+
+fn descend(p: mut Parser) -> Result<Bool, value.Fault> {
+  p.depth = p.depth + 1
+  if p.depth > 100 { return Err(value.fault(p.tokens.at(p.pos).offset, "query nested too deeply")) }
+  return Ok(true)
+}
+
+fn parse_pipe(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  let ok = descend(p)?
+  let left = parse_comma(p)?
+  var result = move left
+  if accept(p, PIPE) {
+    let right = parse_pipe(p)?
+    result = ast.Expr.Pipe(boxed(move result), boxed(move right))
+  }
+  p.depth = p.depth - 1
+  return Ok(move result)
+}
+
+fn parse_comma(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  var left = parse_or(p)?
+  while accept(p, COMMA) {
+    let right = parse_or(p)?
+    left = ast.Expr.Comma(boxed(move left), boxed(move right))
+  }
+  return Ok(move left)
+}
+
+fn parse_or(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  var left = parse_and(p)?
+  while accept_word(p, "or") {
+    let right = parse_and(p)?
+    left = ast.Expr.Binary(ast.Op.Or, boxed(move left), boxed(move right))
+  }
+  return Ok(move left)
+}
+
+fn parse_and(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  var left = parse_compare(p)?
+  while accept_word(p, "and") {
+    let right = parse_compare(p)?
+    left = ast.Expr.Binary(ast.Op.And, boxed(move left), boxed(move right))
+  }
+  return Ok(move left)
+}
+
+fn compare_op(which: Int) -> Option<ast.Op> {
+  if which == EQEQ { return Some(ast.Op.Eq) }
+  if which == NOTEQ { return Some(ast.Op.Ne) }
+  if which == LESS { return Some(ast.Op.Lt) }
+  if which == LESSEQ { return Some(ast.Op.Le) }
+  if which == GREATER { return Some(ast.Op.Gt) }
+  if which == GREATEREQ { return Some(ast.Op.Ge) }
+  return None
+}
+
+fn parse_compare(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  let left = parse_sum(p)?
+  match compare_op(here(p)) {
+    Some(op) => {
+      p.pos = p.pos + 1
+      let right = parse_sum(p)?
+      return Ok(ast.Expr.Binary(op, boxed(move left), boxed(move right)))
+    }
+    None => { return Ok(move left) }
+  }
+}
+
+fn parse_sum(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  var left = parse_product(p)?
+  while here(p) == PLUS || here(p) == MINUS {
+    var op = ast.Op.Add
+    if here(p) == MINUS { op = ast.Op.Sub }
+    p.pos = p.pos + 1
+    let right = parse_product(p)?
+    left = ast.Expr.Binary(op, boxed(move left), boxed(move right))
+  }
+  return Ok(move left)
+}
+
+fn parse_product(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  var left = parse_unary(p)?
+  while here(p) == STAR || here(p) == SLASH || here(p) == PERCENT {
+    var op = ast.Op.Mul
+    if here(p) == SLASH { op = ast.Op.Div }
+    if here(p) == PERCENT { op = ast.Op.Mod }
+    p.pos = p.pos + 1
+    let right = parse_unary(p)?
+    left = ast.Expr.Binary(op, boxed(move left), boxed(move right))
+  }
+  return Ok(move left)
+}
+
+fn parse_unary(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  if accept(p, MINUS) {
+    let inner = parse_unary(p)?
+    return Ok(ast.Expr.Neg(boxed(move inner)))
+  }
+  return parse_postfix(p)
+}
+
+// `.name`, `[expr]`, `[]` and `."quoted"` may follow any primary expression
+fn parse_postfix(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  var base = parse_primary(p)?
+  while true {
+    if here(p) == DOT && next_is_name_or_string(p) {
+      p.pos = p.pos + 1
+      let name = take_text(p)?
+      base = ast.Expr.Field(boxed(move base), move name)
+    } else if here(p) == LBRACKET {
+      p.pos = p.pos + 1
+      if accept(p, RBRACKET) {
+        base = ast.Expr.Iterate(boxed(move base))
+      } else {
+        let index = parse_pipe(p)?
+        let closed = expect(p, RBRACKET, "']'")?
+        base = ast.Expr.Index(boxed(move base), boxed(move index))
+      }
+    } else { break }
+  }
+  return Ok(move base)
+}
+
+fn next_is_name_or_string(p: view Parser) -> Bool {
+  if p.pos + 1 >= p.tokens.len() { return false }
+  let k = code(p.tokens.at(p.pos + 1).kind)
+  return k == NAME || k == STRING
+}
+
+fn take_text(p: mut Parser) -> Result<String, value.Fault> {
+  match p.tokens.at(p.pos).kind {
+    Name(n) => {
+      let copy = String.from(n)
+      p.pos = p.pos + 1
+      return Ok(move copy)
+    }
+    Str(s) => {
+      let copy = String.from(s)
+      p.pos = p.pos + 1
+      return Ok(move copy)
+    }
+    _ => { return Err(unexpected(p, "a name or a string")) }
+  }
+}
+
+fn parse_primary(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  let which = here(p)
+  if which == DOT {
+    p.pos = p.pos + 1
+    if here(p) == NAME || here(p) == STRING {
+      let name = take_text(p)?
+      return Ok(ast.Expr.Field(boxed(ast.Expr.Identity), move name))
+    }
+    return Ok(ast.Expr.Identity)
+  }
+  if which == NUMBER {
+    var literal = value.Json.Null
+    match p.tokens.at(p.pos).kind {
+      Int(n) => { literal = value.Json.Int(n) }
+      Float(f) => { literal = value.Json.Float(f) }
+      _ => {}
+    }
+    p.pos = p.pos + 1
+    return Ok(ast.Expr.Literal(move literal))
+  }
+  if which == STRING {
+    let s = take_text(p)?
+    return Ok(ast.Expr.Literal(value.Json.Str(move s)))
+  }
+  if which == LPAREN {
+    p.pos = p.pos + 1
+    let inner = parse_pipe(p)?
+    let closed = expect(p, RPAREN, "')'")?
+    return Ok(move inner)
+  }
+  if which == LBRACKET {
+    p.pos = p.pos + 1
+    if accept(p, RBRACKET) { return Ok(ast.Expr.Literal(value.Json.Arr(List<value.Json>.new()))) }
+    let inner = parse_pipe(p)?
+    let closed = expect(p, RBRACKET, "']'")?
+    return Ok(ast.Expr.Collect(boxed(move inner)))
+  }
+  if which == LBRACE { return parse_object(p) }
+  if which == NAME { return parse_name(p) }
+  return Err(unexpected(p, "an expression"))
+}
+
+fn parse_object(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  p.pos = p.pos + 1
+  var pairs = List<ast.Pair>.new()
+  if accept(p, RBRACE) { return Ok(ast.Expr.Object(move pairs)) }
+  while true {
+    var key = ast.Expr.Identity
+    var shorthand = String.new()
+    if here(p) == NAME || here(p) == STRING {
+      shorthand = take_text(p)?
+      key = ast.Expr.Literal(value.Json.Str(String.from(shorthand)))
+    } else if accept(p, LPAREN) {
+      key = parse_pipe(p)?
+      let closed = expect(p, RPAREN, "')'")?
+    } else { return Err(unexpected(p, "an object key")) }
+    var item = ast.Expr.Identity
+    if accept(p, COLON) {
+      item = parse_or(p)?
+    } else if shorthand.len() > 0 {
+      // `{name}` means `{name: .name}`
+      item = ast.Expr.Field(boxed(ast.Expr.Identity), move shorthand)
+    } else { return Err(unexpected(p, "':'")) }
+    pairs.push(ast.Pair { key: move key, value: move item })
+    if accept(p, COMMA) { continue }
+    let closed = expect(p, RBRACE, "'}}' or ','")?
+    break
+  }
+  return Ok(ast.Expr.Object(move pairs))
+}
+
+fn parse_name(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  let name = take_text(p)?
+  if name.eq("true") { return Ok(ast.Expr.Literal(value.Json.Bool(true))) }
+  if name.eq("false") { return Ok(ast.Expr.Literal(value.Json.Bool(false))) }
+  if name.eq("null") { return Ok(ast.Expr.Literal(value.Json.Null)) }
+  if name.eq("if") { return parse_if(p) }
+  var args = List<ast.Expr>.new()
+  if accept(p, LPAREN) {
+    while true {
+      let arg = parse_pipe(p)?
+      args.push(move arg)
+      if accept(p, COMMA) { continue }
+      let closed = expect(p, RPAREN, "')' or ','")?
+      break
+    }
+  }
+  return Ok(ast.Expr.Call(move name, move args))
+}
+
+fn parse_if(p: mut Parser) -> Result<ast.Expr, value.Fault> {
+  let condition = parse_pipe(p)?
+  if !accept_word(p, "then") { return Err(unexpected(p, "'then'")) }
+  let yes = parse_pipe(p)?
+  var no = ast.Expr.Identity
+  if accept_word(p, "elif") {
+    no = parse_if(p)?
+    return Ok(ast.Expr.If(boxed(move condition), boxed(move yes), boxed(move no)))
+  }
+  if accept_word(p, "else") { no = parse_pipe(p)? }
+  if !accept_word(p, "end") { return Err(unexpected(p, "'end'")) }
+  return Ok(ast.Expr.If(boxed(move condition), boxed(move yes), boxed(move no)))
+}

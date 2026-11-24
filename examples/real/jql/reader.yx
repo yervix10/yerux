@@ -1,0 +1,204 @@
+// A recursive-descent JSON reader. Numbers without a fraction or exponent are Ints, the rest Floats.
+import std.text
+import value
+
+pub struct Reader { text: String, pos: Int, depth: Int }
+
+pub fn read(text: view String) -> Result<value.Json, value.Fault> {
+  var r = Reader { text: String.from(text), pos: 0, depth: 0 }
+  skip_space(r)
+  let v = parse_value(r)?
+  skip_space(r)
+  if r.pos != r.text.len() {
+    return Err(value.fault(r.pos, "unexpected text after the JSON value"))
+  }
+  return Ok(move v)
+}
+
+fn peek(r: view Reader) -> Int {
+  if r.pos >= r.text.len() { return -1 }
+  return r.text.byte(r.pos)
+}
+
+fn skip_space(r: mut Reader) {
+  while true {
+    let b = peek(r)
+    if b != 32 && b != 9 && b != 10 && b != 13 { return }
+    r.pos = r.pos + 1
+  }
+}
+
+fn is_digit(b: Int) -> Bool {
+  return b >= 48 && b <= 57
+}
+
+fn expect_word(r: mut Reader, word: Text) -> Result<Bool, value.Fault> {
+  let w = String.from(word)
+  for i in 0..w.len() {
+    if peek(r) != w.byte(i) { return Err(value.fault(r.pos, "invalid literal")) }
+    r.pos = r.pos + 1
+  }
+  return Ok(true)
+}
+
+fn parse_value(r: mut Reader) -> Result<value.Json, value.Fault> {
+  if r.depth > 200 { return Err(value.fault(r.pos, "JSON nested too deeply")) }
+  let b = peek(r)
+  if b == '{'.to_int() { return parse_object(r) }
+  if b == '['.to_int() { return parse_array(r) }
+  if b == '"'.to_int() {
+    let s = parse_string(r)?
+    return Ok(value.Json.Str(move s))
+  }
+  if b == 't'.to_int() {
+    let ok = expect_word(r, "true")?
+    return Ok(value.Json.Bool(true))
+  }
+  if b == 'f'.to_int() {
+    let ok = expect_word(r, "false")?
+    return Ok(value.Json.Bool(false))
+  }
+  if b == 'n'.to_int() {
+    let ok = expect_word(r, "null")?
+    return Ok(value.Json.Null)
+  }
+  if b == '-'.to_int() || is_digit(b) { return parse_number(r) }
+  if b < 0 { return Err(value.fault(r.pos, "unexpected end of JSON")) }
+  return Err(value.fault(r.pos, "unexpected character"))
+}
+
+fn parse_number(r: mut Reader) -> Result<value.Json, value.Fault> {
+  let start = r.pos
+  var real = false
+  if peek(r) == '-'.to_int() { r.pos = r.pos + 1 }
+  if !is_digit(peek(r)) { return Err(value.fault(r.pos, "a number needs digits")) }
+  let first = r.pos
+  while is_digit(peek(r)) { r.pos = r.pos + 1 }
+  if r.pos - first > 1 && r.text.byte(first) == 48 { return Err(value.fault(first, "a number cannot start with a leading zero")) }
+  if peek(r) == '.'.to_int() {
+    real = true
+    r.pos = r.pos + 1
+    if !is_digit(peek(r)) { return Err(value.fault(r.pos, "a fraction needs digits")) }
+    while is_digit(peek(r)) { r.pos = r.pos + 1 }
+  }
+  if peek(r) == 'e'.to_int() || peek(r) == 'E'.to_int() {
+    real = true
+    r.pos = r.pos + 1
+    if peek(r) == '+'.to_int() || peek(r) == '-'.to_int() { r.pos = r.pos + 1 }
+    if !is_digit(peek(r)) { return Err(value.fault(r.pos, "an exponent needs digits")) }
+    while is_digit(peek(r)) { r.pos = r.pos + 1 }
+  }
+  let spelling = r.text.slice(start, r.pos)
+  if real {
+    match text.parse_float(spelling) {
+      Ok(f) => { return Ok(value.Json.Float(f)) }
+      Err(_) => { return Err(value.fault(start, "invalid number")) }
+    }
+  }
+  var n = 0
+  if !spelling.parse_int(n) { return Err(value.fault(start, "integer out of range")) }
+  return Ok(value.Json.Int(n))
+}
+
+fn hex_value(b: Int) -> Int {
+  if is_digit(b) { return b - 48 }
+  if b >= 97 && b <= 102 { return b - 97 + 10 }
+  if b >= 65 && b <= 70 { return b - 65 + 10 }
+  return -1
+}
+
+fn parse_string(r: mut Reader) -> Result<String, value.Fault> {
+  r.pos = r.pos + 1
+  var out = String.new()
+  while true {
+    let b = peek(r)
+    if b < 0 { return Err(value.fault(r.pos, "unterminated string")) }
+    if b == '"'.to_int() {
+      r.pos = r.pos + 1
+      return Ok(move out)
+    }
+    if b < 32 { return Err(value.fault(r.pos, "control character in string")) }
+    if b != '\\'.to_int() {
+      out.push_byte(b)
+      r.pos = r.pos + 1
+      continue
+    }
+    r.pos = r.pos + 1
+    let e = peek(r)
+    r.pos = r.pos + 1
+    if e == 'n'.to_int() { out.push_byte(10) }
+    else if e == 't'.to_int() { out.push_byte(9) }
+    else if e == 'r'.to_int() { out.push_byte(13) }
+    else if e == 'b'.to_int() { out.push_byte(8) }
+    else if e == 'f'.to_int() { out.push_byte(12) }
+    else if e == '/'.to_int() || e == '\\'.to_int() || e == '"'.to_int() { out.push_byte(e) }
+    else if e == 'u'.to_int() {
+      var code = 0
+      for i in 0..4 {
+        let h = hex_value(peek(r))
+        if h < 0 { return Err(value.fault(r.pos, "bad \\u escape")) }
+        code = code * 16 + h
+        r.pos = r.pos + 1
+      }
+      if !Char.is_valid(code) { return Err(value.fault(r.pos, "invalid code point")) }
+      out.push_char(Char.from_int(code))
+    } else { return Err(value.fault(r.pos - 1, "unknown escape")) }
+  }
+  return Ok(move out)
+}
+
+fn parse_array(r: mut Reader) -> Result<value.Json, value.Fault> {
+  r.pos = r.pos + 1
+  r.depth = r.depth + 1
+  var items = List<value.Json>.new()
+  skip_space(r)
+  if peek(r) == ']'.to_int() {
+    r.pos = r.pos + 1
+    r.depth = r.depth - 1
+    return Ok(value.Json.Arr(move items))
+  }
+  while true {
+    skip_space(r)
+    let item = parse_value(r)?
+    items.push(move item)
+    skip_space(r)
+    let b = peek(r)
+    r.pos = r.pos + 1
+    if b == ','.to_int() { continue }
+    if b == ']'.to_int() { break }
+    return Err(value.fault(r.pos - 1, "expected ',' or ']'"))
+  }
+  r.depth = r.depth - 1
+  return Ok(value.Json.Arr(move items))
+}
+
+fn parse_object(r: mut Reader) -> Result<value.Json, value.Fault> {
+  r.pos = r.pos + 1
+  r.depth = r.depth + 1
+  var entries = List<value.Entry>.new()
+  skip_space(r)
+  if peek(r) == '}'.to_int() {
+    r.pos = r.pos + 1
+    r.depth = r.depth - 1
+    return Ok(value.Json.Obj(move entries))
+  }
+  while true {
+    skip_space(r)
+    if peek(r) != '"'.to_int() { return Err(value.fault(r.pos, "an object key must be a string")) }
+    let key = parse_string(r)?
+    skip_space(r)
+    if peek(r) != ':'.to_int() { return Err(value.fault(r.pos, "expected ':' after the key")) }
+    r.pos = r.pos + 1
+    skip_space(r)
+    let item = parse_value(r)?
+    entries.push(value.Entry { key: move key, value: move item })
+    skip_space(r)
+    let b = peek(r)
+    r.pos = r.pos + 1
+    if b == ','.to_int() { continue }
+    if b == '}'.to_int() { break }
+    return Err(value.fault(r.pos - 1, "expected ',' or '}}'"))
+  }
+  r.depth = r.depth - 1
+  return Ok(value.Json.Obj(move entries))
+}

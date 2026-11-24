@@ -106,3 +106,16 @@ HTTP/1.1 on loopback: an acceptor thread deals connections to three workers thro
 `examples/real/json`. A scripted client (std.http) and four concurrent client threads drive it, so the output is
 deterministic. The port comes from the process id and is retried when busy.
 
+
+## JSON query tool
+
+`jql/` is a multi-module (8 files, about 1,700 lines) jq-like tool: a JSON
+reader/writer, a query lexer, a recursive-descent parser into a `Box`ed enum
+AST, and a generator-style evaluator with about 25 builtins. Errors are
+`Result<_, value.Fault>` values carrying an offset.
+
+```sh
+target/release/yerux build examples/real/jql/jql.yx -o /tmp/jql
+echo '{"a":[1,2,3]}' | /tmp/jql -c '.a | map(. * 2) | add'
+target/release/yerux test examples/real/jql        # 12 unit tests
+```

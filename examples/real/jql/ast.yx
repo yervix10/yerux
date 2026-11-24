@@ -1,0 +1,45 @@
+// The syntax tree of a query. Every child that is another expression sits behind a Box or inside a List,
+// so the enum has a known size even though it contains itself.
+import value
+
+pub enum Op {
+  Add, Sub, Mul, Div, Mod,
+  Eq, Ne, Lt, Le, Gt, Ge,
+  And, Or,
+}
+
+pub struct Pair { key: Expr, value: Expr }
+
+pub enum Expr {
+  Identity,
+  Literal(value.Json),
+  Field(Box<Expr>, String),
+  Index(Box<Expr>, Box<Expr>),
+  Iterate(Box<Expr>),
+  Pipe(Box<Expr>, Box<Expr>),
+  Comma(Box<Expr>, Box<Expr>),
+  Neg(Box<Expr>),
+  Binary(Op, Box<Expr>, Box<Expr>),
+  If(Box<Expr>, Box<Expr>, Box<Expr>),
+  Collect(Box<Expr>),
+  Object(List<Pair>),
+  Call(String, List<Expr>),
+}
+
+pub fn op_text(op: Op) -> Text {
+  match op {
+    Add => { return "+" }
+    Sub => { return "-" }
+    Mul => { return "*" }
+    Div => { return "/" }
+    Mod => { return "%" }
+    Eq => { return "==" }
+    Ne => { return "!=" }
+    Lt => { return "<" }
+    Le => { return "<=" }
+    Gt => { return ">" }
+    Ge => { return ">=" }
+    And => { return "and" }
+    Or => { return "or" }
+  }
+}
