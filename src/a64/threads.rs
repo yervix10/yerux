@@ -7,6 +7,7 @@ const RESULT: i32 = 24;
 const RECOVERY: i32 = 32;
 const UNWINDING: i32 = 40;
 const CLEANUP_HEAD: i32 = 48;
+const ENTRY_SP: i32 = 56;
 
 // x19 is reserved for the current worker's control block. At process entry it
 // points into the zero-filled runtime state instead.
@@ -104,18 +105,40 @@ fn futex(a: &mut Asm, op: i64) {
     a.svc();
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Pthreads {
+    pub(super) start_main: usize,
+    create: usize,
+    join: usize,
+}
+
+impl Pthreads {
+    pub(super) const IMPORTS: [&'static str; 3] =
+        ["__libc_start_main", "pthread_create", "pthread_join"];
+
+    pub(super) fn new(first: usize) -> Self {
+        Self {
+            start_main: first,
+            create: first + 1,
+            join: first + 2,
+        }
+    }
+}
+
 pub(super) struct Runtime {
     start: usize,
     wait: usize,
     recover: usize,
+    pthreads: Option<Pthreads>,
 }
 
 impl Runtime {
-    pub(super) fn new(a: &mut Asm) -> Self {
+    pub(super) fn new(a: &mut Asm, pthreads: Option<Pthreads>) -> Self {
         Self {
             start: a.label(),
             wait: a.label(),
             recover: a.label(),
+            pthreads,
         }
     }
 
@@ -127,20 +150,21 @@ impl Runtime {
         a.cbz(X15, self.recover);
     }
 
-    pub(super) fn emit(&self, a: &mut Asm, mmap: usize, failure: usize) {
+    pub(super) fn emit(&self, a: &mut Asm, mmap: usize, failure: usize, join_failure: usize) {
         let failed_mapping = a.label();
         let parent = a.label();
         let child_exit = a.label();
         let child_cleanup = a.label();
+        let mapping = if self.pthreads.is_some() { PAGE } else { MAPPING };
 
-        // start(code, env, recover) -> control block. On the child side the
-        // kernel switches SP, so only the parent reloads its saved registers.
+        // start(code, env, recover) -> control block. Only the parent reloads
+        // these registers: the kernel or libc supplies a new stack to the child.
         a.bind(self.start);
         a.sub_imm(SP, SP, 32);
         for (i, reg) in [X0, X1, X2, X30].into_iter().enumerate() {
             a.str_i(reg, SP, 8 * i as i32);
         }
-        a.mov_imm(X1, MAPPING as i64);
+        a.mov_imm(X1, mapping as i64);
         a.bl(mmap);
         a.cmp(X0, XZR);
         a.bcond(LT, failure);
@@ -149,28 +173,53 @@ impl Runtime {
             a.ldr_i(X0, SP, 8 * i as i32);
             a.str_i(X0, X9, field);
         }
-        a.sub_sp_const(X0, X9, PAGE, true);
-        a.mov_imm(X1, PAGE as i64);
-        a.mov_imm(X2, 0); // PROT_NONE
-        a.mov_imm(X8, 226); // mprotect
-        a.svc();
-        a.cmp(X0, XZR);
-        a.bcond(LT, failed_mapping);
+        if let Some(pthreads) = self.pthreads {
+            let child = a.label();
+            // pthread_create(&handle, NULL, child, control).
+            a.str_i(X9, SP, 0);
+            a.str_i(X17, SP, 8);
+            a.mov(X0, X9);
+            a.mov_imm(X1, 0);
+            a.lea_label(X2, child);
+            a.mov(X3, X9);
+            a.call_import(pthreads.create);
+            a.ldr_i(X9, SP, 0);
+            a.ldr_i(X17, SP, 8);
+            a.cbnz_word(X0, failed_mapping);
+            a.b(parent);
 
-        // VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, PARENT_SETTID, CHILD_CLEARTID
-        a.mov_imm(X0, 0x0035_0f00);
-        a.sub_sp_const(X1, X9, MAPPING, true);
-        a.mov(X2, X9); // parent_tid
-        a.mov_imm(X3, 0); // no new libc TLS
-        a.mov(X4, X9); // child_tid
-        a.mov_imm(X8, 220); // clone
-        a.svc();
-        a.cmp(X0, XZR);
-        a.bcond(LT, failed_mapping);
-        a.cbnz(X0, parent);
+            a.bind(child);
+            a.sub_imm(SP, SP, 32);
+            a.str_i(X19, SP, 0);
+            a.str_i(X29, SP, 8);
+            a.str_i(X30, SP, 16);
+            a.mov(X19, X0);
+            a.mov_sp(X0, SP);
+            a.str_i(X0, X19, ENTRY_SP);
+        } else {
+            a.sub_sp_const(X0, X9, PAGE, true);
+            a.mov_imm(X1, PAGE as i64);
+            a.mov_imm(X2, 0); // PROT_NONE
+            a.mov_imm(X8, 226); // mprotect
+            a.svc();
+            a.cmp(X0, XZR);
+            a.bcond(LT, failed_mapping);
 
-        a.mov(X19, X9);
+            // VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, PARENT_SETTID, CHILD_CLEARTID
+            a.mov_imm(X0, 0x0035_0f00);
+            a.sub_sp_const(X1, X9, MAPPING, true);
+            a.mov(X2, X9); // parent_tid
+            a.mov_imm(X3, 0); // no new libc TLS
+            a.mov(X4, X9); // child_tid
+            a.mov_imm(X8, 220); // clone
+            a.svc();
+            a.cmp(X0, XZR);
+            a.bcond(LT, failed_mapping);
+            a.cbnz(X0, parent);
+            a.mov(X19, X9);
+        }
         a.mov_imm(X29, 0);
+        a.mov_imm(X17, 0);
         a.ldr_i(X16, X19, CODE);
         a.ldr_i(X0, X19, ENV);
         a.sub_imm(SP, SP, 16);
@@ -203,7 +252,12 @@ impl Runtime {
         a.add_imm(SP, SP, 16);
         a.b(cleanup);
         a.bind(cleaned);
-        a.sub_sp_const(SP, X19, MAPPING, true);
+        if self.pthreads.is_some() {
+            a.ldr_i(X0, X19, ENTRY_SP);
+            a.mov_sp(SP, X0);
+        } else {
+            a.sub_sp_const(SP, X19, MAPPING, true);
+        }
         a.mov_imm(X29, 0);
 
         a.bind(child_cleanup);
@@ -215,11 +269,21 @@ impl Runtime {
         a.str_i(X0, SP, 0);
         a.str_i(XZR, SP, 8); // no worklist
         a.blr(X16);
+        a.add_imm(SP, SP, 16);
         a.bind(child_exit);
-        a.dmb(); // publish the result and cleanup before the kernel clears TID
         a.mov_imm(X0, 0);
-        a.mov_imm(X8, 93); // exit just this thread
-        a.svc();
+        if self.pthreads.is_some() {
+            // Return to libc so it runs thread-local destructors and frees TLS.
+            a.ldr_i(X19, SP, 0);
+            a.ldr_i(X29, SP, 8);
+            a.ldr_i(X30, SP, 16);
+            a.add_imm(SP, SP, 32);
+            a.ret();
+        } else {
+            a.dmb(); // publish the result and cleanup before the kernel clears TID
+            a.mov_imm(X8, 93); // exit just this thread
+            a.svc();
+        }
 
         a.bind(parent);
         a.ldr_i(X30, SP, 24);
@@ -228,23 +292,38 @@ impl Runtime {
         a.ret();
 
         a.bind(failed_mapping);
-        unmap(a, X9);
+        unmap(a, X9, mapping);
         a.b(failure);
 
-        // The kernel's clear-child-tid wake uses the shared futex key.
         a.bind(self.wait);
-        a.mov(X9, X0);
-        let check = a.label();
-        let complete = a.label();
-        a.bind(check);
-        a.ldar(X2, X9, true);
-        a.cbz(X2, complete);
-        a.mov(X0, X9);
-        futex(a, FUTEX_WAIT);
-        a.b(check);
-        a.bind(complete);
+        if let Some(pthreads) = self.pthreads {
+            a.sub_imm(SP, SP, 32);
+            for (i, reg) in [X0, X30, X17].into_iter().enumerate() {
+                a.str_i(reg, SP, 8 * i as i32);
+            }
+            a.ldr_i(X0, X0, 0); // pthread_t
+            a.mov_imm(X1, 0); // result is in the Yerux control block
+            a.call_import(pthreads.join);
+            a.ldr_i(X17, SP, 16);
+            a.cbnz_word(X0, join_failure);
+            a.ldr_i(X9, SP, 0);
+            a.ldr_i(X30, SP, 8);
+            a.add_imm(SP, SP, 32);
+        } else {
+            // The kernel's clear-child-tid wake uses the shared futex key.
+            a.mov(X9, X0);
+            let check = a.label();
+            let complete = a.label();
+            a.bind(check);
+            a.ldar(X2, X9, true);
+            a.cbz(X2, complete);
+            a.mov(X0, X9);
+            futex(a, FUTEX_WAIT);
+            a.b(check);
+            a.bind(complete);
+        }
         a.ldr_i(X10, X9, RESULT);
-        unmap(a, X9);
+        unmap(a, X9, mapping);
         a.mov(X0, X10);
         a.ret();
     }
@@ -307,9 +386,9 @@ impl Runtime {
     }
 }
 
-fn unmap(a: &mut Asm, addr: u32) {
+fn unmap(a: &mut Asm, addr: u32, mapping: u32) {
     a.mov(X0, addr);
-    a.mov_imm(X1, MAPPING as i64);
+    a.mov_imm(X1, mapping as i64);
     a.mov_imm(X8, 215);
     a.svc();
 }

@@ -4,7 +4,8 @@
 usage: python3 tests/a64_emu.py [--network | --system | --process | --threads | --ffi | --qemu] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
   default: every examples/*.yx and tests/*.yx that the native backend accepts (the e*.yx error programs are
   skipped). Per program the emulated aarch64 build must match tests/expected/<name>.out/.code (stdout, exit code)
-  and the x86-64 native build's stderr. Unicorn fixtures also check instruction decoding in capstone.
+  and the x86-64 native build's stderr. The AArch64 worker TLS test uses the C backend as its reference.
+  Unicorn fixtures also check instruction decoding in capstone.
   --network : run just the socket tests, using qemu-aarch64 for real Linux TCP.
   --system : run the console, filesystem, environment, and time fixtures under qemu-aarch64.
   --process : run the process fixtures under qemu-aarch64.
@@ -44,7 +45,9 @@ THREADS = (
     "concurrency_thread_pool", "drop_double_panic", "drop_panic", "drop_worker",
     "net_drop", "net_loopback", "std_http_client", "std_sync", "thread_handles_list",
 )
-FFI = ("ffi_basic", "ffi_float32", "ffi_text_contract", "ffi_variadic", "ptr_construct")
+WORKER_TLS = "ffi_worker_tls"
+WORKER_TLS_FIXTURE = f"tests/a64/{WORKER_TLS}.yx"
+FFI = ("ffi_basic", "ffi_float32", "ffi_text_contract", "ffi_variadic", "ptr_construct", WORKER_TLS)
 GUEST_LOADER = "lib/ld-linux-aarch64.so.1"
 SHRINK = {"02_fast": ("100000000", "20000"), "own_deep_box_drop": ("return 1000000", "return 2000"), "own_deep_scc_drop": ("return 1000000", "return 2000"), "own_deep_closure_drop": ("return 1000000", "return 2000")}  # loops too long for emulation
 
@@ -170,9 +173,12 @@ def run_binary(command, src, timeout):
                               stdin=stream, timeout=timeout)
 
 
-def run_x64(src, tmp, extra):
-    exe = os.path.join(tmp, "x64.bin")
-    p = build(src, exe, extra)
+def run_reference(src, tmp, extra, use_c):
+    exe = os.path.join(tmp, "reference.bin")
+    if use_c:
+        p = subprocess.run([YERUX, "build", src, "-o", exe], capture_output=True)
+    else:
+        p = build(src, exe, extra)
     if p.returncode != 0:
         return None
     r = run_binary([exe], src, 120)
@@ -224,10 +230,12 @@ def check_one(args):
         if name == "ffi_text_contract":
             # Exercise a function-returned Text with inlining disabled.
             extra.append("--no-opt")
-        x = run_x64(src, tmp, extra)
+        use_c = name == WORKER_TLS
+        reference = "C backend" if use_c else "x86-64 native"
+        x = run_reference(src, tmp, extra, use_c)
         if x is None:
             if needs_qemu:
-                return f, "FAIL", "x86-64 build failed"
+                return f, "FAIL", f"{reference} build failed"
             return f, "SKIP", "native backend rejects it"
         ec, so, se, err, rep = a64_run(src, tmp, extra, qemu=qemu)
         xc, xo, xe = x
@@ -257,9 +265,14 @@ def check_one(args):
             # Preserve and compare the live count and any other diagnostics.
             counts = rb"(?m)^allocs: [0-9]+\nfrees: [0-9]+\n"
             se, xe = re.sub(counts, b"", se), re.sub(counts, b"", xe)
-        if se != xe: why.append(f"stderr differs: a64={se[:80]!r} x64={xe[:80]!r}")
+        if debug and use_c:
+            # The C reference has no allocator counters. Require the native run to have no live allocations.
+            counts = rb"(?m)^allocs: [0-9]+\nfrees: [0-9]+\nlive: 0\n"
+            se, n = re.subn(counts, b"", se)
+            if n != 1: why.append("expected zero live allocations")
+        if se != xe: why.append(f"stderr differs: a64={se[:80]!r} {reference}={xe[:80]!r}")
         if needs_qemu and (xo, xc) != (gold_o, gold_c):
-            why.append("x86-64 differs from golden")
+            why.append(f"{reference} differs from golden")
         return f, ("FAIL" if why else "PASS"), "; ".join(why) or detail
 
 
@@ -283,7 +296,7 @@ def main():
     }
     selected = next((group for group in groups if getattr(a, group)), None)
     if selected:
-        files = [f"tests/{name}.yx" for name in groups[selected]]
+        files = [WORKER_TLS_FIXTURE if name == WORKER_TLS else f"tests/{name}.yx" for name in groups[selected]]
         examples = {"system": SYSTEM_EXAMPLES, "threads": THREAD_EXAMPLES}
         files.extend(f"examples/{name}.yx" for name in examples.get(selected, ()))
     else:
@@ -293,6 +306,7 @@ def main():
             for fn in sorted(os.listdir(os.path.join(ROOT, d))):
                 if fn.endswith(".yx") and not (fn[0] == "e" and fn[1].isdigit()):
                     files.append(f"{d}/{fn}")
+        files.append(WORKER_TLS_FIXTURE)
     files = [f for f in files if a.k in f]
     with ProcessPoolExecutor(a.j) as ex:
         res = list(ex.map(check_one, [(f, a.debug_alloc, a.qemu) for f in files]))
