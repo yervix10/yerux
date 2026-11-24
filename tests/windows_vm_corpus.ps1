@@ -7,7 +7,8 @@ try {
     (New-Object Net.WebClient).DownloadFile($Archive, $zip)
     $dir = Join-Path $root 'corpus'
     Expand-Archive -LiteralPath $zip -DestinationPath $dir
-    $cases = Get-Content (Join-Path $dir 'cases.json') -Raw | ConvertFrom-Json
+    $manifest = Get-Content (Join-Path $dir 'cases.json') -Raw | ConvertFrom-Json
+    $cases = @($manifest)
     $env:YX_IO_TEST = 'hello_env'
     foreach ($case in $cases) {
         $p = New-Object Diagnostics.Process

@@ -1,0 +1,12 @@
+fn check(n: Int) {
+  print(n / 2)
+  print(n / 256)
+  print(n / 4611686018427387904)
+}
+
+fn main() {
+  let values = [(-9223372036854775807 - 1), -513, -257, -1, 0, 1, 255, 513, 9223372036854775807]
+  for n in values {
+    check(n)
+  }
+}

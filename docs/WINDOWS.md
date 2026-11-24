@@ -75,6 +75,17 @@ feature.
 | Raw Linux memory syscalls | 1 |
 
 The driver boots `~/vm-windows/run-vm.sh` and uses `host.py` and the guest agent.
+It runs sequential jobs of 32 programs by default. Use `--batch-size` to set
+the number of programs per job. On hosts with limited memory, configure QEMU
+with `-m 2560 -smp 2` and share the Linux suite's lock:
+
+```sh
+flock /tmp/yerux-run_all.lock python3 tests/windows_vm_corpus.py
+```
+
+With this VM configuration, all 353 built programs matched their goldens
+again across 12 sequential jobs.
+
 If the agent was configured only for the first logon, run the following in a guest
 PowerShell after sign-in while the driver waits. The driver submits
 `Stop-Computer -Force` and waits for QEMU to exit, including on job failure.
