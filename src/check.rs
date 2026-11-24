@@ -756,11 +756,11 @@ impl<'a> Checker<'a> {
                             );
                             return None;
                         }
-                        // a Copy field (Int, Bool, ..) of an owning temporary (`parse(x).status`): the temporary
+                        // a field of an owning temporary (`parse(x).status`, `f().name.len()`): the temporary
                         // moves into a hidden variable that lives as long as the enclosing expression, so the
                         // rest of the value is freed at its end instead of leaking
                         let copy_field = match t {
-                            Ty::Struct(s) => self.types.structs[s].fields.iter().find(|(fname, _)| fname == f).map(|x| x.1).filter(|ft| !self.types.owned(*ft)),
+                            Ty::Struct(s) => self.types.structs[s].fields.iter().find(|(fname, _)| fname == f).map(|x| x.1),
                             _ => None,
                         };
                         if copy_field.is_some() {
