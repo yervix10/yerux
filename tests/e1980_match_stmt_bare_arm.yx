@@ -1,0 +1,10 @@
+fn f(o: Option<Int>) -> Int {
+    match o {
+        Some(n) => { return n }
+        None => 0,
+    }
+    0
+}
+fn main() {
+    print(f(Some(3)))
+}

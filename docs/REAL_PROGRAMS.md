@@ -573,15 +573,19 @@ Bloom filter sized from n=1000, p=0.01 (m=9586, k=7), FNV-1a 64 with wrapping mu
 comparison over 20000 queries, serialize/deserialize with checksum, corruption and truncation rejection, union checked
 against a joint insert. The golden comes from an independent Python model using native bit operators.
 
-### Round 9 frictions (not changed; minimal repros)
+### Round 9 frictions (minimal repros; 38 diagnostic fixed in Round 10)
 
-38. **Bare expression arm in a statement `match` is rejected.** `match o { Some(n) => { return n } None => 0, }` gives
-    "expected '{'" at `0`. The SPEC allows bare arms for value matches; the message does not say so. Braces are the workaround.
+38. **Bare expression arm in a statement `match` (fixed: clearer diagnostic).** `match o { Some(n) => { return n } None => 0, }` gave
+    "expected '{'" at `0`. A bare arm is only for a `match` used as a value (SPEC: Enums and match), so it stays rejected in a
+    statement match, now with "a `match` statement arm needs a block `{ .. }`" and the help to brace it or to use the value.
+    Test: `tests/e1980_match_stmt_bare_arm.yx`.
 39. **Nested pattern on an owned temporary.** `match make() { Some(Num(n)) => ... }` with `make() -> Option<V>` gives
     "cannot look inside an owned payload in 'match move'", then a cascade "variable 'n' does not exist". The same pattern on a
     borrowed parameter compiles. Workaround: `let` the value first. Same family as friction 35.
 40. **No bitwise operators** (`^`, `<<`). Repeat of friction 25; bloom uses `/` and `%`.
-41. **`print(x)` on a `Set` is rejected** ("print only accepts numbers, Char, Bool, Text or String"). Workaround: `print("{s}")`.
-    Reported by the bloom author; the minimal repro was not re-run.
+41. **`print(x)` on a `Set` is rejected (by design, not changed).** "print only accepts numbers, Char, Bool, Text or String".
+    `print` takes scalars and text only: GUIDE.md (print section) lists lists and maps as values to print through `"{x}"`, and
+    `tests/e1510_print_struct_help.yx` locks the rejection of a struct. Verified with a `var` set. Workaround: `print("{s}")`,
+    which prints `{3}`. Lifting the rule would be a language change and needs a decision.
 42. **`JoinHandle.join()` has no timeout.** tcpecho reports server results through a channel read with `recv_timeout`.
 43. **`IoError` fields are not `pub`.** A timeout is detected by matching `"timed out"` in the message. Repeat of friction 36.

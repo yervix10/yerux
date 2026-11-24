@@ -3704,6 +3704,11 @@ impl Parser {
                     pos: bp,
                 }]
             } else {
+                if !as_value && !self.is_sym("{") {
+                    return Err(diag("a `match` statement arm needs a block `{ .. }`", self.pos())
+                        .note("a bare expression arm (`P => e,`) is only for a `match` used as a value")
+                        .note("help: write `P => { e }`, or `let x = match v { P => e, .. }` to use the value"));
+                }
                 self.block()?
             };
             self.eat_sym(",");
