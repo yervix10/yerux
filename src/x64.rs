@@ -3844,6 +3844,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         let (l_large, l_bump, l_newarena, l_release, l_done, l_shared) =
             (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
         a.bind(l_alloc);
+        // a negative size is a bug in the caller: the C backend and this runtime must agree on failing
+        a.raw(&[0x48, 0x85, 0xFF]); // test rdi, rdi
+        a.jcc(CC_S, l_panic[P_OOM]);
         a.add_imm(RDI, 8);
         a.cmp_imm(RDI, SMALL_MAX);
         a.jcc(CC_A, l_large);

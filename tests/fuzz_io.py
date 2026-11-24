@@ -122,11 +122,12 @@ def model(mode, data, K):
             return None
         i = data.find(b"\n", pos)
         if i < 0:
+            # a last line without `\n` is returned verbatim, including a final `\r` (docs/STDLIB_IO.md)
             line = data[pos:]
             pos = len(data)
-        else:
-            line = data[pos:i]
-            pos = i + 1
+            return line
+        line = data[pos:i]
+        pos = i + 1
         if line.endswith(b"\r"):
             line = line[:-1]
         return line

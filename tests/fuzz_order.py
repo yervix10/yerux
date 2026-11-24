@@ -78,12 +78,22 @@ CTX = [
 ]
 
 
-def sh(args, env=None, timeout=60):
+def _sh_raw(args, env=None, timeout=60):
     try:
         p = subprocess.run(args, capture_output=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return -999, b"", b"TIMEOUT"
+
+
+def sh(*args, **kwargs):
+    """Run a command; `  at file:line:col` panic location lines are dropped from stderr: the native backend prints
+    them in release builds, the C backend only with YERUX_LOCS/--debug (docs/PANIC_DIAGNOSTICS.md)."""
+    import re as _re
+    r = _sh_raw(*args, **kwargs)
+    if isinstance(r, tuple) and len(r) == 3 and isinstance(r[2], bytes):
+        return r[0], r[1], _re.sub(rb"(?m)^  at [^\n]*\n?", b"", r[2])
+    return r
 
 
 def program(ctx, holes):
