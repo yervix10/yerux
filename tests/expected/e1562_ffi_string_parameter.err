@@ -1,0 +1,8 @@
+error: extern function 'strlen' has a parameter type that is not supported by the C ABI yet
+ --> tests/e1562_ffi_string_parameter.yx:2:8
+  |
+2 |     fn strlen(value: String) -> UInt64
+  |        ^^^^^^
+  = supported types are Int, Bool, Char, Text, Ptr<T>, Unit, and numeric types; borrowed parameters and aggregates are not supported yet
+
+1 error(s). Nothing was generated.

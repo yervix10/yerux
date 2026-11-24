@@ -41,6 +41,29 @@ fn unquote(v: view String, at: Int, end: mut Int) -> String {
   return out
 }
 
+// The line without its comment: everything from a '#' that is outside a
+// basic (double-quoted) string. Backslash escapes inside strings are skipped.
+fn strip_comment(line: view String) -> String {
+  var quoted = false
+  var i = 0
+  while i < line.len() {
+    let b = line.byte(i)
+    if quoted {
+      if b == 92 {
+        i = i + 2
+        continue
+      }
+      if b == 34 { quoted = false }
+    } else if b == 34 {
+      quoted = true
+    } else if b == 35 {
+      return line.slice(0, i)
+    }
+    i = i + 1
+  }
+  return String.from(line)
+}
+
 fn raw_value(input: view String, wanted: view String) -> String {
   // A hostile manifest should not allocate a String for every blank line.
   if input.len() > 16777216 { return String.new() }
@@ -57,7 +80,7 @@ fn raw_value(input: view String, wanted: view String) -> String {
   var table = String.new()
   var i = 0
   while i < lines.len() {
-    let line = lines.at(i).trim()
+    let line = strip_comment(lines.at(i)).trim()
     if line.len() > 0 && line.char_at(0).to_int() == 91 {
       table = line.slice(1, line.len() - 1)
     } else {
@@ -77,7 +100,7 @@ fn raw_value(input: view String, wanted: view String) -> String {
           var j = i + 1
           while value.len() > 0 && value.char_at(0).to_int() == 91 && bracket_depth(value) > 0 && j < lines.len() {
             value.push_char(Char.from_int(32))
-            let more = lines.at(j).trim()
+            let more = strip_comment(lines.at(j)).trim()
             value.push_slice(more, 0, more.len())
             j = j + 1
           }

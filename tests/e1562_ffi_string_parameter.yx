@@ -1,0 +1,5 @@
+extern "C" {
+    fn strlen(value: String) -> UInt64
+}
+
+fn main() {}

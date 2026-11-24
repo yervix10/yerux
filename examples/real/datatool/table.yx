@@ -1,0 +1,84 @@
+// A rectangular table of strings read from RFC 4180 CSV. Every record has the
+// header's width; blank lines are skipped.
+import std.csv
+
+pub struct Table {
+  header: List<String>,
+  rows: List<List<String>>,
+}
+
+pub fn copy_row(row: view List<String>) -> List<String> {
+  var out = List<String>.new()
+  for i in 0..row.len() {
+    out.push(row.at(i).clone())
+  }
+  return out
+}
+
+pub fn copy(t: view Table) -> Table {
+  var rows = List<List<String>>.new()
+  for i in 0..t.rows.len() {
+    rows.push(copy_row(t.rows.at(i)))
+  }
+  return Table { header: copy_row(t.header), rows: move rows }
+}
+
+fn is_blank_record(row: view List<String>) -> Bool {
+  return row.len() == 1 && row.at(0).is_empty()
+}
+
+// Parses CSV text. Errors name the 1-based record number (the header is record 1).
+pub fn from_csv(src: view String) -> Result<Table, String> {
+  var parsed = csv.parse(src)
+  if parsed.len() == 0 { return Err("no header row") }
+  var header = List<String>.new()
+  var found = false
+  var rows = List<List<String>>.new()
+  var record = 0
+  for i in 0..parsed.len() {
+    record = i + 1
+    if is_blank_record(parsed.at(i)) { continue }
+    if !found {
+      header = copy_row(parsed.at(i))
+      found = true
+      continue
+    }
+    if parsed.at(i).len() != header.len() {
+      return Err("record {record}: expected {header.len()} fields, found {parsed.at(i).len()}")
+    }
+    rows.push(copy_row(parsed.at(i)))
+  }
+  if !found { return Err("no header row") }
+  for i in 0..header.len() {
+    if header.at(i).is_empty() { return Err("record 1: field {i + 1} of the header is empty") }
+    for j in 0..i {
+      if header.at(j).eq(header.at(i)) { return Err("duplicate column '{header.at(i)}'") }
+    }
+  }
+  return Ok(Table { header: move header, rows: move rows })
+}
+
+pub fn column(t: view Table, name: view String) -> Int {
+  return t.header.index_of(name)
+}
+
+// Column indices for `names`, or the first unknown name as an error.
+pub fn columns(t: view Table, names: view List<String>) -> Result<List<Int>, String> {
+  var out = List<Int>.new()
+  for i in 0..names.len() {
+    let c = column(t, names.at(i))
+    if c < 0 { return Err("unknown column '{names.at(i)}'") }
+    out.push(c)
+  }
+  return Ok(move out)
+}
+
+// Converts the table to CSV text (CRLF records, quoted only where needed).
+pub fn to_csv(t: view Table) -> String {
+  var all = List<List<String>>.new()
+  all.push(copy_row(t.header))
+  for i in 0..t.rows.len() {
+    all.push(copy_row(t.rows.at(i)))
+  }
+  return csv.write(all)
+}

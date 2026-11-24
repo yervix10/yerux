@@ -72,6 +72,19 @@ impl<T> Option<T> {
         }
     }
 
+    // Some(v) becomes Ok(v), None becomes Err(msg). Methods cannot be generic yet, so the error is a
+    // String (like `context`); for another error type use the free function `ok_or(opt, e)`.
+    fn ok_or(self, msg: view String) -> Result<T, String> {
+        match move self {
+            Some(v) => {
+                return Result.Ok(move v)
+            }
+            None => {
+                return Result.Err(String.from(msg))
+            }
+        }
+    }
+
     // `self` if it has a value, else `other`.
     fn or(self, other: Option<T>) -> Option<T> {
         match move self {

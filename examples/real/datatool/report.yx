@@ -1,0 +1,45 @@
+// Output renderers: an aligned text table for people, CSV for other tools.
+import std.fmt
+import table
+
+// Column widths in characters: the widest of the header and every cell.
+fn widths(t: view table.Table) -> List<Int> {
+  var w = List<Int>.new()
+  for c in 0..t.header.len() {
+    var m = t.header.at(c).char_count()
+    for r in 0..t.rows.len() {
+      let n = t.rows.at(r).at(c).char_count()
+      if n > m { m = n }
+    }
+    w.push(m)
+  }
+  return w
+}
+
+// One line of cells, each padded to its column width; trailing spaces dropped.
+fn line(cells: view List<String>, w: view List<Int>) -> String {
+  var s = String.new()
+  for c in 0..cells.len() {
+    if c > 0 { s.push_str("  ") }
+    s.push_str(fmt.pad_right(cells.at(c), w.at(c), ' '))
+  }
+  return String.from("{s.trim_end()}\n")
+}
+
+// Header, a dashed rule, the rows, and a row count.
+pub fn render_text(t: view table.Table) -> String {
+  let w = widths(t)
+  var out = line(t.header, w)
+  var rule = String.new()
+  for c in 0..w.len() {
+    if c > 0 { rule.push_str("  ") }
+    rule.push_str(String.from("-").repeat(w.at(c)))
+  }
+  out.push_str(rule)
+  out.push_str("\n")
+  for r in 0..t.rows.len() {
+    out.push_str(line(t.rows.at(r), w))
+  }
+  out.push_str("({t.rows.len()} rows)\n")
+  return out
+}

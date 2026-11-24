@@ -1,0 +1,6 @@
+import std.rand
+
+fn main() {
+    var generator = rand.new(0)
+    print(generator.next())
+}

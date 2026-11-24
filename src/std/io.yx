@@ -20,6 +20,7 @@ pub enum IoErrorKind {
     OutOfSpace,
     NotEmpty,
     Other,
+    UnexpectedEof,
 }
 
 pub struct IoError {
@@ -62,6 +63,9 @@ fn kind_code(k: IoErrorKind) -> Int {
         }
         Other => {
             return 10
+        }
+        UnexpectedEof => {
+            return 12
         }
     }
 }
@@ -177,6 +181,7 @@ fn errno_text(e: Int) -> Text {
 }
 
 // An IoError for the failed operation `op` on `what` (a path, or "" when there is none); `e` is a positive errno.
+/// Internal. Construct an I/O error from a positive errno.
 pub fn os_error(op: Text, what: view String, e: Int) -> IoError {
     var m = String.from(op)
     if what.len() > 0 {
@@ -192,6 +197,7 @@ pub fn os_error(op: Text, what: view String, e: Int) -> IoError {
     return IoError { kind: errno_kind(e), code: e, message: move m }
 }
 
+/// Internal. Construct an I/O error with a library-defined message.
 pub fn custom_error(kind: IoErrorKind, message: Text) -> IoError {
     return IoError { kind: kind, code: 0, message: String.from(message) }
 }
@@ -199,6 +205,7 @@ pub fn custom_error(kind: IoErrorKind, message: Text) -> IoError {
 // ───────────────────────── helpers ─────────────────────────
 
 // Is the string well-formed UTF-8 (no overlong forms, no surrogates, nothing above U+10FFFF)?
+/// Internal. Validate the bytes stored in a String.
 pub fn valid_utf8(s: view String) -> Bool {
     let n = s.len()
     var i = 0
@@ -253,22 +260,35 @@ pub fn valid_utf8(s: view String) -> Bool {
     return true
 }
 
-// A String from the NUL-terminated bytes at `p`. Input that is not valid UTF-8 (possible in argv and the
-// environment) is converted lossily: every non-ASCII byte becomes '?'.
-pub fn cstr(p: Int) -> String {
+fn cstr_bytes(p: Int) -> String {
     var n = 0
     while __load8(p + n) != 0 {
         n = n + 1
     }
     var s = String.new()
     s.push_raw(p, n)
+    return move s
+}
+
+/// Internal. Read a NUL-terminated UTF-8 string and reject invalid bytes.
+pub fn cstr_utf8(p: Int, message: Text) -> Result<String, IoError> {
+    let s = cstr_bytes(p)
+    if !valid_utf8(s) {
+        return Err(custom_error(IoErrorKind.InvalidData, message))
+    }
+    return Ok(move s)
+}
+
+/// Internal. Read a NUL-terminated C string, substituting '?' for non-ASCII bytes if it is invalid UTF-8.
+pub fn cstr(p: Int) -> String {
+    let s = cstr_bytes(p)
     if valid_utf8(s) {
         return s
     }
     var t = String.new()
     var i = 0
-    while i < n {
-        let b = __load8(p + i)
+    while i < s.len() {
+        let b = s.byte(i)
         if b < 128 {
             t.push_byte(b)
         } else {
@@ -280,6 +300,7 @@ pub fn cstr(p: Int) -> String {
 }
 
 // path + a terminating NUL, ready for the kernel; a path with an embedded NUL byte is an error
+/// Internal. Copy a path with a trailing NUL and reject interior NUL bytes.
 pub fn cpath(path: view String) -> Result<String, IoError> {
     var i = 0
     while i < path.len() {
@@ -336,6 +357,7 @@ fn release_if_drained() {
     }
 }
 
+/// Internal. Validate an owned String before exposing it as text.
 pub fn checked_text(s: String) -> Result<String, IoError> {
     if valid_utf8(s) {
         return Ok(move s)
@@ -456,6 +478,16 @@ fn write_fd(fd: Int, s: view String, what: Text) -> Result<Int, IoError> {
 // Write the bytes of `s` to standard output (no newline added; `print` adds one). Returns the byte count.
 pub fn write_stdout(s: view String) -> Result<Int, IoError> {
     return write_fd(1, s, "write stdout")
+}
+
+/// Write a prompt to stdout without a newline, then read one line from stdin.
+/// Return UnexpectedEof if no line remains.
+pub fn prompt(msg: view String) -> Result<String, IoError> {
+    let _ = write_stdout(msg)?
+    match read_line()? {
+        Some(line) => { return Ok(move line) }
+        None => { return Err(custom_error(IoErrorKind.UnexpectedEof, "end of input")) }
+    }
 }
 
 /// Write a List, array or slice of bytes to stdout without UTF-8 conversion.

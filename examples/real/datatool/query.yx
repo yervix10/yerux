@@ -1,0 +1,154 @@
+// Table operations: row filtering with std.regex, column projection, stable
+// sorting by text or number, and grouped statistics over Map and sort.
+import std.fmt
+import std.regex
+import std.sort
+import std.text
+import table
+
+// Keeps the rows whose `column` value matches `pattern` (std.regex syntax).
+pub fn filter(t: view table.Table, column: view String, pattern: view String) -> Result<table.Table, String> {
+  let c = table.column(t, column)
+  if c < 0 { return Err("unknown column '{column}' in filter") }
+  var rows = List<List<String>>.new()
+  for i in 0..t.rows.len() {
+    if regex.is_match(pattern, t.rows.at(i).at(c)) {
+      rows.push(table.copy_row(t.rows.at(i)))
+    }
+  }
+  return Ok(table.Table { header: table.copy_row(t.header), rows: move rows })
+}
+
+// Keeps only `names`, in the order given.
+pub fn project(t: view table.Table, names: view List<String>) -> Result<table.Table, String> {
+  let cols = table.columns(t, names)
+  match cols {
+    Err(e) => { return Err(e.clone()) },
+    Ok(idx) => {
+      var header = List<String>.new()
+      for k in 0..idx.len() {
+        header.push(t.header.at(idx.at(k)).clone())
+      }
+      var rows = List<List<String>>.new()
+      for i in 0..t.rows.len() {
+        var row = List<String>.new()
+        for k in 0..idx.len() {
+          row.push(t.rows.at(i).at(idx.at(k)).clone())
+        }
+        rows.push(move row)
+      }
+      return Ok(table.Table { header: move header, rows: move rows })
+    }
+  }
+}
+
+// Numbers accept an optional sign, digits, and an optional fraction.
+pub fn number_of(s: view String) -> Result<Float, String> {
+  return text.parse_float(s.trim())
+}
+
+// Checks that every value of a numeric column parses, so sorting cannot fail midway.
+fn check_numeric(t: view table.Table, c: Int) -> Result<Int, String> {
+  for i in 0..t.rows.len() {
+    match number_of(t.rows.at(i).at(c)) {
+      Ok(_) => { }
+      Err(_) => { return Err("data row {i + 1}: '{t.rows.at(i).at(c)}' is not a number") }
+    }
+  }
+  return Ok(0)
+}
+
+// Stable sort by one column. Numeric columns compare as Float.
+pub fn sort_by(t: mut table.Table, column: view String, numeric: Bool, descending: Bool) -> Result<Int, String> {
+  let c = table.column(t, column)
+  if c < 0 { return Err("unknown column '{column}' in sort") }
+  if numeric {
+    match check_numeric(t, c) {
+      Err(e) => { return Err(e.clone()) },
+      Ok(_) => { }
+    }
+    sort.stable_by(t.rows, |a: view List<String>, b: view List<String>| -> Int {
+      let x = number_of(a.at(c)).unwrap_or(0.0)
+      let y = number_of(b.at(c)).unwrap_or(0.0)
+      var r = 0
+      if x < y { r = -1 } else if x > y { r = 1 }
+      if descending { return -r }
+      return r
+    })
+  } else {
+    sort.stable_by(t.rows, |a: view List<String>, b: view List<String>| -> Int {
+      var r = 0
+      if a.at(c) < b.at(c) { r = -1 } else if a.at(c) > b.at(c) { r = 1 }
+      if descending { return -r }
+      return r
+    })
+  }
+  return Ok(t.rows.len())
+}
+
+// Running statistics of one group.
+struct Acc {
+  count: Int,
+  sum: Float,
+  min: Float,
+  max: Float,
+}
+
+fn add(acc: mut Acc, x: Float) {
+  if acc.count == 0 {
+    acc.min = x
+    acc.max = x
+  } else {
+    if x < acc.min { acc.min = x }
+    if x > acc.max { acc.max = x }
+  }
+  acc.count = acc.count + 1
+  acc.sum = acc.sum + x
+}
+
+// One row per distinct `by` value, sorted by that value: count, sum, min, max, mean.
+pub fn group_stats(t: view table.Table, by: view String, value: view String) -> Result<table.Table, String> {
+  let kc = table.column(t, by)
+  if kc < 0 { return Err("unknown column '{by}' in group") }
+  let vc = table.column(t, value)
+  if vc < 0 { return Err("unknown column '{value}' in group") }
+  match check_numeric(t, vc) {
+    Err(e) => { return Err(e.clone()) },
+    Ok(_) => { }
+  }
+  var groups = Map<String, Acc>.new()
+  for i in 0..t.rows.len() {
+    let key = t.rows.at(i).at(kc).clone()
+    let x = number_of(t.rows.at(i).at(vc)).unwrap_or(0.0)
+    var acc = Acc { count: 0, sum: 0.0, min: 0.0, max: 0.0 }
+    if groups.contains(key) {
+      acc = groups.take(key)
+    }
+    add(acc, x)
+    groups.insert(move key, move acc)
+  }
+  var keys = List<String>.new()
+  for i in 0..groups.len() {
+    keys.push(groups.keys.at(i).clone())
+  }
+  sort.stable(keys)
+  var header = List<String>.new()
+  header.push(by.clone())
+  for name in ["count", "sum", "min", "max", "mean"] {
+    header.push(String.from(name))
+  }
+  var rows = List<List<String>>.new()
+  for k in 0..keys.len() {
+    let idx = groups.find(keys.at(k))
+    let acc = groups.vals.at(idx)
+    var row = List<String>.new()
+    row.push(keys.at(k).clone())
+    row.push(acc.count.show())
+    row.push(fmt.fixed(acc.sum, 2))
+    row.push(fmt.fixed(acc.min, 2))
+    row.push(fmt.fixed(acc.max, 2))
+    row.push(fmt.fixed(acc.sum / acc.count.to_float(), 2))
+    rows.push(move row)
+  }
+  return Ok(table.Table { header: move header, rows: move rows })
+}

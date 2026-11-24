@@ -1,0 +1,8 @@
+region  product       units  amount
+------  ------------  -----  ------
+west    gadget        4      7.25
+south   gadget        1      12
+north   widget        3      30.50
+east    widget        5      50
+north   gizmo, large  2      99.99
+(5 rows)

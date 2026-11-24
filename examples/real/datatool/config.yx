@@ -1,0 +1,61 @@
+// Job configuration read from a TOML file. Only [input] is required; the
+// other sections are optional. Missing strings read as empty.
+//
+//   [input]
+//   file = "sales.csv"
+//   [filter]
+//   column = "region"
+//   pattern = "^n"
+//   [select]
+//   columns = ["region", "amount"]
+//   [sort]
+//   column = "amount"
+//   numeric = true
+//   descending = false
+//   [group]
+//   by = "region"
+//   value = "amount"
+//   [output]
+//   format = "text"   # or "csv"
+import std.toml
+
+pub struct Config {
+  input: String,
+  filter_column: String,
+  filter_pattern: String,
+  select: List<String>,
+  sort_column: String,
+  sort_numeric: Bool,
+  sort_desc: Bool,
+  group_by: String,
+  group_value: String,
+  format: String,
+}
+
+// Reads and validates a job file. Errors name the offending key.
+pub fn load(src: view String) -> Result<Config, String> {
+  let input = toml.get_string(src, "input.file")
+  if input.is_empty() { return Err(String.from("config: input.file is required")) }
+  var format = toml.get_string(src, "output.format")
+  if format.is_empty() { format = String.from("text") }
+  if !format.eq("text") && !format.eq("csv") {
+    return Err(String.from("config: output.format must be \"text\" or \"csv\", not \"{format}\""))
+  }
+  let group_by = toml.get_string(src, "group.by")
+  let group_value = toml.get_string(src, "group.value")
+  if group_by.is_empty() != group_value.is_empty() {
+    return Err(String.from("config: group.by and group.value must be given together"))
+  }
+  return Ok(Config {
+    input: move input,
+    filter_column: toml.get_string(src, "filter.column"),
+    filter_pattern: toml.get_string(src, "filter.pattern"),
+    select: toml.get_array(src, "select.columns"),
+    sort_column: toml.get_string(src, "sort.column"),
+    sort_numeric: toml.get_bool(src, "sort.numeric"),
+    sort_desc: toml.get_bool(src, "sort.descending"),
+    group_by: move group_by,
+    group_value: move group_value,
+    format: move format,
+  })
+}

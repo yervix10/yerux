@@ -454,7 +454,7 @@ test "double doubles" {
   assert(double(0) == 0)
 }
 ```
-- `assert(cond: Bool)` and `assert_eq(a, b)` (Int or Bool; for strings use `assert(a.eq(b))`) are built-ins. A failure panics with `assertion failed` (exit 101, both backends).
+- `assert(cond: Bool)` and `assert_eq(a, b)` (numbers, Bool, and String/Text variables or literals; a String-returning call is first stored with `let`, like any `==`) are built-ins. A failure panics with `assertion failed` (exit 101, both backends).
 - `test "name" { ... }` is a top-level item of the file under test (it can call private functions). Normal builds ignore test blocks.
 - `yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]` (default: the current folder, recursively, files that contain tests) builds and runs **each test as its own program** (C backend, or native with `--native`), prints `ok` / `FAIL` per test with the test's output and panic message, then `test result: ok. N passed; M failed`. Exit code 0 only if everything passed. A test that does not compile fails with its diagnostics. Tests in imported modules are not run (run the module's own file).
 

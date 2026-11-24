@@ -1,0 +1,28 @@
+import std.io
+
+fn read_first() -> Result<String, io.IoError> {
+    let line = io.prompt("First: ")?
+    return Ok(move line)
+}
+
+fn main() {
+    let first = read_first().unwrap()
+    print("[{first}]")
+    let blank = io.prompt("Blank: ").unwrap()
+    print(blank.len())
+    match io.prompt("Invalid: ") {
+        Ok(_) => { panic("invalid input accepted") }
+        Err(error) => { print(error.kind == io.IoErrorKind.InvalidData) }
+    }
+    let last = io.prompt("Last: ").unwrap()
+    print(last.len())
+    print(last.byte(last.len() - 1))
+    match io.prompt("EOF: ") {
+        Ok(_) => { panic("EOF accepted") }
+        Err(error) => {
+            print(error.kind == io.IoErrorKind.UnexpectedEof)
+            print(error.code)
+            print(error.message)
+        }
+    }
+}

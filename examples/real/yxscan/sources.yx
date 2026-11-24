@@ -96,7 +96,7 @@ struct Work {
 }
 
 fn expand(work: mut List<Work>, directory: view String) -> Result<Int, io.IoError> {
-    let entries = fs.read_dir_entries(directory)?
+    let entries = fs.read_dir_entries_utf8(directory)?
     var i = entries.len()
     // Push in reverse byte order for stable depth-first output.
     while i > 0 {

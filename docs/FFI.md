@@ -1,6 +1,6 @@
 # Yerux FFI and dynamic linking
 
-Status: experimental. `extern "C" { fn ... }` declarations, `link "..."`, C scalar prototypes and direct calls work through the C backend. Linux x86-64 native builds use an eager ELF loader/import path and lower scalar integers, pointers, and floats through SysV registers and stack arguments. Text literals passed to extern functions use a NUL-terminated C view. `Ptr<T>` is accepted as a raw C ABI parameter or result, and extern calls require a lexical `unsafe { ... }` block. The dynamic ELF writer maps code and read-only literals RX and loader metadata/GOT/runtime state RW in separate page-aligned `PT_LOAD`s, with a non-executable RW stack. Variadic declarations/calls (section 6.1) work on Linux x86-64 and the C backend. Pointer dereference/arithmetic (construction exists: `Ptr<T>.null()`, `Ptr<T>.alloc(n)`, `p.is_null()`, `p.free()`, see SPEC.md), a first-class `CString` helper, and non-Linux imports remain unimplemented.
+Status: experimental. `extern "C" { fn ... }` declarations, `link "..."`, C scalar prototypes and direct calls work through the C backend. Linux x86-64 native builds use an eager ELF loader/import path and lower scalar integers, pointers, and floats through SysV registers and stack arguments. An extern parameter declared as `Text` receives a pointer to NUL-terminated UTF-8 bytes for either a literal or a typed `Text` value. `Ptr<T>` is accepted as a raw C ABI parameter or result, and extern calls require a lexical `unsafe { ... }` block. The dynamic ELF writer maps code and read-only literals RX and loader metadata/GOT/runtime state RW in separate page-aligned `PT_LOAD`s, with a non-executable RW stack. Variadic declarations/calls (section 6.1) work on Linux x86-64 and the C backend. Pointer dereference/arithmetic (construction exists: `Ptr<T>.null()`, `Ptr<T>.alloc(n)`, `p.is_null()`, `p.free()`, see SPEC.md), a first-class `CString` helper, and non-Linux imports remain unimplemented.
 
 ## 0. Conclusions up front
 
@@ -138,7 +138,7 @@ Design points:
 - **Names are C names** by default; `@link_name("vkCreateInstance")` renames when a Yerux-style name is wanted.
 - **`Ptr<T>`** is the only pointer type in the language. It has no borrow semantics, can be null, can be cast, and its dereference exists only inside `unsafe`. It cannot be stored where the ownership model would require a drop (a `Ptr` has no drop glue). This keeps rule 3 (borrows are second-class, no lifetimes) intact: safe code never sees a pointer; `view`/`mut` parameters lower to `Ptr` only at the call into `extern`.
 - **Ownership across the boundary:** passing `view T` / `mut T` of a `@c struct` to an extern function lends a pointer for the call only. `move`-ing a Yerux value into C is only allowed through an explicit `Handle` wrapper whose drop calls the library's destroy function (e.g. `vkDestroyDevice`), written by the binding author with `unsafe`.
-- **Strings:** `Text` is not NUL-terminated; add `CStr` (literal `c"..."`) and a `to_cstr` that allocates.
+- **Strings:** A proposed `CStr` type (literal `c"..."`) and an allocating `to_cstr` would cover owned C string buffers.
 - **Errors:** extern calls return raw codes. Safe wrappers convert `VkResult` etc. into `Result<T, E>` (v0.4).
 
 ### 6.1 Variadic calls (implemented)

@@ -33,7 +33,7 @@ fn alloc_ring<const CAP: Int>() -> Ring<CAP> { ... } // comptime parameters (sec
 The compile-time evaluator is **the same language semantics** as runtime: checked arithmetic (overflow panics become compile errors "this overflows while evaluating the constant"), bounds checks, `List`/`String` with ownership. No second semantics.
 Allowed: arithmetic, control flow, structs/enums/match, `List`, `String`, calls to eligible functions, `comptime`-time allocators (A6: the compiler provides a compile-time heap).
 Not allowed (compile error E-K1 with explanation): `print` (can be made a compile-time *note* with `comptime note(x)`), file/network/clock/random/environment access, threads (CONCURRENCY.md), calls to `extern` functions, `unsafe` raw-pointer operations except those the evaluator implements (none initially), any function that needs a capability (effects, v0.5). Reading a file at compile time is possible only through an explicit `comptime embed("font.ttf") -> List<Int>` builtin that records the file as a build dependency (hash in the build cache; reproducible builds preserved).
-Termination: a **step budget** (default 10^8 interpreter steps, `--comptime-steps=N`) and a memory budget (256 MiB); exceeded: error E-K2 showing the call stack and the loop that was running. No halting-problem solution is attempted.
+Termination: a **step budget** (fixed at 20 000 000 interpreter steps in 1.0; a `--comptime-steps=N` flag is not implemented) and a memory budget (256 MiB); exceeded: error E-K2 showing the call stack and the loop that was running. No halting-problem solution is attempted.
 Determinism: evaluation is deterministic (no hash-iteration order, no addresses observable: pointers do not exist at this level), so builds are reproducible.
 
 ### A4. Which values may leave compile time
@@ -74,13 +74,13 @@ Comptime evaluation runs on the **compiler's own IR**, not on the AST, so semant
 
 ### A9. Error messages
 ```
-error[E-K2]: compile-time evaluation ran too long (more than 100000000 steps)
+error[E-K2]: compile-time evaluation ran too long (more than 20000000 steps) [E-K2]
   --> tables.yx:7:3
    |
  7 |   while c != 1 { c = next(c) }      // running here when the budget ran out
    = called from `gamma_table` (tables.yx:2), which `const GAMMA` needs (tables.yx:15)
    = why: the compiler runs this code while compiling, so it must finish. It may never end for some inputs.
-   = fix: add a limit to the loop, or raise the limit with `--comptime-steps=...` if you know it ends.
+   = fix: add a limit to the loop, or make the computation smaller.
 error[E-K1]: `read_file` cannot run at compile time
    = why: compile-time code must give the same result every time. Files can change.
    = fix: `comptime embed("font.ttf")` includes the file's bytes, and the compiler remembers the file as a dependency.

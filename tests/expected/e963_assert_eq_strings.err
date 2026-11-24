@@ -1,8 +1,8 @@
-error: assert_eq compares numbers or Bool values, not Text
- --> tests/e963_assert_eq_strings.yx:3:13
+error: cannot use `==` on values of type P: it does not implement Equal
+ --> tests/e963_assert_eq_strings.yx:6:13
   |
-3 |   assert_eq(a, "a")
-  |             ^
-  = help: for strings use `assert(a.eq(b))`
+6 |   assert_eq(a, b)
+  |             ^^^^
+  = help: add `impl Equal for P { fn eq(view self, other: view P) -> Bool { .. } }`
 
 1 error(s). Nothing was generated.

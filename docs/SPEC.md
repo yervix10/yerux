@@ -853,8 +853,13 @@ listed in section 10.
   error (tests/e53_ffi_variadic_plain.yx).
 - Types used in the fixtures: `Int` (64-bit), `Int32`, `UInt8`, `UInt64`, `Float`, `Text` and
   `Ptr<T>` (tests/ffi_basic.yx, tests/ffi_variadic.yx, tests/ffi_native.sh).
-- A `Text` argument is passed as a NUL-terminated C string: `strlen("hello")` returns `5`
-  (tests/ffi_basic.yx).
+- An extern parameter declared as `Text` receives a pointer to NUL-terminated UTF-8 bytes,
+  whether the argument is a literal or a value typed as `Text`. C string operations stop at an
+  embedded NUL. The byte length of a non-ASCII `Text` value and the empty value are covered
+  by tests/ffi_text_contract.yx.
+  An owned `String` cannot be used as an extern parameter or implicitly converted to `Text`
+  (tests/e1562_ffi_string_parameter.yx and tests/e1560_ffi_owned_string.yx). Declare `Ptr<T>`
+  for APIs taking raw buffers and follow the foreign API's ownership, lifetime and length rules.
 - `Ptr<T>.null()` needs no `unsafe` block; `Ptr<T>.alloc(n)` and `p.free()` are language-provided
   (tests/ptr_construct.yx). `Ptr<T>` values returned by an extern function can be passed to another
   extern function (tests/ffi_native.sh: `ffi_identity` then `strlen`).
@@ -966,6 +971,10 @@ that no test calls is **no especificado** even if the reference lists it.
 
 - `import std.<name>` makes the module available under its last path segment, for example
   `import std.hash` then `hash.fnv1a32("")` (tests/std_hash.yx).
+- Module-level functions are called through the module name or its import alias with explicit
+  arguments. A receiver call resolves methods of the receiver type or of an applicable trait.
+  Importing a free function does not install it as a method (tests/std_free_functions.yx,
+  tests/e1563_std_free_function_not_method.yx).
 - Private helpers of a `std` module are not visible to the user (tests/e981_fs_private_helper.yx,
   tests/e1303_process_private_helper.yx). An unknown item is an error (tests/e1502_unknown_module_item.yx).
 - Every module in `src/std/` is imported by at least one test in `tests/`.
@@ -986,9 +995,10 @@ that no test calls is **no especificado** even if the reference lists it.
   conversions (tests/std_hash_hex_bytes.yx); base64 and hex encoding (tests/std_encoding.yx).
 - `std.rand`: two generators with the same seed produce the same sequence, and `next` returns values
   in `0..2^32` (tests/std_rand.yx).
-- `std.compress`: run-length encoding. Decompressing output larger than 16 MiB returns
-  `Err` with the message `decompressed output exceeds 16 MiB limit` (tests/std_compress_hostile.yx).
-  Round trips are in tests/std_compress.yx. The module is not gzip or deflate.
+- `std.compress`: byte-oriented run-length encoding using one-byte `(count, byte)` pairs
+  with counts of 1 through 255 (tests/std_compress_format.yx). Decompressing output larger
+  than 16 MiB returns `Err` with the message `decompressed output exceeds 16 MiB limit`
+  (tests/std_compress_hostile.yx). See [STDLIB_COMPRESS.md](STDLIB_COMPRESS.md).
 - `std.kv`, `std.csv`, `std.toml`, `std.regex`: normal and malformed input are covered by
   tests/std_kv.yx, tests/std_csv.yx, tests/std_toml.yx, tests/std_regex.yx and their `*_hostile`
   companions. The accepted grammar is described in [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md); behaviour

@@ -1,0 +1,8 @@
+error: type rand.Rng has no method 'next'
+ --> tests/e1563_std_free_function_not_method.yx:5:11
+  |
+5 |     print(generator.next())
+  |           ^^^^^^^^^^^^^^^^
+  = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+
+1 error(s). Nothing was generated.

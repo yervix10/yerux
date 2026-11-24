@@ -23,45 +23,22 @@ compares stdout, stderr and exit status with expected results on both backends.
   `Child.read_stdout_into(buf)` now supports streaming bytes. The integration
   test counts a binary stream larger than a pipe buffer.
 
+- Malformed UTF-8 in Linux filenames could be converted to `?` and cause yxscan
+  to open a different file. yxscan now uses `env.args_utf8()` and
+  `fs.read_dir_entries_utf8()`, which report `InvalidData` for malformed input.
+  The integration test creates both `?` and a filename containing byte
+  `0xff`, then checks direct arguments and directory traversal.
+- Help stays an immutable `Text` value. When a call requires `view String`,
+  yxscan passes `String.from(options.usage())` explicitly. The compiler
+  continues to reject `io.eprintln(help())` when `help() -> Text`
+  ([regression test](../tests/e1561_text_requires_string_conversion.yx)).
+
 ### Remaining limits
 
-**Non-UTF-8 paths.** Linux filenames are byte sequences. `fs.read_dir_entries`
-and `env.args` replace non-ASCII bytes in invalid UTF-8 with `?`. If the name
-with the replacements also exists, opening the returned path can open that
-other file. Supporting these names requires an exact-byte contract for
-directory entries and process arguments. yxscan supports UTF-8 paths.
-
-To reproduce, run this program with a directory containing both filenames
-created by `touch -- '?' "$(printf '\377')"`. Pass the second name as an argument.
-The directory listing prints `?` for both entries, and the argument also prints
-as `?`.
-
-```yerux
-import std.env
-import std.fs
-
-fn main() {
-    for entry in fs.read_dir_entries(".").unwrap() {
-        print(entry.name)
-    }
-    print(env.arg(1).unwrap())
-}
-```
-
-**Text values and I/O.** A string literal adapts to the `view String` parameter
-of `io.eprintln`. A value already typed as `Text`, such as the return value
-below, yields a type error at the call. yxscan constructs an owned `String` for
-reusable help text.
-
-```yerux
-import std.io
-
-fn help() -> Text { return "help" }
-
-fn main() {
-    io.eprintln(help())
-}
-```
+yxscan accepts UTF-8 paths. A directory containing another encoding is
+rejected as a whole. Supporting all Linux filenames requires an exact-byte
+API for both directory entries and process arguments. To see the limit,
+create a name with `touch -- "$(printf '\377')"` and run `yxscan wc -r .`.
 
 ## webkv (`examples/real/webkv/`)
 
@@ -103,20 +80,57 @@ Size: 8 modules, 1,677 lines; 12 `yerux test` blocks plus a golden run
 No compiler or stdlib defect was found; the program's own bug (a reader that
 accepted `01`) was caught by its unit test and fixed in `reader.yx`.
 
-API/ergonomics frictions (documented, not changed):
+Frictions and their resolution (1.0 freeze round):
 
-1. `String.parse_int(out)` is a method returning `Bool`, while the float
-   equivalent is `text.parse_float(s)` returning `Result`. Two shapes for the
-   same task.
-   Repro: `var n = 0; if s.parse_int(n) {..}` vs `match text.parse_float(s) {..}`.
-2. `Char.from_int(n)` panics on invalid scalars (surrogates, > 0x10FFFF), so
-   decoding `\uD800` needs a prior `Char.is_valid` check.
-3. A top-level `fn` cannot be passed by name where a `fn` value is expected:
-   `sort.stable_by(l, compare)` gives "variable 'compare' does not exist"; a
-   closure `|a, b| compare(a, b)` is required.
-4. `Result::unwrap` needs `E: Show`, so any program with its own error struct
-   must `match` instead (or add `impl Show`).
-5. `assert_eq` rejects `String`; tests must use `assert(a.eq(b))`.
-6. There is no `io.println`; stdout printing is the builtin `print`.
-7. `{`/`}` in string literals must be doubled, including char literals
-   (`'}}'`), which is easy to forget in JSON-heavy code.
+1. `String.parse_int(out)` (Bool) vs `text.parse_float(s)` (Result). **Final, documented:** `std.text` has
+   the matching `Result` pair `parse_int(s)`/`parse_float(s)`; the prelude method is the no-import `Bool`
+   fast path for integers only.
+2. `Char.from_int(n)` panics on invalid scalars; use `Char.is_valid(n)` first. **Final** (checked conversion
+   style, like `Int<lo..hi>.from`).
+3. A top-level `fn` cannot be passed by name as a `fn` value (`sort.stable_by(l, compare)` fails); wrap it:
+   `|a, b| compare(a, b)`. **Open, language gap** (not a 1.0 blocker: a closure is the workaround).
+4. `Result::unwrap` needs `E: Show`. **Final:** the diagnostic already says `add impl Show for E`.
+5. `assert_eq` rejected `String`. **Fixed:** `assert_eq` is now `assert(a == b)` checked like any `==`, so
+   numbers, Bool and String/Text variables or literals work, and other types get the precise `==`
+   diagnostic. A String-returning call must be stored with `let` first (the general rule for `==`).
+   Tests: tests/assert_eq_string.yx, tests/e963_assert_eq_strings.yx.
+6. No `io.println`; stdout is the builtin `print`. **Final** (one way to print).
+7. `{`/`}` in string literals must be doubled, including char literals. **Final** (SPEC string rules).
+
+## datatool (examples/real/datatool, CSV and TOML data tool)
+
+Size: 5 modules, 435 lines (`table`, `query`, `config`, `report`, `main`). It
+reads RFC 4180 CSV (`std.csv`), runs a TOML job file (`std.toml`), filters rows
+with `std.regex`, sorts with `std.sort.stable_by`, and aggregates per key into a
+`Map<String, Acc>`. Golden outputs and oracles: `tests/datatool.sh` (C and native:
+fixture goldens, a python3 csv-writer oracle for filter+select+sort over a
+generated 3000-row file, python group statistics, and 14 error paths).
+
+Fixed (regression test fails before the fix):
+
+1. `std.toml` kept inline comments in values and table headers.
+   `file = "a.csv" # c` read as `a.csv" # c`, and `[input] # c` hid the whole
+   section, so every later key read as missing. Fixed in `src/std/toml.yx`
+   (`strip_comment`: a `#` outside a basic string starts a comment). Regression:
+   `tests/std_toml_comments.yx` (golden `tests/expected/std_toml_comments.out`).
+
+Open (no fix; minimal repros):
+
+2. Regex alternation is not supported, and it fails silently. `^(north|south)$`
+   matches nothing (exit 0, zero rows); `|` is a literal byte. Workaround for
+   single characters: `^[ns]`.
+3. An unbalanced group is accepted without an error: `^(nor` matches `north`.
+4. A string literal cannot start a `+` expression: `"(" + s` gives "expected
+   Int but this is Text", because literals are `Text`. `s + "x"` works, and so
+   does `"x{s}"` (interpolation, which datatool uses).
+5. A method call on a temporary cannot be indexed: `print(f().at(0))` gives
+   "expected a variable or a field here". Bind first: `let l = f()`.
+6. `io.write_stdout` returns `Result`, and an unused `Result` is a compile
+   error; the program writes `let _ = io.write_stdout(...)`.
+7. Config limits (`std.toml` reads one line per value): multi-line arrays are
+   not read, string escapes are kept raw (`"a\"b"` returns `a\"b`), and a missing
+   key and an empty value both read as `""`/`0`/`false`.
+
+Figures: 435 lines of datatool, 1 library defect fixed, 6 open findings (2 of
+them silent wrong results with regex), 4 golden cases, 2 oracles and 14 error
+checks, 3000-row oracle file, both backends identical.

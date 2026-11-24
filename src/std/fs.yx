@@ -387,6 +387,26 @@ fn join_name(dir: view String, name: view String) -> String {
 /// The entries of directory `path` without `.` and `..`, sorted by name (byte order). A name that is not
 /// valid UTF-8 is converted lossily (each non-ASCII byte becomes `?`).
 pub fn read_dir_entries(path: view String) -> Result<List<DirEntry>, io.IoError> {
+    return read_dir_entries_with_names(path, false)
+}
+
+/// Like read_dir_entries, but an invalid UTF-8 name returns InvalidData, without substituting bytes.
+pub fn read_dir_entries_utf8(path: view String) -> Result<List<DirEntry>, io.IoError> {
+    return read_dir_entries_with_names(path, true)
+}
+
+fn directory_name(address: Int, strict: Bool) -> Result<String, io.IoError> {
+    if strict {
+        return io.cstr_utf8(address, "directory entry is not valid UTF-8")
+    }
+    return Ok(io.cstr(address))
+}
+
+fn close_directory(fd: Int) {
+    let closed = __syscall(3, fd, 0, 0, 0, 0, 0)
+}
+
+fn read_dir_entries_with_names(path: view String, strict: Bool) -> Result<List<DirEntry>, io.IoError> {
     let cp = io.cpath(path)?
     // O_RDONLY | O_DIRECTORY | O_CLOEXEC
     let fd = __syscall(2, cp.raw_addr(), 589824, 0, 0, 0, 0)
@@ -395,15 +415,15 @@ pub fn read_dir_entries(path: view String) -> Result<List<DirEntry>, io.IoError>
     }
     var out = List<DirEntry>.new()
     let buf = __alloc(32768)
-    var err = 0
+    defer __free(buf)
+    defer close_directory(fd)
     while true {
         let n = __syscall(217, fd, buf, 32768, 0, 0, 0)
         if n == -4 {
             continue
         }
         if n < 0 {
-            err = 0 - n
-            break
+            return Err(io.os_error("read directory", path, 0 - n))
         }
         if n == 0 {
             break
@@ -413,7 +433,7 @@ pub fn read_dir_entries(path: view String) -> Result<List<DirEntry>, io.IoError>
             let rec = buf + off
             let reclen = __load8(rec + 16) + 256 * __load8(rec + 17)
             let dtype = __load8(rec + 18)
-            let name = io.cstr(rec + 19)
+            let name = directory_name(rec + 19, strict)?
             let dot = name.len() == 1 && name.byte(0) == 46
             let dotdot = name.len() == 2 && name.byte(0) == 46 && name.byte(1) == 46
             if !dot && !dotdot {
@@ -440,11 +460,6 @@ pub fn read_dir_entries(path: view String) -> Result<List<DirEntry>, io.IoError>
             }
             off = off + reclen
         }
-    }
-    __free(buf)
-    let c = __syscall(3, fd, 0, 0, 0, 0, 0)
-    if err != 0 {
-        return Err(io.os_error("read directory", path, err))
     }
     sort.unstable_by(out, |a: view DirEntry, b: view DirEntry| -> Int { return cmp_bytes(a.name, b.name) })
     return Ok(move out)

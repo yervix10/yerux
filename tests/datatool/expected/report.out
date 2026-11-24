@@ -1,0 +1,6 @@
+region  product       amount
+------  ------------  ------
+north   gizmo, large  99.99
+north   widget        30.50
+south   gadget        12
+(3 rows)

@@ -76,12 +76,13 @@ risk of the area, not the amount of code.
 | `std.regex`, `std.csv`, `std.toml` | Experimental | tests/std_regex.yx, tests/std_csv.yx, tests/std_toml.yx; grammar in REGEX_CSV_TOML.md still subject to change |
 | `std.args`, `std.env` | Stable-candidate | tests/std_args.yx, tests/std_env_typed.yx |
 | `std.io`, `std.fs`, `std.path`, `std.time` | Stable-candidate | docs/STDLIB_IO.md, docs/STDLIB_SYSTEM.md; tests/std_fs_metadata.yx, tests/time_duration.yx. Public helpers listed in 6.3 are Internal |
+| `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable-candidate | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |
 | `std.process` | Experimental | docs/STDLIB_PROCESS.md; tests/process_*.yx |
 | `std.net`, `std.http` | Experimental | docs/NET.md, docs/HTTP.md; tests/net_loopback.yx, tests/std_http_client.yx |
 | `std.sync` | Experimental | spinning primitives, docs/STDLIB_SYNC.md; tests/std_sync.yx |
 | `std.log` | Stable-candidate | tests/std_log.yx |
 | `std.kv` | Experimental | single-writer store, docs/STDLIB_KV.md; tests/std_kv.yx |
-| `std.compress` | Experimental | run-length only; name is misleading (see 6.3) |
+| `std.compress` | Experimental | byte-oriented run-length encoding (see item 1 in section 7) |
 
 Rule for all modules: a function that no test calls is Experimental regardless of the table above.
 
@@ -146,12 +147,15 @@ Rules, from 1.0:
 These are inconsistencies found while writing this policy. Each must be resolved (rename, keep as
 alias with deprecation, or document as intended) before the item it touches becomes Stable.
 
-1. **`std.compress` name.** The module implements run-length encoding, not gzip or deflate
-   (STDLIB_COMPRESS.md). The name suggests a standard format. Candidate: `std.rle`, with `std.compress`
-   kept as a deprecated alias, or documented as intended.
+1. **Resolved — `std.compress` name.** Keep `std.compress` as the definitive name of the byte-oriented
+   RLE module. [STDLIB_COMPRESS.md](STDLIB_COMPRESS.md) defines the format and its scope;
+   `tests/std_compress_format.yx` pins the encoding and rejects zero-length runs.
 2. **Two sort APIs.** `List.sort()` is in-place and not stable (STDLIB.md). `std.sort` has `stable`,
    `stable_by`, `unstable` and `unstable_by`. The prelude name `sort` means "unstable" but the word
    "unstable" appears only in the module. Decide the names before freezing either.
+   **Resolved:** names are final and documented as is. `l.sort()` == `std.sort.unstable(l)`; for `Ordered`
+   element types stability is unobservable, and `sort.stable`/`stable_by` cover records. Test:
+   tests/sort_api_names.yx; STDLIB.md `std.sort`.
 3. **Two lock APIs.** *Resolved (documented as final).* `Locked<T>` is the primitive and uses methods
    (`with`, `with_view`, `take`); `Mutex<T>` is its named facade and uses free functions (`mutex_update`,
    `mutex_with`, `mutex_with_view`), because generic methods with their own type parameters are not available
@@ -163,18 +167,27 @@ alias with deprecation, or document as intended) before the item it touches beco
    the surface (banner in CONCURRENCY.md).
 5. **`ok_or` is a free function** (`ok_or(opt, e)`), while `context` and `ok` are methods on the same
    types. Either add the method form or document the difference as final.
-6. **Module-level free functions vs methods.** `rand.new` / `rand.next`, `hash.fnv1a32`, `path.join`
-   are free functions in `std.*` modules, while the prelude uses methods on values. Keep the rule
-   ("module functions are free functions") explicit in STDLIB.md.
+   **Resolved:** both forms. `opt.ok_or("msg")` is a method returning `Result<T, String>` (methods cannot
+   be generic yet, so it mirrors `context`); the free function `ok_or(opt, e)` stays for any error type
+   and is final. Test: tests/option_ok_or_method.yx; STDLIB.md.
+6. **Resolved — Module-level free functions vs methods.** Keep both forms. A module function is
+   called through its module alias and takes all arguments explicitly. A method is declared on its
+   receiver type or through a trait. See [STDLIB.md](STDLIB.md), `tests/std_free_functions.yx` and
+   `tests/e1563_std_free_function_not_method.yx`.
 7. **`Int<lo..hi>.from` vs `try_from`.** `from` panics and `try_from` returns `Result`. The pair is
    consistent, but the panic message names the conversion (`integer conversion out of range`); check
    that every checked conversion uses the same wording before freezing.
-8. **Public helpers in `std.io`.** `io.cpath`, `io.cstr`, `io.os_error`, `io.custom_error`,
-   `io.checked_text`, `io.valid_utf8` are public so `std.fs`, `std.env` and `std.time` can use them
-   (STDLIB_IO.md). They are not part of the stable API but are reachable by name. Move them to an
-   internal module or mark them as Internal in the docs.
-9. **`Text` and `String` in FFI.** Extern arguments use `Text`; owned strings are `String`. The
-   conversion rule (NUL-terminated copy) is documented in SPEC 7.1 only. Document it in STDLIB.md too.
+   **Resolved:** audited; every failed integer conversion (sized types, `as`, `from`, range types, both
+   backends) starts with `panic: integer conversion out of range`; range types append `: V not in LO..HI`.
+   Float to integer keeps its own message (`float is NaN or out of range for the integer type`) and exit
+   code 101. Final. Test: tests/conv_panic_wording.sh.
+8. **Resolved — Public helpers in `std.io`.** Keep the existing paths callable for compatibility
+   and mark the helpers Internal in their declarations and in [STDLIB_IO.md](STDLIB_IO.md).
+   `tests/std_io_internal_compat.yx` checks continued access and behavior.
+9. **Resolved — `Text` and `String` in FFI.** Keep the `Text` ABI as a pointer to NUL-terminated UTF-8
+   bytes and require explicit raw pointers for C APIs using owned buffers. See
+   [STDLIB.md](STDLIB.md#text-immutable-literal), [SPEC.md](SPEC.md#71-declarations-and-calls),
+   `tests/ffi_text_contract.yx` and `tests/e1560_ffi_owned_string.yx`.
 10. **`ThreadPanic` is not tested by name.** *Resolved.* `JoinHandle<T>.join() -> Result<T, ThreadPanic>`;
     `ThreadPanic` is an empty struct whose `show()` is `worker panicked`. Tested by name, type and message in
     tests/conc_freeze_api.yx (plus `is_ok`/`is_err` in tests/conc_spawn.yx).
@@ -182,6 +195,9 @@ alias with deprecation, or document as intended) before the item it touches beco
     sections that only the implemented forms are the frozen surface; the rest is marked not implemented.
 12. **Compile-time budget.** COMPTIME.md proposes 10^8 steps; the diagnostic in
     `examples/e53_comptime_budget.yx` uses 20 000 000. Pick one number and test it.
+    **Resolved:** 20 000 000 steps is final for 1.0 (what the compiler enforces); COMPTIME.md now says so and
+    no longer mentions an unimplemented `--comptime-steps` flag. Test: e53_comptime_budget golden
+    (message contains `20000000`).
 
 ## 8. Relation to the roadmap
 

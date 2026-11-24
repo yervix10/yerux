@@ -1,0 +1,14 @@
+extern "C" {
+    fn strlen(value: Text) -> UInt64
+}
+
+fn message() -> Text { return "café" }
+
+fn main() {
+    unsafe {
+        print(strlen(message()))
+        print(strlen(""))
+    }
+    let owned = String.from(message())
+    print(owned)
+}
