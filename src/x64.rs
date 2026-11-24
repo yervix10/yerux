@@ -51,7 +51,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 13] = [
+const IMPORTS: [&str; 16] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -65,6 +65,9 @@ const IMPORTS: [&str; 13] = [
     "QueryPerformanceFrequency",
     "GetSystemTimePreciseAsFileTime",
     "Sleep",
+    "GetCommandLineW",
+    "GetEnvironmentStringsA",
+    "WideCharToMultiByte",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -79,6 +82,9 @@ const IMP_QPC: usize = 9;
 const IMP_QPF: usize = 10;
 const IMP_SYSTIME: usize = 11;
 const IMP_SLEEP: usize = 12;
+const IMP_GETCOMMANDLINE: usize = 13;
+const IMP_GETENVIRONMENT: usize = 14;
+const IMP_WIDETOMULTI: usize = 15;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
@@ -86,7 +92,6 @@ pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
         for inst in f.blocks.iter().flat_map(|b| &b.insts) {
             let unsupported = match inst {
                 Inst::Thread(..) | Inst::Atomic(..) => "thread runtime intrinsics".into(),
-                Inst::Global(_, 0) => "process arguments and environment".into(),
                 Inst::Syscall(_, args) => match constants[args[0]] {
                     Some(0 | 1 | 35 | 39 | 60 | 228 | 231) => continue,
                     Some(n) => format!("raw system call {n}"),
@@ -3280,6 +3285,115 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.raw(&[0xB9]); // mov ecx, 65001
         a.imm32(65001);
         a.call_iat(IMP_SETCONSOLEOUTPUTCP);
+        if ir.funcs.iter().any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Global(..))))) {
+            // global cell 0: the process arguments and environment laid out like the Linux initial stack
+            // (argc, argv.., 0, envp.., 0) in one VirtualAlloc'd block; the command line is split on blanks
+            // outside double quotes (the quotes are dropped; backslash escapes are not interpreted)
+            let (skip, skip_adv, tok, chr, inq, lit, end_ws, end_nul, done_args) = (
+                a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(),
+            );
+            let (eloop, scan, edone) = (a.label(), a.label(), a.label());
+            a.mov_imm(RCX, 0);
+            a.mov_imm(RDX, 2 << 20);
+            a.mov_imm(R8, 0x3000);
+            a.mov_imm(R9, 4);
+            a.call_iat(IMP_VIRTUALALLOC);
+            a.mov_rr(RBX, RAX);
+            a.call_iat(IMP_GETCOMMANDLINE);
+            // UTF-16 -> UTF-8 into the last quarter of the block (the ANSI command line would lose characters)
+            a.mov_rr(RSI, RAX);
+            a.mov_rr(RDI, RBX);
+            a.alu_imm(0, RDI, 3 << 19);
+            a.alu_imm(5, RSP, 32);
+            a.mov_imm(RCX, 65001);
+            a.mov_imm(RDX, 0);
+            a.mov_rr(R8, RSI);
+            a.mov_imm(R9, -1);
+            a.st(RSP, 32, RDI);
+            a.mov_imm(RAX, 1 << 19);
+            a.st(RSP, 40, RAX);
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 48, RAX);
+            a.st(RSP, 56, RAX);
+            a.call_iat(IMP_WIDETOMULTI);
+            a.alu_imm(0, RSP, 32);
+            a.mov_rr(RSI, RBX);
+            a.alu_imm(0, RSI, 3 << 19);
+            a.mov_rr(RDI, RBX);
+            a.alu_imm(0, RDI, 1 << 20); // characters go to the second half of the block
+            a.lea(R8, RBX, 8);
+            a.mov_imm(R9, 0);
+            a.bind(skip);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.cmp_imm(RAX, 32);
+            a.jcc(CC_E, skip_adv);
+            a.cmp_imm(RAX, 9);
+            a.jcc(CC_E, skip_adv);
+            a.test_rr(RAX);
+            a.jcc(CC_E, done_args);
+            a.jmp(tok);
+            a.bind(skip_adv);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(skip);
+            a.bind(tok);
+            a.st(R8, 0, RDI);
+            a.alu_imm(0, R8, 8);
+            a.alu_imm(0, R9, 1);
+            a.mov_imm(R10, 0);
+            a.bind(chr);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.test_rr(RAX);
+            a.jcc(CC_E, end_nul);
+            a.cmp_imm(R10, 0);
+            a.jcc(CC_NE, inq);
+            a.cmp_imm(RAX, 32);
+            a.jcc(CC_E, end_ws);
+            a.cmp_imm(RAX, 9);
+            a.jcc(CC_E, end_ws);
+            a.bind(inq);
+            a.cmp_imm(RAX, 34);
+            a.jcc(CC_NE, lit);
+            a.alu_imm(6, R10, 1);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(chr);
+            a.bind(lit);
+            a.mov8_mem(RDI, 0, RAX);
+            a.alu_imm(0, RDI, 1);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(chr);
+            a.bind(end_ws);
+            a.alu_imm(0, RSI, 1);
+            a.bind(end_nul);
+            a.mov_imm(RAX, 0);
+            a.mov8_mem(RDI, 0, RAX);
+            a.alu_imm(0, RDI, 1);
+            a.jmp(skip);
+            a.bind(done_args);
+            a.mov_imm(RAX, 0);
+            a.st(R8, 0, RAX);
+            a.alu_imm(0, R8, 8);
+            a.st(RBX, 0, R9);
+            a.mov_rr(RDI, R8); // the environment pointers follow argv
+            a.call_iat(IMP_GETENVIRONMENT);
+            a.mov_rr(RSI, RAX);
+            a.bind(eloop);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.test_rr(RAX);
+            a.jcc(CC_E, edone);
+            a.st(RDI, 0, RSI);
+            a.alu_imm(0, RDI, 8);
+            a.bind(scan);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.alu_imm(0, RSI, 1);
+            a.test_rr(RAX);
+            a.jcc(CC_NE, scan);
+            a.jmp(eloop);
+            a.bind(edone);
+            a.mov_imm(RAX, 0);
+            a.st(RDI, 0, RAX);
+            a.gaddr(RAX, 0);
+            a.st(RAX, G_USER as i32, RBX);
+        }
         a.mov_imm(RBP, 0); // the panic reporter walks Yerux frames up to this sentinel
     }
     if os == Os::Linux {
