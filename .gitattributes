@@ -1,0 +1,7 @@
+# Goldens and stdin fixtures can contain intentional CR or NUL bytes.
+/tests/expected/** -text
+/tests/*.stdin -text
+
+# Bash reads these lists without stripping carriage returns.
+/tests/fast.list text eol=lf
+/tests/*.args text eol=lf
