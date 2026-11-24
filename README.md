@@ -16,8 +16,15 @@ export PATH="$PWD/target/release:$PATH"
 yerux doctor                          # what this installation can do (C compiler, wine, both backends)
 ```
 
-A release tarball (`scripts/release.sh`) contains `install.sh`, which copies `yerux` to `~/.local/bin`; the standard
-library is built into the binary.
+Install the latest stable release on Linux x86-64 or AArch64:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yervix10/yerux/main/install.sh | sh
+```
+
+The installer verifies the archive's SHA-256 and puts `yerux` in `~/.local/bin`. The
+standard library is built into the binary. See [Releasing Yerux](docs/RELEASING.md)
+for pinned and offline installs.
 
 ```sh
 yerux run examples/01_lists.yx            # through C (needs cc)
