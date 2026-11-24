@@ -7,6 +7,11 @@ fails=0
 fail() { echo "FAIL: $*"; fails=$((fails+1)); }
 want="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
 
+[ -f VERSION ] || fail "VERSION file missing"
+[ "$(cat VERSION 2>/dev/null)" = "$want" ] || fail "VERSION and Cargo.toml disagree"
+grep -Fxq "## $want" CHANGELOG.md || fail "CHANGELOG is missing $want"
+[ "$("$Y" version)" = "yerux $want" ] || fail "version subcommand"
+
 [ "$("$Y" --version)" = "yerux $want" ] || fail "--version is '$("$Y" --version)', Cargo.toml says $want"
 [ "$("$Y" -V)" = "yerux $want" ] || fail "-V"
 
@@ -39,5 +44,39 @@ if [ -n "$tgz" ]; then
   # --prefix
   "$tmp"/yerux-*/install.sh --prefix "$tmp/pfx" >/dev/null 2>&1 || fail "install.sh --prefix"
   [ -x "$tmp/pfx/bin/yerux" ] || fail "--prefix target missing"
+  # Exercise the same download paths as GitHub Releases without a network server.
+  asset="$(basename "$tgz")"
+  mirror="$tmp/releases"
+  pinned="$mirror/download/v$want"
+  mkdir -p "$mirror/latest/download" "$pinned"
+  cp "$tmp/dist/VERSION" "$mirror/latest/download/VERSION"
+  cp "$tgz" "$tgz.sha256" "$pinned/"
+  [ "$(cat "$mirror/latest/download/VERSION")" = "$want" ] || fail "release VERSION asset"
+  mkdir "$tmp/download-home"
+  if ! HOME="$tmp/download-home" YERUX_RELEASE_BASE_URL="file://$mirror" sh < install.sh >"$tmp/download.log" 2>&1; then
+    cat "$tmp/download.log"
+    fail "install latest over file://"
+  fi
+  installed="$tmp/download-home/.local/bin/yerux"
+  [ "$("$installed" version)" = "yerux $want" ] || fail "downloaded binary version"
+  YERUX_RELEASE_BASE_URL="file://$mirror" YERUX_VERSION="v$want" \
+    sh -s -- --prefix "$tmp/pinned" < install.sh >/dev/null || fail "install pinned version"
+  [ -x "$tmp/pinned/bin/yerux" ] || fail "pinned binary missing"
+
+  cp "$pinned/$asset.sha256" "$tmp/original.sha256"
+  rm "$pinned/$asset.sha256"
+  if YERUX_URL="file://$pinned/$asset" sh -s -- --prefix "$tmp/unverified" < install.sh >"$tmp/nohash.log" 2>&1; then
+    fail "installed an archive without a checksum"
+  fi
+  [ ! -e "$tmp/unverified/bin/yerux" ] || fail "unverified binary was installed"
+
+  cp "$tmp/original.sha256" "$pinned/$asset.sha256"
+  printf 'tampered\n' >> "$pinned/$asset"
+  if HOME="$tmp/download-home" YERUX_RELEASE_BASE_URL="file://$mirror" sh < install.sh >"$tmp/tampered.log" 2>&1; then
+    fail "installed a tampered archive"
+  fi
+  grep -q 'checksum mismatch' "$tmp/tampered.log" || fail "no checksum mismatch diagnostic"
+  cmp -s "$installed" "$tmp/home/.local/bin/yerux" || fail "failed upgrade changed the installed binary"
+
 fi
 [ $fails -eq 0 ] && echo "dist: ok" || exit 1
