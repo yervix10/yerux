@@ -1,0 +1,32 @@
+// std.time: the free conversions as_micros and as_millis_float (zero, truncation, negatives, agreement
+// with the Duration methods)
+import std.time
+
+fn main() {
+  print(time.as_micros(time.zero()))
+  print(time.as_micros(time.nanos(999)))
+  print(time.as_micros(time.nanos(1000)))
+  print(time.as_micros(time.nanos(1500)))
+  print(time.as_micros(time.nanos(-999)))
+  print(time.as_micros(time.nanos(-1000)))
+  print(time.as_micros(time.nanos(-1500)))
+  print(time.as_micros(time.micros(7)))
+  print(time.as_micros(time.millis(1500)))
+  print(time.as_micros(time.seconds(2)))
+
+  print(time.as_millis_float(time.zero()))
+  print(time.as_millis_float(time.nanos(1)))
+  print(time.as_millis_float(time.nanos(999)))
+  print(time.as_millis_float(time.nanos(1500000)))
+  print(time.as_millis_float(time.nanos(-1500000)))
+  print(time.as_millis_float(time.micros(1500)))
+  print(time.as_millis_float(time.millis(2500)))
+  print(time.as_millis_float(time.seconds(1)))
+  print(time.as_millis_float(time.millis(-40)))
+
+  // the free forms and the methods agree
+  let d = time.millis(1500)
+  print(time.as_micros(d) == d.as_micros())
+  print(time.as_millis_float(d) == d.as_millis_float())
+  print(time.as_micros(time.zero()) == time.zero().as_micros())
+}
