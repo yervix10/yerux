@@ -1,0 +1,197 @@
+// The hub: one thread owns the membership state. Connection threads send it events; it answers each request by
+// sending lines to the output channel of the client that asked, or of every client a broadcast reaches.
+import protocol
+
+// A connected client; `name` is empty until a NICK succeeds.
+pub struct Member {
+  id: Int,
+  name: String,
+}
+
+pub struct Hub {
+  members: List<Member>,
+}
+
+// One line for one client; `close` also closes that client's connection after the line.
+pub struct Delivery {
+  to: Int,
+  text: String,
+  close: Bool,
+}
+
+pub fn new_hub() -> Hub {
+  return Hub { members: List<Member>.new() }
+}
+
+fn index_of(h: view Hub, id: Int) -> Int {
+  for i in 0..h.members.len() {
+    if h.members.at(i).id == id { return i }
+  }
+  return -1
+}
+
+// True when a client other than `except` has joined as `name`.
+fn taken(h: view Hub, name: view String, except: Int) -> Bool {
+  for i in 0..h.members.len() {
+    let m = h.members.at(i)
+    if m.id != except && m.name.eq(name) { return true }
+  }
+  return false
+}
+
+pub fn connect(h: mut Hub, id: Int) {
+  h.members.push(Member { id: id, name: String.new() })
+}
+
+pub fn disconnect(h: mut Hub, id: Int) {
+  let i = index_of(h, id)
+  if i >= 0 {
+    let _ = h.members.remove(i)
+  }
+}
+
+pub fn is_connected(h: view Hub, id: Int) -> Bool {
+  return index_of(h, id) >= 0
+}
+
+// The joined names in sorted order.
+pub fn joined_names(h: view Hub) -> List<String> {
+  var names = List<String>.new()
+  for i in 0..h.members.len() {
+    if !h.members.at(i).name.is_empty() { names.push(h.members.at(i).name.clone()) }
+  }
+  names.sort()
+  return names
+}
+
+fn deliver(to: Int, text: String) -> Delivery {
+  return Delivery { to: to, text: move text, close: false }
+}
+
+// Applies one parsed request from client `id` and returns the lines to send, in order.
+pub fn step(h: mut Hub, id: Int, cmd: protocol.Command) -> List<Delivery> {
+  var out = List<Delivery>.new()
+  let at = index_of(h, id)
+  if at < 0 { return out }
+  match cmd {
+    Nick(name) => {
+      if taken(h, name, id) {
+        out.push(deliver(id, protocol.err("name taken")))
+        return out
+      }
+      h.members.at(at).name = name.clone()
+      out.push(deliver(id, protocol.ok(name)))
+    }
+    Msg(text) => {
+      let me = h.members.at(at).name.clone()
+      if me.is_empty() {
+        out.push(deliver(id, protocol.err("join with NICK first")))
+        return out
+      }
+      for i in 0..h.members.len() {
+        let m = h.members.at(i)
+        if m.id != id && !m.name.is_empty() {
+          out.push(deliver(m.id, protocol.broadcast(me, text)))
+        }
+      }
+      out.push(deliver(id, protocol.ok("sent")))
+    }
+    Who => {
+      let names = joined_names(h)
+      if names.is_empty() {
+        out.push(deliver(id, protocol.ok("")))
+      } else {
+        out.push(deliver(id, protocol.ok(names.join(","))))
+      }
+    }
+    Quit => {
+      out.push(Delivery { to: id, text: protocol.ok("bye"), close: true })
+      disconnect(h, id)
+    }
+    Invalid(reason) => {
+      out.push(deliver(id, protocol.err(reason)))
+    }
+  }
+  return out
+}
+
+// What the hub thread sends to a connection thread.
+pub enum Out {
+  Line(String),
+  Close,
+}
+
+// Events from the connection threads, in the order they were produced.
+pub enum Event {
+  Connect(Int, Sender<Out>),
+  Line(Int, String),
+  Gone(Int),
+}
+
+pub struct Route {
+  id: Int,
+  out: Sender<Out>,
+}
+
+fn route_index(routes: view List<Route>, id: Int) -> Int {
+  for i in 0..routes.len() {
+    if routes.at(i).id == id { return i }
+  }
+  return -1
+}
+
+fn forget(routes: mut List<Route>, id: Int) {
+  let i = route_index(routes, id)
+  if i >= 0 {
+    let _ = routes.remove(i)
+  }
+}
+
+fn send_line(routes: view List<Route>, id: Int, text: String) {
+  let i = route_index(routes, id)
+  if i >= 0 { routes.at(i).out.send(Out.Line(move text)) }
+}
+
+fn send_close(routes: view List<Route>, id: Int) {
+  let i = route_index(routes, id)
+  if i >= 0 { routes.at(i).out.send(Out.Close) }
+}
+
+// Applies one event to the hub state and the routing table.
+fn dispatch(h: mut Hub, routes: mut List<Route>, ev: Event) {
+  match move ev {
+    Connect(id, out) => {
+      connect(h, id)
+      routes.push(Route { id: id, out: move out })
+    }
+    Line(id, text) => {
+      if !is_connected(h, id) { return }
+      let lines = step(h, id, protocol.parse(text))
+      for k in 0..lines.len() {
+        let d = lines.at(k)
+        send_line(routes, d.to, d.text.clone())
+        if d.close {
+          send_close(routes, d.to)
+          forget(routes, d.to)
+        }
+      }
+    }
+    Gone(id) => {
+      disconnect(h, id)
+      forget(routes, id)
+    }
+  }
+}
+
+// The hub thread body: runs until every event sender is gone.
+pub fn run(rx: Receiver<Event>) -> Int {
+  var h = new_hub()
+  var routes = List<Route>.new()
+  while true {
+    match rx.recv() {
+      Some(ev) => { dispatch(h, routes, move ev) }
+      None => { break }
+    }
+  }
+  return 0
+}

@@ -1,0 +1,98 @@
+// The TCP side of the chat: an accept loop on the calling thread, one thread per connection, and one hub thread.
+//
+// A connection thread reads lines and forwards them to the hub as events. Replies come back on its own output
+// channel; the socket read uses a short timeout so queued replies are written even while the client is idle.
+import hub
+import protocol
+import std.io
+import std.net
+
+const POLL_MS = 20
+
+fn is_timeout(e: view io.IoError) -> Bool {
+  return "{e}".contains("timed out")
+}
+
+// Writes every queued line. True when the hub asked for this connection to close.
+fn flush(out: view Receiver<hub.Out>, s: view net.TcpStream) -> Bool {
+  while true {
+    match out.recv_timeout(0) {
+      Some(msg) => {
+        match move msg {
+          Line(text) => {
+            var line = move text
+            line.push_str("\n")
+            let _ = net.write(s, line)
+          }
+          Close => { return true }
+        }
+      }
+      None => { return false }
+    }
+  }
+  return false
+}
+
+fn connection(stream: net.TcpStream, id: Int, events: Sender<hub.Event>) -> Int {
+  let (out_tx, out_rx) = Sender<hub.Out>.unbounded()
+  events.send(hub.Event.Connect(id, move out_tx))
+  let _ = net.set_read_timeout(stream, POLL_MS)
+  var lines = protocol.new_line_buf()
+  while true {
+    if flush(out_rx, stream) { return 0 }
+    match net.read(stream, 4096) {
+      Ok(chunk) => {
+        if chunk.is_empty() {
+          events.send(hub.Event.Gone(id))
+          return 0
+        }
+        lines.push(chunk)
+        while true {
+          match lines.next_line() {
+            Some(l) => { events.send(hub.Event.Line(id, move l)) }
+            None => { break }
+          }
+        }
+      }
+      Err(e) => {
+        if !is_timeout(e) {
+          events.send(hub.Event.Gone(id))
+          return 0
+        }
+      }
+    }
+  }
+  return 0
+}
+
+// Accepts exactly `max` connections; returns when every one of their threads has finished.
+fn accept_all(listener: view net.TcpListener, max: Int, events: Sender<hub.Event>) -> Int {
+  scope {
+    var threads = List<JoinHandle<Int>>.new()
+    for i in 0..max {
+      match net.accept(listener) {
+        Ok(stream) => {
+          let tx = events.clone()
+          let id = i + 1
+          threads.push(spawn move || connection(move stream, id, move tx))
+        }
+        Err(e) => {
+          io.eprintln("accept failed: {e}")
+          return 1
+        }
+      }
+    }
+  }
+  return 0
+}
+
+// Serves `max` connections on `listener`, then returns 0 once they have all closed.
+pub fn serve(listener: net.TcpListener, max: Int) -> Int {
+  let (events, inbox) = Sender<hub.Event>.unbounded()
+  var rc = 0
+  scope {
+    let hub_thread = spawn move || hub.run(move inbox)
+    rc = accept_all(listener, max, move events)
+  }
+  return rc
+}

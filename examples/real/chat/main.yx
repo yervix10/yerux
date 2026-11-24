@@ -1,0 +1,116 @@
+// chat: a line-based group chat over TCP (the protocol is in protocol.yx, the state machine in hub.yx).
+//
+//   chat serve PORT MAXCLIENTS   listen on 127.0.0.1:PORT; exit 0 once MAXCLIENTS connections have closed
+//   chat client HOST PORT        send each stdin line, print the replies; exit 0 at end of input or after QUIT
+// Exit status: 0 success; 1 a network failure; 2 a usage error (the message is on standard error).
+import protocol
+import server
+import std.env
+import std.io
+import std.net
+
+fn usage() -> Int {
+  io.eprintln("usage: chat serve PORT MAXCLIENTS | chat client HOST PORT")
+  return 2
+}
+
+fn serve_cli(port: Int, max: Int) -> Int {
+  let a = match net.address("127.0.0.1", port) {
+    Ok(x) => move x
+    Err(e) => {
+      io.eprintln("chat: bad address: {e}")
+      return 2
+    }
+  }
+  let listener = match net.listen(a) {
+    Ok(l) => move l
+    Err(e) => {
+      io.eprintln("chat: cannot listen on port {port}: {e}")
+      return 1
+    }
+  }
+  return server.serve(move listener, max)
+}
+
+// Sends one line and prints replies until a non-broadcast line arrives. False when the server closed first.
+fn exchange(s: view net.TcpStream, lb: mut protocol.LineBuf, line: view String) -> Bool {
+  var out = line.clone()
+  out.push_str("\n")
+  match net.write(s, out) {
+    Ok(_) => {}
+    Err(e) => {
+      io.eprintln("chat: write failed: {e}")
+      return false
+    }
+  }
+  while true {
+    match lb.next_line() {
+      Some(reply) => {
+        print(reply)
+        if !reply.starts_with("MSG ") { return true }
+      }
+      None => {
+        match net.read(s, 4096) {
+          Ok(chunk) => {
+            if chunk.is_empty() {
+              io.eprintln("chat: server closed the connection")
+              return false
+            }
+            lb.push(chunk)
+          }
+          Err(e) => {
+            io.eprintln("chat: read failed: {e}")
+            return false
+          }
+        }
+      }
+    }
+  }
+  return false
+}
+
+fn client_cli(host: String, port: Int) -> Int {
+  let a = net.SocketAddr { ip: String.from(host), port: port }
+  let s = match net.connect(a) {
+    Ok(x) => move x
+    Err(e) => {
+      io.eprintln("chat: cannot connect: {e}")
+      return 1
+    }
+  }
+  var lb = protocol.new_line_buf()
+  while true {
+    let next = match io.read_line() {
+      Ok(x) => move x
+      Err(e) => {
+        io.eprintln("chat: stdin: {e}")
+        return 1
+      }
+    }
+    match next {
+      Some(line) => {
+        if !exchange(s, lb, line) { return 1 }
+        if protocol.is_quit(line) { return 0 }
+      }
+      None => { return 0 }
+    }
+  }
+  return 0
+}
+
+fn main() {
+  let argv = env.args()
+  if argv.len() == 4 && argv.at(1).eq("serve") {
+    var port = 0
+    var max = 0
+    if !argv.at(2).parse_int(port) || port < 1 || port > 65535 { env.exit(usage()) }
+    if !argv.at(3).parse_int(max) || max < 1 { env.exit(usage()) }
+    env.exit(serve_cli(port, max))
+  }
+  if argv.len() == 4 && argv.at(1).eq("client") {
+    var port = 0
+    if !argv.at(3).parse_int(port) || port < 1 || port > 65535 { env.exit(usage()) }
+    env.exit(client_cli(String.from(argv.at(2)), port))
+  }
+  env.exit(usage())
+}

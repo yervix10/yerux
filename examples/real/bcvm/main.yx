@@ -1,0 +1,84 @@
+// bcvm: compiles an expression-and-statement program to stack bytecode, then runs it, disassembles it or debugs it.
+//
+//   bcvm run FILE      run the program; its print output goes to standard output
+//   bcvm dis FILE      disassemble the bytecode, one line per instruction: "NNNN MNEMONIC[ OPERAND]"
+//   bcvm debug FILE    step debugger; commands are read from standard input (see debugger.yx)
+//
+// The language is in lex_parse.yx, the code generator and disassembler in codegen.yx, the machine in vm.yx.
+// Exit status: 0 ok; 1 a runtime error (on standard error, "bcvm: runtime error at instruction N: MESSAGE", after the
+// output so far); 2 a usage, read or syntax error ("bcvm: FILE: byte N: MESSAGE") or unreadable input.
+import codegen
+import debugger
+import lex_parse
+import std.env
+import std.fs
+import std.io
+import vm
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("bcvm: {msg}")
+  io.exit(code)
+}
+
+// The compiled program of a source file, or the message for the first error.
+fn compile_file(path: view String) -> Result<codegen.Program, String> {
+  var src = String.new()
+  match fs.read_to_string(path) {
+    Ok(s) => { src = move s }
+    Err(e) => { return Err("cannot read {path}: {e}") }
+  }
+  let stmts = match lex_parse.parse(src) {
+    Ok(s) => move s
+    Err(e) => { return Err("{path}: {e}") }
+  }
+  match codegen.compile(stmts) {
+    Ok(p) => { return Ok(move p) }
+    Err(e) => { return Err("{path}: {e}") }
+  }
+}
+
+// Runs to HALT; returns the exit status.
+fn run_program(prog: codegen.Program) -> Int {
+  var machine = vm.load(move prog)
+  match vm.run(machine) {
+    Ok(_) => { return 0 }
+    Err(e) => {
+      io.eprintln(e)
+      return 1
+    }
+  }
+}
+
+fn main() {
+  let argv = match env.args_utf8() {
+    Ok(a) => move a
+    Err(e) => {
+      fail("arguments: {e}", 2)
+      return
+    }
+  }
+  if argv.len() != 3 {
+    fail("usage: bcvm run|dis|debug FILE", 2)
+    return
+  }
+  let cmd = String.from(argv.at(1))
+  if !(cmd.eq("run") || cmd.eq("dis") || cmd.eq("debug")) {
+    fail("usage: bcvm run|dis|debug FILE", 2)
+    return
+  }
+  let prog = match compile_file(argv.at(2)) {
+    Ok(p) => move p
+    Err(e) => {
+      fail(e, 2)
+      return
+    }
+  }
+  if cmd.eq("dis") {
+    let _ = io.write_stdout(codegen.disassemble(prog.code))
+    io.exit(0)
+  } else if cmd.eq("run") {
+    io.exit(run_program(move prog))
+  } else {
+    io.exit(debugger.session(move prog))
+  }
+}

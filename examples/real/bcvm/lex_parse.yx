@@ -1,0 +1,314 @@
+// bcvm: the source language, its lexer and its precedence-climbing parser.
+//
+//   program   := stmt*
+//   stmt      := "let" NAME "=" expr ";"
+//              | "print" expr ";"
+//              | "if" expr block [ "else" block ]        (an empty else block is the same as no else)
+//   block     := "{" stmt* "}"
+//   expr      := unary (BINOP unary)*                    precedence, low to high:
+//                "==" ; "<" ; "+" "-" ; "*" "/" "%"      (all left associative)
+//   unary     := "-" unary | primary
+//   primary   := INT | NAME | "(" expr ")"
+//
+// Integers are signed 64-bit literals (no sign in the literal; "-" is the unary operator). Comments are not part of
+// the language. Errors are "byte N: message", where N is the byte offset of the offending token (or the length of the
+// source at end of input).
+pub enum Kind {
+  Num,
+  Name,
+  Let,
+  Print,
+  If,
+  Else,
+  Sym,
+  Eof,
+}
+
+pub struct Token {
+  kind: Kind,
+  text: String,
+  value: Int,
+  pos: Int,
+}
+
+pub enum BinOp {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod,
+  Lt,
+  Eq,
+}
+
+pub enum Expr {
+  Lit(Int),
+  Var(String, Int),
+  Neg(Box<Expr>),
+  Bin(BinOp, Box<Expr>, Box<Expr>),
+}
+
+pub enum Stmt {
+  Let(String, Int, Expr),
+  Print(Expr),
+  If(Expr, List<Stmt>, List<Stmt>),
+}
+
+fn is_digit(c: Int) -> Bool {
+  return c >= 48 && c <= 57
+}
+
+fn is_name_start(c: Int) -> Bool {
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn is_name_char(c: Int) -> Bool {
+  return is_name_start(c) || is_digit(c)
+}
+
+// The one-byte operators and punctuation: + - * / % ( ) { } ; < =
+fn is_single_sym(c: Int) -> Bool {
+  return c == 43 || c == 45 || c == 42 || c == 47 || c == 37 || c == 40 || c == 41 || c == 123 || c == 125 || c == 59 || c == 60 || c == 61
+}
+
+fn token(kind: Kind, text: String, value: Int, pos: Int) -> Token {
+  return Token { kind: kind, text: move text, value: value, pos: pos }
+}
+
+// The tokens of `src`, ending with an Eof token; the first bad byte is the error.
+pub fn lex(src: view String) -> Result<List<Token>, String> {
+  var toks = List<Token>.new()
+  let n = src.len()
+  var i = 0
+  while i < n {
+    let c = src.byte(i)
+    if c == 32 || c == 9 || c == 10 || c == 13 {
+      i = i + 1
+      continue
+    }
+    let start = i
+    if is_digit(c) {
+      while i < n && is_digit(src.byte(i)) {
+        i = i + 1
+      }
+      let text = src.slice(start, i)
+      var v = 0
+      if !text.parse_int(v) {
+        return Err("byte {start}: integer literal too large")
+      }
+      toks.push(token(Kind.Num, move text, v, start))
+    } else if is_name_start(c) {
+      while i < n && is_name_char(src.byte(i)) {
+        i = i + 1
+      }
+      let text = src.slice(start, i)
+      if text.eq("let") {
+        toks.push(token(Kind.Let, move text, 0, start))
+      } else if text.eq("print") {
+        toks.push(token(Kind.Print, move text, 0, start))
+      } else if text.eq("if") {
+        toks.push(token(Kind.If, move text, 0, start))
+      } else if text.eq("else") {
+        toks.push(token(Kind.Else, move text, 0, start))
+      } else {
+        toks.push(token(Kind.Name, move text, 0, start))
+      }
+    } else if c == 61 && i + 1 < n && src.byte(i + 1) == 61 {
+      toks.push(token(Kind.Sym, src.slice(start, start + 2), 0, start))
+      i = i + 2
+    } else if is_single_sym(c) {
+      toks.push(token(Kind.Sym, src.slice(start, start + 1), 0, start))
+      i = i + 1
+    } else {
+      return Err("byte {start}: unexpected byte {c}")
+    }
+  }
+  toks.push(token(Kind.Eof, String.new(), 0, n))
+  return Ok(move toks)
+}
+
+struct Parser {
+  toks: List<Token>,
+  pos: Int,
+}
+
+fn kind_at(p: view Parser) -> Kind {
+  return p.toks.at(p.pos).kind
+}
+
+fn is(p: view Parser, k: Kind) -> Bool {
+  let cur = kind_at(p)
+  return cur == k
+}
+
+fn here(p: view Parser) -> Int {
+  return p.toks.at(p.pos).pos
+}
+
+// The current token as the error messages show it.
+fn describe(p: view Parser) -> String {
+  if is(p, Kind.Eof) {
+    return "end of input"
+  }
+  return "'{p.toks.at(p.pos).text}'"
+}
+
+fn is_sym(p: view Parser, s: view String) -> Bool {
+  return is(p, Kind.Sym) && p.toks.at(p.pos).text.eq(s)
+}
+
+fn expect_sym(p: mut Parser, s: view String) -> Result<Bool, String> {
+  if !is_sym(p, s) {
+    return Err("byte {here(p)}: expected '{s}' but found {describe(p)}")
+  }
+  p.pos = p.pos + 1
+  return Ok(true)
+}
+
+fn binop_at(p: view Parser) -> Option<BinOp> {
+  if !is(p, Kind.Sym) {
+    return None
+  }
+  if p.toks.at(p.pos).text.eq("+") {
+    return Some(BinOp.Add)
+  } else if p.toks.at(p.pos).text.eq("-") {
+    return Some(BinOp.Sub)
+  } else if p.toks.at(p.pos).text.eq("*") {
+    return Some(BinOp.Mul)
+  } else if p.toks.at(p.pos).text.eq("/") {
+    return Some(BinOp.Div)
+  } else if p.toks.at(p.pos).text.eq("%") {
+    return Some(BinOp.Mod)
+  } else if p.toks.at(p.pos).text.eq("<") {
+    return Some(BinOp.Lt)
+  } else if p.toks.at(p.pos).text.eq("==") {
+    return Some(BinOp.Eq)
+  }
+  return None
+}
+
+fn prec_of(op: BinOp) -> Int {
+  match op {
+    Eq => { return 1 }
+    Lt => { return 2 }
+    Add => { return 3 }
+    Sub => { return 3 }
+    Mul => { return 4 }
+    Div => { return 4 }
+    Mod => { return 4 }
+  }
+}
+
+fn parse_primary(p: mut Parser) -> Result<Expr, String> {
+  if is(p, Kind.Num) {
+    let v = p.toks.at(p.pos).value
+    p.pos = p.pos + 1
+    return Ok(Expr.Lit(v))
+  }
+  if is(p, Kind.Name) {
+    let name = String.from(p.toks.at(p.pos).text)
+    let at = here(p)
+    p.pos = p.pos + 1
+    return Ok(Expr.Var(move name, at))
+  }
+  if is_sym(p, "(") {
+    p.pos = p.pos + 1
+    let e = parse_expr(p, 1)?
+    expect_sym(p, ")")?
+    return Ok(move e)
+  }
+  return Err("byte {here(p)}: expected an expression but found {describe(p)}")
+}
+
+fn parse_unary(p: mut Parser) -> Result<Expr, String> {
+  if is_sym(p, "-") {
+    p.pos = p.pos + 1
+    let e = parse_unary(p)?
+    return Ok(Expr.Neg(Box.new(move e)))
+  }
+  return parse_primary(p)
+}
+
+// Precedence climbing: operators of precedence at least `min` are consumed; the right operand is read at one level
+// higher, which makes every binary operator left associative.
+fn parse_expr(p: mut Parser, min: Int) -> Result<Expr, String> {
+  var lhs = parse_unary(p)?
+  while true {
+    match binop_at(p) {
+      Some(op) => {
+        let prec = prec_of(op)
+        if prec < min {
+          break
+        }
+        p.pos = p.pos + 1
+        let rhs = parse_expr(p, prec + 1)?
+        lhs = Expr.Bin(op, Box.new(move lhs), Box.new(move rhs))
+      }
+      None => { break }
+    }
+  }
+  return Ok(move lhs)
+}
+
+fn parse_block(p: mut Parser) -> Result<List<Stmt>, String> {
+  expect_sym(p, "{{")?
+  var out = List<Stmt>.new()
+  while !is_sym(p, "}}") {
+    if is(p, Kind.Eof) {
+      return Err("byte {here(p)}: expected '}}' but found end of input")
+    }
+    let s = parse_stmt(p)?
+    out.push(move s)
+  }
+  p.pos = p.pos + 1
+  return Ok(move out)
+}
+
+fn parse_stmt(p: mut Parser) -> Result<Stmt, String> {
+  match kind_at(p) {
+    Let => {
+      p.pos = p.pos + 1
+      if !is(p, Kind.Name) {
+        return Err("byte {here(p)}: expected a name but found {describe(p)}")
+      }
+      let name = String.from(p.toks.at(p.pos).text)
+      let at = here(p)
+      p.pos = p.pos + 1
+      expect_sym(p, "=")?
+      let e = parse_expr(p, 1)?
+      expect_sym(p, ";")?
+      return Ok(Stmt.Let(move name, at, move e))
+    }
+    Print => {
+      p.pos = p.pos + 1
+      let e = parse_expr(p, 1)?
+      expect_sym(p, ";")?
+      return Ok(Stmt.Print(move e))
+    }
+    If => {
+      p.pos = p.pos + 1
+      let c = parse_expr(p, 1)?
+      let then_part = parse_block(p)?
+      var else_part = List<Stmt>.new()
+      if is(p, Kind.Else) {
+        p.pos = p.pos + 1
+        else_part = parse_block(p)?
+      }
+      return Ok(Stmt.If(move c, move then_part, move else_part))
+    }
+    _ => {}
+  }
+  return Err("byte {here(p)}: expected a statement but found {describe(p)}")
+}
+
+// The statements of a whole program.
+pub fn parse(src: view String) -> Result<List<Stmt>, String> {
+  let toks = lex(src)?
+  var p = Parser { toks: move toks, pos: 0 }
+  var out = List<Stmt>.new()
+  while !is(p, Kind.Eof) {
+    let s = parse_stmt(p)?
+    out.push(move s)
+  }
+  return Ok(move out)
+}

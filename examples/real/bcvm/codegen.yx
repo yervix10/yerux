@@ -1,0 +1,194 @@
+// bcvm: AST -> stack bytecode, and the disassembler.
+//
+// The code is a List<Op>; an instruction is its index in that list. Jump targets are absolute instruction indices.
+// Every variable is a slot: slots are numbered in the order of their `let` statements (a shadowing `let` gets a new
+// slot), and `names` gives the source name of each slot. Every program ends with HALT.
+//
+// Code shape:
+//   let x = e;        e ; STORE slot(x)
+//   print e;          e ; PRINT
+//   if c { A } else { B }
+//                     c ; JUMPIFZERO Lelse ; A ; JUMP Lend ; Lelse: B ; Lend:
+//   if c { A }        c ; JUMPIFZERO Lend ; A ; Lend:      (an empty else block is the same as none)
+//   e1 op e2          e1 ; e2 ; OP        (OP: ADD SUB MUL DIV MOD LT EQ; NEG for unary -)
+//   name              LOAD slot(name)     (the innermost visible `let` of that name)
+//   integer           PUSH n
+//
+// Disassembly: one line per instruction, "NNNN MNEMONIC[ OPERAND]" with the index as four digits.
+import std.fmt
+import lex_parse
+
+pub enum Op {
+  Push(Int),
+  Load(Int),
+  Store(Int),
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod,
+  Neg,
+  Lt,
+  Eq,
+  Print,
+  JumpIfZero(Int),
+  Jump(Int),
+  Halt,
+}
+
+pub struct Program {
+  code: List<Op>,
+  names: List<String>,
+}
+
+// The names visible at the current point of the source: `names[i]` is bound to slot `slots[i]`.
+struct Scope {
+  names: List<String>,
+  slots: List<Int>,
+}
+
+// The mnemonic and operand of one instruction, without its index.
+pub fn op_text(op: Op) -> String {
+  match op {
+    Push(n) => { return "PUSH {n}" }
+    Load(s) => { return "LOAD {s}" }
+    Store(s) => { return "STORE {s}" }
+    Add => { return "ADD" }
+    Sub => { return "SUB" }
+    Mul => { return "MUL" }
+    Div => { return "DIV" }
+    Mod => { return "MOD" }
+    Neg => { return "NEG" }
+    Lt => { return "LT" }
+    Eq => { return "EQ" }
+    Print => { return "PRINT" }
+    JumpIfZero(t) => { return "JUMPIFZERO {t}" }
+    Jump(t) => { return "JUMP {t}" }
+    Halt => { return "HALT" }
+  }
+}
+
+// The index of an instruction as four digits (wider when the index needs more).
+pub fn index_text(i: Int) -> String {
+  return fmt.pad_left(fmt.format_int(i, 10), 4, '0')
+}
+
+// One line of the disassembly.
+pub fn line_text(i: Int, op: Op) -> String {
+  return "{index_text(i)} {op_text(op)}"
+}
+
+pub fn disassemble(code: view List<Op>) -> String {
+  var out = String.new()
+  for i in 0..code.len() {
+    out.push_str(line_text(i, code.get(i)))
+    out.push_str("\n")
+  }
+  return out
+}
+
+fn emit(prog: mut Program, op: Op) {
+  prog.code.push(op)
+}
+
+// The slot of the innermost visible `let` of `name`, or -1.
+fn lookup(sc: view Scope, name: view String) -> Int {
+  var i = sc.names.len() - 1
+  while i >= 0 {
+    if sc.names.at(i).eq(name) {
+      return sc.slots.get(i)
+    }
+    i = i - 1
+  }
+  return -1
+}
+
+fn gen_expr(prog: mut Program, sc: view Scope, e: view lex_parse.Expr) -> Result<Bool, String> {
+  match e {
+    Lit(n) => {
+      emit(prog, Op.Push(n))
+    }
+    Var(name, pos) => {
+      let slot = lookup(sc, name)
+      if slot < 0 {
+        return Err("byte {pos}: undefined variable '{name}'")
+      }
+      emit(prog, Op.Load(slot))
+    }
+    Neg(x) => {
+      gen_expr(prog, sc, *x)?
+      emit(prog, Op.Neg)
+    }
+    Bin(op, l, r) => {
+      gen_expr(prog, sc, *l)?
+      gen_expr(prog, sc, *r)?
+      emit(prog, binop_instr(op))
+    }
+  }
+  return Ok(true)
+}
+
+fn binop_instr(op: lex_parse.BinOp) -> Op {
+  match op {
+    Add => { return Op.Add }
+    Sub => { return Op.Sub }
+    Mul => { return Op.Mul }
+    Div => { return Op.Div }
+    Mod => { return Op.Mod }
+    Lt => { return Op.Lt }
+    Eq => { return Op.Eq }
+  }
+}
+
+fn gen_stmt(prog: mut Program, sc: mut Scope, s: view lex_parse.Stmt) -> Result<Bool, String> {
+  match s {
+    Let(name, _, e) => {
+      gen_expr(prog, sc, e)?
+      let slot = prog.names.len()
+      prog.names.push(String.from(name))
+      sc.names.push(String.from(name))
+      sc.slots.push(slot)
+      emit(prog, Op.Store(slot))
+    }
+    Print(e) => {
+      gen_expr(prog, sc, e)?
+      emit(prog, Op.Print)
+    }
+    If(c, then_part, else_part) => {
+      gen_expr(prog, sc, c)?
+      let jz = prog.code.len()
+      emit(prog, Op.JumpIfZero(0))
+      gen_block(prog, sc, then_part)?
+      if else_part.is_empty() {
+        prog.code.set(jz, Op.JumpIfZero(prog.code.len()))
+      } else {
+        let jmp = prog.code.len()
+        emit(prog, Op.Jump(0))
+        prog.code.set(jz, Op.JumpIfZero(prog.code.len()))
+        gen_block(prog, sc, else_part)?
+        prog.code.set(jmp, Op.Jump(prog.code.len()))
+      }
+    }
+  }
+  return Ok(true)
+}
+
+// A block: the `let` names it declares are not visible after it (their slots stay allocated).
+fn gen_block(prog: mut Program, sc: mut Scope, stmts: view List<lex_parse.Stmt>) -> Result<Bool, String> {
+  let mark = sc.names.len()
+  for i in 0..stmts.len() {
+    gen_stmt(prog, sc, stmts.at(i))?
+  }
+  sc.names.truncate(mark)
+  sc.slots.truncate(mark)
+  return Ok(true)
+}
+
+// The bytecode of a parsed program. Undefined variables are the only compile error.
+pub fn compile(stmts: view List<lex_parse.Stmt>) -> Result<Program, String> {
+  var prog = Program { code: List<Op>.new(), names: List<String>.new() }
+  var sc = Scope { names: List<String>.new(), slots: List<Int>.new() }
+  gen_block(prog, sc, stmts)?
+  emit(prog, Op.Halt)
+  return Ok(move prog)
+}

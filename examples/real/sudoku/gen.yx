@@ -1,0 +1,122 @@
+// Puzzle generator: a seeded 64-bit linear congruential generator, a random full grid, and removal of cells that keeps
+// the solution unique.
+//
+// The generator is the LCG state s = (s * 6364136223846793005 + 1442695040888963407) mod 2^64, seeded with SEED. A draw
+// advances the state and returns its top 32 bits, s / 2^32. Shuffles are Fisher-Yates from the last index down:
+// for i = n-1 down to 1, j = draw % (i+1), swap xs[i] and xs[j].
+//
+// puzzle(SEED, HOLES), in order:
+//   attempt (at most MAX_ATTEMPTS):
+//     1. fill: a depth-first search on an empty board. A node picks the most constrained empty cell (first in row
+//        order on ties, as in solve.yx); a node with an empty cell that has no candidate fails without drawing. Otherwise
+//        the node shuffles 1..9 (8 draws) and tries the digits in that order, skipping those that do not fit.
+//     2. order: a shuffle of the cell indices 0..80.
+//     3. removal: each cell in that order is emptied, unless the puzzle would no longer have exactly one solution;
+//        stop when HOLES cells are empty. HOLES reached: the puzzle. Otherwise the next attempt.
+import grid
+import solve
+
+pub const MAX_ATTEMPTS: Int = 40
+
+pub struct Rng {
+  state: UInt64,
+}
+
+pub fn new_rng(seed: UInt64) -> Rng {
+  return Rng { state: seed }
+}
+
+// The next draw: the top 32 bits of the advanced state.
+pub fn draw(r: mut Rng) -> Int {
+  r.state = r.state.wrapping_mul(6364136223846793005u64).wrapping_add(1442695040888963407u64)
+  return (r.state / 4294967296u64).to_int()
+}
+
+// Shuffles xs in place (Fisher-Yates, one draw per index from n-1 down to 1).
+pub fn shuffle(r: mut Rng, xs: mut List<Int>) {
+  var i = xs.len() - 1
+  while i > 0 {
+    let j = draw(r) % (i + 1)
+    let t = xs.at(i)
+    xs.set(i, xs.at(j))
+    xs.set(j, t)
+    i = i - 1
+  }
+}
+
+// Fills every empty cell of b with a random solution; false when no completion exists (never for an empty board).
+fn fill(b: mut solve.Board, r: mut Rng) -> Bool {
+  var best = -1
+  var bestn = 10
+  for i in 0..81 {
+    if b.cells.at(i) == 0 {
+      let n = solve.ncands(b, i)
+      if n == 0 {
+        return false
+      }
+      if n < bestn {
+        bestn = n
+        best = i
+      }
+    }
+  }
+  if best < 0 {
+    return true
+  }
+  var perm = List<Int>.new()
+  for d in 1..10 {
+    perm.push(d)
+  }
+  shuffle(r, perm)
+  for k in 0..9 {
+    let d = perm.at(k)
+    if solve.can(b, best, d) {
+      solve.place(b, best, d)
+      if fill(b, r) {
+        return true
+      }
+      solve.unplace(b, best, d)
+    }
+  }
+  return false
+}
+
+// The puzzle cells (0 = empty) with exactly `holes` empty cells and a unique solution; or the reason it failed.
+pub fn puzzle(seed: UInt64, holes: Int) -> Result<List<Int>, String> {
+  var r = new_rng(seed)
+  var attempt = 0
+  while attempt < MAX_ATTEMPTS {
+    attempt = attempt + 1
+    var empty = List<Int>.new()
+    for _ in 0..81 {
+      empty.push(0)
+    }
+    var b = solve.board_of(empty)
+    if !fill(b, r) {
+      return Err("internal error: no full grid")
+    }
+    var order = List<Int>.new()
+    for i in 0..81 {
+      order.push(i)
+    }
+    shuffle(r, order)
+    var removed = 0
+    var k = 0
+    while k < 81 && removed < holes {
+      let i = order.at(k)
+      let d = b.cells.at(i)
+      solve.unplace(b, i, d)
+      var first = List<Int>.new()
+      if solve.search(b, 2, first) == 1 {
+        removed = removed + 1
+      } else {
+        solve.place(b, i, d)
+      }
+      k = k + 1
+    }
+    if removed == holes {
+      return Ok(b.cells.copy())
+    }
+  }
+  return Err("gave up after {MAX_ATTEMPTS} attempts")
+}

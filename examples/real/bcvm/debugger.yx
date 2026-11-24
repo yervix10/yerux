@@ -1,0 +1,190 @@
+// bcvm: the interactive step debugger. Commands are read from standard input, one per line; the prompt "(bcvm) " is
+// written before each read. Output goes to standard output; a runtime error goes to standard error.
+//
+//   s            execute one instruction (its line is printed first: "> NNNN MNEMONIC OPERAND")
+//   c            continue until HALT, a runtime error or a breakpoint (a breakpoint is checked before its
+//                instruction runs, so `c` at a breakpoint moves on)
+//   b N          set a breakpoint at instruction N
+//   p            print the operand stack (bottom first) and the variables
+//   d            disassemble; ">" marks the next instruction, "*" a breakpoint
+//   q            quit
+//   h            list the commands
+// End of input quits. Exit status: 0 after q, end of input or HALT; 1 after a runtime error; 2 if commands cannot be
+// read. A bad command is reported on standard output and the session goes on.
+import codegen
+import std.io
+import vm
+
+struct Session {
+  machine: vm.Vm,
+  halted: Bool,
+  breaks: List<Int>,
+  status: Int,
+}
+
+fn is_breakpoint(s: view Session, i: Int) -> Bool {
+  for k in 0..s.breaks.len() {
+    if s.breaks.get(k) == i {
+      return true
+    }
+  }
+  return false
+}
+
+// Executes one instruction. Returns true when the session must end (a runtime error).
+fn exec(s: mut Session) -> Bool {
+  if s.halted {
+    print("program has finished")
+    return false
+  }
+  let pc = s.machine.pc
+  print("> {codegen.line_text(pc, s.machine.prog.code.get(pc))}")
+  match vm.step(s.machine) {
+    Next => { return false }
+    Halt => {
+      s.halted = true
+      print("halted")
+      return false
+    }
+    Fault(msg) => {
+      io.eprintln(vm.fault_text(s.machine, msg))
+      s.status = 1
+      return true
+    }
+  }
+}
+
+fn show_state(s: view Session) {
+  var stack = String.from("stack:")
+  if s.machine.stack.is_empty() {
+    stack.push_str(" (empty)")
+  }
+  for i in 0..s.machine.stack.len() {
+    stack.push_str(" {s.machine.stack.get(i)}")
+  }
+  print(stack)
+  var vars = String.from("vars:")
+  if s.machine.prog.names.is_empty() {
+    vars.push_str(" (none)")
+  }
+  for i in 0..s.machine.prog.names.len() {
+    vars.push_str(" {s.machine.prog.names.at(i)}={s.machine.vars.get(i)}")
+  }
+  print(vars)
+}
+
+fn show_code(s: view Session) {
+  for i in 0..s.machine.prog.code.len() {
+    var mark = "  "
+    if i == s.machine.pc {
+      mark = "> "
+    } else if is_breakpoint(s, i) {
+      mark = "* "
+    }
+    print("{mark}{codegen.line_text(i, s.machine.prog.code.get(i))}")
+  }
+}
+
+// The words of a command line.
+fn words(line: view String) -> List<String> {
+  let t = line.trim()
+  let parts = t.split(" ")
+  var out = List<String>.new()
+  for i in 0..parts.len() {
+    if !parts.at(i).is_empty() {
+      out.push(String.from(parts.at(i)))
+    }
+  }
+  return out
+}
+
+// Runs one command line. Returns true when the session must end.
+fn command(s: mut Session, line: view String) -> Bool {
+  let w = words(line)
+  if w.is_empty() {
+    return false
+  }
+  let cmd = String.from(w.at(0))
+  if cmd.eq("s") {
+    return exec(s)
+  }
+  if cmd.eq("c") {
+    if s.halted {
+      print("program has finished")
+      return false
+    }
+    var first = true
+    while true {
+      if !first && is_breakpoint(s, s.machine.pc) {
+        print("breakpoint at {s.machine.pc}")
+        return false
+      }
+      first = false
+      if exec(s) {
+        return true
+      }
+      if s.halted {
+        return false
+      }
+    }
+    return false
+  }
+  if cmd.eq("b") {
+    var n = 0
+    if w.len() != 2 || !w.at(1).parse_int(n) {
+      print("usage: b N")
+      return false
+    }
+    if n < 0 || n >= s.machine.prog.code.len() {
+      print("no instruction {n}")
+      return false
+    }
+    if !is_breakpoint(s, n) {
+      s.breaks.push(n)
+    }
+    print("breakpoint set at {n}")
+    return false
+  }
+  if cmd.eq("p") {
+    show_state(s)
+    return false
+  }
+  if cmd.eq("d") {
+    show_code(s)
+    return false
+  }
+  if cmd.eq("q") {
+    return true
+  }
+  if cmd.eq("h") {
+    print("commands: s (step) c (continue) b N (breakpoint) p (state) d (disassemble) q (quit)")
+    return false
+  }
+  print("unknown command '{cmd}'; h lists the commands")
+  return false
+}
+
+// Runs a debugging session on `prog`; returns the exit status.
+pub fn session(prog: codegen.Program) -> Int {
+  var s = Session { machine: vm.load(move prog), halted: false, breaks: List<Int>.new(), status: 0 }
+  while true {
+    let _ = io.write_stdout("(bcvm) ")
+    match io.read_line() {
+      Ok(line) => {
+        match line {
+          Some(text) => {
+            if command(s, text) {
+              return s.status
+            }
+          }
+          None => { return 0 }
+        }
+      }
+      Err(e) => {
+        io.eprintln("bcvm: cannot read commands: {e}")
+        return 2
+      }
+    }
+  }
+  return 0
+}
