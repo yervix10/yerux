@@ -7854,7 +7854,7 @@ impl<'a> Checker<'a> {
                 let (got, want) = (self.tn(t), self.tn(pat));
                 let d = match (pat, prior) {
                     (Ty::Param(_), Some(b)) => diag(
-                        format!("argument {} of '{}' is {}, but {} was already fixed to {} (by the type arguments or an earlier argument)", k + 1, g.name, got, want, self.tn(b)),
+                        format!("argument {} of '{}' is {}, but {} was already fixed to {} by an earlier argument", k + 1, g.name, got, want, self.tn(b)),
                         arg.pos,
                     )
                     .note(format!("every parameter declared as `{}` must receive the same type", want)),

@@ -11,7 +11,7 @@ error: 'plain' takes no type arguments
   |         ^^^^^^^^^^^^^
   = it is not a generic function: remove the `<..>`
 
-error: argument 1 of 'id' is Int, but T was already fixed to Bool (by the type arguments or an earlier argument)
+error: argument 1 of 'id' is Int, but T was already fixed to Bool by an earlier argument
  --> tests/e1518_explicit_type_args.yx:6:18
   |
 6 |   print(id<Bool>(1))
