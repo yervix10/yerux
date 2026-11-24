@@ -1,0 +1,27 @@
+import std.io
+
+fn main() {
+    let path = io.cpath("name").unwrap()
+    print(path.byte(4))
+    print(io.cstr(path.raw_addr()))
+    var embedded_nul = String.from("a")
+    embedded_nul.push_byte(0)
+    embedded_nul.push_byte(98)
+    print(io.cpath(embedded_nul).is_err())
+
+    let kernel_error = io.os_error("open", "name", 2)
+    print(kernel_error.code)
+    let custom = io.custom_error(io.IoErrorKind.InvalidData, "bad data")
+    print(custom.message)
+
+    var invalid = String.new()
+    invalid.push_byte(255)
+    invalid.push_byte(0)
+    print(io.valid_utf8(invalid))
+    print(io.cstr(invalid.raw_addr()))
+    match io.cstr_utf8(invalid.raw_addr(), "bad data") {
+        Ok(_) => { print(false) }
+        Err(error) => { print(error.kind == io.IoErrorKind.InvalidData) }
+    }
+    print(io.checked_text(move invalid).is_err())
+}

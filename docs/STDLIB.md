@@ -530,10 +530,16 @@ struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
 ## Text (Immutable Literal)
 
 - `Text` literals: `"hello"` (no `{expr}` inside).
-- Implicitly copied to a hidden `String` when passed to `view String` parameter.
+- A literal passed to a `view String` parameter becomes a temporary owned string. For a value
+  already typed as `Text`, pass `String.from(value)` to such a parameter.
 - Implements `Equal`, `Ordered`, `Show`, `Hash`, `Copy`.
 - `String.from(text)` creates an owned copy.
 - In interpolation, a literal without `{expr}` is `Text`; with `{expr}` it's `String`.
+- An `extern "C"` parameter declared as `Text` receives a pointer to NUL-terminated UTF-8 bytes
+  for either a literal or a typed `Text` value. C string operations stop at the first NUL.
+  `String` has no implicit conversion to this ABI. For APIs accepting a raw buffer, declare
+  the pointer as `Ptr<T>` and follow the foreign API's length and lifetime requirements.
+  See [SPEC.md](SPEC.md#71-declarations-and-calls).
 
 ---
 
@@ -625,7 +631,13 @@ fn main() {
 
 ## Standard-library modules (`src/std/*.yx`, embedded in the compiler)
 
-`import std.text` makes the functions available as `text.name(..)` (the alias is the last path segment). Every module is written in Yerux; there are no hidden intrinsics. Rules that follow from the language and apply to every call below:
+`import std.text` makes the functions available as `text.name(..)` (the alias is the last path segment). A module-level function is called through that alias, with its arguments supplied explicitly
+(`rand.next(rng)`, `path.join(a, b)`). Methods use a receiver (`s.len()`, `reader.read_line()`) and
+are defined by the receiver's type or a trait. Importing a module does not make its free functions
+available as methods on their first argument. Modules can provide constructors as free functions
+(`rand.new(seed)`); the language also provides type-qualified constructors such as `String.from`.
+
+Rules that follow from the language and apply to the calls below:
 
 - Arguments documented as `s: view String` may be variables, places such as `l.at(i)`, literals (`"abc"`) or call results (`out.push_str(fmt.pad_left(s, 5, ' '))`): a temporary is kept in a hidden variable for the call and dropped right after it.
 - Results are fresh owned values (`String`, `List`); the arguments are only borrowed (unless noted).
@@ -649,7 +661,7 @@ fn main() {
 | `std.sync` | `once()`, `barrier(n)`, `semaphore(n)` (spinning coordination primitives) | [STDLIB_SYNC.md](STDLIB_SYNC.md) |
 | `std.log` | `debug`/`info`/`warn`/`error`: `[LEVEL] message` on stderr | [STDLIB_IO.md](STDLIB_IO.md) |
 | `std.kv` | persistent string/int/bool store in one file (atomic updates, single writer) | [STDLIB_KV.md](STDLIB_KV.md) |
-| `std.compress` | run-length encoding (`compress`/`decompress`), **not** gzip/deflate | [STDLIB_COMPRESS.md](STDLIB_COMPRESS.md) |
+| `std.compress` | byte-oriented run-length encoding (`compress`/`decompress`) | [STDLIB_COMPRESS.md](STDLIB_COMPRESS.md) |
 
 ### `std.text`
 | Function | Notes |

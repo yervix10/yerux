@@ -1,0 +1,8 @@
+extern "C" {
+    fn strlen(value: Text) -> UInt64
+}
+
+fn main() {
+    let owned = String.from("abc")
+    unsafe { print(strlen(move owned)) }
+}

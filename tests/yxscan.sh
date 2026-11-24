@@ -11,7 +11,11 @@ trap 'rm -rf "$T"' EXIT
 "$YERUX" build "$SOURCE" --native -o "$T/scan-native"
 
 cd "$T"
-mkdir -p tree/sub
+mkdir -p tree/sub invalid-tree utf8-tree
+raw_name=$(printf '\377')
+printf 'valid\n' >'invalid-tree/?'
+printf 'invalid\n' >"invalid-tree/$raw_name"
+printf 'valid\n' >'utf8-tree/café'
 printf 'Alpha beta\nzero\nALPHA\n' >tree/a.txt
 printf 'needle ALPHA\r\nlastalpha' >tree/sub/b.txt
 ln -s .. tree/sub/loop
@@ -68,6 +72,10 @@ check no_match 1 /dev/null $'0\n' '' grep -c yes dash
 check symlink_argument 0 /dev/null $'Alpha beta\n' '' grep Alpha tree/link.txt
 check unreadable_path 2 /dev/null $'dash:no\r\n' $'yxscan: missing: lstat \'missing\': No such file or directory (os error 2)\n' grep no missing dash
 check directory_requires_flag 2 /dev/null '' $'yxscan: tree: directory requires -r\n' wc tree
+check utf8_path 0 /dev/null $'1 1 6 utf8-tree/café\n' '' wc utf8-tree/café
+check utf8_dir_entry 0 /dev/null $'1 1 6 utf8-tree/café\n' '' wc -r utf8-tree
+check invalid_argv 2 /dev/null '' $'yxscan: command-line argument is not valid UTF-8\n' wc "invalid-tree/$raw_name"
+check invalid_dir_entry 2 /dev/null '' $'yxscan: invalid-tree: directory entry is not valid UTF-8\n' wc -r invalid-tree
 check child_arguments 0 /dev/null $'2:literal $HOME\n' '' grep -n '$HOME' --exec /usr/bin/printf '%s\n' --exec 'literal $HOME'
 check child_large_stdout 0 /dev/null $'0 1 131072 /bin/cat\n' '' wc --exec /bin/cat large.in
 check child_failed 2 /dev/null $'word\n' $'yxscan: /bin/sh: exit code 7\n' grep word --exec /bin/sh -c 'printf "word\n"; exit 7'

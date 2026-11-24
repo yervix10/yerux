@@ -5,7 +5,16 @@ import scanner
 import sources
 
 fn run() -> Int {
-    let argv = env.args()
+    match env.args_utf8() {
+        Ok(argv) => { return run_with_args(argv) }
+        Err(error) => {
+            io.eprintln("yxscan: {error}")
+            return 2
+        }
+    }
+}
+
+fn run_with_args(argv: view List<String>) -> Int {
     if argv.len() == 2 && (argv.at(1) == "--help" || argv.at(1) == "-h") {
         print(options.usage())
         return 0
@@ -13,7 +22,7 @@ fn run() -> Int {
     match options.parse(argv) {
         Err(message) => {
             io.eprintln("yxscan: {message}")
-            io.eprintln(options.usage())
+            io.eprintln(String.from(options.usage()))
             return 2
         }
         Ok(opts) => {

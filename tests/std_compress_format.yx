@@ -1,0 +1,15 @@
+import std.compress
+
+fn main() {
+    var source = String.new()
+    for _ in 0..256 { source.push_byte(255) }
+    source.push_byte(0)
+    let encoded = compress.compress(source)
+    for i in 0..encoded.len() { print(encoded.byte(i)) }
+    let decoded = compress.decompress(encoded).unwrap()
+    print(decoded == source)
+    var invalid = String.new()
+    invalid.push_byte(0)
+    invalid.push_byte(42)
+    print(compress.decompress(invalid).is_err())
+}

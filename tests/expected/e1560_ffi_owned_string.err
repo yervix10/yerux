@@ -1,0 +1,8 @@
+error: expected Text but this is String
+ --> tests/e1560_ffi_owned_string.yx:7:27
+  |
+7 |     unsafe { print(strlen(move owned)) }
+  |                           ^^^^^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+1 error(s). Nothing was generated.

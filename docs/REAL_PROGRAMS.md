@@ -23,45 +23,22 @@ compares stdout, stderr and exit status with expected results on both backends.
   `Child.read_stdout_into(buf)` now supports streaming bytes. The integration
   test counts a binary stream larger than a pipe buffer.
 
+- Malformed UTF-8 in Linux filenames could be converted to `?` and cause yxscan
+  to open a different file. yxscan now uses `env.args_utf8()` and
+  `fs.read_dir_entries_utf8()`, which report `InvalidData` for malformed input.
+  The integration test creates both `?` and a filename containing byte
+  `0xff`, then checks direct arguments and directory traversal.
+- Help stays an immutable `Text` value. When a call requires `view String`,
+  yxscan passes `String.from(options.usage())` explicitly. The compiler
+  continues to reject `io.eprintln(help())` when `help() -> Text`
+  ([regression test](../tests/e1561_text_requires_string_conversion.yx)).
+
 ### Remaining limits
 
-**Non-UTF-8 paths.** Linux filenames are byte sequences. `fs.read_dir_entries`
-and `env.args` replace non-ASCII bytes in invalid UTF-8 with `?`. If the name
-with the replacements also exists, opening the returned path can open that
-other file. Supporting these names requires an exact-byte contract for
-directory entries and process arguments. yxscan supports UTF-8 paths.
-
-To reproduce, run this program with a directory containing both filenames
-created by `touch -- '?' "$(printf '\377')"`. Pass the second name as an argument.
-The directory listing prints `?` for both entries, and the argument also prints
-as `?`.
-
-```yerux
-import std.env
-import std.fs
-
-fn main() {
-    for entry in fs.read_dir_entries(".").unwrap() {
-        print(entry.name)
-    }
-    print(env.arg(1).unwrap())
-}
-```
-
-**Text values and I/O.** A string literal adapts to the `view String` parameter
-of `io.eprintln`. A value already typed as `Text`, such as the return value
-below, yields a type error at the call. yxscan constructs an owned `String` for
-reusable help text.
-
-```yerux
-import std.io
-
-fn help() -> Text { return "help" }
-
-fn main() {
-    io.eprintln(help())
-}
-```
+yxscan accepts UTF-8 paths. A directory containing another encoding is
+rejected as a whole. Supporting all Linux filenames requires an exact-byte
+API for both directory entries and process arguments. To see the limit,
+create a name with `touch -- "$(printf '\377')"` and run `yxscan wc -r .`.
 
 ## webkv (`examples/real/webkv/`)
 

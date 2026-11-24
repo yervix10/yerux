@@ -1,0 +1,10 @@
+import std.rand as rng
+import std.path as p
+
+fn main() {
+    var generator = rng.new(0)
+    print(rng.next(generator))
+    let joined = p.join("a", "b")
+    print(joined)
+    print(joined.len())
+}

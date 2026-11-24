@@ -50,7 +50,7 @@ pub struct IoError { kind: IoErrorKind, code: Int, message: String }            
 `path` and `data` are `view String` parameters, so a `Text` literal works (the compiler lends a hidden copy). A temporary `String` stays alive through the call.
 
 Rules worth knowing:
-- **Strings stay UTF-8.** `read_line`, `read_all` and `read_file` validate their input (no overlong forms, no surrogates, nothing above U+10FFFF) and return `IoErrorKind.InvalidData` instead of building a String that `char_at` would later panic on. `args()` and `env_*` are converted lossily instead (every non-ASCII byte of an invalid value becomes `?`), because a program cannot refuse its own command line.
+- **Strings stay UTF-8.** `read_line`, `read_all` and `read_file` validate their input (no overlong forms, no surrogates, nothing above U+10FFFF) and return `IoErrorKind.InvalidData` instead of building a String that `char_at` would later panic on. `args()` and `env_*` retain their lossy conversion (every non-ASCII byte of an invalid value becomes `?`). Use `env.args_utf8()` to reject malformed command-line arguments.
 - **Paths** with an embedded NUL byte are `InvalidInput`.
 - **Interrupted calls** (`EINTR`) are retried, never reported.
 - **stdin buffering.** `read_line`, `read_all` and `read_stdin_bytes` share one 64 KiB buffer that is allocated when a read finds it empty and freed again as soon as everything in it has been consumed (a program that stops reading in the middle of a buffer keeps it until exit). Reading stdin by other means (raw intrinsics) would bypass it.
@@ -88,17 +88,19 @@ Same rules as `std.io` (raw syscalls, `view String` paths, NUL in a path is `Inv
 | `remove_dir_all(path)` | `Result<Int, IoError>` | Recursive; symbolic links inside are removed, never followed; a non-directory `path` is `NotDirectory`. |
 | `read_dir(path)` | `Result<List<String>, IoError>` | Names (not full paths), sorted by bytes, no `.`/`..`. |
 | `read_dir_entries(path)` | `Result<List<DirEntry>, IoError>` | `DirEntry { name: String, kind: FileKind }`, same order; `kind` from `d_type` (falls back to `lstat` on file systems that leave it unknown). |
+| `read_dir_entries_utf8(path)` | `Result<List<DirEntry>, IoError>` | Same order and metadata. Returns `InvalidData` if any name is not valid UTF-8. |
 | `metadata(path)`, `symlink_metadata(path)` | `Result<Metadata, IoError>` | `stat` / `lstat`: `Metadata { kind: FileKind, size: Int, mode: Int, modified_ns: Int }`; `mode` = permission bits (the low 12 bits of `st_mode`), `modified_ns` since the Unix epoch. |
 | `file_size(path)` | `Result<Int, IoError>` | |
 | `exists(path)`, `is_file(path)`, `is_dir(path)` | `Bool` | Follow symlinks; false on any error. |
 
-`pub enum FileKind { File, Dir, Symlink, Other }` has `impl Equal` and `impl Show` (`file`, `dir`, `symlink`, `other`). Directory names that are not valid UTF-8 are converted lossily like `args()` (every non-ASCII byte becomes `?`), so such a name cannot be opened again through the returned String. Syscalls: `open` (2, `O_DIRECTORY` for listings), `getdents64` (217), `stat` (4), `lstat` (6), `rename` (82), `mkdir` (83), `rmdir` (84), `unlink` (87).
+`pub enum FileKind { File, Dir, Symlink, Other }` has `impl Equal` and `impl Show` (`file`, `dir`, `symlink`, `other`). The legacy `read_dir` and `read_dir_entries` convert malformed names lossily (every non-ASCII byte becomes `?`). A substituted name may refer to a different file. Use `read_dir_entries_utf8` when using the returned names as paths. Syscalls: `open` (2, `O_DIRECTORY` for listings), `getdents64` (217), `stat` (4), `lstat` (6), `rename` (82), `mkdir` (83), `rmdir` (84), `unlink` (87).
 
 ## `std.env`: the process environment
 
 | Function | Result | Notes |
 |---|---|---|
-| `args()` | `List<String>` | `= io.args()`. |
+| `args()` | `List<String>` | `= io.args()`, with lossy UTF-8 conversion. |
+| `args_utf8()` | `Result<List<String>, IoError>` | Includes the program name. Returns `InvalidData` if any argument is not valid UTF-8. |
 | `arg_count()` | `Int` | Program name included. |
 | `arg(i)` | `Option<String>` | `None` out of range (also for `i < 0`). |
 | `get(name)` | `Option<String>` | `= io.env_var`. |
@@ -134,9 +136,17 @@ The environment is the read-only block the kernel put on the initial stack: ther
 
 No time zones (that needs the tz database), no `strftime`-style patterns.
 
-## Shared helpers
+## Internal helpers
 
-`std.fs`, `std.env` and `std.time` reuse a few functions of `std.io` that are public for that reason: `io.cpath(path)` (NUL-terminated copy, `InvalidInput` on an embedded NUL), `io.cstr(addr)` (lossy String from a C string), `io.os_error(op, what, errno)`, `io.custom_error(kind, message)`, `io.checked_text(s)` and `io.valid_utf8(s)`. They are building blocks for library code, not part of the stable API.
+`std.fs`, `std.env` and `std.time` use these Internal functions of `std.io`.
+They have public visibility for cross-module calls and retain their existing paths for source
+compatibility. The stability guarantees for the public I/O API exclude these helpers.
+
+- `io.cpath(path)` produces a NUL-terminated copy and rejects an embedded NUL with `InvalidInput`.
+- `io.cstr(addr)` decodes a C string lossily. `io.cstr_utf8(addr, message)` returns `InvalidData`
+  on malformed UTF-8.
+- `io.os_error(op, what, errno)` and `io.custom_error(kind, message)` build I/O errors.
+- `io.checked_text(s)` and `io.valid_utf8(s)` validate UTF-8.
 
 ## The intrinsic mechanism
 

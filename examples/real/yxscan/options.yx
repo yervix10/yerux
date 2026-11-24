@@ -10,8 +10,8 @@ pub struct Options {
     inputs: List<String>,
 }
 
-pub fn usage() -> String {
-    return String.from("Usage: yxscan grep [-rinvc] PATTERN [PATH ...]\n       yxscan wc [-r] [PATH ...]\n       yxscan grep [OPTIONS] PATTERN --exec PROGRAM [ARG ...]\n       yxscan wc --exec PROGRAM [ARG ...]\nUse - for stdin and -- to end options. -r visits directories in name order.\nGrep matches literal bytes. -i folds ASCII, -v inverts, -n numbers lines,\nand -c prints matching line counts. Wc counts LF, ASCII words, and bytes.")
+pub fn usage() -> Text {
+    return "Usage: yxscan grep [-rinvc] PATTERN [PATH ...]\n       yxscan wc [-r] [PATH ...]\n       yxscan grep [OPTIONS] PATTERN --exec PROGRAM [ARG ...]\n       yxscan wc --exec PROGRAM [ARG ...]\nUse - for stdin and -- to end options. -r visits directories in name order.\nGrep matches literal bytes. -i folds ASCII, -v inverts, -n numbers lines,\nand -c prints matching line counts. Wc counts LF, ASCII words, and bytes."
 }
 
 pub fn parse(argv: view List<String>) -> Result<Options, String> {
