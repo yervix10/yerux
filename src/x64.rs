@@ -51,7 +51,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 9] = [
+const IMPORTS: [&str; 13] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -61,6 +61,10 @@ const IMPORTS: [&str; 9] = [
     "ReadFile",
     "GetLastError",
     "GetCurrentProcessId",
+    "QueryPerformanceCounter",
+    "QueryPerformanceFrequency",
+    "GetSystemTimePreciseAsFileTime",
+    "Sleep",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -71,6 +75,10 @@ const IMP_SETCONSOLEOUTPUTCP: usize = 5;
 const IMP_READFILE: usize = 6;
 const IMP_GETLASTERROR: usize = 7;
 const IMP_GETCURRENTPROCESSID: usize = 8;
+const IMP_QPC: usize = 9;
+const IMP_QPF: usize = 10;
+const IMP_SYSTIME: usize = 11;
+const IMP_SLEEP: usize = 12;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
@@ -80,7 +88,7 @@ pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
                 Inst::Thread(..) | Inst::Atomic(..) => "thread runtime intrinsics".into(),
                 Inst::Global(_, 0) => "process arguments and environment".into(),
                 Inst::Syscall(_, args) => match constants[args[0]] {
-                    Some(0 | 1 | 39 | 60 | 231) => continue,
+                    Some(0 | 1 | 35 | 39 | 60 | 228 | 231) => continue,
                     Some(n) => format!("raw system call {n}"),
                     None => "raw system call with a dynamic number".into(),
                 },
@@ -4380,12 +4388,91 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
 
         // Only calls accepted by validate_windows can reach this dispatch.
         a.bind(l_winsyscall);
-        let pid = a.label();
-        for (number, stub) in [(0, l_osread), (1, l_oswrite), (39, pid), (60, l_osexit), (231, l_osexit)] {
+        let (pid, clock, nap) = (a.label(), a.label(), a.label());
+        for (number, stub) in [(0, l_osread), (1, l_oswrite), (35, nap), (39, pid), (60, l_osexit), (228, clock), (231, l_osexit)] {
             a.cmp_imm(RAX, number);
             a.jcc(CC_E, stub);
         }
         a.raw(&[0x0F, 0x0B]); // ud2
+
+        // clock_gettime: rdi = clock (1 = monotonic, otherwise realtime), rsi = timespec* -> 0
+        a.bind(clock);
+        {
+            let (mono, done) = (a.label(), a.label());
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.cmp_imm(RDI, 1);
+            a.jcc(CC_E, mono);
+            a.lea(RCX, RSP, 32);
+            a.call_iat(IMP_SYSTIME); // 100 ns ticks since 1601
+            a.ld(RAX, RSP, 32);
+            a.mov_imm(RCX, 116444736000000000);
+            a.alu(0x29, RAX, RCX); // sub rax, rcx: ticks since 1970
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.mov_imm(RCX, 10_000_000);
+            a.raw(&[0x48, 0xF7, 0xF1]); // div rcx
+            a.st(RSI, 0, RAX);
+            a.raw(&[0x48, 0x69, 0xD2]); // imul rdx, rdx, 100
+            a.imm32(100);
+            a.st(RSI, 8, RDX);
+            a.jmp(done);
+            a.bind(mono);
+            a.lea(RCX, RSP, 32);
+            a.call_iat(IMP_QPC);
+            a.lea(RCX, RSP, 40);
+            a.call_iat(IMP_QPF);
+            a.ld(RAX, RSP, 32);
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.raw(&[0x48, 0xF7, 0x74, 0x24, 0x28]); // div qword [rsp+40]: rax = seconds, rdx = remainder
+            a.st(RSI, 0, RAX);
+            a.raw(&[0x48, 0x69, 0xD2]); // imul rdx, rdx, 1000000000
+            a.imm32(1_000_000_000);
+            a.mov_rr(RAX, RDX);
+            a.raw(&[0x31, 0xD2]);
+            a.raw(&[0x48, 0xF7, 0x74, 0x24, 0x28]); // div qword [rsp+40]: nanoseconds
+            a.st(RSI, 8, RAX);
+            a.bind(done);
+            a.mov_imm(RAX, 0);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // nanosleep: rdi = timespec* {seconds, nanoseconds}: Sleep for the milliseconds rounded up -> 0
+        a.bind(nap);
+        {
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.ld(RAX, RDI, 8);
+            a.alu_imm(0, RAX, 999_999);
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.mov_imm(RCX, 1_000_000);
+            a.raw(&[0x48, 0xF7, 0xF1]); // div rcx
+            a.ld(RCX, RDI, 0);
+            a.raw(&[0x48, 0x69, 0xC9]); // imul rcx, rcx, 1000
+            a.imm32(1000);
+            a.alu(0x01, RAX, RCX); // add rax, rcx
+            a.mov_rr(RCX, RAX);
+            a.mov_imm(RDX, u32::MAX as i64);
+            a.alu(0x39, RCX, RDX);
+            a.cmov_rr(CC_A, RCX, RDX); // Sleep takes a DWORD
+            a.call_iat(IMP_SLEEP);
+            a.mov_imm(RAX, 0);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
         a.bind(pid);
         a.win_prologue(0);
         a.call_iat(IMP_GETCURRENTPROCESSID);
