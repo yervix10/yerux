@@ -1,0 +1,5 @@
+// A literal is a Text: std.text functions are not methods on it, even when a String has them
+fn main() {
+  let parts = "a b".split_ws()
+  print(parts.len())
+}

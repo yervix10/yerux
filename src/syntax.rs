@@ -3056,6 +3056,12 @@ impl Parser {
         let mut methods: Vec<ImplMethod> = vec![];
         while !self.is_sym("}") {
             if !self.is_kw("fn") {
+                if self.is_kw("pub") {
+                    return Err(diag(
+                        "methods take no `pub`: they are visible wherever their type is",
+                        self.pos(),
+                    ));
+                }
                 return Err(diag("expected 'fn' inside `impl`", self.pos()));
             }
             let tok = self.i;

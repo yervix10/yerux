@@ -7102,6 +7102,13 @@ impl<'a> Checker<'a> {
                         "help: `{}` is a method of trait {}: write `impl {} for {} {{ .. }}`",
                         m, t, t, tyn
                     ));
+                } else if matches!(rt, Ty::Text)
+                    && crate::stdlib::source("std.text").is_some_and(|src| {
+                        let head = format!("pub fn {}(", m);
+                        src.lines().any(|l| l.starts_with(&head) && l[head.len()..].contains(": view String") && l[head.len()..].starts_with(|c: char| c.is_alphabetic()))
+                    })
+                {
+                    d = d.note(format!("help: `{m}` is a function of std.text: add `import std.text` and write `text.{m}(s, ..)`"));
                 } else if matches!(
                     rt,
                     Ty::Int | Ty::Bool | Ty::Text | Ty::Struct(_) | Ty::Enum(_)

@@ -1,0 +1,8 @@
+error: type Text has no method 'split_ws'
+ --> tests/e1965_text_method_std_text.yx:3:15
+  |
+3 |   let parts = "a b".split_ws()
+  |               ^^^^^^^^^^^^^^^^
+  = help: `split_ws` is a function of std.text: add `import std.text` and write `text.split_ws(s, ..)`
+
+1 error(s). Nothing was generated.
