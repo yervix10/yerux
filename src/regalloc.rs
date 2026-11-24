@@ -188,7 +188,7 @@ impl Bits {
     }
 }
 
-pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
+pub fn allocate(f: &IrFunc, cold: &[bool], reserved: u16) -> Alloc {
     let nv = f.nvregs;
     let nb = f.blocks.len();
     let mut loc = vec![Loc::None; nv];
@@ -645,7 +645,7 @@ pub fn allocate(f: &IrFunc, cold: &[bool]) -> Alloc {
         if use_xmm {
             classes.push((XMM_ALLOC as u32) << 16);
         }
-        classes.push((ALLOC & !if crosses { CALLER_SAVED } else { 0 }) as u32);
+        classes.push((ALLOC & !reserved & !if crosses { CALLER_SAVED } else { 0 }) as u32);
         let mut done = false;
         for &mask in &classes {
             let mut free: u32 = 0;

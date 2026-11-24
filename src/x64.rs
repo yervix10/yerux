@@ -51,7 +51,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 20] = [
+const IMPORTS: [&str; 25] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -72,6 +72,11 @@ const IMPORTS: [&str; 20] = [
     "CloseHandle",
     "DeleteFileA",
     "MoveFileExA",
+    "CreateThread",
+    "WaitForSingleObject",
+    "ExitThread",
+    "GetModuleHandleA",
+    "GetProcAddress",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -93,13 +98,17 @@ const IMP_CREATEFILE: usize = 16;
 const IMP_CLOSEHANDLE: usize = 17;
 const IMP_DELETEFILE: usize = 18;
 const IMP_MOVEFILE: usize = 19;
+const IMP_CREATETHREAD: usize = 20;
+const IMP_WAITFORSINGLEOBJECT: usize = 21;
+const IMP_EXITTHREAD: usize = 22;
+const IMP_GETMODULEHANDLE: usize = 23;
+const IMP_GETPROCADDRESS: usize = 24;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
         let constants = crate::ir::syscall_constants(f);
         for inst in f.blocks.iter().flat_map(|b| &b.insts) {
             let unsupported = match inst {
-                Inst::Thread(..) | Inst::Atomic(..) => "thread runtime intrinsics".into(),
                 Inst::Syscall(_, args) => match constants[args[0]] {
                     Some(0 | 1 | 2 | 3 | 35 | 39 | 60 | 82 | 87 | 228 | 231) => continue,
                     Some(n) => format!("raw system call {n}"),
@@ -758,9 +767,13 @@ impl Asm {
         self.raw(&[0x48, 0x83, 0xE4, 0xF0]); // and rsp, -16
         self.raw(&[0x48, 0x83, 0xEC, 32 + locals]); // sub rsp, 32 + locals
     }
-    fn win_epilogue(&mut self) {
+    fn win_restore_frame(&mut self) {
         self.raw(&[0x48, 0x89, 0xEC]); // mov rsp, rbp
-        self.raw(&[0x5D, 0xC3]); // pop rbp; ret
+        self.pop(RBP);
+    }
+    fn win_epilogue(&mut self) {
+        self.win_restore_frame();
+        self.ret();
     }
 
     /// `data_start`: offset of the data blobs relative to the start of the code (may be larger than
@@ -855,6 +868,14 @@ const FUTEX_WAKE_PRIVATE: i64 = 129;
 const G_HEAP_LOCK: i32 = G_FREE + 17 * 8; // after the last free-list head
 const G_MAIN_TLS: i64 = 176; // self pointer, recovery flag, unwinding flag, cleanup head
 const G_PRINT_LOCK: i32 = 208;
+const G_WIN_WAIT_ON_ADDRESS: i64 = 216;
+const G_WIN_WAKE_ONE: i64 = 224;
+const G_WIN_WAKE_ALL: i64 = 232;
+const WIN_THREAD_APIS: [(&[u8], i64); 3] = [
+    (b"WaitOnAddress\0", G_WIN_WAIT_ON_ADDRESS),
+    (b"WakeByAddressSingle\0", G_WIN_WAKE_ONE),
+    (b"WakeByAddressAll\0", G_WIN_WAKE_ALL),
+];
 const G_USER: i64 = 256; // user cells (`__global(i)`): 8 * layout::GLOBAL_CELLS bytes
 pub(crate) const G_SIZE: u64 = 4096;
 // The runtime mutex preserves RDI and RSI on acquisition and RAX on release.
@@ -913,6 +934,45 @@ fn acquire_print_lock(a: &mut Asm, g: i64) {
 }
 
 fn emit_futex(a: &mut Asm, operation: i64) {
+    if a.os == Os::Windows {
+        let done = a.label();
+        if operation == FUTEX_WAIT_PRIVATE {
+            a.ld32(RAX, RDI, 0);
+            a.raw(&[0x39, 0xD0]); // cmp eax, edx
+            a.mov_imm(RAX, -11); // EAGAIN if the word has already changed
+            a.jcc(CC_NE, done);
+
+            a.win_prologue(16);
+            a.st(RSP, 32, RDX);
+            a.mov_rr(RCX, RDI);
+            a.lea(RDX, RSP, 32);
+            a.mov_imm(R8, 4); // Linux futex words are 32 bits
+            a.mov_imm(R9, -1); // INFINITE
+            a.gaddr(RAX, G_WIN_WAIT_ON_ADDRESS);
+            a.ld(RAX, RAX, 0);
+            a.call_r(RAX);
+            a.win_restore_frame();
+        } else {
+            let all = a.label();
+            a.mov_imm(RAX, 0);
+            a.cmp_imm(RDX, 0);
+            a.jcc(CC_LE, done);
+            a.gaddr(RAX, G_WIN_WAKE_ALL);
+            a.cmp_imm(RDX, 1);
+            a.jcc(CC_NE, all);
+            a.gaddr(RAX, G_WIN_WAKE_ONE);
+            a.bind(all);
+            a.win_prologue(0);
+            a.mov_rr(RCX, RDI);
+            a.ld(RAX, RAX, 0);
+            a.call_r(RAX);
+            a.win_restore_frame();
+        }
+        // Win32 wake functions don't report a count.
+        a.mov_imm(RAX, 0);
+        a.bind(done);
+        return;
+    }
     a.mov_imm(RSI, operation);
     a.mov_imm(R10, 0); // no timeout
     a.mov_imm(RAX, 202); // Linux x86-64 futex
@@ -2387,6 +2447,7 @@ fn gen_func(
     f: &IrFunc,
     cold_fn: &[bool],
     debug_scopes: &[usize],
+    reserved: u16,
 ) -> (Vec<i32>, Vec<(usize, usize)>) {
     let converted = if std::env::var_os("YERUX_NO_IFCONV").is_some() || f.debug_bindings { None } else { ifconv(f) };
     let f = converted.as_ref().unwrap_or(f);
@@ -2416,7 +2477,7 @@ fn gen_func(
     // without them, and the locations travel beside it
     let (stripped, locs) = strip_locs(f);
     let f = &stripped;
-    let al = regalloc::allocate(f, &cold);
+    let al = regalloc::allocate(f, &cold, reserved);
     if std::env::var_os("YERUX_RA_STATS").is_some() {
         let regs = al.loc.iter().filter(|l| matches!(l, Loc::Reg(_))).count();
         let remat = al
@@ -3011,15 +3072,24 @@ const RECOVERY_IN_DESTRUCTOR: i64 = 2;
 const THREAD_UNWINDING: i32 = 16;
 const THREAD_CLEANUP_HEAD: i32 = 24;
 const TLS_ALLOC_FREE: i32 = 1040; // one cached block for each small allocation size class
+const THREAD_WIN_STACK_BASE: i32 = THREAD_TLS + 32;
 const THREAD_STACK_END: i32 = 2 * 4096 + 2 * 1024 * 1024;
 
 fn emit_tls_load(a: &mut Asm, reg: u8, offset: i32) {
+    if a.os == Os::Windows {
+        a.ld(reg, R15, offset);
+        return;
+    }
     debug_assert!(reg < 8);
     a.raw(&[0x64, 0x48, 0x8b, (reg << 3) | 4, 0x25]); // mov reg, fs:[disp32]
     a.imm32(offset);
 }
 
 fn emit_tls_store(a: &mut Asm, reg: u8, offset: i32) {
+    if a.os == Os::Windows {
+        a.st(R15, offset, reg);
+        return;
+    }
     debug_assert!(reg < 8);
     a.raw(&[0x64, 0x48, 0x89, (reg << 3) | 4, 0x25]); // mov fs:[disp32], reg
     a.imm32(offset);
@@ -3030,12 +3100,13 @@ fn emit_threads(
     start: usize,
     join: usize,
     mmap: usize,
+    os_free: usize,
     failure: usize,
     recover: usize,
 ) {
     const PAGE: i32 = 4096;
     const MAPPING: i32 = THREAD_STACK_END;
-    const TID: i32 = 0;
+    const THREAD_ID_OR_HANDLE: i32 = 0;
     const CODE: i32 = 8;
     const ENV: i32 = 16;
     const RESULT: i32 = 24;
@@ -3043,13 +3114,14 @@ fn emit_threads(
 
     // start(code, env) -> control page. The child branches away without returning on the parent's stack.
     let parent = a.label();
+    let win_entry = a.label();
     let child_exit = a.label();
     let child_cleanup = a.label();
     a.bind(start);
     a.push(RDI);
     a.push(RSI);
     a.push(RDX);
-    a.mov_imm(RSI, MAPPING as i64);
+    a.mov_imm(RSI, if a.os == Os::Linux { MAPPING } else { PAGE } as i64);
     a.call(mmap);
     a.pop(RDX);
     a.pop(RSI);
@@ -3058,26 +3130,51 @@ fn emit_threads(
     a.st(RBX, CODE, RDI);
     a.st(RBX, ENV, RSI);
     a.st(RBX, THREAD_RECOVER, RDX);
-    a.lea(RDI, RBX, PAGE);
-    a.mov_imm(RSI, PAGE as i64);
-    a.mov_imm(RDX, 0); // PROT_NONE
-    a.mov_imm(RAX, 10); // mprotect
-    a.syscall();
-    a.test_rax();
-    a.jcc(CC_S, failure);
+    match a.os {
+        Os::Linux => {
+            a.lea(RDI, RBX, PAGE);
+            a.mov_imm(RSI, PAGE as i64);
+            a.mov_imm(RDX, 0); // PROT_NONE
+            a.mov_imm(RAX, 10); // mprotect
+            a.syscall();
+            a.test_rax();
+            a.jcc(CC_S, failure);
 
-    a.mov_imm(RDI, CLONE_FLAGS);
-    a.lea(RSI, RBX, MAPPING);
-    a.lea(RDX, RBX, TID); // parent_tid
-    a.mov_rr(R10, RDX); // child_tid
-    a.lea(R8, RBX, THREAD_TLS);
-    a.st(R8, 0, R8); // TLS base self-pointer
-    a.mov_imm(RAX, 56); // clone
-    a.syscall();
-    a.test_rax();
-    a.jcc(CC_S, failure);
-    a.jcc(CC_NE, parent);
+            a.mov_imm(RDI, CLONE_FLAGS);
+            a.lea(RSI, RBX, MAPPING);
+            a.lea(RDX, RBX, THREAD_ID_OR_HANDLE); // parent_tid
+            a.mov_rr(R10, RDX); // child_tid
+            a.lea(R8, RBX, THREAD_TLS);
+            a.st(R8, 0, R8); // TLS base self-pointer
+            a.mov_imm(RAX, 56); // clone
+            a.syscall();
+            a.test_rax();
+            a.jcc(CC_S, failure);
+            a.jcc(CC_NE, parent);
+        }
+        Os::Windows => {
+            a.win_prologue(16);
+            a.mov_imm(RCX, 0); // default security attributes
+            a.mov_imm(RDX, 0); // use the executable's stack size
+            a.lea_label(R8, win_entry);
+            a.mov_rr(R9, RBX);
+            a.st(RSP, 32, RCX); // creation flags
+            a.st(RSP, 40, RCX); // no thread ID output
+            a.call_iat(IMP_CREATETHREAD);
+            a.test_rax();
+            a.jcc(CC_E, failure);
+            a.st(RBX, THREAD_ID_OR_HANDLE, RAX); // the join handle is only read by the parent
+            a.mov_rr(RAX, RBX);
+            a.win_epilogue();
 
+            a.bind(win_entry); // Win64 callback, terminates via ExitThread
+            a.mov_rr(RBX, RCX);
+            a.and_imm(RSP, -16);
+            a.st(RBX, THREAD_WIN_STACK_BASE, RSP);
+            a.lea(R15, RBX, THREAD_TLS);
+            a.st(R15, 0, R15);
+        }
+    }
     a.mov_rr(R12, RBX); // generated functions preserve r12
     a.mov_imm(RBP, 0);
     a.ld(RAX, R12, CODE);
@@ -3112,7 +3209,10 @@ fn emit_threads(
     a.call_r(RAX);
     a.jmp(cleanup);
     a.bind(cleaned);
-    a.lea(RSP, R12, MAPPING);
+    match a.os {
+        Os::Linux => a.lea(RSP, R12, MAPPING),
+        Os::Windows => a.ld(RSP, R12, THREAD_WIN_STACK_BASE),
+    }
     a.mov_imm(RBP, 0);
     a.bind(child_cleanup);
     a.mov_imm(RAX, 0);
@@ -3136,13 +3236,38 @@ fn emit_threads(
         a.jcc(CC_E, empty);
         a.mov_imm(RBX, 0);
         a.st(RDX, class * 8, RBX);
-        a.mov_imm(RBX, G + G_FREE as i64 + class as i64 * 8);
+        a.gaddr(RBX, G_FREE as i64 + class as i64 * 8);
         a.ld(RCX, RBX, 0);
         a.st(RAX, 0, RCX);
         a.st(RBX, 0, RAX);
         a.bind(empty);
     }
     release_runtime_lock(a, G, G_HEAP_LOCK);
+    if a.os == Os::Windows {
+        a.alu_imm(5, RSP, 32); // shadow space (already aligned)
+        a.mov_imm(RCX, 0);
+        a.call_iat(IMP_EXITTHREAD);
+        a.raw(&[0x0F, 0x0B]); // ud2
+
+        a.bind(join);
+        a.mov_rr(RBX, RDI);
+        a.win_prologue(0);
+        a.ld(RCX, RBX, THREAD_ID_OR_HANDLE);
+        a.mov_imm(RDX, -1); // INFINITE
+        a.call_iat(IMP_WAITFORSINGLEOBJECT);
+        a.raw(&[0x85, 0xC0]); // test eax, eax (DWORD wait status)
+        a.jcc(CC_NE, failure);
+        a.ld(RCX, RBX, THREAD_ID_OR_HANDLE);
+        a.call_iat(IMP_CLOSEHANDLE);
+        a.ld(RAX, RBX, RESULT);
+        a.push(RAX);
+        a.mov_rr(RDI, RBX);
+        a.call(os_free);
+        a.pop(RAX);
+        a.win_epilogue();
+        return;
+    }
+
     a.mov_imm(RDI, 0);
     a.mov_imm(RAX, 60); // exit this thread; the kernel clears TID and wakes the joiner
     a.syscall();
@@ -3157,7 +3282,7 @@ fn emit_threads(
     a.bind(join);
     a.mov_rr(RBX, RDI);
     a.bind(check);
-    a.ld32(RDX, RBX, TID);
+    a.ld32(RDX, RBX, THREAD_ID_OR_HANDLE);
     a.test_rr(RDX);
     a.jcc(CC_E, complete);
     a.mov_imm(RSI, 0); // FUTEX_WAIT
@@ -3199,26 +3324,25 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         .iter()
         .any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Loc(_)))));
     let report = a.report;
-    let has_workers = os == Os::Linux
-        && ir.funcs.iter().any(|f| {
-            f.blocks.iter().any(|b| {
-                b.insts.iter().any(|i| {
-                    matches!(
-                        i,
-                        Inst::Thread(
-                            crate::ir::ThreadOp::Start
-                                | crate::ir::ThreadOp::StartRecover
-                                | crate::ir::ThreadOp::Wait
-                                | crate::ir::ThreadOp::Unlock
-                                | crate::ir::ThreadOp::CleanupPush
-                                | crate::ir::ThreadOp::CleanupPop
-                                | crate::ir::ThreadOp::DropEnter,
-                            ..
-                        )
+    let has_workers = ir.funcs.iter().any(|f| {
+        f.blocks.iter().any(|b| {
+            b.insts.iter().any(|i| {
+                matches!(
+                    i,
+                    Inst::Thread(
+                        crate::ir::ThreadOp::Start
+                            | crate::ir::ThreadOp::StartRecover
+                            | crate::ir::ThreadOp::Wait
+                            | crate::ir::ThreadOp::Unlock
+                            | crate::ir::ThreadOp::CleanupPush
+                            | crate::ir::ThreadOp::CleanupPop
+                            | crate::ir::ThreadOp::DropEnter,
+                        ..
                     )
-                })
+                )
             })
-        });
+        })
+    });
 
     let mut data: Vec<Vec<u8>> = vec![
         b"panic: ".to_vec(),
@@ -3450,11 +3574,38 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     if has_workers {
         a.gaddr(RSI, G_MAIN_TLS as i64);
         a.st(RSI, 0, RSI);
-        a.mov_imm(RDI, 0x1002); // ARCH_SET_FS
-        a.mov_imm(RAX, 158); // arch_prctl
-        a.syscall();
-        a.test_rax();
-        a.jcc(CC_S, l_panic[P_THREAD_START]);
+        match os {
+            Os::Linux => {
+                a.mov_imm(RDI, 0x1002); // ARCH_SET_FS
+                a.mov_imm(RAX, 158); // arch_prctl
+                a.syscall();
+                a.test_rax();
+                a.jcc(CC_S, l_panic[P_THREAD_START]);
+            }
+            Os::Windows => {
+                a.mov_rr(R15, RSI);
+                // WaitOnAddress and WakeByAddress* are exported by KernelBase,
+                // while the PE writer's import table uses only kernel32.
+                let module = data.len();
+                data.push(b"kernelbase.dll\0".to_vec());
+                a.lea_data(RCX, module);
+                a.call_iat(IMP_GETMODULEHANDLE);
+                a.test_rax();
+                a.jcc(CC_E, l_panic[P_THREAD_START]);
+                a.mov_rr(RBX, RAX);
+                for (name, slot) in WIN_THREAD_APIS {
+                    let symbol = data.len();
+                    data.push(name.to_vec());
+                    a.mov_rr(RCX, RBX);
+                    a.lea_data(RDX, symbol);
+                    a.call_iat(IMP_GETPROCADDRESS);
+                    a.test_rax();
+                    a.jcc(CC_E, l_panic[P_THREAD_START]);
+                    a.gaddr(RCX, slot);
+                    a.st(RCX, 0, RAX);
+                }
+            }
+        }
     }
     a.call(l_funcs[ir.main]);
     if debug_alloc {
@@ -4317,6 +4468,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             l_thread_start,
             l_thread_wait,
             l_mmap,
+            l_osfree,
             l_panic[P_THREAD_START],
             l_thread_recover,
         );
@@ -4344,6 +4496,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         thread_wait: l_thread_wait,
     };
     let cold_fn: Vec<bool> = ir.funcs.iter().map(|f| f.name == "__list_grow").collect();
+    // Keep the Windows runtime TLS base in a nonvolatile register when used.
+    let reserved = if os == Os::Windows && has_workers { 1 << R15 } else { 0 };
     let mut dbg_info = crate::dwarf::DebugInfo::default();
     let debug_scopes = ir.debug.as_ref().map_or(&[][..], |debug| debug.scopes.as_slice());
     for (fi, f) in ir.funcs.iter().enumerate() {
@@ -4363,7 +4517,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         a.cfi.clear();
         a.func_unwind = None;
-        let (slot_off, scopes) = gen_func(&mut a, &rt, f, &cold_fn, debug_scopes);
+        let (slot_off, scopes) = gen_func(&mut a, &rt, f, &cold_fn, debug_scopes, reserved);
         if os == Os::Windows {
             let frame = a.func_unwind.take().map(|(fr, pe)| (fr, pe - start));
             let end = a.code.len();
