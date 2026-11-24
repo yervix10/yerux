@@ -4,4 +4,14 @@ fn main() {
   var input = String.new()
   for i in 0..100001 { input.push_byte(10) }
   print(toml.get_int(input, "answer"))
+  print(toml.get_string("[é\nname = \"wrong\"\n", "name").is_empty())
+  print(toml.get_string("[\nname = \"wrong\"\n", "name").is_empty())
+  var invalid = String.from("name = \"")
+  invalid.push_byte(255)
+  invalid.push_str("\"\n")
+  print(toml.get_string(invalid, "name").is_empty())
+  var multiline = String.from("items = [\n")
+  for i in 0..40000 { multiline.push_str("0,\n") }
+  multiline.push_str("1]\n")
+  print(toml.get_array(multiline, "items").len())
 }

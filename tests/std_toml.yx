@@ -9,4 +9,8 @@ fn main() {
   print(toml.get_bool(input, String.from("package.active")))
   print(" ")
   print(toml.get_array(input, String.from("package.tags")).len())
+  let unicode = "[package]\nname = \"é € 😀\"\ntags = [\"é\", \"中\"]\n"
+  print(toml.get_string(unicode, "package.name"))
+  let tags = toml.get_array(unicode, "package.tags")
+  for tag in tags { print(tag) }
 }
