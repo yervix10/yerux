@@ -91,19 +91,24 @@ Self-hosting parity measured by `tests/selfhost_*.sh`:
 | bootstrap (`tests/selfhost_codegen.sh`) | 7 of 7 stage executables rebuilt by the compiler they were built with, byte-identical C |
 
 The self-hosted compiler matched the Rust C backend's stdout, stderr and
-exit status for **458 of 459 candidates**, including all 14 required
-concurrency cases and 101 runtime panics. The run had one expected type
+exit status for **465 of 466 candidates**, including all 14 required
+concurrency cases and 102 runtime panics. The run had one expected type
 rejection, zero candidates outside the subset and **zero execution
 mismatches**. All seven stages rebuilt with byte-identical C between
 self-hosted generations. The generated C from Rust and Yerux differed in
 all 14 concurrency cases. The remaining work to switch the default compiler
 is tracked in [SELFHOST.md](SELFHOST.md).
-Every program of the corpus, concurrency
-included, now compiles; what is left before it can be called self-hosted is
-language surface the corpus does not exercise (the closing list of
-[SELFHOST.md](SELFHOST.md): slices as bindings, `extern`, generic function items
-as values, precise loans for nested calls), the native backends and tools that
-exist only in the Rust binary, and diagnostics with spans.
+Every program of the corpus, concurrency included, now compiles. Type
+errors of the self-hosted stages are drawn with `-->`, the source line and an
+underline (`tests/selfhost/spans/`). Measured on the 219 error programs
+`tests/e*.yx`: 68 give the same first error as the Rust compiler, 30 differ in
+wording, 48 fail another way and 73 are still accepted (range analysis,
+`const` evaluation, object safety and similar checks are missing). Slices
+held in variables and generic function items used as values are compile errors
+of the language itself (`e1003_slice_variable`), so there is nothing to lower.
+Left before it can be called self-hosted: the missing checks above, `extern`
+beyond the corpus programs, precise loans for nested calls, the native
+backends and tools that exist only in the Rust binary.
 The milestone remains at 0.5 while the self-hosted compiler covers a subset
 of the language and standard library.
 

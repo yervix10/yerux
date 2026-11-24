@@ -261,10 +261,31 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilt 7 of 7 executables with byte-identical C. The
-2026-11-23 run matched **458 of 459 candidates**, including 101 runtime
+latest run matched **465 of 466 candidates**, including 102 runtime
 panics. It reported zero candidates outside the supported subset, one
-expected type rejection and zero mismatches. The previous run matched
-457 of 458 candidates with 100 matching runtime panics.
+expected type rejection (`rejected_types.yx`, the 466th) and zero mismatches.
+The previous run matched 458 of 459 candidates with 101 matching runtime
+panics.
+
+Diagnostics with spans: a type error found by the self-hosted stages is drawn
+like the Rust compiler's (`--> file:line:col`, the source line and `^^^^` under
+the offending expression). The parser's `--build` mode adds `Pos(line,col,length)`
+to literals and variables (calls and methods already had `Pos(line,col)` for panic
+locations), the type stage remembers the last positioned expression it finished
+and prints `span:line:col:length` after each error, and the code generator
+draws it. Limits: the span is the token of that expression, not the whole
+expression; errors in imported modules and in the prelude are printed without a
+span. `tests/selfhost/spans/bad_*.yx` with `.err` files fix three drawings.
+
+Error corpus (`tests/e*.yx`, 219 programs the Rust compiler rejects): the
+self-hosted driver gives the **same first error as the Rust compiler for 68**,
+rejects 30 with different wording, fails another way on 48 (parser errors that
+print `SyntaxError:N`, C compiler errors, bootstrap `codegen:` limits) and
+**accepts 73**. The accepted ones are checks the self-hosted type stage does
+not implement yet (integer range analysis `Int<a..b>`, `const` evaluation,
+object safety, slice type placement, `Drop` rules, thread transfer rules...).
+`tests/selfhost_codegen.sh` prints these counts and fails if the matching
+number falls below 68.
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
@@ -308,7 +329,7 @@ and category for each unsupported file.
 
 As of 2026-11-23, the driver compiles all seven `selfhost/*.yx` stages
 and itself without the Rust compiler (`--stage2`), and reproduces itself
-byte for byte. It builds `examples/project` and matches 458 program executions in the corpus.
+byte for byte. It builds `examples/project` and matches 465 program executions in the corpus.
 Replacing the default compiler requires closing these gaps.
 
 1. native

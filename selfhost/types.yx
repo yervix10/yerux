@@ -579,8 +579,9 @@ fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<o
   if !types.verify_ownership { return }
   let owns = owns_value(types, ty)
   if mode != "Mut" && !owns {
-    // a read-only use of a plain value still conflicts with a `mut` use of it in the same call
-    if mode == "View" {
+    // a read-only slice of a value still conflicts with a `mut` use of it in the same call (plain values passed
+    // by `view` are copied, so `f(b, b.a)` is fine)
+    if mode == "View" && tree.at(node).tag == "Slice" {
       let place = root_place(types, tree, node)
       if place >= 0 && types.identities.at(place) >= 0 {
         let id = types.identities.at(place)

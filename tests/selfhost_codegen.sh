@@ -57,8 +57,8 @@ done
 [[ -n ${SELFHOST_ERRORS:-} ]] && cp "$tmp/errors.tsv" "$SELFHOST_ERRORS"
 printf 'selfhost error corpus: %d of %d tests/e*.yx give the same first error as the Rust compiler (%d differ in wording, %d fail another way, %d are accepted)\n' \
   "$same" "$errors_total" "$differs" "$other" "$accepts"
-if [[ $same -lt ${SELFHOST_ERROR_FLOOR:-0} ]]; then
-  printf 'selfhost error corpus: fell below %d matching diagnostics\n' "${SELFHOST_ERROR_FLOOR:-0}" >&2
+if [[ $same -lt ${SELFHOST_ERROR_FLOOR:-68} ]]; then
+  printf 'selfhost error corpus: fell below %d matching diagnostics\n' "${SELFHOST_ERROR_FLOOR:-68}" >&2
   exit 1
 fi
 cp -R examples/project "$tmp/project"
