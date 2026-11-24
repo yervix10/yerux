@@ -24,11 +24,35 @@ rm -f "$TMP"/copy/tests/e38_interp_unclosed.yx "$TMP"/copy/tests/e39_interp_lone
 ( cd "$TMP/copy" && "$Y" fmt . >"$TMP/fmt1.log" 2>&1 ) || { note "FAIL fmt on the copy"; head -n 5 "$TMP/fmt1.log"; }
 ( cd "$TMP/copy" && "$Y" fmt --check . >"$TMP/fmt2.log" 2>&1 ) || { note "FAIL fmt is not idempotent"; head -n 10 "$TMP/fmt2.log"; }
 n=0
-for f in examples/*.yx tests/*.yx; do
+# every program, including the multi-file projects of examples/real and the module trees under tests/
+for f in $(find examples tests -name '*.yx' | sort); do
+  [ -f "$TMP/copy/$f" ] || continue
   "$Y" c "$f" >"$TMP/a.c" 2>/dev/null || continue
   "$Y" c "$TMP/copy/$f" >"$TMP/b.c" 2>/dev/null || { note "FAIL $f: formatted version no longer compiles"; continue; }
   cmp -s "$TMP/a.c" "$TMP/b.c" || note "FAIL $f: formatting changed the generated C"
   n=$((n+1))
 done
+# comments are never dropped or rewritten: the `//` comments of every file survive formatting unchanged
+python3 - "$TMP/copy" <<'PY' || note "FAIL formatting changed or dropped comments"
+import glob, os, sys
+def comments(text):
+    out = []
+    for line in text.split("\n"):
+        ins = False
+        for i, c in enumerate(line):
+            if c == '"' and (i == 0 or line[i - 1] != "\\"):
+                ins = not ins
+            elif not ins and line.startswith("//", i):
+                out.append(line[i:].rstrip())
+                break
+    return sorted(out)
+bad = 0
+for f in glob.glob("examples/**/*.yx", recursive=True) + glob.glob("tests/**/*.yx", recursive=True):
+    g = os.path.join(sys.argv[1], f)
+    if os.path.exists(g) and comments(open(f).read()) != comments(open(g).read()):
+        print("comments differ:", f)
+        bad += 1
+sys.exit(1 if bad else 0)
+PY
 echo "fmt checks: $n programs compared, failures $fails"
 [ $fails -eq 0 ]

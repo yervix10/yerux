@@ -137,6 +137,7 @@ AUX=(
   "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
   "lsp_vscode|bash tests/lsp_vscode.sh"
   "lsp_real|bash tests/lsp_real.sh"
+  "cli_help|bash tests/cli_help.sh"
   "doctests|bash tests/doctests.sh"
   "tokens_dump|bash tests/tokens_dump.sh"
   "win_smoke|bash tests/win_smoke.sh"
