@@ -52,26 +52,32 @@ both `.out` and `.code` goldens and runs the PE binaries on Windows Server 2022 
 (build 20348) in QEMU. It compares redirected stdout byte for byte, the exit status,
 and stderr for tests with a `.stderr` golden. It feeds the same `.stdin` and `.args`
 fixtures as the Linux suite. The driver lists the 12 excluded POSIX-specific goldens
-and counts compiler rejections among the 402 eligible tests.
+and counts compiler rejections among the eligible tests (402 at the first two rows, 417 now).
 
 | Windows Server 2022 run | PE binaries built | Stdout and exit code match | All available goldens match |
 |---|---:|---:|---:|
 | Before console runtime changes (`b92021b`) | 337 | 337/402 | 239/402 |
 | With console I/O and panic source locations (`a05427a`) | 353 | 353/402 | 353/402 |
+| With clocks, sleep, arguments, environment and file handles (`5f976aa`) | 377 | 377/417 | 377/417 |
 
 In the baseline, 98 panics matched stdout and exit status but lacked the source
 location in the stderr golden. After the change, every built program matched all
-its goldens. The 49 compiler rejections group by the first reported unsupported
-feature.
+its goldens. The 49 compiler rejections of the first two rows were reduced to 40 (of 417 eligible) by mapping more Linux
+system calls onto Win32 imports: `clock_gettime` (`QueryPerformanceCounter` for the monotonic clock,
+`GetSystemTimePreciseAsFileTime` for the wall clock), `nanosleep` (`Sleep`, rounded up to milliseconds), process
+arguments (`GetCommandLineW` converted to UTF-8 and split on blanks outside double quotes; backslash escapes are not
+interpreted) and environment (`GetEnvironmentStringsA`), both laid out like the Linux initial stack so `std.env`
+is unchanged, and `open`/`close`/`unlink`/`rename` (`CreateFileA`, `CloseHandle`, `DeleteFileA`,
+`MoveFileExA`; the handle is the descriptor, `read`/`write` accept it; `/tmp/...` paths resolve to `C:\tmp`, which
+the corpus job creates). The remaining 40 group by the first reported unsupported feature:
 
 | Feature | Rejections |
 |---|---:|
-| Threads, channels, locks and atomics | 21 |
-| Filesystem and paths | 7 |
-| Clocks and timers | 6 |
-| Process arguments and environment | 5 |
-| Extern C | 5 |
+| Threads, channels, locks and atomics (need `CreateThread`, TLS and a futex replacement) | 23 |
+| Extern C (need DLL imports and a Win64 call shim) | 6 |
 | Sockets | 4 |
+| `getcwd` and directory iteration | 4 |
+| `statx` | 2 |
 | Raw Linux memory syscalls | 1 |
 
 The driver boots `~/vm-windows/run-vm.sh` and uses `host.py` and the guest agent.
@@ -84,7 +90,7 @@ flock /tmp/yerux-run_all.lock python3 tests/windows_vm_corpus.py
 ```
 
 With this VM configuration, all 353 built programs matched their goldens
-again across 12 sequential jobs.
+again across 12 sequential jobs, and all 377 built programs of the 417 eligible tests matched in the latest run.
 
 If the agent was configured only for the first logon, run the following in a guest
 PowerShell after sign-in while the driver waits. The driver submits
