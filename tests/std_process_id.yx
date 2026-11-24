@@ -1,0 +1,10 @@
+// std.process: id() reports this process's pid, the same value io.process_id reports
+import std.process
+import std.io
+
+fn main() {
+  let pid = process.id()
+  print(pid > 0)
+  print(pid == io.process_id())
+  print(pid < 4194304)
+}

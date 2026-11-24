@@ -1,0 +1,67 @@
+// std.io: raw stdout/stderr writes (write_stdout, write_stdout_bytes, write_stderr, eprint) and the
+// process's private environment table (set_env_var, remove_env_var, env_vars). stderr goes to
+// tests/expected/std_io_raw_env.stderr.
+import std.io
+import std.fs
+
+fn report(label: Text, r: Result<Int, io.IoError>) {
+  match r {
+    Ok(n) => {
+      print("{label}: ok {n}")
+    }
+    Err(e) => {
+      print("{label}: {e}")
+    }
+  }
+}
+
+fn lookup(name: Text) {
+  match io.env_var(name) {
+    Some(v) => {
+      print("get {v}")
+    }
+    None => {
+      print("unset")
+    }
+  }
+}
+
+fn main() {
+  // raw stdout writes keep their order with print
+  report("write_stdout", io.write_stdout("raw-a\n"))
+  let utf8 = fs.string_bytes("héllo")
+  report("write_stdout_bytes", io.write_stdout_bytes(utf8))
+  report("write_stdout_bytes empty", io.write_stdout_bytes(List<UInt8>.new()))
+  print("after raw writes")
+
+  // stderr (checked against the golden .stderr file)
+  report("write_stderr", io.write_stderr("stderr-line\n"))
+  io.eprint("eprint-line\n")
+
+  // set, read back, overwrite, list, remove, remove again
+  report("set", io.set_env_var("YX_IO_RAW_ENV", "one"))
+  lookup("YX_IO_RAW_ENV")
+  report("overwrite", io.set_env_var("YX_IO_RAW_ENV", "two"))
+  lookup("YX_IO_RAW_ENV")
+  var hits = 0
+  for e in io.env_vars() {
+    let m = e.eq("YX_IO_RAW_ENV=two")
+    if m {
+      hits = hits + 1
+    }
+  }
+  print("list hits {hits}")
+  print("list nonempty {io.env_vars().len() > 0}")
+  report("remove", io.remove_env_var("YX_IO_RAW_ENV"))
+  report("remove again", io.remove_env_var("YX_IO_RAW_ENV"))
+  lookup("YX_IO_RAW_ENV")
+
+  // invalid names and values are errors, not panics
+  report("empty name", io.set_env_var("", "x"))
+  report("name with =", io.set_env_var("A=B", "x"))
+  report("remove bad name", io.remove_env_var("A=B"))
+  var nul = String.from("V")
+  nul.push_byte(0)
+  report("value with NUL", io.set_env_var("YX_IO_RAW_OK", nul))
+  report("name with NUL", io.set_env_var(nul, "x"))
+}
