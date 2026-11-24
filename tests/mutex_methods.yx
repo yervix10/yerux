@@ -1,0 +1,20 @@
+// Mutex as methods: update / with / with_view (same lock as mutex_update / mutex_with / mutex_with_view), also through Shared.
+fn main() {
+  let m = Shared.new(Mutex<(Int, Int)>.new((0, 0)))
+  let a = m.clone()
+  scope {
+    let h = spawn move || {
+      for i in 0..100 {
+        a.update(|p| {
+          p.0 = p.0 + 1
+          p.1 = p.1 + 2
+        })
+      }
+      return 0
+    }
+  }
+  print(m.with_view(|p| p.0 + p.1))
+  let s = m.with(|p| { p.0 = 5
+    return p.0 * 2 })
+  print(s)
+}

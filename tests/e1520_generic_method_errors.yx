@@ -1,0 +1,10 @@
+struct P { n: Int }
+struct Q { z: Int }
+impl P {
+  fn show_with<R: Show>(view self, f: view fn(Int) -> R) -> String { return f(self.n).show() }
+}
+fn main() {
+  let p = P { n: 1 }
+  print(p.show_with(|x| Q { z: x }))
+  print(p.show_with())
+}
