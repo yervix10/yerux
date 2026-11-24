@@ -38,8 +38,15 @@ Imports from `KERNEL32.dll` include `GetStdHandle`, `ReadFile`, `WriteFile`, `Ge
   and stderr. The stubs return the transfer count and translate common errors into the codes
   expected by `std.io`. A closed input pipe returns EOF. This covers line and byte reads,
   prompts, raw standard output, and explicit process exit.
-* Panics print the message and, when the compiler emits source locations, the source position to
-  stderr before calling `ExitProcess(101)`.
+* Fatal panics print the message and, when available, the source position to stderr before calling
+  `ExitProcess(101)`. A scoped worker can recover from a panic, drop its live values and return the
+  failure to its joiner. Windows threads use `CreateThread` and `WaitForSingleObject`, a nonvolatile
+  register for runtime TLS and `WaitOnAddress` / `WakeByAddress*` for contended locks. The internal wake
+  primitive returns zero because Win32 provides no wake count.
+* File operations include basic directory creation and removal, existence checks, working-directory
+  changes and path or handle metadata. `current_dir` converts the Win32 UTF-16 path to UTF-8. For
+  metadata, sizes and modification times come from the file handle. Permissions are synthesized from
+  the file kind and read-only attribute. A no-follow metadata query treats reparse points as symlink-like.
 * Allocator: the same size-class free lists + 1 MiB arenas as on Linux, with `mmap` replaced by
   `VirtualAlloc(NULL, n, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)` (NULL -> "out of memory" panic) and `munmap` by
   `VirtualFree(p, 0, MEM_RELEASE)` for large blocks.
@@ -52,7 +59,7 @@ both `.out` and `.code` goldens and runs the PE binaries on Windows Server 2022 
 (build 20348) in QEMU. It compares redirected stdout byte for byte, the exit status,
 and stderr for tests with a `.stderr` golden. It feeds the same `.stdin` and `.args`
 fixtures as the Linux suite. The driver lists the 12 excluded POSIX-specific goldens
-and counts compiler rejections among the eligible tests (402 at the first two rows, 417 now).
+and counts compiler rejections among the eligible tests (402 at the first two rows, 417 in the third).
 
 | Windows Server 2022 run | PE binaries built | Stdout and exit code match | All available goldens match |
 |---|---:|---:|---:|
@@ -69,7 +76,7 @@ arguments (`GetCommandLineW` converted to UTF-8 and split on blanks outside doub
 interpreted) and environment (`GetEnvironmentStringsA`), both laid out like the Linux initial stack so `std.env`
 is unchanged, and `open`/`close`/`unlink`/`rename` (`CreateFileA`, `CloseHandle`, `DeleteFileA`,
 `MoveFileExA`; the handle is the descriptor, `read`/`write` accept it; `/tmp/...` paths resolve to `C:\tmp`, which
-the corpus job creates). The remaining 40 group by the first reported unsupported feature:
+the corpus job creates). The 40 rejections in that historical run group by the first reported unsupported feature.
 
 | Feature | Rejections |
 |---|---:|
@@ -90,7 +97,7 @@ flock /tmp/yerux-run_all.lock python3 tests/windows_vm_corpus.py
 ```
 
 With this VM configuration, all 353 built programs matched their goldens
-again across 12 sequential jobs, and all 377 built programs of the 417 eligible tests matched in the latest run.
+again across 12 sequential jobs, and all 377 built programs of the 417 eligible tests matched in the last VM run.
 
 If the agent was configured only for the first logon, run the following in a guest
 PowerShell after sign-in while the driver waits. The driver submits
@@ -99,6 +106,42 @@ PowerShell after sign-in while the driver waits. The driver submits
 ```powershell
 Invoke-Expression (Invoke-RestMethod 'http://10.0.2.2:8000/agent.ps1')
 ```
+
+## Current cross-build audit and Wine verification
+
+`python3 tests/windows_pe_audit.py` builds the runtime goldens in `tests/` and the standalone programs
+under `examples/`. Intentional compile-error examples and modules without `main` are excluded. The
+[audit snapshot](windows-pe-rejections.tsv) records each rejected source and its exact first diagnostic
+before and after the changes. The baseline is `2b8acbb`.
+
+| Same corpus before and after | Before | With threads and filesystem changes |
+|---|---:|---:|
+| Test goldens rejected | 56/446 | 34/446 |
+| Example entry points rejected | 19/67 | 13/67 |
+| Total rejected | **75/513** | **47/513** |
+
+The two new filesystem regressions also build, for **468/515** PE builds in the updated corpus. The
+counts measure compiler acceptance. A program can use several unsupported features, so removing its
+first diagnostic may reveal another.
+
+| First compiler rejection | Before | After |
+|---|---:|---:|
+| Thread runtime and atomics | 31 | 0 |
+| Sockets (`setsockopt`) | 9 | 16 |
+| Directory iteration (`getdents64`) | 0 | 13 |
+| Process handling (`wait4`) | 8 | 8 |
+| Extern C | 6 | 6 |
+| Working directory (`getcwd`) | 10 | 0 |
+| Metadata (`statx`) | 7 | 0 |
+| Existence (`access`) and mkdir | 3 | 0 |
+| Other filesystem operations (`lseek`, `readlink`, `chmod`) | 0 | 3 |
+| Raw Linux memory mapping | 1 | 1 |
+
+Wine 10.0 matched the C backend's stdout and exit status on all 28 newly buildable programs and both
+new regressions. This included scoped panic and cleanup, nested workers, contended locks, a four-worker
+`schedsim` run, a scripted `edlite` session and a `tasks` listing from a prepopulated file. The Windows
+CI smoke suite requires the thread and filesystem regressions to build and run. Windows Server figures
+above are from the earlier native Windows run.
 
 ## Other verification
 
@@ -148,9 +191,12 @@ Invoke-Expression (Invoke-RestMethod 'http://10.0.2.2:8000/agent.ps1')
 * `std.io` retries short standard-output writes. The built-in `print` uses a single synchronous write.
 * Redirected I/O preserves bytes. Console rendering depends on the code page and font. Interactive Unicode input
   needs separate verification.
-* PE supports the console subsystem. Filesystem access and Windows path handling, command-line arguments, the
-  environment, clocks, subprocesses, sockets, threads, extern C, and runtime backtraces remain outside this support.
-* The code is the unoptimised "every vreg in a stack slot" output (see BACKEND.md); no Windows-specific speed work.
+* Executables use the console subsystem and the shared x86-64 register allocator. Subprocesses,
+  sockets, extern C and runtime backtraces remain unavailable.
+* Path-taking Win32 file calls still use the ANSI code page. Native path syntax and separator rules
+  differ from the POSIX `std.path` conventions. Directory enumeration and handle-relative traversal,
+  including recursive tree removal, still require unsupported syscalls. Windows ACLs, full POSIX
+  mode changes, and Linux `/proc/self/exe` semantics are outside the metadata subset.
 * `aarch64` Windows and 32-bit x86 are out of scope.
 
 
@@ -167,7 +213,7 @@ The `windows-check` CI job cross-checks the Rust compiler with
 | No C compiler | build/run fall back to the native backend with a note; `check`, `c`, `ir`, `fmt`, `lsp` need none |
 | `yerux doctor` | reports the compiler found (or MISSING and why), wine, temp dir, platform, and compiles + runs a program with each backend; exit 1 only if no backend works |
 | Paths and command lines | temp files use `std::env::temp_dir()`; file arguments may contain spaces and either slash; CRLF and BOM sources are accepted (checked by `tests/win_smoke.sh`) |
-| Limits | the native Windows backend has the limits listed above (extern C and OS intrinsics outside the supported console subset are rejected with `not supported on the windows target yet`); programs using them need the C backend (MinGW) or Linux |
+| Limits | the native Windows backend has the limits listed above (extern C and unsupported OS intrinsics are rejected with `not supported on the windows target yet`); programs using them need the C backend (MinGW) or Linux |
 
 `tests/win_smoke.sh` runs on Linux and Windows. It checks `--version`, `doctor`, `run` on a CRLF
 source in a directory with spaces, the default output name, and native output against the
