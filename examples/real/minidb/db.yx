@@ -8,7 +8,7 @@ import record
 /// index maps a key to `value offset * 16777216 + value length` (values are below 16 MiB)
 pub struct Db {
   path: String,
-  file: fs.File,
+  file: Option<fs.File>,
   index: Map<String, Int>,
   end: Int,
   dead: Int,
@@ -24,10 +24,10 @@ fn len_of(p: Int) -> Int { return p % 16777216 }
 
 fn fail(what: view String, e: view io.IoError) -> String { return "{what}: {e}" }
 
-fn open_file(path: view String) -> Result<fs.File, String> {
+fn open_file(path: view String, create: Bool) -> Result<fs.File, String> {
   var o = fs.options()
   o.write = true
-  o.create = true
+  o.create = create
   match fs.open_with(path, o) {
     Ok(f) => { return Ok(move f) }
     Err(e) => { return Err(fail("cannot open {path}", e)) }
@@ -68,26 +68,41 @@ pub fn open(path: view String) -> Result<Db, String> {
     at = r.next
   }
   let repaired = data.len() - at
-  var file = open_file(path)?
+  var file = open_file(path, true)?
   if repaired > 0 {
     match file.set_len(at) {
       Ok(_) => { }
       Err(e) => { return Err(fail("cannot cut the damaged tail of {path}", e)) }
     }
   }
-  return Ok(Db { path: String.from(path), file: move file, index: move index, end: at, dead: dead, repaired: repaired, records: records })
+  return Ok(Db { path: String.from(path), file: Some(move file), index: move index, end: at, dead: dead, repaired: repaired, records: records })
+}
+
+// Compact closes the old handle before replacing the file. Reopen on demand
+// so a failed rename leaves the index and the original log usable.
+fn ensure_file(db: mut Db) -> Result<Int, String> {
+  if db.file.is_none() {
+    db.file = Some(open_file(db.path, false)?)
+  }
+  return Ok(0)
 }
 
 fn append(db: mut Db, bytes: view List<UInt8>) -> Result<Int, String> {
-  match db.file.seek(db.end) {
-    Ok(_) => { }
-    Err(e) => { return Err(fail("seek", e)) }
-  }
-  match db.file.write(bytes) {
-    Ok(n) => {
-      if n != bytes.len() { return Err("short write") }
+  ensure_file(db)?
+  match mut db.file {
+    Some(file) => {
+      match file.seek(db.end) {
+        Ok(_) => { }
+        Err(e) => { return Err(fail("seek", e)) }
+      }
+      match file.write(bytes) {
+        Ok(n) => {
+          if n != bytes.len() { return Err("short write") }
+        }
+        Err(e) => { return Err(fail("write", e)) }
+      }
     }
-    Err(e) => { return Err(fail("write", e)) }
+    None => { return Err("log is closed") }
   }
   let at = db.end
   db.end = db.end + bytes.len()
@@ -124,7 +139,15 @@ pub fn get(db: mut Db, key: view String) -> Result<Option<String>, String> {
   let e = db.index.find(key)
   if e < 0 { return Ok(None) }
   let p = db.index.vals.get(e)
-  match db.file.seek(off_of(p)) {
+  ensure_file(db)?
+  match mut db.file {
+    Some(file) => { return read_value(file, p) }
+    None => { return Err("log is closed") }
+  }
+}
+
+fn read_value(file: mut fs.File, p: Int) -> Result<Option<String>, String> {
+  match file.seek(off_of(p)) {
     Ok(_) => { }
     Err(x) => { return Err(fail("seek", x)) }
   }
@@ -132,7 +155,7 @@ pub fn get(db: mut Db, key: view String) -> Result<Option<String>, String> {
   var out = String.new()
   var left = want
   while left > 0 {
-    match db.file.read_bytes(left) {
+    match file.read_bytes(left) {
       Ok(chunk) => {
         if chunk.len() == 0 { return Err("the log is shorter than its index says (damaged while open)") }
         for i in 0..chunk.len() { out.push_byte(chunk[i].to_int()) }
@@ -176,12 +199,12 @@ pub fn compact(db: mut Db) -> Result<Int, String> {
     Ok(_) => { }
     Err(e) => { return Err(fail("cannot write {tmp}", e)) }
   }
+  db.file = None
   match fs.rename(tmp, db.path) {
     Ok(_) => { }
     Err(e) => { return Err(fail("cannot replace {db.path}", e)) }
   }
   let freed = db.end - out.len()
-  db.file = open_file(db.path)?
   db.index = move fresh
   db.end = out.len()
   db.dead = 0
