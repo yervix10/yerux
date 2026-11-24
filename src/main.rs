@@ -305,20 +305,21 @@ fn compile_native_ir(
     target: &str,
     debug_alloc: bool,
 ) -> Result<Vec<u8>, String> {
-    if !matches!(target, "" | "linux") {
-        let aarch64 = target == "aarch64";
-        if aarch64 {
-            a64::discard_unused_functions(ir);
+    let validated = match target {
+        "aarch64" => {
+            ir::discard_unused_functions(ir);
+            a64::validate_syscalls(ir)
         }
-        let mut unsupported = ir::os_intrinsics_error(ir, aarch64);
-        if aarch64 && unsupported.is_none() {
-            unsupported = a64::validate_syscalls(ir).err();
+        "windows" => {
+            ir::discard_unused_functions(ir);
+            x64::validate_windows(ir)
         }
-        if let Some(what) = unsupported {
-            return Err(format!(
-                "error: native backend: {what} is not supported on the {target} target yet (available on x86-64 Linux)"
-            ));
-        }
+        _ => Ok(()),
+    };
+    if let Err(what) = validated {
+        return Err(format!(
+            "error: native backend: {what} is not supported on the {target} target yet (available on x86-64 Linux)"
+        ));
     }
     Ok(match target {
         "aarch64" => a64::compile(ir, debug_alloc),

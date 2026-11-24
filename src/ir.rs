@@ -4277,28 +4277,57 @@ pub fn dump(p: &IrProgram) -> String {
 }
 
 /// Reject OS intrinsics unavailable on the target. AArch64 validates its supported syscall numbers separately.
-pub fn os_intrinsics_error(p: &IrProgram, allow_linux_os: bool) -> Option<String> {
-    for f in &p.funcs {
-        for b in &f.blocks {
-            for i in &b.insts {
-                match i {
-                    Inst::Thread(..) | Inst::Atomic(..) if !allow_linux_os => {
-                        return Some(format!(
-                            "thread runtime intrinsics (used by function '{}')",
-                            f.name
-                        ))
-                    }
-                    Inst::Syscall(..) | Inst::Global(..) if allow_linux_os => {}
-                    Inst::Syscall(..) | Inst::Global(..) => {
-                        return Some(format!(
-                            "raw system calls (std.io, used by function '{}')",
-                            f.name
-                        ))
-                    }
-                    _ => {}
-                }
+/// Imported modules include all their functions. Keep function IDs stable while
+/// dropping code that cannot be called, including unsupported OS APIs.
+pub fn discard_unused_functions(ir: &mut IrProgram) {
+    let mut reachable = vec![false; ir.funcs.len()];
+    let mut pending = vec![ir.main];
+    while let Some(fid) = pending.pop() {
+        if std::mem::replace(&mut reachable[fid], true) {
+            continue;
+        }
+        for inst in ir.funcs[fid].blocks.iter().flat_map(|b| &b.insts) {
+            match inst {
+                Inst::Call(_, callee, _) | Inst::FnAddr(_, callee) => pending.push(*callee),
+                Inst::VTableAddr(_, table) => pending.extend(&ir.vtables[*table]),
+                _ => {}
             }
         }
     }
-    None
+    for (f, used) in ir.funcs.iter_mut().zip(reachable) {
+        if !used {
+            f.nparams = 0;
+            f.nvregs = 0;
+            f.slots.clear();
+            f.blocks = vec![Block {
+                insts: vec![],
+                term: Term::Unreachable,
+            }];
+        }
+    }
+}
+
+pub fn syscall_constants(f: &IrFunc) -> Vec<Option<i64>> {
+    if !f
+        .blocks
+        .iter()
+        .flat_map(|b| &b.insts)
+        .any(|i| matches!(i, Inst::Syscall(..)))
+    {
+        return Vec::new();
+    }
+    // A runtime number could accidentally invoke a different AArch64 syscall.
+    let mut defined = vec![false; f.nvregs];
+    let mut constants = vec![None; f.nvregs];
+    defined[..f.nparams].fill(true);
+    for inst in f.blocks.iter().flat_map(|b| &b.insts) {
+        if let Some(d) = crate::opt::def(inst) {
+            constants[d] = match inst {
+                Inst::Const(_, n) if !defined[d] => Some(*n),
+                _ => None,
+            };
+            defined[d] = true;
+        }
+    }
+    constants
 }

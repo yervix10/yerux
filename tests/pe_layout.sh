@@ -17,6 +17,20 @@ for f in examples/01_lists.yx bench/src/fib.yx bench/src/sort.yx bench/src/texto
   "$Y" build "$f" --native -o "$T/$n.lin" >/dev/null 2>&1 && "$Y" build "$f" -o "$T/$n.c" >/dev/null 2>&1 \
     && [ "$(timeout 20 "$T/$n.lin" 2>&1)" = "$(timeout 20 "$T/$n.c" 2>&1)" ] || { echo "FAIL: $n linux native differs from the C backend"; fails=$((fails+1)); }
 done
+# Reachable console operations use Win32 even without optimization. Importing
+# std.io must not require its unrelated file and environment operations.
+for mode in --release --no-opt; do
+  if ! "$Y" build tests/io_prompt.yx --target windows "$mode" -o "$T/prompt.exe" >"$T/log" 2>&1 ||
+     ! python3 tests/pe_check.py "$T/prompt.exe" >>"$T/log" 2>&1; then
+    echo "FAIL: Windows prompt ($mode): $(cat "$T/log")"
+    fails=$((fails+1))
+  fi
+done
+if "$Y" build tests/native_linux_memory.yx --target windows -o "$T/linux.exe" >"$T/log" 2>&1 ||
+   ! grep -q 'raw system call.*not supported on the windows target' "$T/log"; then
+  echo "FAIL: Windows must reject Linux memory syscalls: $(cat "$T/log")"
+  fails=$((fails+1))
+fi
 # a function with a frame larger than ALLOC_SMALL's 128 bytes, and one larger than 512 KiB (32-bit ALLOC_LARGE)
 cat >"$T/big.yx" <<'Y'
 fn big(n: Int) -> Int {

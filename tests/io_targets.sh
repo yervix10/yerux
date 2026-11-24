@@ -18,7 +18,7 @@ for m in "${services[@]}"; do
   if "$Y" build "tests/$m.yx" --target windows -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
     echo "FAIL: $m built for windows"; fail=1; continue
   fi
-  grep -q "native backend: raw system calls .* is not supported on the windows target yet" "$TMP/err" ||
+  grep -Eq "native backend: (raw system call [0-9]+|process arguments and environment|thread runtime intrinsics) .* is not supported on the windows target yet" "$TMP/err" ||
     { echo "FAIL: unclear message for $m on windows"; cat "$TMP/err"; fail=1; }
 done
 if ! "$Y" build tests/conc_runtime.yx --target aarch64 -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
