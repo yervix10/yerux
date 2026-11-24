@@ -1216,7 +1216,7 @@ fn main() {
 ## 23. Running the Compiler
 
 ```bash
-yerux --version                      # yerux 0.5.0
+yerux --version                      # yerux 0.9.0-rc1
 yerux doctor                         # C compiler, wine, both backends: what this installation can do
 yerux check file.yx                  # type-check only
 yerux c file.yx                      # emit C code to stdout

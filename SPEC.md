@@ -530,7 +530,7 @@ Lexer → parser → type + ownership checker → C generator → `cc -O2`.
 - **v0.5** `Option<T>` / `Result<T, E>` (plain generic enums), error handling with `?`.
 - **v0.6** Effects/capabilities system (no network/disk access without permission), range integers `Int<lo..hi>` to remove bounds checks (docs/RANGES.md), `comptime` and explicit allocators (docs/COMPTIME.md; first versions done: scalar `comptime`, `Arena<T>`), threads (docs/CONCURRENCY.md).
 - **v0.7** Tooling: LSP, package manager (formatter and test runner exist).
-- **Self-hosting** is milestone M7 in docs/ROADMAP.md (partial today); the 1.0 release is M12 there. The current version is 0.5.0, so the version lines above are the older plan, and docs/ROADMAP.md is authoritative.
+- **Self-hosting** is milestone M7 in docs/ROADMAP.md (partial today); the 1.0 release is M12 there. The current version is 0.9.0-rc1, so the version lines above are the older plan, and docs/ROADMAP.md is authoritative.
 - **UI framework:** graphics layer (wgpu/Vulkan/Metal) → layout → widgets → reactivity (signals, docs/SIGNALS.md) → platforms.
 
 ## Open decisions

@@ -55,6 +55,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: scripts/release.sh dist
       - run: |
+          (cd dist && sha256sum -c ./*.sha256)
           export HOME="$(mktemp -d)"
           tar -xzf dist/yerux-*.tar.gz -C "$HOME"
           "$HOME"/yerux-*/install.sh

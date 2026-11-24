@@ -1,7 +1,7 @@
 # Yerux master roadmap (M1..M12)
 
 > **Status note:** the milestone table is a direction and effort estimate; the section "Measured status" below
-> counts what exists in this repository (version 0.5.0), deliverable by deliverable, with the evidence for each
+> counts what exists in this repository (version 0.9.0-rc1), deliverable by deliverable, with the evidence for each
 > count. The compiler has a C backend (default, the test oracle, needs `cc`) and a native backend (x86-64 Linux; AArch64
 > Linux and Windows PE with documented limits). Framework milestones M4-M6 and M8-M11 have not been started.
 
@@ -41,7 +41,7 @@ graph.
 | **M11** | Widget library, hot reload, devtools | ~40-100 widgets (lists, nav, dialogs, menus, theming), design system, patchable hot reload (relocatable modules), inspector, perf overlay, image codecs (PNG/JPEG/GIF/WebP) | M6, M7, M10 | 20-30 | Non-trivial app built entirely in Yerux |
 | **M12** | Apple, mobile, web | aarch64 backend, Mach-O + signing + ObjC bridge (macOS, iOS), Android `.so` + APK + JNI, wasm backend; Metal RHI; per-OS IME/a11y; release 1.0 | M8-M11 | 40-60 | Same app on macOS, Android, iOS (and web) |
 
-## Measured status (version 0.5.0)
+## Measured status (version 0.9.0-rc1)
 
 Method: each milestone's deliverables are the items listed in its "Contents" cell above (100 in total). An item
 counts as 1 when it is implemented and covered by a test in the suite, 0.5 when it exists but only partially (the
