@@ -1,0 +1,908 @@
+// std.http.server: an HTTP/1.1 server: a strict, bounded request parser (Content-Length and chunked bodies, keep-alive,
+// Expect: 100-continue), Request and Response values, a router with path parameters, and an accept loop that deals
+// connections to a pool of worker threads and stops in order.
+//
+//   import std.http.server
+//
+//   struct App { hits: Locked<Int> }
+//   impl server.Handler for App {
+//     fn handle(view self, req: view server.Request) -> server.Response {
+//       return server.text(200, "hello {req.path}\n")
+//     }
+//   }
+//   fn main() {
+//     let l = net.listen(net.address("127.0.0.1", 8080).unwrap()).unwrap()
+//     let stop = server.stop_handle()
+//     server.serve(l, Shared.new(App { hits: Locked.new(0) }), server.config(), stop)
+//   }
+//
+// Hostile input never panics: every violation is a 4xx/5xx answer and the connection is closed. Nothing is read or
+// buffered beyond the limits of `Config`.
+import std.io
+import std.net
+
+/// Size and time limits. `config()` gives the defaults; change fields of the returned value.
+pub struct Config {
+  /// worker threads
+  workers: Int,
+  /// connections queued per worker before the accept loop waits
+  queue: Int,
+  /// request line plus headers, in bytes (431 beyond it)
+  max_head: Int,
+  /// number of header fields (431 beyond it)
+  max_headers: Int,
+  /// request target length (414 beyond it)
+  max_uri: Int,
+  /// body bytes, after chunked decoding (413 beyond it)
+  max_body: Int,
+  /// time to receive the rest of a request once it started, in ms (408 beyond it)
+  read_timeout_ms: Int,
+  /// time to send a response, in ms
+  write_timeout_ms: Int,
+  /// time a keep-alive connection may wait for its next request, in ms (closed silently)
+  idle_timeout_ms: Int,
+  /// requests served on one connection before it is closed
+  max_requests: Int,
+  /// stop after accepting this many connections (0 = no limit); for tests and one-shot tools
+  max_connections: Int,
+}
+
+derive Clone for Config
+
+pub fn config() -> Config {
+  return Config {
+    workers: 4,
+    queue: 16,
+    max_head: 8192,
+    max_headers: 64,
+    max_uri: 2048,
+    max_body: 1048576,
+    read_timeout_ms: 5000,
+    write_timeout_ms: 5000,
+    idle_timeout_ms: 5000,
+    max_requests: 100,
+    max_connections: 0,
+  }
+}
+
+/// One request. `path` is the percent-decoded target path, `query` the raw text after `?`.
+pub struct Request {
+  method: String,
+  /// the target as received (origin form)
+  target: String,
+  path: String,
+  /// the path before percent-decoding (what the router splits on)
+  raw_path: String,
+  query: String,
+  /// 0 for HTTP/1.0, 1 for HTTP/1.1
+  minor: Int,
+  headers: List<(String, String)>,
+  body: String,
+  /// the connection stays open after the answer unless the handler or the server closes it
+  keep_alive: Bool,
+}
+
+/// One answer. The server adds Content-Length, Connection and Server.
+pub struct Response {
+  status: Int,
+  headers: List<(String, String)>,
+  body: String,
+  /// close the connection after this answer
+  close: Bool,
+}
+
+/// Something that answers requests. It is shared by all workers (`Shared<H>`), so it takes `view self`: state that
+/// changes lives in `Locked`, `Mutex` or `Atomic` fields.
+pub trait Handler {
+  fn handle(view self, req: view Request) -> Response
+}
+
+// ───────────────────────── responses ─────────────────────────
+
+pub fn response(status: Int, content_type: Text, body: view String) -> Response {
+  var h = List<(String, String)>.new()
+  h.push((String.from("Content-Type"), String.from(content_type)))
+  return Response { status: status, headers: move h, body: body.clone(), close: false }
+}
+
+/// A `text/plain; charset=utf-8` answer.
+pub fn text(status: Int, body: view String) -> Response {
+  return response(status, "text/plain; charset=utf-8", body)
+}
+
+/// An `application/json` answer (the body is sent as given).
+pub fn json(status: Int, body: view String) -> Response {
+  return response(status, "application/json", body)
+}
+
+/// An answer with no body (204, 304, redirects, ...).
+pub fn empty(status: Int) -> Response {
+  return Response { status: status, headers: List<(String, String)>.new(), body: String.new(), close: false }
+}
+
+/// Add a header field to an answer.
+pub fn add_header(r: mut Response, name: view String, value: view String) {
+  r.headers.push((name.clone(), value.clone()))
+}
+
+/// The reason phrase of a status code.
+pub fn reason(status: Int) -> Text {
+  match status {
+    100 => { return "Continue" }
+    200 => { return "OK" }
+    201 => { return "Created" }
+    202 => { return "Accepted" }
+    204 => { return "No Content" }
+    206 => { return "Partial Content" }
+    301 => { return "Moved Permanently" }
+    302 => { return "Found" }
+    303 => { return "See Other" }
+    304 => { return "Not Modified" }
+    307 => { return "Temporary Redirect" }
+    308 => { return "Permanent Redirect" }
+    400 => { return "Bad Request" }
+    401 => { return "Unauthorized" }
+    403 => { return "Forbidden" }
+    404 => { return "Not Found" }
+    405 => { return "Method Not Allowed" }
+    408 => { return "Request Timeout" }
+    409 => { return "Conflict" }
+    411 => { return "Length Required" }
+    413 => { return "Content Too Large" }
+    414 => { return "URI Too Long" }
+    415 => { return "Unsupported Media Type" }
+    417 => { return "Expectation Failed" }
+    422 => { return "Unprocessable Content" }
+    429 => { return "Too Many Requests" }
+    431 => { return "Request Header Fields Too Large" }
+    500 => { return "Internal Server Error" }
+    501 => { return "Not Implemented" }
+    503 => { return "Service Unavailable" }
+    505 => { return "HTTP Version Not Supported" }
+    _ => { return "Status" }
+  }
+}
+
+// Header names and values are written verbatim, except that a CR, LF or NUL is replaced by a blank: a handler cannot
+// split a response by putting a line break in a value.
+fn clean(s: view String) -> String {
+  var out = String.new()
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b == 13 || b == 10 || b == 0 { out.push_byte(32) } else { out.push_byte(b) }
+  }
+  return out
+}
+
+fn bodyless(status: Int) -> Bool {
+  return status < 200 || status == 204 || status == 304
+}
+
+/// The bytes of an answer: status line, headers, blank line and (unless `head_only`) the body.
+pub fn render(r: view Response, head_only: Bool, close: Bool) -> String {
+  var out = String.from("HTTP/1.1 ")
+  out.push_int(r.status)
+  out.push_str(" ")
+  out.push_str(reason(r.status))
+  out.push_str("\r\nServer: yerux\r\n")
+  var has_length = false
+  for i in 0..r.headers.len() {
+    let name = clean(r.headers.at(i).0)
+    let lower = name.to_lower()
+    if lower.eq("content-length") || lower.eq("connection") || lower.eq("transfer-encoding") || lower.eq("server") { continue }
+    out.push_str(name)
+    out.push_str(": ")
+    out.push_str(clean(r.headers.at(i).1))
+    out.push_str("\r\n")
+  }
+  if !bodyless(r.status) {
+    out.push_str("Content-Length: ")
+    out.push_int(r.body.len())
+    out.push_str("\r\n")
+  }
+  if close { out.push_str("Connection: close\r\n") } else { out.push_str("Connection: keep-alive\r\n") }
+  out.push_str("\r\n")
+  if !head_only && !bodyless(r.status) { out.push_str(r.body) }
+  return out
+}
+
+fn error_response(status: Int, message: view String) -> Response {
+  var body = String.from(message)
+  body.push_str("\n")
+  var r = text(status, body)
+  r.close = true
+  return r
+}
+
+// ───────────────────────── request access ─────────────────────────
+
+/// The value of the first header field called `name` (case-insensitive).
+pub fn header(req: view Request, name: Text) -> Option<String> {
+  let want = String.from(name).to_lower()
+  for i in 0..req.headers.len() {
+    if req.headers.at(i).0.to_lower().eq(want) { return Some(req.headers.at(i).1.clone()) }
+  }
+  return None
+}
+
+fn hex_val(b: Int) -> Int {
+  if b >= 48 && b <= 57 { return b - 48 }
+  if b >= 65 && b <= 70 { return b - 55 }
+  if b >= 97 && b <= 102 { return b - 87 }
+  return -1
+}
+
+/// Percent-decode `s` (`+` is a blank when `plus` is set, as in query strings). None for a bad escape or a NUL.
+pub fn url_decode(s: view String, plus: Bool) -> Option<String> {
+  var out = String.new()
+  var i = 0
+  while i < s.len() {
+    let b = s.byte(i)
+    if b == 37 {
+      if i + 2 >= s.len() { return None }
+      let hi = hex_val(s.byte(i + 1))
+      let lo = hex_val(s.byte(i + 2))
+      if hi < 0 || lo < 0 { return None }
+      let v = hi * 16 + lo
+      if v == 0 { return None }
+      out.push_byte(v)
+      i = i + 3
+    } else if b == 43 && plus {
+      out.push_byte(32)
+      i = i + 1
+    } else {
+      out.push_byte(b)
+      i = i + 1
+    }
+  }
+  return Some(move out)
+}
+
+/// The decoded value of query parameter `name` (the first one).
+pub fn query_param(req: view Request, name: Text) -> Option<String> {
+  let want = String.from(name)
+  let pairs = req.query.split("&")
+  for i in 0..pairs.len() {
+    let eq = pairs.at(i).find("=")
+    var key = String.from(pairs.at(i))
+    var value = String.new()
+    if eq >= 0 {
+      key = pairs.at(i).slice(0, eq)
+      value = pairs.at(i).slice(eq + 1, pairs.at(i).len())
+    }
+    match url_decode(key, true) {
+      Some(k) => {
+        if k.eq(want) { return url_decode(value, true) }
+      }
+      None => {}
+    }
+  }
+  return None
+}
+
+// ───────────────────────── the parser ─────────────────────────
+
+/// The outcome of looking at the bytes received so far.
+pub enum Step {
+  /// more bytes are needed; the flag says an `Expect: 100-continue` is waiting for its interim answer
+  Need(Bool),
+  /// a whole request and the number of bytes it used
+  Done(Request, Int),
+  /// refuse with this status and message, then close
+  Reject(Int, String),
+}
+
+fn token_char(b: Int) -> Bool {
+  if (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) { return true }
+  return b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 || b == 42 || b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
+}
+
+fn is_token(s: view String) -> Bool {
+  if s.is_empty() { return false }
+  for i in 0..s.len() {
+    if !token_char(s.byte(i)) { return false }
+  }
+  return true
+}
+
+fn trim_ows(s: view String) -> String {
+  var a = 0
+  var b = s.len()
+  while a < b && (s.byte(a) == 32 || s.byte(a) == 9) { a = a + 1 }
+  while b > a && (s.byte(b - 1) == 32 || s.byte(b - 1) == 9) { b = b - 1 }
+  return s.slice(a, b)
+}
+
+/// A decimal number of at most 18 digits, or -1.
+fn decimal(s: view String) -> Int {
+  if s.is_empty() || s.len() > 18 { return -1 }
+  var n = 0
+  for i in 0..s.len() {
+    let d = s.byte(i) - 48
+    if d < 0 || d > 9 { return -1 }
+    n = n * 10 + d
+  }
+  return n
+}
+
+fn reject(status: Int, message: Text) -> Step {
+  return Step.Reject(status, String.from(message))
+}
+
+// A byte that cannot appear in a request head: a control character other than HT, DEL, a bare CR or a bare LF.
+// Returns the offset of the first bad byte, or -1.
+fn bad_head_byte(buf: view String, from: Int, to: Int) -> Int {
+  var i = from
+  while i < to {
+    let b = buf.byte(i)
+    if b == 10 {
+      if i == from || buf.byte(i - 1) != 13 { return i }
+    } else if b == 13 {
+      if i + 1 < buf.len() && buf.byte(i + 1) != 10 { return i }
+    } else if (b < 32 && b != 9) || b == 127 {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+fn find_crlf(buf: view String, from: Int, to: Int) -> Int {
+  var i = from
+  while i + 1 < to {
+    if buf.byte(i) == 13 && buf.byte(i + 1) == 10 { return i }
+    i = i + 1
+  }
+  return -1
+}
+
+// Chunked body starting at `start`: Ok((body, next)) when complete, Err(0) when more bytes are needed, Err(status)
+// for a malformed or oversized body.
+fn decode_chunked(buf: view String, start: Int, cfg: view Config) -> Result<(String, Int), Int> {
+  var body = String.new()
+  var p = start
+  while true {
+    let eol = find_crlf(buf, p, buf.len())
+    if eol < 0 {
+      if buf.len() - p > 300 { return Err(400) }
+      return Err(0)
+    }
+    if eol - p > 300 { return Err(400) }
+    // size [; extension]
+    var digits_end = p
+    while digits_end < eol && buf.byte(digits_end) != 59 { digits_end = digits_end + 1 }
+    if digits_end == p || digits_end - p > 15 { return Err(400) }
+    var size = 0
+    for i in p..digits_end {
+      let h = hex_val(buf.byte(i))
+      if h < 0 { return Err(400) }
+      size = size * 16 + h
+    }
+    p = eol + 2
+    if size == 0 {
+      // trailer fields until an empty line
+      var trailer = 0
+      while true {
+        let teol = find_crlf(buf, p, buf.len())
+        if teol < 0 {
+          if buf.len() - p > cfg.max_head { return Err(431) }
+          return Err(0)
+        }
+        if teol == p { return Ok((move body, p + 2)) }
+        trailer = trailer + (teol - p) + 2
+        if trailer > cfg.max_head { return Err(431) }
+        let colon = buf.slice(p, teol).find(":")
+        if colon <= 0 { return Err(400) }
+        p = teol + 2
+      }
+    }
+    if body.len() + size > cfg.max_body { return Err(413) }
+    if buf.len() < p + size + 2 { return Err(0) }
+    if buf.byte(p + size) != 13 || buf.byte(p + size + 1) != 10 { return Err(400) }
+    body.push_str(buf.slice(p, p + size))
+    p = p + size + 2
+  }
+  return Err(400)
+}
+
+/// Look at `buf` from `from`: the first request in it, or what is missing. Pure: no I/O.
+pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
+  // tolerate a few empty lines before the request line (RFC 9112, 2.2)
+  var p = from
+  var skipped = 0
+  while skipped < 4 && p + 1 < buf.len() && buf.byte(p) == 13 && buf.byte(p + 1) == 10 {
+    p = p + 2
+    skipped = skipped + 1
+  }
+  if p >= buf.len() { return Step.Need(false) }
+  if p + 1 == buf.len() && buf.byte(p) == 13 { return Step.Need(false) }
+  // the head ends at the first blank line
+  var head_end = -1
+  var i = p
+  while i + 3 < buf.len() {
+    if buf.byte(i) == 13 && buf.byte(i + 1) == 10 && buf.byte(i + 2) == 13 && buf.byte(i + 3) == 10 {
+      head_end = i
+      break
+    }
+    i = i + 1
+  }
+  var scan_to = buf.len()
+  if head_end >= 0 { scan_to = head_end + 4 }
+  let bad = bad_head_byte(buf, p, scan_to)
+  if bad >= 0 { return reject(400, "invalid character in the request head") }
+  if head_end < 0 {
+    if buf.len() - p > cfg.max_head { return reject(431, "request head too large") }
+    return Step.Need(false)
+  }
+  if head_end - p > cfg.max_head { return reject(431, "request head too large") }
+  let head = buf.slice(p, head_end)
+  let lines = head.split("\r\n")
+  // request line: METHOD SP target SP HTTP/1.x
+  let parts = lines.at(0).split(" ")
+  if parts.len() != 3 { return reject(400, "malformed request line") }
+  let method = String.from(parts.at(0))
+  let target = String.from(parts.at(1))
+  let version = String.from(parts.at(2))
+  if !is_token(method) || method.len() > 24 { return reject(400, "malformed method") }
+  var minor = 1
+  if version.eq("HTTP/1.1") {
+    minor = 1
+  } else if version.eq("HTTP/1.0") {
+    minor = 0
+  } else if version.starts_with("HTTP/") {
+    return reject(505, "only HTTP/1.0 and HTTP/1.1 are supported")
+  } else {
+    return reject(400, "malformed request line")
+  }
+  if target.is_empty() { return reject(400, "empty request target") }
+  if target.len() > cfg.max_uri { return reject(414, "request target too long") }
+  for k in 0..target.len() {
+    let b = target.byte(k)
+    if b < 33 || b > 126 { return reject(400, "invalid character in the request target") }
+  }
+  if method.eq("CONNECT") { return reject(501, "CONNECT is not supported") }
+  var path_part = String.from(target)
+  if !target.starts_with("/") {
+    if target.eq("*") && method.eq("OPTIONS") {
+      path_part = String.from("*")
+    } else if target.starts_with("http://") {
+      // absolute form: keep the path
+      let rest = target.slice(7, target.len())
+      let slash = rest.find("/")
+      if slash < 0 { path_part = String.from("/") } else { path_part = rest.slice(slash, rest.len()) }
+    } else {
+      return reject(400, "unsupported request target form")
+    }
+  }
+  if path_part.contains("#") { return reject(400, "a request target has no fragment") }
+  var query = String.new()
+  let q = path_part.find("?")
+  if q >= 0 {
+    query = path_part.slice(q + 1, path_part.len())
+    path_part = path_part.slice(0, q)
+  }
+  let raw_path = String.from(path_part)
+  var path = String.new()
+  match url_decode(path_part, false) {
+    Some(d) => { path = move d }
+    None => { return reject(400, "bad percent-encoding in the path") }
+  }
+  // header fields
+  if lines.len() - 1 > cfg.max_headers { return reject(431, "too many header fields") }
+  var headers = List<(String, String)>.new()
+  var hosts = 0
+  var host_ok = true
+  var length = -1
+  var has_te = false
+  var te = String.new()
+  var close = minor == 0
+  var expect_continue = false
+  var bad_expect = false
+  for k in 1..lines.len() {
+    let line = lines.at(k)
+    if line.is_empty() { return reject(400, "empty header line") }
+    if line.byte(0) == 32 || line.byte(0) == 9 { return reject(400, "obsolete line folding is not accepted") }
+    let colon = line.find(":")
+    if colon <= 0 { return reject(400, "malformed header field") }
+    let name = line.slice(0, colon)
+    if !is_token(name) { return reject(400, "invalid header field name") }
+    let value = trim_ows(line.slice(colon + 1, line.len()))
+    let lower = name.to_lower()
+    if lower.eq("host") {
+      hosts = hosts + 1
+      if value.is_empty() || value.contains(" ") || value.contains(",") || value.contains("/") { host_ok = false }
+    } else if lower.eq("content-length") {
+      let n = decimal(value)
+      if n < 0 { return reject(400, "invalid Content-Length") }
+      if length >= 0 && n != length { return reject(400, "conflicting Content-Length fields") }
+      length = n
+    } else if lower.eq("transfer-encoding") {
+      if has_te { return reject(400, "repeated Transfer-Encoding") }
+      has_te = true
+      te = value.to_lower()
+    } else if lower.eq("connection") {
+      let tokens = value.to_lower().split(",")
+      for t in 0..tokens.len() {
+        let tok = trim_ows(tokens.at(t))
+        if tok.eq("close") { close = true }
+        if tok.eq("keep-alive") && minor == 0 { close = false }
+      }
+    } else if lower.eq("expect") {
+      if value.to_lower().eq("100-continue") { expect_continue = true } else { bad_expect = true }
+    }
+    headers.push((move name, move value))
+  }
+  if minor == 1 && (hosts != 1 || !host_ok) { return reject(400, "exactly one valid Host header is required") }
+  if hosts > 1 || !host_ok { return reject(400, "invalid Host header") }
+  if bad_expect { return reject(417, "unsupported expectation") }
+  if has_te && length >= 0 { return reject(400, "Transfer-Encoding and Content-Length together") }
+  var body = String.new()
+  var used = head_end + 4
+  if has_te {
+    if minor == 0 { return reject(400, "Transfer-Encoding needs HTTP/1.1") }
+    if !te.eq("chunked") { return reject(501, "only the chunked transfer coding is supported") }
+    match decode_chunked(buf, head_end + 4, cfg) {
+      Ok(r) => {
+        body = r.0.clone()
+        used = r.1
+      }
+      Err(code) => {
+        if code == 0 { return Step.Need(expect_continue && buf.len() == head_end + 4) }
+        if code == 413 { return reject(413, "request body too large") }
+        if code == 431 { return reject(431, "chunked trailers too large") }
+        return reject(400, "malformed chunked body")
+      }
+    }
+  } else if length > 0 {
+    if length > cfg.max_body { return reject(413, "request body too large") }
+    if buf.len() < head_end + 4 + length { return Step.Need(expect_continue && buf.len() == head_end + 4) }
+    body = buf.slice(head_end + 4, head_end + 4 + length)
+    used = head_end + 4 + length
+  }
+  let req = Request {
+    method: move method,
+    target: move target,
+    path: move path,
+    raw_path: move raw_path,
+    query: move query,
+    minor: minor,
+    headers: move headers,
+    body: move body,
+    keep_alive: !close,
+  }
+  return Step.Done(move req, used)
+}
+
+// ───────────────────────── router ─────────────────────────
+
+struct Route {
+  method: String,
+  segments: List<String>,
+  id: Int,
+}
+
+/// Routes by method and path pattern. A pattern is `/`-separated: a literal segment, `:name` (one segment, any text)
+/// or `*name` (the rest of the path, last). `add` returns nothing; `route` gives the `id` you chose, so the handler
+/// `match`es on small integers.
+pub struct Router {
+  routes: List<Route>,
+}
+
+/// A matched route: its id and the decoded values of the `:name` and `*name` segments.
+pub struct Match {
+  id: Int,
+  params: List<(String, String)>,
+}
+
+pub enum Routed {
+  Found(Match),
+  NotFound,
+  /// the path exists for other methods: the `Allow` header value
+  MethodNotAllowed(String),
+}
+
+pub fn router() -> Router {
+  return Router { routes: List<Route>.new() }
+}
+
+fn segments_of(path: view String) -> List<String> {
+  var out = List<String>.new()
+  let parts = path.split("/")
+  for i in 0..parts.len() {
+    if !parts.at(i).is_empty() { out.push(String.from(parts.at(i))) }
+  }
+  return out
+}
+
+impl Router {
+  /// Register `method pattern` under `id`. `HEAD` requests use the `GET` routes.
+  fn add(mut self, method: Text, pattern: Text, id: Int) {
+    self.routes.push(Route { method: String.from(method), segments: segments_of(String.from(pattern)), id: id })
+  }
+
+  /// Find the route of a request.
+  fn route(view self, req: view Request) -> Routed {
+    let segs = segments_of(req.raw_path)
+    var allow = List<String>.new()
+    var best = -1
+    var best_score = -1
+    var found_params = List<(String, String)>.new()
+    for r in 0..self.routes.len() {
+      let route = self.routes.at(r)
+      var ok = true
+      var score = 0
+      var params = List<(String, String)>.new()
+      var i = 0
+      while i < route.segments.len() && ok {
+        let p = route.segments.at(i)
+        if p.starts_with("*") {
+          // the rest of the path, joined again
+          var rest = String.new()
+          var k = i
+          while k < segs.len() {
+            if k > i { rest.push_str("/") }
+            rest.push_str(segs.at(k))
+            k = k + 1
+          }
+          match url_decode(rest, false) {
+            Some(d) => { params.push((p.slice(1, p.len()), move d)) }
+            None => { ok = false }
+          }
+          i = route.segments.len() + 1
+        } else if i >= segs.len() {
+          ok = false
+        } else if p.starts_with(":") {
+          match url_decode(segs.at(i), false) {
+            Some(d) => { params.push((p.slice(1, p.len()), move d)) }
+            None => { ok = false }
+          }
+          score = score + 1
+          i = i + 1
+        } else {
+          match url_decode(segs.at(i), false) {
+            Some(d) => { if !d.eq(p) { ok = false } }
+            None => { ok = false }
+          }
+          score = score + 4
+          i = i + 1
+        }
+      }
+      if ok && i == route.segments.len() && i < segs.len() { ok = false }
+      if ok && i == route.segments.len() + 1 { ok = true }
+      if !ok { continue }
+      let same = route.method.eq(req.method) || (req.method.eq("HEAD") && route.method.eq("GET"))
+      if same {
+        if score > best_score {
+          best = route.id
+          best_score = score
+          found_params = move params
+        }
+      } else if !allow.contains(route.method) {
+        allow.push(route.method.clone())
+      }
+    }
+    if best_score >= 0 { return Routed.Found(Match { id: best, params: move found_params }) }
+    if allow.is_empty() { return Routed.NotFound }
+    allow.sort()
+    return Routed.MethodNotAllowed(allow.join(", "))
+  }
+}
+
+/// The value captured by `:name` or `*name`.
+pub fn param(m: view Match, name: Text) -> Option<String> {
+  let want = String.from(name)
+  for i in 0..m.params.len() {
+    if m.params.at(i).0.eq(want) { return Some(m.params.at(i).1.clone()) }
+  }
+  return None
+}
+
+/// The standard answer for a route that did not match: 404, or 405 with an `Allow` header.
+pub fn unrouted(r: view Routed) -> Response {
+  match r {
+    MethodNotAllowed(allow) => {
+      var resp = text(405, "method not allowed")
+      add_header(resp, "Allow", allow)
+      return resp
+    }
+    _ => { return text(404, "no such route") }
+  }
+}
+
+// ───────────────────────── connections ─────────────────────────
+
+/// Asks a running `serve` to stop. Cloneable: give one copy to the thread or signal handler that decides.
+pub struct Stop {
+  flag: Shared<Atomic<Bool>>,
+}
+
+pub fn stop_handle() -> Stop {
+  return Stop { flag: Shared.new(Atomic<Bool>.new(false)) }
+}
+
+impl Stop {
+  /// Stop accepting; connections being served finish their current request and are closed.
+  fn request(view self) {
+    self.flag.get().store(true)
+  }
+
+  fn requested(view self) -> Bool {
+    return self.flag.get().load()
+  }
+
+  fn share(view self) -> Stop {
+    return Stop { flag: self.flag.clone() }
+  }
+}
+
+fn is_timeout(e: view io.IoError) -> Bool {
+  return e.code == 110
+}
+
+fn send(stream: view net.TcpStream, data: view String, cfg: view Config) -> Bool {
+  let t = net.set_write_timeout(stream, cfg.write_timeout_ms)
+  match net.write(stream, data) {
+    Ok(n) => { return true }
+    Err(e) => { return false }
+  }
+}
+
+fn now_ms() -> Int {
+  return io.monotonic_ns() / 1000000
+}
+
+/// Serve one connection until it closes, errors, times out or reaches `max_requests`; returns the requests answered.
+fn serve_connection<H: Handler>(stream: net.TcpStream, handler: view H, cfg: view Config, stop: view Stop) -> Int {
+  var buf = String.new()
+  var scratch = [0u8; 8192]
+  var served = 0
+  var started = 0
+  var continued = false
+  while true {
+    match parse(buf, 0, cfg) {
+      Done(req, used) => {
+        buf = buf.slice(used, buf.len())
+        continued = false
+        started = 0
+        served = served + 1
+        var resp = handler.handle(req)
+        var close = resp.close || !req.keep_alive || served >= cfg.max_requests || stop.requested()
+        let head_only = req.method.eq("HEAD")
+        let wire = render(resp, head_only, close)
+        if !send(stream, wire, cfg) { return served }
+        if close { return served }
+      }
+      Reject(code, message) => {
+        let wire = render(error_response(code, message), false, true)
+        let sent = send(stream, wire, cfg)
+        return served
+      }
+      Need(expect) => {
+        if expect && !continued {
+          continued = true
+          if !send(stream, "HTTP/1.1 100 Continue\r\n\r\n", cfg) { return served }
+        }
+        // time left for this request (the idle limit while no byte of the next one has arrived)
+        var wait = cfg.idle_timeout_ms
+        if !buf.is_empty() {
+          if started == 0 { started = now_ms() }
+          wait = cfg.read_timeout_ms - (now_ms() - started)
+          if wait < 1 {
+            let wire = render(error_response(408, "request timeout"), false, true)
+            let sent = send(stream, wire, cfg)
+            return served
+          }
+        } else if stop.requested() {
+          return served
+        }
+        let t = net.set_read_timeout(stream, wait)
+        match net.read_into(stream, scratch[..]) {
+          Ok(n) => {
+            if n == 0 { return served }
+            if buf.is_empty() { started = now_ms() }
+            for i in 0..n { buf.push_byte(scratch[i].to_int()) }
+          }
+          Err(e) => {
+            if is_timeout(e) && !buf.is_empty() {
+              let wire = render(error_response(408, "request timeout"), false, true)
+              let sent = send(stream, wire, cfg)
+            }
+            return served
+          }
+        }
+      }
+    }
+  }
+  return served
+}
+
+fn worker<H: Handler>(rx: Receiver<net.TcpStream>, handler: Shared<H>, cfg: Config, stop: Stop, load: Shared<Atomic<Int>>, requests: Shared<Atomic<Int>>) -> Int {
+  var connections = 0
+  while true {
+    match rx.recv() {
+      Some(stream) => {
+        let n = serve_connection(move stream, handler.get(), cfg, stop)
+        requests.get().add(n)
+        load.get().add(0 - 1)
+        connections = connections + 1
+      }
+      None => { break }
+    }
+  }
+  return connections
+}
+
+/// What a finished `serve` did.
+pub struct Summary {
+  connections: Int,
+  requests: Int,
+  /// connections handled by each worker
+  per_worker: List<Int>,
+}
+
+/// Accept connections on `listener` and answer them with `handler` on `cfg.workers` threads until `stop` is requested
+/// (or `cfg.max_connections` were accepted). Each connection goes to the worker with the fewest connections in flight.
+/// The listener stays the caller's. On stop: no new connections, queued ones are answered, requests in progress
+/// finish, keep-alive connections are closed after their current answer, then the workers are joined.
+pub fn serve<H: Handler>(listener: view net.TcpListener, handler: Shared<H>, cfg: view Config, stop: view Stop) -> Summary {
+  var n = cfg.workers
+  if n < 1 { n = 1 }
+  if n > 256 { n = 256 }
+  var queue = cfg.queue
+  if queue < 1 { queue = 1 }
+  let tick = net.set_accept_timeout(listener, 100)
+  var accepted = 0
+  var per_worker = List<Int>.new()
+  var served = 0
+  let requests = Shared.new(Atomic<Int>.new(0))
+  let total = requests.clone()
+  scope {
+    var senders = List<Sender<net.TcpStream>>.new()
+    var loads = List<Shared<Atomic<Int>>>.new()
+    var handles = List<JoinHandle<Int>>.new()
+    for i in 0..n {
+      let (tx, rx) = Sender<net.TcpStream>.bounded(queue)
+      senders.push(move tx)
+      let load = Shared.new(Atomic<Int>.new(0))
+      loads.push(load.clone())
+      let mine = handler.clone()
+      let c = cfg.clone()
+      let s = stop.share()
+      let r = requests.clone()
+      handles.push(spawn move || worker(move rx, move mine, move c, move s, move load, move r))
+    }
+    while !stop.requested() && (cfg.max_connections == 0 || accepted < cfg.max_connections) {
+      match net.accept(listener) {
+        Ok(peer) => {
+          var best = 0
+          var best_load = loads.at(0).get().load()
+          for i in 1..n {
+            let l = loads.at(i).get().load()
+            if l < best_load {
+              best = i
+              best_load = l
+            }
+          }
+          loads.at(best).get().add(1)
+          senders.at(best).send(move peer)
+          accepted = accepted + 1
+        }
+        Err(e) => {
+          if !is_timeout(e) { io.sleep_ms(10) }
+        }
+      }
+    }
+    for i in 0..n { senders.at(i).close() }
+    while !handles.is_empty() {
+      let h = handles.remove(0)
+      match h.join() {
+        Ok(c) => {
+          per_worker.push(c)
+          served = served + c
+        }
+        Err(e) => { per_worker.push(-1) }
+      }
+    }
+  }
+  return Summary { connections: accepted, requests: total.get().load(), per_worker: move per_worker }
+}
