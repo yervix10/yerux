@@ -1,0 +1,53 @@
+import std.env
+import std.fs
+import std.net
+import std.text
+
+fn expired(listener: view net.TcpListener) {
+  match net.accept(listener) {
+    Ok(_) => { panic("accepted without a client") }
+    Err(e) => { assert(e.code == 110) }
+  }
+}
+
+fn exchange(listener: view net.TcpListener, ip: Text) {
+  let bound = net.listener_local_addr(listener).unwrap()
+  assert(bound.port > 0)
+  assert(bound.ip.eq(ip))
+  let client = net.connect_timeout(bound, 500).unwrap()
+  let server = net.accept(listener).unwrap()
+  let peer = net.peer_addr(server).unwrap()
+  let local = net.local_addr(client).unwrap()
+  assert(peer.port == local.port && peer.ip.eq(ip))
+  assert(net.set_read_timeout(server, 20).is_ok())
+  match net.read(server, 1) {
+    Ok(_) => { panic("read before sending any bytes") }
+    Err(e) => { assert(e.code == 110) }
+  }
+  assert(net.write(client, "1").unwrap() == 1)
+  let data = net.read(server, 1).unwrap()
+  assert((text.parse_float(data).unwrap() + 0.5).round_int() == 2)
+  assert(net.close_stream(move client).is_ok())
+  let eof = net.read(server, 1).unwrap()
+  assert(eof.is_empty())
+}
+
+fn main() {
+  // File and socket descriptors coexist, but use different Win32 APIs.
+  let path = "yerux_pe_net_{env.pid()}.tmp"
+  assert(fs.write(path, "file").is_ok())
+  let listener = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
+  assert(net.set_accept_timeout(listener, 30).is_ok())
+  expired(listener)
+  exchange(listener, "127.0.0.1")
+  let file = fs.read_to_string(path).unwrap()
+  assert(file.eq("file"))
+  assert(fs.remove_file(path).is_ok())
+  assert(net.close_listener(move listener).is_ok())
+
+  match net.listen(net.address("::1", 0).unwrap()) {
+    Ok(l) => { exchange(l, "0000:0000:0000:0000:0000:0000:0000:0001") }
+    Err(e) => { assert(e.code == 97 || e.code == 99) }
+  }
+  print("TCP endpoints, timeouts and EOF ok")
+}

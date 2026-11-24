@@ -47,6 +47,12 @@ Imports from `KERNEL32.dll` include `GetStdHandle`, `ReadFile`, `WriteFile`, `Ge
   changes and path or handle metadata. `current_dir` converts the Win32 UTF-16 path to UTF-8. For
   metadata, sizes and modification times come from the file handle. Permissions are synthesized from
   the file kind and read-only attribute. A no-follow metadata query treats reparse points as symlink-like.
+  Directory iteration converts UTF-16 names and preserves the enumeration cursor on the handle.
+  Regular files support seeking, truncation that preserves the file offset, and flushing.
+* `std.net` supports IPv4 and IPv6 TCP clients and listeners, local and peer addresses, and the standard
+  accept, connect, read and write timeouts. PE programs that use sockets load Winsock from the Windows
+  system directory at startup. The runtime translates socket handles, address families and common
+  Winsock errors to the ABI used by `std.net`.
 * Allocator: the same size-class free lists + 1 MiB arenas as on Linux, with `mmap` replaced by
   `VirtualAlloc(NULL, n, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)` (NULL -> "out of memory" panic) and `munmap` by
   `VirtualFree(p, 0, MEM_RELEASE)` for large blocks.
@@ -111,37 +117,34 @@ Invoke-Expression (Invoke-RestMethod 'http://10.0.2.2:8000/agent.ps1')
 
 `python3 tests/windows_pe_audit.py` builds the runtime goldens in `tests/` and the standalone programs
 under `examples/`. Intentional compile-error examples and modules without `main` are excluded. The
-[audit snapshot](windows-pe-rejections.tsv) records each rejected source and its exact first diagnostic
-before and after the changes. The baseline is `2b8acbb`.
+[audit snapshot](windows-pe-rejections.tsv) records each rejected source and its exact first diagnostic.
+The previous audit recorded 47 rejections of 515 programs. By `f7003c2` the corpus had grown to 524.
 
-| Same corpus before and after | Before | With threads and filesystem changes |
+| Same corpus before and after | `f7003c2` | With TCP, directory iteration and file positioning |
 |---|---:|---:|
-| Test goldens rejected | 56/446 | 34/446 |
-| Example entry points rejected | 19/67 | 13/67 |
-| Total rejected | **75/513** | **47/513** |
+| Test goldens rejected | 38/454 | 26/454 |
+| Example entry points rejected | 14/70 | 5/70 |
+| Total rejected | **52/524** | **31/524** |
 
-The two new filesystem regressions also build, for **468/515** PE builds in the updated corpus. The
-counts measure compiler acceptance. A program can use several unsupported features, so removing its
-first diagnostic may reveal another.
+The four new goldens also build for PE, giving **497/528 builds** in the updated corpus.
+A program can use several unsupported features. The table counts only its first diagnostic.
 
 | First compiler rejection | Before | After |
 |---|---:|---:|
-| Thread runtime and atomics | 31 | 0 |
-| Sockets (`setsockopt`) | 9 | 16 |
-| Directory iteration (`getdents64`) | 0 | 13 |
-| Process handling (`wait4`) | 8 | 8 |
+| TCP socket setup (`setsockopt`) | 18 | 0 |
+| Directory iteration (`getdents64`) | 14 | 0 |
+| File positioning (`lseek`) | 1 | 0 |
+| Handle-relative filesystem access (`openat`) | 0 | 9 |
+| Process handling (`wait4`) | 9 | 11 |
+| Raw poll (`ppoll`) | 0 | 1 |
 | Extern C | 6 | 6 |
-| Working directory (`getcwd`) | 10 | 0 |
-| Metadata (`statx`) | 7 | 0 |
-| Existence (`access`) and mkdir | 3 | 0 |
-| Other filesystem operations (`lseek`, `readlink`, `chmod`) | 0 | 3 |
-| Raw Linux memory mapping | 1 | 1 |
+| Links and permissions (`readlink`, `chmod`) | 3 | 3 |
+| Raw Linux memory mapping (`mmap`) | 1 | 1 |
 
-Wine 10.0 matched the C backend's stdout and exit status on all 28 newly buildable programs and both
-new regressions. This included scoped panic and cleanup, nested workers, contended locks, a four-worker
-`schedsim` run, a scripted `edlite` session and a `tasks` listing from a prepopulated file. The Windows
-CI smoke suite requires the thread and filesystem regressions to build and run. Windows Server figures
-above are from the earlier native Windows run.
+Wine 10.0 matched C on the three new PE regressions, loopback and randomized HTTP requests,
+and the `apiserver` and `webkv` examples. The Windows CI smoke suite requires the new TCP,
+directory and file-positioning regressions to build and run. The Windows Server figures above
+are from the earlier native Windows run.
 
 ## Other verification
 
@@ -192,11 +195,13 @@ above are from the earlier native Windows run.
 * Redirected I/O preserves bytes. Console rendering depends on the code page and font. Interactive Unicode input
   needs separate verification.
 * Executables use the console subsystem and the shared x86-64 register allocator. Subprocesses,
-  sockets, extern C and runtime backtraces remain unavailable.
+  extern C, raw Linux polling and runtime backtraces remain unavailable.
 * Path-taking Win32 file calls still use the ANSI code page. Native path syntax and separator rules
-  differ from the POSIX `std.path` conventions. Directory enumeration and handle-relative traversal,
-  including recursive tree removal, still require unsupported syscalls. Windows ACLs, full POSIX
-  mode changes, and Linux `/proc/self/exe` semantics are outside the metadata subset.
+  differ from the POSIX `std.path` conventions. Handle-relative traversal and recursive tree removal
+  still require unsupported syscalls. Replacing an open destination via `fs.rename` can
+  fail under Win32 sharing rules. In Wine, `minidb compact` encounters this when
+  it renames its new log over the still-open database. Windows ACLs, full POSIX mode
+  changes, and Linux `/proc/self/exe` semantics are outside the metadata subset.
 * `aarch64` Windows and 32-bit x86 are out of scope.
 
 
