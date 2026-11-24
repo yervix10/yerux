@@ -13,9 +13,9 @@ To install a release instead (`scripts/release.sh` builds `yerux-<version>-<os>-
 library is compiled into the binary, so only `yerux` is installed):
 
 ```sh
-tar xzf yerux-0.5.0-linux-x86_64.tar.gz && cd yerux-0.5.0-linux-x86_64
+tar xzf yerux-0.9.0-rc1-linux-x86_64.tar.gz && cd yerux-0.9.0-rc1-linux-x86_64
 ./install.sh                     # into ~/.local/bin (PREFIX=/some/dir or --prefix DIR to change)
-yerux --version                  # yerux 0.5.0
+yerux --version                  # yerux 0.9.0-rc1
 yerux doctor                     # what this installation can do
 ```
 

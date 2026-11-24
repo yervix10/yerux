@@ -6,7 +6,7 @@ out="${1:-dist}"
 target="${2:-}"
 version="$(cat VERSION)"
 cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)"
-if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc[1-9][0-9]*)?$ ]] ||
    [[ "$version" != "$cargo_version" ]] || ! grep -Fxq "## $version" CHANGELOG.md; then
   echo "VERSION, Cargo.toml and CHANGELOG.md must agree on the release version" >&2
   exit 1

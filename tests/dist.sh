@@ -62,6 +62,16 @@ if [ -n "$tgz" ]; then
   YERUX_RELEASE_BASE_URL="file://$mirror" YERUX_VERSION="v$want" \
     sh -s -- --prefix "$tmp/pinned" < install.sh >/dev/null || fail "install pinned version"
   [ -x "$tmp/pinned/bin/yerux" ] || fail "pinned binary missing"
+  YERUX_URL="file://$pinned/$asset" sh -s -- --prefix "$tmp/direct" < install.sh >/dev/null || fail "install direct URL"
+  [ "$("$tmp/direct/bin/yerux" --version)" = "yerux $want" ] || fail "direct URL binary version"
+
+  for invalid in 0.9.0-rc0 0.9.0-rc01 0.9.0-beta1; do
+    if YERUX_RELEASE_BASE_URL="file://$mirror" YERUX_VERSION="$invalid" \
+        sh -s -- --prefix "$tmp/invalid" < install.sh >"$tmp/invalid.log" 2>&1; then
+      fail "accepted invalid release version $invalid"
+    fi
+    grep -Fqx "invalid release version: $invalid" "$tmp/invalid.log" || fail "invalid version diagnostic for $invalid"
+  done
 
   cp "$pinned/$asset.sha256" "$tmp/original.sha256"
   rm "$pinned/$asset.sha256"

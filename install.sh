@@ -16,7 +16,8 @@ while [ "$#" -gt 0 ]; do
 Usage: install.sh [--prefix DIR]
 Installs Yerux in DIR/bin (default: ~/.local/bin).
 Run from an unpacked release or pipe the script to sh to download a release.
-YERUX_VERSION selects a version. The default is the latest stable release.
+YERUX_VERSION selects a stable release or release candidate (e.g. 0.9.0-rc1).
+The default is the latest stable release.
 HELP
       exit 0
       ;;
@@ -64,9 +65,9 @@ else
   fi
   version="${version#v}"
   case "$version" in
-    ''|*[!0-9.]*) die "invalid release version: $version" ;;
+    ''|*[!0-9.rc-]*) die "invalid release version: $version" ;;
   esac
-  printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' ||
+  printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc[1-9][0-9]*)?$' ||
     die "invalid release version: $version"
 
   name="yerux-$version-linux-$arch"

@@ -1,6 +1,6 @@
 # Yerux compatibility policy (towards 1.0)
 
-Status: **draft policy**, version 0.5.0 as of this writing. It defines what users may rely on,
+Status: **draft policy**, version 0.9.0-rc1 as of this writing. It defines what users may rely on,
 how versions change, and what must be settled before the syntax and the standard library are
 frozen. The language itself is specified in [SPEC.md](SPEC.md); the stdlib reference is
 [STDLIB.md](STDLIB.md) with the per-area references [STDLIB_IO.md](STDLIB_IO.md),
@@ -263,7 +263,7 @@ corrected text now states).
 2. **Const generics.** *Resolved.* `fn dot<const N: Int>(a: [Int; N], ...)` works. The root "Range integer
    types" list of unimplemented items no longer names const generics. Evidence: `tests/conf_const_generic_array.yx`
    (prints 32), `tests/arr_const.yx`, `tests/e1023_const_generic_lengths.yx`.
-3. **Version and milestones.** *Resolved.* `yerux --version` is 0.5.0. The root roadmap now defers to
+3. **Version and milestones.** *Resolved.* `yerux --version` agrees with `VERSION`. The root roadmap now defers to
    docs/ROADMAP.md: self-hosting is M7 and release 1.0 is M12. Evidence: `tests/spec_conformance.sh` (item 3 checks).
 4. **Module root.** *Resolved.* A single file resolves its imports in its own folder (`<root>`). In a project
    the main file is `src/main.yx`, so local imports resolve in `src/`, and dependencies resolve through

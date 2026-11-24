@@ -51,7 +51,7 @@ lacks SPEC.md "- **v1.0** Self-hosting (the compiler written in Yerux)." "item 3
 has SPEC.md "is milestone M7 in docs/ROADMAP.md" "item 3: root roadmap points at docs/ROADMAP.md (M7 self-hosting, M12 1.0)"
 has docs/ROADMAP.md "| **M7** | Self-hosting and tooling" "item 3: docs/ROADMAP.md still places self-hosting in M7"
 has docs/ROADMAP.md "| **M12** | Apple, mobile, web" "item 3: docs/ROADMAP.md still places release 1.0 in M12"
-if [ "$("$Y" --version)" = "yerux 0.5.0" ]; then pass; else fail "item 3: compiler version is not 0.5.0"; fi
+if [ "$("$Y" --version)" = "yerux $(cat VERSION)" ]; then pass; else fail "item 3: compiler version disagrees with VERSION"; fi
 
 # ---------------------------------------------------------------- 4. module root
 has SPEC.md "In a package the main file is \`src/main.yx\`" "item 4: root SPEC explains <root> inside a package"
