@@ -304,7 +304,17 @@ fn expression(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   if tag == "Method" {
     let name = ast.name_at(tree, node, 1)
     let recv = ast.child(tree, node, 0)
-    if name == "len" && e.expr_types.at(recv) == "Text" {
+    var receiver = String.new()
+    if tree.at(recv).tag == "Var" { receiver = ast.name_at(tree, recv, 0) }
+    if name == "from" && receiver == "String" && e.bindings.at(recv) < 0 {
+      let args = ast.child(tree, node, 2)
+      if args + 1 < tree.at(args).end && tree.at(args + 1).end == tree.at(args).end && tree.at(args + 1).tag == "Text" {
+        expression(e, tree, args + 1)
+        return
+      }
+    }
+    let kind = String.from(e.expr_types.at(recv))
+    if name == "len" && (kind == "String" || kind == "view String") {
       expression(e, tree, recv)
       bytes3(e, 72, 139, 0)
       return
@@ -349,14 +359,8 @@ fn field_count(tree: view List<ast.AstNode>, decl: Int) -> Int {
   return count
 }
 
-// the fields of a struct live in consecutive 8-byte words of a bump-allocated block (the pointer is the value)
-fn struct_literal(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
-  let name = ast.name_at(tree, node, 0)
-  let decl = find_struct(tree, e, name)
-  if decl < 0 || tree.at(ast.child(tree, node, 1)).tag != "_" { unsupported("struct literal of {name}") }
-  var size = 8 * field_count(tree, decl)
-  if size == 0 { size = 8 }
-  // rcx = [heap]; [heap] = rcx + size; rax = rcx
+// rax = a fresh block of `size` bytes from the bump heap
+fn emit_alloc(e: mut Emitter, size: Int) {
   bytes4(e, 72, 139, 12, 37)
   e.data_patches.push(Patch { at: e.code.len(), target: 0 })
   emit_le(e, 0, 4)
@@ -366,6 +370,58 @@ fn struct_literal(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   e.data_patches.push(Patch { at: e.code.len(), target: 0 })
   emit_le(e, 0, 4)
   bytes3(e, 72, 137, 200)
+}
+
+// rax = a deep copy of the struct `name` that rax points to (nested structs are stored inline in the language, so they are copied too)
+fn emit_copy(e: mut Emitter, tree: view List<ast.AstNode>, name: view String) {
+  let decl = find_struct(tree, e, name)
+  var size = 8 * field_count(tree, decl)
+  if size == 0 { size = 8 }
+  e.frame = e.frame + 16
+  let source = 0 - (e.frame - 8)
+  let target = 0 - e.frame
+  store_slot(e, source)
+  emit_alloc(e, size)
+  store_slot(e, target)
+  let entries = ast.child(tree, decl, 2)
+  var index = 0
+  var at = entries + 1
+  while at < tree.at(entries).end {
+    let ty = ast.child(tree, at, 1)
+    load_slot(e, source)
+    bytes3(e, 72, 139, 128)
+    emit_le(e, 8 * index, 4)
+    if tree.at(ty).tag == "Type" {
+      let inner = ast.name_at(tree, ty, 0)
+      if find_struct(tree, e, inner) >= 0 { emit_copy(e, tree, inner) }
+    }
+    bytes3(e, 72, 139, 141)
+    emit_le(e, target, 4)
+    bytes3(e, 72, 137, 129)
+    emit_le(e, 8 * index, 4)
+    index = index + 1
+    at = tree.at(at).end
+  }
+  load_slot(e, target)
+}
+
+// an expression whose value gets stored or passed by value: a struct read from a place is copied
+fn value_of(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
+  expression(e, tree, node)
+  let tag = String.from(tree.at(node).tag)
+  if tag != "Var" && tag != "Field" { return }
+  let ty = String.from(e.expr_types.at(node))
+  if find_struct(tree, e, ty) >= 0 { emit_copy(e, tree, ty) }
+}
+
+// the fields of a struct live in consecutive 8-byte words of a bump-allocated block (the pointer is the value)
+fn struct_literal(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
+  let name = ast.name_at(tree, node, 0)
+  let decl = find_struct(tree, e, name)
+  if decl < 0 || tree.at(ast.child(tree, node, 1)).tag != "_" { unsupported("struct literal of {name}") }
+  var size = 8 * field_count(tree, decl)
+  if size == 0 { size = 8 }
+  emit_alloc(e, size)
   e.frame = e.frame + 8
   let slot = 0 - e.frame
   store_slot(e, slot)
@@ -373,7 +429,7 @@ fn struct_literal(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   var at = fields + 1
   while at < tree.at(fields).end {
     let index = field_index(tree, e, name, ast.name_at(tree, at, 0))
-    expression(e, tree, ast.child(tree, at, 1))
+    value_of(e, tree, ast.child(tree, at, 1))
     bytes3(e, 72, 139, 141)
     emit_le(e, slot, 4)
     bytes3(e, 72, 137, 129)
@@ -529,6 +585,8 @@ fn binary(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
     here(e, done)
     return
   }
+  let operand = String.from(e.expr_types.at(left))
+  if operand == "Text" || operand == "String" || operand == "view String" { unsupported("text comparison") }
   expression(e, tree, left)
   push_rax(e)
   expression(e, tree, right)
@@ -626,8 +684,12 @@ fn call(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   if index < 0 { unsupported("call to {name}") }
   var count = 0
   var i = args + 1
+  let params = ast.child(tree, e.nodes.at(index), 2)
+  var param = params + 1
   while i < tree.at(args).end {
-    expression(e, tree, i)
+    if param < tree.at(params).end && tree.at(ast.child(tree, param, 1)).tag == "Own" { value_of(e, tree, i) }
+    else { expression(e, tree, i) }
+    if param < tree.at(params).end { param = tree.at(param).end }
     push_rax(e)
     count = count + 1
     i = tree.at(i).end
@@ -651,7 +713,7 @@ fn print_statement(e: mut Emitter, tree: view List<ast.AstNode>, args: Int) {
     write_stdout(e)
     return
   }
-  if ty == "Text" {
+  if ty == "Text" || ty == "String" || ty == "view String" {
     expression(e, tree, value)
     bytes3(e, 72, 139, 16)
     bytes4(e, 72, 141, 112, 8)
@@ -712,7 +774,7 @@ fn epilogue(e: mut Emitter) {
 fn statement(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   let tag = String.from(tree.at(node).tag)
   if tag == "Let" {
-    expression(e, tree, ast.child(tree, node, 2))
+    value_of(e, tree, ast.child(tree, node, 2))
     store_slot(e, slot_of(e, e.bindings.at(node)))
     return
   }
@@ -722,7 +784,7 @@ fn statement(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
       let base = ast.child(tree, target, 0)
       let index = field_index(tree, e, e.expr_types.at(base), ast.name_at(tree, target, 1))
       if index < 0 { unsupported("assignment to a field of this type") }
-      expression(e, tree, ast.child(tree, node, 1))
+      value_of(e, tree, ast.child(tree, node, 1))
       push_rax(e)
       expression(e, tree, base)
       byte(e, 89)
@@ -731,7 +793,7 @@ fn statement(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
       return
     }
     if tree.at(target).tag != "Var" || e.bindings.at(target) < 0 { unsupported("assignment to something other than a local") }
-    expression(e, tree, ast.child(tree, node, 1))
+    value_of(e, tree, ast.child(tree, node, 1))
     store_slot(e, slot_of(e, e.bindings.at(target)))
     return
   }
@@ -741,7 +803,7 @@ fn statement(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   }
   if tag == "Return" {
     let value = ast.child(tree, node, 0)
-    if tree.at(value).tag != "_" { expression(e, tree, value) }
+    if tree.at(value).tag != "_" { value_of(e, tree, value) }
     epilogue(e)
     return
   }
@@ -861,6 +923,9 @@ fn function(e: mut Emitter, tree: view List<ast.AstNode>, index: Int) {
     if tree.at(p).tag != "Param" { unsupported("methods") }
     let ty = ast.child(tree, p, 2)
     if tree.at(ty).tag != "Type" { unsupported("parameter types other than Int and Bool") }
+    if tree.at(ast.child(tree, p, 1)).tag == "Mut" && find_struct(tree, e, ast.name_at(tree, ty, 0)) < 0 {
+      unsupported("a mut parameter that is not a struct")
+    }
     count = count + 1
     p = tree.at(p).end
   }

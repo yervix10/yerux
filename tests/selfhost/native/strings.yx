@@ -1,0 +1,10 @@
+fn shout(s: view String) -> Int { return s.len() * 2 }
+fn main() {
+  let a = String.from("hello")
+  print(a)
+  print(a.len())
+  print(shout(a))
+  let b = String.from("")
+  print(b.len())
+  print(b)
+}
