@@ -1,0 +1,69 @@
+// Ray tracing: shading with shadows and recursive mirror reflections, a pinhole camera, and the image buffer.
+import scene
+import std.math
+import vec
+
+pub struct Image { width: Int, height: Int, pixels: List<vec.V3> }
+
+// Reflection recursion limit; a mirror at this depth contributes its local shading only.
+pub fn max_depth() -> Int { return 4 }
+
+fn sky(dir: view vec.V3, top: view vec.V3, bottom: view vec.V3) -> vec.V3 {
+  let t = 0.5 * (dir.unit().y + 1.0)
+  return bottom.scale(1.0 - t).add(top.scale(t))
+}
+
+// Light reaching `p` with surface normal `n`, from the single light of the scene (Lambert, shadowed).
+fn direct(s: view scene.Scene, p: view vec.V3, n: view vec.V3, albedo: view vec.V3) -> vec.V3 {
+  let ambient = 0.1
+  let to_light = s.light.position.sub(p)
+  let dist = to_light.length()
+  let l = to_light.scale(1.0 / dist)
+  let origin = p.add(n.scale(scene.epsilon() * 10.0))
+  if scene.occluded(s, origin, l, dist) {
+    return albedo.scale(ambient)
+  }
+  var diffuse = n.dot(l)
+  if diffuse < 0.0 { diffuse = 0.0 }
+  return albedo.scale(ambient + diffuse * s.light.intensity)
+}
+
+// Color seen along a ray from `origin` in direction `dir` (unit length), at reflection depth `depth`.
+pub fn trace(s: view scene.Scene, origin: view vec.V3, dir: view vec.V3, depth: Int) -> vec.V3 {
+  let hit = scene.closest(s, origin, dir, 1.0e30)
+  match hit {
+    None => { return sky(dir, s.sky_top, s.sky_bottom) }
+    Some(h) => {
+      let surface = s.objects.at(h.object).surface
+      match surface {
+        Matte(albedo) => {
+          return direct(s, h.point, h.normal, albedo)
+        }
+        Mirror(albedo, mix) => {
+          let local = direct(s, h.point, h.normal, albedo)
+          if depth <= 0 { return local }
+          let r = dir.reflect(h.normal).unit()
+          let origin2 = h.point.add(h.normal.scale(scene.epsilon() * 10.0))
+          let bounced = trace(s, origin2, r, depth - 1).mul(albedo)
+          return local.scale(1.0 - mix).add(bounced.scale(mix))
+        }
+      }
+    }
+  }
+}
+
+// Pinhole camera at the origin looking along +z, with a vertical field of view `fov` in radians.
+pub fn render(s: view scene.Scene, width: Int, height: Int, fov: Float) -> Image {
+  var pixels = List<vec.V3>.new()
+  let half = (fov / 2.0).tan()
+  let aspect = width.to_float() / height.to_float()
+  for j in 0..height {
+    for i in 0..width {
+      let u = (2.0 * (i.to_float() + 0.5) / width.to_float() - 1.0) * half * aspect
+      let v = (1.0 - 2.0 * (j.to_float() + 0.5) / height.to_float()) * half
+      let dir = vec.v3(u, v, 1.0).unit()
+      pixels.push(trace(s, vec.v3(0.0, 0.0, 0.0), dir, max_depth()))
+    }
+  }
+  return Image { width: width, height: height, pixels: move pixels }
+}
