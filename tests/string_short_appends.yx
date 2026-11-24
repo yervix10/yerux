@@ -1,0 +1,25 @@
+fn append(s: mut String, chunk: view String) {
+  s.push_str(chunk)
+  s.push_str("|")
+}
+
+fn main() {
+  var out = String.new()
+  // Include exact one-, two- and three-byte copies and multibyte UTF-8.
+  append(out, "")
+  append(out, "a")
+  append(out, "bc")
+  append(out, "def")
+  append(out, "é")
+  append(out, "€")
+  append(out, "ghij")
+  print(out)
+  print(out.len())
+  var i = 0
+  while i < 50 {
+    append(out, "xy")
+    i = i + 1
+  }
+  print(out.len())
+  print(out.byte(out.len() - 2))
+}

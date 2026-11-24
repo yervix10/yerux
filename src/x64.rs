@@ -416,6 +416,19 @@ impl Asm {
         self.code.push(0xFF);
         self.modrm_mem(6, RBP, disp);
     }
+    /// movzx r32, word [base+disp]
+    fn movzx16_mem(&mut self, r: u8, base: u8, disp: i32) {
+        self.rex(false, r, base);
+        self.raw(&[0x0F, 0xB7]);
+        self.modrm_mem(r, base, disp);
+    }
+    /// mov word [base+disp], r16
+    fn mov16_mem(&mut self, base: u8, disp: i32, r: u8) {
+        self.code.push(0x66);
+        self.rex(false, r, base);
+        self.code.push(0x89);
+        self.modrm_mem(r, base, disp);
+    }
     /// movzx r32, byte [base+disp]
     fn movzx8_mem(&mut self, r: u8, base: u8, disp: i32) {
         self.rex(false, r, base);
@@ -453,9 +466,6 @@ impl Asm {
     }
     fn inc(&mut self, r: u8) {
         self.raw(&[0x48 | (r >> 3), 0xFF, 0xC0 + (r & 7)]);
-    }
-    fn dec(&mut self, r: u8) {
-        self.raw(&[0x48 | (r >> 3), 0xFF, 0xC8 + (r & 7)]);
     }
     /// lock inc qword [base+disp32]
     fn atomic_inc_mem(&mut self, base: u8, disp: i32) {
@@ -4030,9 +4040,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     a.ret();
 
     // rt_memcpy: rdi = dst, rsi = src, rcx = n (regions do not overlap). Clobbers rax, rcx, rdx, rsi, rdi only.
-    // n <= 16: overlapping head/tail moves; n <= 256: 8-byte words plus an overlapping tail; else rep movsb.
+    // Up to 3 bytes use a word and/or a byte. Up to 16 use overlapping head/tail moves.
+    // Up to 256 use 8-byte words plus an overlapping tail. Larger copies use rep movsb.
     {
-        let (l_lt8, l_lt4, l_byte, l_big, l_words, l_rep, l_ret) = (
+        let (l_lt8, l_lt4, l_lt2, l_big, l_words, l_rep, l_ret) = (
             a.label(),
             a.label(),
             a.label(),
@@ -4064,15 +4075,19 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.st32(RDI, -4, RDX);
         a.ret();
         a.bind(l_lt4);
+        a.cmp_imm(RCX, 2);
+        a.jcc(CC_B, l_lt2);
+        a.movzx16_mem(RAX, RSI, 0);
+        a.mov16_mem(RDI, 0, RAX);
+        a.jcc(CC_E, l_ret); // MOV preserves the comparison flags.
+        a.movzx8_mem(RAX, RSI, 2);
+        a.mov8_mem(RDI, 2, RAX);
+        a.ret();
+        a.bind(l_lt2);
         a.test_rcx();
         a.jcc(CC_E, l_ret);
-        a.bind(l_byte);
         a.movzx8_mem(RAX, RSI, 0);
         a.mov8_mem(RDI, 0, RAX);
-        a.inc(RSI);
-        a.inc(RDI);
-        a.dec(RCX);
-        a.jcc(CC_NE, l_byte);
         a.bind(l_ret);
         a.ret();
         a.bind(l_big);
