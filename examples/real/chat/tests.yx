@@ -1,0 +1,211 @@
+// Unit tests for the chat protocol and the hub. Run: yerux test examples/real/chat/tests.yx
+import hub
+import protocol
+
+fn cmd(line: view String) -> protocol.Command {
+  return protocol.parse(line)
+}
+
+// Connected clients 1..n, none joined yet.
+fn lobby(n: Int) -> hub.Hub {
+  var h = hub.new_hub()
+  for i in 1..n + 1 {
+    hub.connect(h, i)
+  }
+  return h
+}
+
+// The text of the first delivery for `to`, or "" when there is none.
+fn text_to(ds: view List<hub.Delivery>, to: Int) -> String {
+  for i in 0..ds.len() {
+    if ds.at(i).to == to { return ds.at(i).text.clone() }
+  }
+  return String.new()
+}
+
+fn count_to(ds: view List<hub.Delivery>, to: Int) -> Int {
+  var n = 0
+  for i in 0..ds.len() {
+    if ds.at(i).to == to { n = n + 1 }
+  }
+  return n
+}
+
+test "NICK accepts names of 1 to 16 word characters" {
+  assert(protocol.valid_name("a"))
+  assert(protocol.valid_name("Zed_09"))
+  assert(protocol.valid_name("abcdefghijklmnop"))
+  assert(!protocol.valid_name(""))
+  assert(!protocol.valid_name("abcdefghijklmnopq"))
+}
+
+test "names reject spaces, punctuation and control characters" {
+  assert(!protocol.valid_name("a b"))
+  assert(!protocol.valid_name("a-b"))
+  assert(!protocol.valid_name("a\tb"))
+}
+
+test "CRLF and LF lines parse the same way" {
+  match protocol.parse("WHO\r") {
+    Who => {}
+    _ => { panic("WHO with CR") }
+  }
+  match protocol.parse("WHO") {
+    Who => {}
+    _ => { panic("WHO without CR") }
+  }
+  match protocol.parse("NICK ann\r") {
+    Nick(n) => { assert(n.eq("ann")) }
+    _ => { panic("NICK with CR") }
+  }
+}
+
+test "MSG keeps the rest of the line verbatim" {
+  match protocol.parse("MSG hello  there ") {
+    Msg(t) => { assert(t.eq("hello  there ")) }
+    _ => { panic("MSG") }
+  }
+  match protocol.parse("MSG ") {
+    Invalid(r) => { assert(r.eq("empty message")) }
+    _ => { panic("empty MSG") }
+  }
+}
+
+test "unknown and malformed requests are invalid" {
+  match protocol.parse("who") {
+    Invalid(r) => { assert(r.eq("unknown command")) }
+    _ => { panic("lowercase") }
+  }
+  match protocol.parse("WHO now") {
+    Invalid(_) => {}
+    _ => { panic("WHO with argument") }
+  }
+  match protocol.parse("NICK") {
+    Invalid(_) => {}
+    _ => { panic("NICK alone") }
+  }
+  match protocol.parse("NICK bad name") {
+    Invalid(r) => { assert(r.eq("bad name")) }
+    _ => { panic("NICK with space") }
+  }
+  match protocol.parse("") {
+    Invalid(_) => {}
+    _ => { panic("empty line") }
+  }
+}
+
+test "line buffer splits chunks that do not end on line boundaries" {
+  var lb = protocol.new_line_buf()
+  lb.push("NI")
+  assert(lb.next_line().is_none())
+  lb.push("CK a\nWHO\r\nMS")
+  match lb.next_line() {
+    Some(l) => { assert(l.eq("NICK a")) }
+    None => { panic("first line") }
+  }
+  match lb.next_line() {
+    Some(l) => {
+      match protocol.parse(l) {
+        Who => {}
+        _ => { panic("WHO line") }
+      }
+    }
+    None => { panic("second line") }
+  }
+  assert(lb.next_line().is_none())
+  lb.push("G x\n")
+  match lb.next_line() {
+    Some(l) => { assert(l.eq("MSG x")) }
+    None => { panic("third line") }
+  }
+}
+
+test "reply formatting" {
+  assert(protocol.ok("bye").eq("OK bye"))
+  assert(protocol.err("name taken").eq("ERR name taken"))
+  assert(protocol.broadcast("ann", "hi all").eq("MSG ann hi all"))
+}
+
+test "hub: NICK joins, WHO lists names sorted" {
+  var h = lobby(3)
+  let a = hub.step(h, 2, cmd("NICK bob"))
+  assert(text_to(a, 2).eq("OK bob"))
+  let b = hub.step(h, 1, cmd("NICK ann"))
+  assert(text_to(b, 1).eq("OK ann"))
+  let w = hub.step(h, 3, cmd("WHO"))
+  assert(text_to(w, 3).eq("OK ann,bob"))
+}
+
+test "hub: duplicate name is refused and the first owner keeps it" {
+  var h = lobby(2)
+  let _ = hub.step(h, 1, cmd("NICK ann"))
+  let d = hub.step(h, 2, cmd("NICK ann"))
+  assert(text_to(d, 2).eq("ERR name taken"))
+  let w = hub.step(h, 2, cmd("WHO"))
+  assert(text_to(w, 2).eq("OK ann"))
+}
+
+test "hub: renaming to your own name is allowed" {
+  var h = lobby(1)
+  let _ = hub.step(h, 1, cmd("NICK ann"))
+  let again = hub.step(h, 1, cmd("NICK ann"))
+  assert(text_to(again, 1).eq("OK ann"))
+}
+
+test "hub: MSG is broadcast to other joined clients only" {
+  var h = lobby(3)
+  let _ = hub.step(h, 1, cmd("NICK ann"))
+  let _ = hub.step(h, 2, cmd("NICK bob"))
+  let ds = hub.step(h, 1, cmd("MSG hi there"))
+  assert(text_to(ds, 2).eq("MSG ann hi there"))
+  assert(count_to(ds, 1) == 1)
+  assert(text_to(ds, 1).eq("OK sent"))
+  assert(count_to(ds, 3) == 0)
+}
+
+test "hub: MSG before NICK is an error and reaches nobody" {
+  var h = lobby(2)
+  let _ = hub.step(h, 2, cmd("NICK bob"))
+  let ds = hub.step(h, 1, cmd("MSG hello"))
+  assert(text_to(ds, 1).eq("ERR join with NICK first"))
+  assert(count_to(ds, 2) == 0)
+}
+
+test "hub: QUIT says bye, closes and frees the name" {
+  var h = lobby(2)
+  let _ = hub.step(h, 1, cmd("NICK ann"))
+  let q = hub.step(h, 1, cmd("QUIT"))
+  assert(text_to(q, 1).eq("OK bye"))
+  assert(q.at(0).close)
+  let again = hub.step(h, 2, cmd("NICK ann"))
+  assert(text_to(again, 2).eq("OK ann"))
+}
+
+test "hub: a dropped client no longer blocks its name or gets messages" {
+  var h = lobby(2)
+  let _ = hub.step(h, 1, cmd("NICK ann"))
+  let _ = hub.step(h, 2, cmd("NICK bob"))
+  hub.disconnect(h, 1)
+  let ds = hub.step(h, 2, cmd("MSG anyone"))
+  assert(count_to(ds, 1) == 0)
+  assert(text_to(ds, 2).eq("OK sent"))
+  let w = hub.step(h, 2, cmd("WHO"))
+  assert(text_to(w, 2).eq("OK bob"))
+}
+
+test "hub: invalid lines get ERR and change nothing" {
+  var h = lobby(1)
+  let e = hub.step(h, 1, cmd("NICK a-b"))
+  assert(text_to(e, 1).eq("ERR bad name"))
+  let u = hub.step(h, 1, cmd("HELLO"))
+  assert(text_to(u, 1).eq("ERR unknown command"))
+  let w = hub.step(h, 1, cmd("WHO"))
+  assert(text_to(w, 1).eq("OK"))
+}
+
+test "hub: WHO with nobody joined is OK with no names" {
+  var h = lobby(2)
+  let w = hub.step(h, 1, cmd("WHO"))
+  assert(text_to(w, 1).eq("OK"))
+  assert(hub.is_connected(h, 2))
+}

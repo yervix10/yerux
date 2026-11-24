@@ -1,0 +1,96 @@
+// chat protocol: one request per line (LF or CRLF), replies "OK ...", "ERR ..." or "MSG name text".
+//
+//   NICK name     join (or rename) as name; name is 1-16 characters of [A-Za-z0-9_], unique among joined clients
+//   MSG text      broadcast text to every other joined client; the sender gets "OK sent"
+//   WHO           "OK" plus the sorted, comma-separated names of the joined clients
+//   QUIT          "OK bye", then the server closes the connection
+//   anything else "ERR ..."
+
+pub enum Command {
+  Nick(String),
+  Msg(String),
+  Who,
+  Quit,
+  Invalid(String),
+}
+
+// Removes one trailing carriage return (the CRLF case); the LF was already removed by the line splitter.
+pub fn strip_cr(raw: view String) -> String {
+  if raw.len() > 0 && raw.byte(raw.len() - 1) == 13 {
+    return raw.slice(0, raw.len() - 1)
+  }
+  return String.from(raw)
+}
+
+pub fn valid_name(name: view String) -> Bool {
+  if name.len() < 1 || name.len() > 16 { return false }
+  for i in 0..name.len() {
+    let b = name.byte(i)
+    let digit = b >= 48 && b <= 57
+    let upper = b >= 65 && b <= 90
+    let lower = b >= 97 && b <= 122
+    if !(digit || upper || lower || b == 95) { return false }
+  }
+  return true
+}
+
+// True for a QUIT request line (with or without CR).
+pub fn is_quit(raw: view String) -> Bool {
+  return strip_cr(raw).eq("QUIT")
+}
+
+// Parses one request line; the line must not contain its LF.
+pub fn parse(raw: view String) -> Command {
+  let line = strip_cr(raw)
+  if line.eq("WHO") { return Command.Who }
+  if line.eq("QUIT") { return Command.Quit }
+  if line.starts_with("NICK ") {
+    let name = line.slice(5, line.len())
+    if valid_name(name) { return Command.Nick(move name) }
+    return Command.Invalid("bad name")
+  }
+  if line.starts_with("MSG ") {
+    let text = line.slice(4, line.len())
+    if text.is_empty() { return Command.Invalid("empty message") }
+    return Command.Msg(move text)
+  }
+  return Command.Invalid("unknown command")
+}
+
+// Turns a stream of received bytes into complete lines (without their LF).
+pub struct LineBuf {
+  pending: String,
+}
+
+pub fn new_line_buf() -> LineBuf {
+  return LineBuf { pending: String.new() }
+}
+
+impl LineBuf {
+  fn push(mut self, chunk: view String) {
+    self.pending.push_str(chunk)
+  }
+
+  // The next complete line, or None while the buffer holds only a partial line.
+  fn next_line(mut self) -> Option<String> {
+    let at = self.pending.find("\n")
+    if at < 0 { return None }
+    let line = self.pending.slice(0, at)
+    self.pending = self.pending.slice(at + 1, self.pending.len())
+    return Some(move line)
+  }
+}
+
+// The reply text for a successfully handled request, before the LF is added.
+pub fn ok(text: view String) -> String {
+  if text.is_empty() { return String.from("OK") }
+  return "OK {text}"
+}
+
+pub fn err(reason: view String) -> String {
+  return "ERR {reason}"
+}
+
+pub fn broadcast(sender: view String, text: view String) -> String {
+  return "MSG {sender} {text}"
+}
