@@ -547,5 +547,7 @@ destructor are rejected. A fatal panic skips pending cleanup. A recoverable
 worker panic drops its live owned values and skips `defer`. A panic inside a
 destructor is itself fatal.
 
-User-defined `Drop` is experimental. See [docs/DROP.md](docs/DROP.md) for the
-generic `impl` ownership gap, cleanup order and tested backends.
+Each concrete type with an applicable generic `impl Drop` is owned as well.
+The compiler rejects `derive Copy` for destructor-bearing types. User-defined
+`Drop` is experimental. See [docs/DROP.md](docs/DROP.md) for cleanup order,
+tested backends and the outstanding overlap between implementations.

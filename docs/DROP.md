@@ -2,7 +2,7 @@
 
 `Drop` is a built-in trait. A concrete user-defined struct can implement it once.
 C and Linux x86-64 native builds run its destructor automatically. The feature
-is experimental for 1.0 while the checker has the generic ownership gap below.
+is experimental for 1.0 while overlapping implementations remain unresolved.
 
 ```yerux
 struct Tag { id: Int }
@@ -76,8 +76,13 @@ owned value. If the worker was already unwinding, the diagnostic is
 
 ## Backends and verification
 
-The checker registers non-generic destructors during declaration checking
-(`src/check.rs`). `Types::owned` consults that registration (`src/syntax.rs`).
+The checker resolves applicable `Drop` implementations before checking bodies
+and whenever parsing interns new types (`src/check.rs`). `Types::owned`
+consults that registration (`src/syntax.rs`). Destructor bodies for concrete
+instantiations are compiled separately. `Copy` is rejected for a type with a
+destructor, including through `derive Copy`, an explicit `Copy` bound or a
+copy in an assignment, argument or return from a borrow. An owned local
+returned by name transfers ownership, as it does for other owned types.
 The C emitter (`src/cgen.rs`) and native IR (`src/ir.rs`) call the method before
 releasing its fields. Recursive drops that pass through a destructor-bearing
 struct use the ordinary call stack. The existing worklists still handle cycles
@@ -86,35 +91,23 @@ of plain structs and heap nodes.
 The `drop_*.yx` fixtures verify normal order, ownership transfers, deferred
 and early exits, worker recovery, and fatal destructor panics. The default
 `tests/leakcheck.sh` run includes the successful Drop fixtures.
+`tests/drop_generic_single_owner.yx` prints one destructor call after moving
+a generic value with Copy fields through a return and an argument. It is
+also exercised with `tests/a64_emu.py --qemu`.
 
-## Generic ownership gap
+## Overlapping implementations
 
-Both C and Linux x86-64 native accept and print `42` twice for this program.
-The single-owner rule requires a compile error at `let duplicate = tag`.
+The compiler accepts the following overlapping `Drop` implementations at
+`yerux check`. The C build fails with a redefinition of the destructor.
+The Linux x86-64 native build runs and prints `1`.
 
 ```yerux
 struct Tag<T> { value: T }
-impl<T> Drop for Tag<T> {
-  fn drop(mut self) { print(42) }
-}
-
-fn main() {
-  let tag = Tag<Int> { value: 1 }
-  let duplicate = tag
-}
+impl<T> Drop for Tag<T> { fn drop(mut self) { print(1) } }
+impl Drop for Tag<Int> { fn drop(mut self) { print(2) } }
+fn main() { let tag = Tag<Int> { value: 1 } }
 ```
 
-`src/check.rs` resolves generic destructors for concrete instantiations after
-checking the entry program's bodies. The checker sees `Tag<Int>` as Copy at
-the assignment. Later, both emitters see its registered destructor and drop
-both bindings. The same timing matters to Copy bounds and containers whose
-ownership depends on their element type. Until this is fixed, use a non-generic
-wrapper for a resource-owning handle with Copy fields. The generic case with
-an independently owned field is covered by `tests/drop_generic_move_order.yx`.
-
-The proposed fix is to establish whether an applicable `Drop` implementation
-exists before the first ownership query for each concrete instantiation. Use
-normal impl matching and bounds, and keep lazy compilation of the destructor
-body separate from its effect on ownership. Validate Copy checks, transitive
-ownership of containers, conditional moves and worker cleanup together. The
-same repro should become a rejection fixture once the checker enforces it.
+Use one applicable destructor implementation per concrete type. The proposed
+checker rule is to diagnose overlapping `Drop` candidates before emitting
+destructor bodies. The example should then become a rejection fixture.

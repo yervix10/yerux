@@ -551,9 +551,12 @@ their live locals are dropped (`tests/drop_basic.yx`, `tests/drop_exits.yx`). Di
 calls and field moves are rejected (`tests/e1200_drop_call.yx`,
 `tests/e1204_drop_field_move.yx`). `Drop` prevents `Copy` (`tests/e1966_drop_copy_bound.yx`).
 
-Generic implementations run in C and Linux x86-64 native builds. The checker can
-still copy a generic destructor-bearing struct with only Copy fields. See
-[DROP.md](DROP.md#generic-ownership-gap) for the reproducer and proposed fix.
+Generic implementations make each matching instantiation owned, even with only
+Copy fields. The checker rejects `derive Copy` on destructor-bearing types, as
+well as implicit copies in bindings, assignments, arguments and returns from
+borrows (`tests/e1967_drop_generic_copy_bound.yx` through
+`tests/e1969_drop_implicit_copy.yx`). Returning an owned local by name moves it.
+See [DROP.md](DROP.md#overlapping-implementations) for the remaining overlap limit.
 
 ---
 

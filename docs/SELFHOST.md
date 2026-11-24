@@ -121,6 +121,15 @@ and loops. It checks shared and mutable loans of known arguments and
 receivers within a call and protects a match subject while an arm borrows
 its payloads.
 
+For generic `Drop`, `types ownership` rejects the `Copy` bound and implicit
+copies in `tests/e1967_drop_generic_copy_bound.yx` and
+`tests/e1969_drop_implicit_copy.yx`. It accepts `derive Copy` in
+`tests/e1968_drop_derive_copy.yx`. It also marks the whole struct family as
+owned when a `Drop` impl matches only some instantiations. For example, with
+`impl<T> Drop for Tag<List<T>>`, it rejects copying an otherwise Copy
+`Tag<Int>`. Full parity requires checking the applicable impl for the actual
+type arguments and diagnosing `derive Copy` on destructor-bearing types.
+
 Run `types locals FILE.ast` for binding and capture rows, `types types FILE.ast`
 for inferred binding types and type errors, or `types ownership FILE.ast`
 for type and ownership errors. The input comes from the self-hosted parser

@@ -63,8 +63,8 @@ Tests: `tests/generic_methods.yx`, `tests/option_result_methods.yx`, `tests/mute
   the built-in type"); wrap them in your own struct.
 - `Ordered`/`Hash` cannot be derived.
 
-Generic `impl<T> Drop for Stack<T>` is accepted. See [DROP.md](DROP.md#generic-ownership-gap)
-for the ownership gap when a concrete instantiation has only Copy fields.
+Generic `impl<T> Drop for Stack<T>` makes its applicable instantiations owned.
+See [DROP.md](DROP.md#overlapping-implementations) for the current overlap limit.
 - Bodies of never-instantiated generic impls are not type-checked; errors show per instantiation.
 - Bounds on struct/enum parameters and default type arguments. (Explicit type arguments on calls exist since the
   freeze rounds: `f<Int>(x)`, all parameters in order; `tests/generic_explicit_args.yx`.)
