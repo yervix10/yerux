@@ -14,6 +14,40 @@ lone percent: none
 trailing percent: none
 nul: none
 half escape: none
+%FF: none
+/%FF: 400 invalid percent escapes, NUL or UTF-8 in the path
+/?k=%FF: 400 invalid percent escapes, NUL or UTF-8 in the query
+/?%FF=value: 400 invalid percent escapes, NUL or UTF-8 in the query
+%C3: none
+/%C3: 400 invalid percent escapes, NUL or UTF-8 in the path
+/?k=%C3: 400 invalid percent escapes, NUL or UTF-8 in the query
+/?%C3=value: 400 invalid percent escapes, NUL or UTF-8 in the query
+%E2%82: none
+/%E2%82: 400 invalid percent escapes, NUL or UTF-8 in the path
+/?k=%E2%82: 400 invalid percent escapes, NUL or UTF-8 in the query
+/?%E2%82=value: 400 invalid percent escapes, NUL or UTF-8 in the query
+%C0%AF: none
+/%C0%AF: 400 invalid percent escapes, NUL or UTF-8 in the path
+/?k=%C0%AF: 400 invalid percent escapes, NUL or UTF-8 in the query
+/?%C0%AF=value: 400 invalid percent escapes, NUL or UTF-8 in the query
+%ED%A0%80: none
+/%ED%A0%80: 400 invalid percent escapes, NUL or UTF-8 in the path
+/?k=%ED%A0%80: 400 invalid percent escapes, NUL or UTF-8 in the query
+/?%ED%A0%80=value: 400 invalid percent escapes, NUL or UTF-8 in the query
+manual query %FF: true
+manual query %C3: true
+manual query %E2%82: true
+manual query %C0%AF: true
+manual query %ED%A0%80: true
+/%E2%82%AC?k=%E2%82%AC: path [/€]
+parameter k: [€] len=3
+/?k=x&ignored=%FF: 400 invalid percent escapes, NUL or UTF-8 in the query
+/?k=%zz: 400 invalid percent escapes, NUL or UTF-8 in the query
+/?k=%00: 400 invalid percent escapes, NUL or UTF-8 in the query
+http://h?k=%FF: 400 invalid percent escapes, NUL or UTF-8 in the query
+http://h?k=a/b%FF: 400 invalid percent escapes, NUL or UTF-8 in the query
+http://h?k=%E2%82%AC: path [/]
+parameter k: [€] len=3
 201
 hello
 application/json

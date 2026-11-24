@@ -21,10 +21,13 @@ smuggling: 400 Bad Request
 huge header: 431 Request Header Fields Too Large
 huge body: 413 Content Too Large
 bad escape: 400 Bad Request
+bad UTF-8 path: 400 Bad Request [invalid percent escapes, NUL or UTF-8 in the path]
+bad UTF-8 query: 400 Bad Request [invalid percent escapes, NUL or UTF-8 in the query]
+valid UTF-8 query: 200 OK [€]
 stalled: 408 Request Timeout
 idle: 0 bytes
 max_requests=3: 3 answered, last connection header close
 in progress at stop: 200 OK slow done connection=close
 workers: 3
-connections accepted: 25
-requests answered by the handler: 19, handler calls: 19
+connections accepted: 28
+requests answered by the handler: 20, handler calls: 20

@@ -232,33 +232,32 @@ fn hex_val(b: Int) -> Int {
   return -1
 }
 
-/// Percent-decode `s` (`+` is a blank when `plus` is set, as in query strings). None for a bad escape or a NUL.
+/// Percent-decode `s` (`+` is a blank when `plus` is set, as in query strings).
+/// Returns None for malformed escapes, NUL bytes or invalid UTF-8.
 pub fn url_decode(s: view String, plus: Bool) -> Option<String> {
   var out = String.new()
   var i = 0
   while i < s.len() {
-    let b = s.byte(i)
+    var b = s.byte(i)
     if b == 37 {
       if i + 2 >= s.len() { return None }
       let hi = hex_val(s.byte(i + 1))
       let lo = hex_val(s.byte(i + 2))
       if hi < 0 || lo < 0 { return None }
-      let v = hi * 16 + lo
-      if v == 0 { return None }
-      out.push_byte(v)
+      b = hi * 16 + lo
       i = i + 3
-    } else if b == 43 && plus {
-      out.push_byte(32)
-      i = i + 1
     } else {
-      out.push_byte(b)
+      if b == 43 && plus { b = 32 }
       i = i + 1
     }
+    if b == 0 { return None }
+    out.push_byte(b)
   }
+  if !io.valid_utf8(out) { return None }
   return Some(move out)
 }
 
-/// The decoded value of query parameter `name` (the first one).
+/// The decoded value of query parameter `name` (the first one), or None if missing or invalid.
 pub fn query_param(req: view Request, name: Text) -> Option<String> {
   let want = String.from(name)
   let pairs = req.query.split("&")
@@ -472,20 +471,28 @@ pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
     if b < 33 || b > 126 { return reject(400, "invalid character in the request target") }
   }
   if method.eq("CONNECT") { return reject(501, "CONNECT is not supported") }
+  if target.contains("#") { return reject(400, "a request target has no fragment") }
   var path_part = String.from(target)
   if !target.starts_with("/") {
     if target.eq("*") && method.eq("OPTIONS") {
       path_part = String.from("*")
     } else if target.starts_with("http://") {
-      // absolute form: keep the path
+      // Absolute form: keep the path and query, including a query with no explicit path.
       let rest = sub(target, 7, target.len())
       let slash = rest.find("/")
-      if slash < 0 { path_part = String.from("/") } else { path_part = sub(rest, slash, rest.len()) }
+      let question = rest.find("?")
+      if question >= 0 && (slash < 0 || question < slash) {
+        path_part = String.from("/")
+        path_part.push_str(sub(rest, question, rest.len()))
+      } else if slash < 0 {
+        path_part = String.from("/")
+      } else {
+        path_part = sub(rest, slash, rest.len())
+      }
     } else {
       return reject(400, "unsupported request target form")
     }
   }
-  if path_part.contains("#") { return reject(400, "a request target has no fragment") }
   var query = String.new()
   let q = path_part.find("?")
   if q >= 0 {
@@ -496,7 +503,11 @@ pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
   var path = String.new()
   match url_decode(path_part, false) {
     Some(d) => { path = move d }
-    None => { return reject(400, "bad percent-encoding in the path") }
+    None => { return reject(400, "invalid percent escapes, NUL or UTF-8 in the path") }
+  }
+  // Raw '&' and '=' are ASCII separators, so UTF-8 sequences cannot cross parameter boundaries.
+  if !query.is_empty() && url_decode(query, true).is_none() {
+    return reject(400, "invalid percent escapes, NUL or UTF-8 in the query")
   }
   // header fields
   if lines.len() - 1 > cfg.max_headers { return reject(431, "too many header fields") }

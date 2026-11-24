@@ -69,6 +69,7 @@ For a complete program, see [the calculator](../examples/25_calculator.yx).
 
 Rules worth knowing:
 - **Strings stay UTF-8.** `read_line`, `read_all` and `read_file` validate their input (no overlong forms, no surrogates, nothing above U+10FFFF) and return `IoErrorKind.InvalidData` instead of building a String that `char_at` would later panic on. `args()` and `env_*` retain their lossy conversion (every non-ASCII byte of an invalid value becomes `?`). Use `env.args_utf8()` to reject malformed command-line arguments.
+- **HTTP request targets.** `std.http.server.url_decode` returns `None` for invalid UTF-8, malformed escapes or NUL. The request parser rejects these in the decoded path or query with HTTP 400. See [NET.md](NET.md).
 - **Paths** with an embedded NUL byte are `InvalidInput`.
 - **Interrupted calls** (`EINTR`) are retried, never reported.
 - **stdin buffering.** `read_line`, `read_all` and `read_stdin_bytes` share one 64 KiB buffer that is allocated when a read finds it empty and freed again as soon as everything in it has been consumed (a program that stops reading in the middle of a buffer keeps it until exit). Reading stdin by other means (raw intrinsics) would bypass it.

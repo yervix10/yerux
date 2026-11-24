@@ -195,6 +195,12 @@ fn client(port: Int, stop: server.Stop) -> List<String> {
   out.push("huge header: {status_of(exchange(port, huge, 2000))}")
   out.push("huge body: {status_of(exchange(port, "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 99999999\r\n\r\n", 2000))}")
   out.push("bad escape: {status_of(exchange(port, "GET /a%zz HTTP/1.1\r\nHost: h\r\n\r\n", 2000))}")
+  let bad_path = exchange(port, "GET /%FF HTTP/1.1\r\nHost: h\r\n\r\n", 2000)
+  out.push("bad UTF-8 path: {status_of(bad_path)} [{body_of(bad_path).trim()}]")
+  let bad_query = exchange(port, "GET /q?name=%C3 HTTP/1.1\r\nHost: h\r\n\r\n", 2000)
+  out.push("bad UTF-8 query: {status_of(bad_query)} [{body_of(bad_query).trim()}]")
+  let euro_query = exchange(port, "GET /q?name=%E2%82%AC HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", 2000)
+  out.push("valid UTF-8 query: {status_of(euro_query)} [{body_of(euro_query)}]")
   // 7. timeouts: a stalled request gets 408, an idle connection is closed without an answer
   out.push("stalled: {status_of(exchange(port, "GET /health HTTP/1.1\r\nHost: h\r\nX-Slow:", 3000))}")
   let idle = exchange(port, "", 3000)

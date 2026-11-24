@@ -111,6 +111,7 @@ fn main() {
 | `serve(listener, handler, cfg, stop)` | accept loop and worker pool; returns `Summary { connections, requests, per_worker }` when stopped |
 | `stop_handle()`, `stop.request()`, `stop.share()` | ordered stop |
 | `parse(buf, from, cfg)` | the pure parser behind it: `Need(expect_continue)`, `Done(Request, used)` or `Reject(status, message)`; no I/O, so it can be tested and fuzzed on byte strings |
+| `url_decode(s, plus)` | returns `Some(String)` for valid percent-decoded UTF-8 and `None` for malformed escapes, NUL or invalid UTF-8; `plus` decodes literal `+` as a space |
 
 **Parser.** Strict and bounded; nothing past the limits is read or kept. A request line is `METHOD SP target SP
 HTTP/1.0|1.1` (an origin-form target, `*` for OPTIONS, or an absolute `http://` target; CONNECT is 501, other versions
@@ -119,10 +120,11 @@ bare LF, at most `max_headers` of them and `max_head` bytes (431); HTTP/1.1 need
 `Content-Length` (digits only; repeated values must agree; over `max_body` is 413) or `Transfer-Encoding: chunked`
 (chunk extensions ignored, trailers read and dropped, the decoded size counts against `max_body`); both together, or
 any other coding, is refused (400 / 501), which closes the request-smuggling shapes. `Expect: 100-continue` gets its
-interim answer before the body is read, any other expectation is 417. Percent escapes are decoded in the path
-(`%00` and malformed escapes are 400); `?` splits the query. The verdict depends only on the bytes, not on how they
-are split into reads. Every cut of a received buffer copies bytes: `String.slice` panics inside a UTF-8 character, so a
-hostile body or a pipelined request could kill a worker if the parser used it.
+interim answer before the body is read, any other expectation is 417. The parser returns 400 if the path or query
+has malformed percent escapes, NUL or invalid UTF-8 after decoding. `Request.query` retains its raw spelling.
+`query_param` decodes the first matching value and returns `None` for a missing or invalid value. The verdict
+depends on the bytes regardless of where reads split them. The parser copies buffer ranges byte by byte.
+`String.slice` could panic if a range in a body or a pipelined request ends inside a UTF-8 character.
 
 **Connections.** Keep-alive follows the HTTP/1.1 default (`Connection: close` and HTTP/1.0 close after the answer);
 `max_requests` bounds a connection; a keep-alive connection that sends nothing for `idle_timeout_ms` is closed

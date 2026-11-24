@@ -13,6 +13,33 @@ fn show(label: Text, o: Option<String>) {
   }
 }
 
+fn show_target(target: view String) {
+  let cfg = server.config()
+  match server.parse("GET {target} HTTP/1.1\r\nHost: h\r\n\r\n", 0, cfg) {
+    Done(req, used) => {
+      print("{target}: path [{req.path}]")
+      show("parameter k", server.query_param(req, "k"))
+    }
+    Reject(code, message) => { print("{target}: {code} {message}") }
+    Need(_) => { print("{target}: incomplete") }
+  }
+}
+
+// query_param also accepts Requests constructed or changed by a caller.
+fn show_invalid_params(escapes: view [Text]) {
+  let cfg = server.config()
+  match server.parse("GET / HTTP/1.1\r\nHost: h\r\n\r\n", 0, cfg) {
+    Done(req, used) => {
+      var r = move req
+      for escape in escapes {
+        r.query = "k={escape}"
+        print("manual query {escape}: {server.query_param(r, "k").is_none()}")
+      }
+    }
+    _ => { print("unexpected parse result") }
+  }
+}
+
 fn main() {
   show("plain", server.url_decode("abc", false))
   show("empty", server.url_decode("", false))
@@ -30,6 +57,21 @@ fn main() {
   show("trailing percent", server.url_decode("100%", false))
   show("nul", server.url_decode("%00", false))
   show("half escape", server.url_decode("ok%2", false))
+  let invalid = ["%FF", "%C3", "%E2%82", "%C0%AF", "%ED%A0%80"]
+  for escape in invalid {
+    show(escape, server.url_decode(escape, false))
+    show_target("/{escape}")
+    show_target("/?k={escape}")
+    show_target("/?{escape}=value")
+  }
+  show_invalid_params(invalid)
+  show_target("/%E2%82%AC?k=%E2%82%AC")
+  show_target("/?k=x&ignored=%FF")
+  show_target("/?k=%zz")
+  show_target("/?k=%00")
+  show_target("http://h?k=%FF")
+  show_target("http://h?k=a/b%FF")
+  show_target("http://h?k=%E2%82%AC")
 
   let r = server.json(201, "hello")
   print(r.status)

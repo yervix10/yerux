@@ -1,4 +1,4 @@
-inputs: 3000  need more: 366  requests: 333  refused: 2301
+inputs: 3000  need more: 366  requests: 328  refused: 2306
 fragments checked: 17569
 invariant violations: 0
 verdicts that changed with more bytes: 0
