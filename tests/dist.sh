@@ -7,6 +7,11 @@ fails=0
 fail() { echo "FAIL: $*"; fails=$((fails+1)); }
 want="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
 
+[ -f VERSION ] || fail "VERSION file missing"
+[ "$(cat VERSION 2>/dev/null)" = "$want" ] || fail "VERSION and Cargo.toml disagree"
+grep -Fxq "## $want" CHANGELOG.md || fail "CHANGELOG is missing $want"
+[ "$("$Y" version)" = "yerux $want" ] || fail "version subcommand"
+
 [ "$("$Y" --version)" = "yerux $want" ] || fail "--version is '$("$Y" --version)', Cargo.toml says $want"
 [ "$("$Y" -V)" = "yerux $want" ] || fail "-V"
 

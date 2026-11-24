@@ -301,7 +301,7 @@ fn native_build(
 
 const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--obj mod.yxo] [--separate] [--no-opt] [--native-debug-alloc]
        yerux --selfhost <check|c|build|run|--stage2> ...
-       yerux --version | doctor       (version; check cc, backends and paths)
+       yerux --version | version | doctor       (version; check cc, backends and paths)
        yerux lsp                      (language server on stdin/stdout)
        yerux fmt [--check|--stdout] file.yx|dir ...
        yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]
@@ -396,11 +396,11 @@ fn main() {
     }
 }
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = include_str!("../VERSION");
 
 /// `yerux doctor`: what this installation can do. Returns the exit code (1 when nothing can build programs).
 fn doctor() -> i32 {
-    println!("yerux {}", VERSION);
+    println!("yerux {}", VERSION.trim());
     match env::current_exe() {
         Ok(p) => println!("  binary:      {}", p.display()),
         Err(e) => println!("  binary:      unknown ({})", e),
@@ -510,7 +510,7 @@ fn real_main() {
         exit(code);
     }
     if args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V" | "version") {
-        println!("yerux {}", VERSION);
+        println!("yerux {}", VERSION.trim());
         return;
     }
     if args.len() == 2 && args[1] == "doctor" {
