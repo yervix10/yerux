@@ -1,0 +1,15 @@
+import std.toml
+
+fn main() {
+  let input = String.from("[pkg]\nname = \"a\\\"b\\\\c\"\nline = \"x\\ty\"\nnames = [\n  \"one\",\n  \"t,wo\",\n  3,\n]\nafter = 5\n")
+  print(toml.get_string(input, "pkg.name"))
+  print(toml.get_string(input, "pkg.line"))
+  let names = toml.get_array(input, "pkg.names")
+  print(names.len())
+  var i = 0
+  while i < names.len() {
+    print(names.at(i))
+    i = i + 1
+  }
+  print(toml.get_int(input, "pkg.after"))
+}

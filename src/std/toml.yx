@@ -2,6 +2,45 @@
 // booleans, and flat arrays. Values are queried by dotted key.
 import std.text
 
+// '[' minus ']' outside of quoted strings (0 when the brackets of a value balance)
+fn bracket_depth(v: view String) -> Int {
+  var depth = 0
+  var quoted = false
+  var i = 0
+  while i < v.len() {
+    let c = v.byte(i)
+    if quoted {
+      if c == 92 { i = i + 1 } else if c == 34 { quoted = false }
+    } else if c == 34 {
+      quoted = true
+    } else if c == 91 {
+      depth = depth + 1
+    } else if c == 93 {
+      depth = depth - 1
+    }
+    i = i + 1
+  }
+  return depth
+}
+
+// the string literal that starts at the quote at `at`: escapes \" \\ \n \t resolved; stops at the closing quote
+fn unquote(v: view String, at: Int, end: mut Int) -> String {
+  var out = String.new()
+  var i = at + 1
+  while i < v.len() && v.byte(i) != 34 {
+    var c = v.byte(i)
+    if c == 92 && i + 1 < v.len() {
+      i = i + 1
+      c = v.byte(i)
+      if c == 110 { c = 10 } else if c == 116 { c = 9 }
+    }
+    out.push_char(Char.from_int(c))
+    i = i + 1
+  }
+  end = i + 1
+  return out
+}
+
 fn raw_value(input: view String, wanted: view String) -> String {
   // A hostile manifest should not allocate a String for every blank line.
   if input.len() > 16777216 { return String.new() }
@@ -33,7 +72,16 @@ fn raw_value(input: view String, wanted: view String) -> String {
           full.push_slice(key, 0, key.len())
         }
         if full.eq(wanted) {
-          return line.slice(eq + 1, line.len()).trim()
+          var value = line.slice(eq + 1, line.len()).trim()
+          // a multi-line array: keep reading lines until its brackets balance
+          var j = i + 1
+          while value.len() > 0 && value.char_at(0).to_int() == 91 && bracket_depth(value) > 0 && j < lines.len() {
+            value.push_char(Char.from_int(32))
+            let more = lines.at(j).trim()
+            value.push_slice(more, 0, more.len())
+            j = j + 1
+          }
+          return value
         }
       }
     }
@@ -45,7 +93,8 @@ fn raw_value(input: view String, wanted: view String) -> String {
 pub fn get_string(input: view String, key: view String) -> String {
   let raw = raw_value(input, key)
   if raw.len() >= 2 && raw.char_at(0).to_int() == 34 {
-    return raw.slice(1, raw.len() - 1)
+    var end = 0
+    return unquote(raw, 0, end)
   }
   return String.new()
 }
@@ -65,17 +114,22 @@ pub fn get_array(input: view String, key: view String) -> List<String> {
   let raw = raw_value(input, key).trim()
   var out = List<String>.new()
   if raw.len() < 2 || raw.char_at(0).to_int() != 91 { return out }
-  let body = raw.slice(1, raw.len() - 1)
-  let items = body.split(String.from(","))
-  var i = 0
-  while i < items.len() {
-    let item = items.at(i).trim()
-    if item.len() >= 2 && item.char_at(0).to_int() == 34 {
-      out.push(item.slice(1, item.len() - 1))
-    } else if item.len() > 0 {
-      out.push(move item)
+  var i = 1
+  while i < raw.len() {
+    let c = raw.byte(i)
+    if c == 34 {
+      var end = 0
+      out.push(unquote(raw, i, end))
+      i = end
+    } else if c == 44 || c == 32 || c == 9 || c == 93 {
+      i = i + 1
+    } else {
+      var j = i
+      while j < raw.len() && raw.byte(j) != 44 && raw.byte(j) != 93 { j = j + 1 }
+      let item = raw.slice(i, j).trim()
+      if item.len() > 0 { out.push(move item) }
+      i = j
     }
-    i = i + 1
   }
   return out
 }

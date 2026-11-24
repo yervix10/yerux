@@ -778,8 +778,9 @@ File system (`read_dir`, `create_dir_all`, `remove_dir_all`, `metadata`, `copy`,
 Textual paths with `/` as the separator (nothing touches the file system). `join(a, b)` (an absolute `b` replaces `a`) · `parent(p)` (`a/b/c.txt` -> `a/b`, `/c` -> `/`, `c` -> empty) · `file_name(p)` · `stem(p)` · `extension(p)` (without dot; a leading dot is not an extension) · `with_extension(p, ext)` · `is_absolute(p)` · `components(p)` · `normalize(p)` (`.`/`..`/repeated slashes; empty result is `.`).
 
 ### `std.regex`, `std.csv`, and `std.toml`
-`std.regex` provides bounded matching and substitution; its supported syntax and
-step budget are documented in [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md).
+`std.regex` provides bounded matching and substitution with groups, alternation `a|b` and quantified groups; an invalid
+pattern is an error (`regex.check` returns it, the other functions panic). Syntax and step budget:
+[REGEX_CSV_TOML.md](REGEX_CSV_TOML.md).
 `std.csv.parse/write` handle quoted RFC 4180 records. `std.toml` reads the
 manifest subset via dotted-key accessors.
 

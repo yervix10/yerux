@@ -1,171 +1,347 @@
-// Bounded ASCII regular-expression search. Supports literals, '.', classes
-// (including [^...]), grouping parentheses, ^/$, and *, +, ?. Each attempted
-// transition consumes the shared step budget to prevent pathological work.
+// Bounded regular-expression search (backtracking VM, no external dependencies).
+// Syntax: literals, '.', classes [abc] [a-z] [^...], groups (...), alternation a|b, quantifiers * + ? on an atom
+// or a group, anchors ^ and $ (anywhere), and backslash escapes (\n, \t and escaped punctuation such as \. \( \\);
+// letter escapes such as \d are errors (use classes).
+// An invalid pattern is an error, never a silent mismatch: `check` returns it as a Result, and every other
+// function panics with the same message. Each attempted instruction consumes a step budget (20000 per start
+// position, plus a global one) so a pathological pattern ends instead of running forever; a search that runs
+// out of budget reports no match.
+//
+// Program layout: prog[0] = number of groups; instruction k is the triple prog[1+3k..4+3k] = op, x, y:
+//   0 CHAR x   1 ANY   2 CLASS (x = offset of '[' in the pattern)   3 SPLIT (try pc+x first, then pc+y)
+//   4 JMP pc+x   5 SAVE slot x   6 BOL   7 EOL   8 MATCH
+fn ch(pat: view String, i: Int) -> Int {
+  if i >= pat.len() { return -1 }
+  return pat.char_at(i).to_int()
+}
+
 fn atom(pattern: view String, pi: Int, c: Char) -> Bool {
-  let p = pattern.char_at(pi)
-  if p.to_int() == 46 { return true }
-  if p.to_int() != 91 { return p == c }
   var i = pi + 1
   var negate = false
-  if i < pattern.len() && pattern.char_at(i).to_int() == 94 { negate = true; i = i + 1 }
+  if ch(pattern, i) == 94 { negate = true; i = i + 1 }
   var found = false
-  while i < pattern.len() && pattern.char_at(i).to_int() != 93 {
-    if i + 2 < pattern.len() && pattern.char_at(i + 1).to_int() == 45 {
-      if c.to_int() >= pattern.char_at(i).to_int() && c.to_int() <= pattern.char_at(i + 2).to_int() { found = true }
+  while i < pattern.len() && ch(pattern, i) != 93 {
+    if ch(pattern, i + 1) == 45 && i + 2 < pattern.len() && ch(pattern, i + 2) != 93 {
+      if c.to_int() >= ch(pattern, i) && c.to_int() <= ch(pattern, i + 2) { found = true }
       i = i + 3
     } else {
-      if c == pattern.char_at(i) { found = true }
-      i = i + 1
+      if c.to_int() == ch(pattern, i) { found = true }
+      i = i + pattern.char_size(i)
     }
   }
   if negate { return !found }
   return found
 }
 
-fn atom_end(pattern: view String, pi: Int) -> Int {
-  if pattern.char_at(pi).to_int() == 91 {
-    var i = pi + 1
-    while i < pattern.len() && pattern.char_at(i).to_int() != 93 { i = i + 1 }
-    if i < pattern.len() { return i + 1 }
-    return pattern.len()
-  }
-  return pi + 1
+fn emit(f: mut List<Int>, op: Int, x: Int, y: Int) {
+  f.push(op)
+  f.push(x)
+  f.push(y)
 }
 
-fn previous_offset(text: view String, start: Int, end: Int) -> Int {
-  var at = start
-  var previous = start
-  while at < end {
-    previous = at
-    at = at + text.char_size(at)
+fn append(dst: mut List<Int>, src: view List<Int>) {
+  var i = 0
+  while i < src.len() {
+    dst.push(src.get(i))
+    i = i + 1
   }
-  return previous
 }
 
-fn match_from(pattern: view String, text: view String, pi: Int, ti: Int, steps: mut Int) -> Int {
-  steps = steps + 1
-  if steps > 20000 { return -1 }
-  if pi >= pattern.len() { return ti }
-  let p = pattern.char_at(pi).to_int()
-  if p == 36 && pi + 1 == pattern.len() {
-    if ti == text.len() { return ti }
-    return -1
-  }
-  if p == 40 || p == 41 { return match_from(pattern, text, pi + 1, ti, steps) }
-  let end = atom_end(pattern, pi)
-  var q = 0
-  if end < pattern.len() { q = pattern.char_at(end).to_int() }
-  let repeated = q == 42 || q == 43 || q == 63
-  var max = ti
-  if ti < text.len() {
-    while max < text.len() && atom(pattern, pi, text.char_at(max)) && steps <= 20000 {
-      max = max + text.char_size(max)
-      steps = steps + 1
-      if !repeated { break }
+// offset just after the ']' of the class that opens at `pos`; sets `err` when the class is malformed
+fn class_end(pat: view String, pos: Int, err: mut String) -> Int {
+  var i = pos + 1
+  if ch(pat, i) == 94 { i = i + 1 }
+  let first = i
+  while i < pat.len() && ch(pat, i) != 93 {
+    if ch(pat, i + 1) == 45 && i + 2 < pat.len() && ch(pat, i + 2) != 93 {
+      if ch(pat, i + 2) < ch(pat, i) {
+        err = "invalid range in the character class that starts at offset {pos}"
+        return pos
+      }
+      i = i + 3
+    } else {
+      i = i + pat.char_size(i)
     }
   }
-  var min = ti
-  if q == 43 { min = ti + 1 }
-  if !repeated {
-    if max == ti { return -1 }
-    return match_from(pattern, text, end, max, steps)
+  if i >= pat.len() {
+    err = "unclosed '[' at offset {pos}"
+    return pos
   }
-  if q == 63 && max == ti { }
-  var at = max
-  while at >= min {
-    var next_pi = end
-    if repeated { next_pi = end + 1 }
-    let next = match_from(pattern, text, next_pi, at, steps)
-    if next >= 0 { return next }
+  if i == first {
+    err = "empty character class at offset {pos}"
+    return pos
+  }
+  return i + 1
+}
+
+fn is_quant(c: Int) -> Bool { return c == 42 || c == 43 || c == 63 }
+
+fn parse_atom(pat: view String, pos: mut Int, ng: mut Int, err: mut String) -> List<Int> {
+  var f = List<Int>.new()
+  let c = ch(pat, pos)
+  if c == 40 {
+    let open = pos
+    pos = pos + 1
+    ng = ng + 1
+    let idx = ng
+    let inner = parse_alt(pat, pos, ng, err)
+    if err.len() > 0 { return f }
+    if ch(pat, pos) != 41 {
+      err = "missing ')' for the group opened at offset {open}"
+      return f
+    }
+    pos = pos + 1
+    emit(f, 5, 2 * idx, 0)
+    append(f, inner)
+    emit(f, 5, 2 * idx + 1, 0)
+  } else if c == 91 {
+    let end = class_end(pat, pos, err)
+    if err.len() > 0 { return f }
+    emit(f, 2, pos, 0)
+    pos = end
+  } else if c == 46 {
+    emit(f, 1, 0, 0)
+    pos = pos + 1
+  } else if c == 94 {
+    emit(f, 6, 0, 0)
+    pos = pos + 1
+  } else if c == 36 {
+    emit(f, 7, 0, 0)
+    pos = pos + 1
+  } else if is_quant(c) {
+    err = "nothing to repeat before the quantifier at offset {pos}"
+  } else if c == 92 {
+    if pos + 1 >= pat.len() {
+      err = "trailing backslash at offset {pos}"
+      return f
+    }
+    var e = ch(pat, pos + 1)
+    let letter = (e >= 65 && e <= 90) || (e >= 97 && e <= 122) || (e >= 48 && e <= 57)
+    if letter && e != 110 && e != 116 {
+      err = "unsupported escape at offset {pos}: only \\n, \\t and escaped punctuation are defined (use a class such as [0-9])"
+      return f
+    }
+    if e == 110 { e = 10 }
+    if e == 116 { e = 9 }
+    emit(f, 0, e, 0)
+    pos = pos + 2
+  } else {
+    emit(f, 0, c, 0)
+    pos = pos + pat.char_size(pos)
+  }
+  return f
+}
+
+fn parse_seq(pat: view String, pos: mut Int, ng: mut Int, err: mut String) -> List<Int> {
+  var out = List<Int>.new()
+  var atoms = 0
+  while pos < pat.len() && ch(pat, pos) != 124 && ch(pat, pos) != 41 {
+    let at = pos
+    let a = parse_atom(pat, pos, ng, err)
+    if err.len() > 0 { return out }
+    atoms = atoms + 1
+    let n = a.len() / 3
+    let q = ch(pat, pos)
+    if is_quant(q) {
+      if n == 1 && (a.get(0) == 6 || a.get(0) == 7) {
+        err = "an anchor cannot be repeated (offset {pos})"
+        return out
+      }
+      pos = pos + 1
+      if q == 42 {
+        emit(out, 3, 1, n + 2)
+        append(out, a)
+        emit(out, 4, -(n + 1), 0)
+      } else if q == 43 {
+        append(out, a)
+        emit(out, 3, -n, 1)
+      } else {
+        emit(out, 3, 1, n + 1)
+        append(out, a)
+      }
+      if is_quant(ch(pat, pos)) {
+        err = "nested quantifier at offset {pos}: a repeated item cannot be repeated again (wrap it in a group)"
+        return out
+      }
+    } else {
+      append(out, a)
+    }
+  }
+  if atoms == 0 {
+    err = "empty alternative or group at offset {pos}"
+  }
+  return out
+}
+
+fn parse_alt(pat: view String, pos: mut Int, ng: mut Int, err: mut String) -> List<Int> {
+  var branches = List<List<Int>>.new()
+  while true {
+    let b = parse_seq(pat, pos, ng, err)
+    if err.len() > 0 { return List<Int>.new() }
+    branches.push(move b)
+    if ch(pat, pos) == 124 { pos = pos + 1 } else { break }
+  }
+  var result = branches.pop()
+  while branches.len() > 0 {
+    let b = branches.pop()
+    let nb = b.len() / 3
+    let nr = result.len() / 3
+    var merged = List<Int>.new()
+    emit(merged, 3, 1, nb + 2)
+    append(merged, b)
+    emit(merged, 4, nr + 1, 0)
+    append(merged, result)
+    result = move merged
+  }
+  return result
+}
+
+fn compile(pat: view String) -> Result<List<Int>, String> {
+  var prog = List<Int>.new()
+  var pos = 0
+  var ng = 0
+  var err = String.new()
+  var body = List<Int>.new()
+  if pat.len() > 0 {
+    body = parse_alt(pat, pos, ng, err)
+    if err.len() == 0 && pos < pat.len() { err = "unmatched ')' at offset {pos}" }
+  }
+  if err.len() > 0 { return Err(move err) }
+  prog.push(ng)
+  append(prog, body)
+  emit(prog, 8, 0, 0)
+  return Ok(move prog)
+}
+
+fn must(pat: view String) -> List<Int> {
+  let r = compile(pat)
+  match move r {
+    Ok(p) => { return p }
+    Err(e) => { panic("std.regex: invalid pattern '{pat}': {e}") }
+  }
+}
+
+// Ok(number of capture groups) when the pattern is valid, Err(message) otherwise.
+pub fn check(pattern: view String) -> Result<Int, String> {
+  let r = compile(pattern)
+  match move r {
+    Ok(p) => { return Ok(p.get(0)) }
+    Err(e) => { return Err(move e) }
+  }
+}
+
+fn run(prog: view List<Int>, pat: view String, text: view String, pc0: Int, ti0: Int, caps: mut List<Int>, steps: mut Int) -> Int {
+  var pc = pc0
+  var ti = ti0
+  while true {
+    steps = steps + 1
     if steps > 20000 { return -1 }
-    at = previous_offset(text, ti, at)
+    let b = 1 + 3 * pc
+    let op = prog.get(b)
+    let x = prog.get(b + 1)
+    let y = prog.get(b + 2)
+    if op == 8 { return ti }
+    if op == 0 {
+      if ti < text.len() && text.char_at(ti).to_int() == x {
+        ti = ti + text.char_size(ti)
+        pc = pc + 1
+      } else { return -1 }
+    } else if op == 1 {
+      if ti < text.len() {
+        ti = ti + text.char_size(ti)
+        pc = pc + 1
+      } else { return -1 }
+    } else if op == 2 {
+      if ti < text.len() && atom(pat, x, text.char_at(ti)) {
+        ti = ti + text.char_size(ti)
+        pc = pc + 1
+      } else { return -1 }
+    } else if op == 3 {
+      let r = run(prog, pat, text, pc + x, ti, caps, steps)
+      if r >= 0 { return r }
+      pc = pc + y
+    } else if op == 4 {
+      pc = pc + x
+    } else if op == 5 {
+      let old = caps.get(x)
+      caps.set(x, ti)
+      let r = run(prog, pat, text, pc + 1, ti, caps, steps)
+      if r >= 0 { return r }
+      caps.set(x, old)
+      return -1
+    } else if op == 6 {
+      if ti == 0 { pc = pc + 1 } else { return -1 }
+    } else if op == 7 {
+      if ti == text.len() { pc = pc + 1 } else { return -1 }
+    } else {
+      return -1
+    }
   }
   return -1
 }
 
-fn find_match(pattern: view String, text: view String, start: Int) -> List<Int> {
-  var at = start
-  var steps = 0
-  let anchored = pattern.len() > 0 && pattern.char_at(0).to_int() == 94
-  var offset = 0
-  if anchored { offset = 1 }
-  while at <= text.len() && steps <= 20000 {
-    let end = match_from(pattern, text, offset, at, steps)
-    if end >= 0 {
-      var found = List<Int>.new()
-      found.push(at)
-      found.push(end)
-      return found
-    }
-    if anchored {
-      var missing = List<Int>.new()
-      missing.push(-1)
-      missing.push(-1)
-      return missing
-    }
-    if at < text.len() { at = at + text.char_size(at) } else {
-      var missing = List<Int>.new()
-      missing.push(-1)
-      missing.push(-1)
-      return missing
-    }
-  }
+// [start, end, group1 start, group1 end, ...] of the first match at or after `start`, or [-1, -1].
+fn find_match(prog: view List<Int>, pat: view String, text: view String, start: Int) -> List<Int> {
+  let groups = prog.get(0)
   var missing = List<Int>.new()
   missing.push(-1)
   missing.push(-1)
+  var at = start
+  var total = 0
+  let limit = 2000000 + 4 * text.len()
+  let anchored = prog.get(1) == 6
+  if anchored && start > 0 { return missing }
+  while at <= text.len() && total < limit {
+    var caps = List<Int>.new()
+    var k = 0
+    while k < 2 * (groups + 1) {
+      caps.push(-1)
+      k = k + 1
+    }
+    var steps = 0
+    let end = run(prog, pat, text, 0, at, caps, steps)
+    total = total + steps
+    if end >= 0 {
+      caps.set(0, at)
+      caps.set(1, end)
+      return caps
+    }
+    if anchored || at >= text.len() { return missing }
+    at = at + text.char_size(at)
+  }
   return missing
 }
 
 pub fn find(pattern: view String, text: view String) -> Int {
-  let result = find_match(pattern, text, 0)
+  let prog = must(pattern)
+  let result = find_match(prog, pattern, text, 0)
   return result.get(0)
 }
 pub fn is_match(pattern: view String, text: view String) -> Bool { return find(pattern, text) >= 0 }
 
-// Returns the whole match followed by the first parenthesized capture, if any.
+// The whole match followed by every parenthesized group, in order of their '('; a group that took no part in the
+// match (the other side of an alternation) is the empty string. Empty list when nothing matches.
 pub fn captures(pattern: view String, text: view String) -> List<String> {
   var out = List<String>.new()
-  let found = find_match(pattern, text, 0)
-  let start = found.get(0)
-  let end = found.get(1)
-  if start < 0 { return out }
-  out.push(text.slice(start, end))
-  var i = 0
-  while i < pattern.len() {
-    if pattern.char_at(i).to_int() == 40 {
-      let open = i
-      var depth = 1
-      i = i + 1
-      while i < pattern.len() && depth > 0 {
-        if pattern.char_at(i).to_int() == 40 { depth = depth + 1 }
-        if pattern.char_at(i).to_int() == 41 { depth = depth - 1 }
-        i = i + 1
-      }
-      if depth == 0 {
-        let close = i - 1
-        var prefix_start = 0
-        if pattern.char_at(0).to_int() == 94 { prefix_start = 1 }
-        let prefix = pattern.slice(prefix_start, open)
-        var steps = 0
-        let capture_start = match_from(prefix, text, 0, start, steps)
-        let inner = pattern.slice(open + 1, close)
-        let capture_end = match_from(inner, text, 0, capture_start, steps)
-        if capture_start >= start && capture_end >= capture_start {
-          out.push(text.slice(capture_start, capture_end))
-        }
-      }
-    } else {
-      i = i + 1
-    }
+  let prog = must(pattern)
+  let found = find_match(prog, pattern, text, 0)
+  if found.get(0) < 0 { return out }
+  var g = 0
+  while 2 * g + 1 < found.len() {
+    let s = found.get(2 * g)
+    let e = found.get(2 * g + 1)
+    if s >= 0 && e >= s { out.push(text.slice(s, e)) } else { out.push(String.new()) }
+    g = g + 1
   }
   return out
 }
 
 pub fn find_all(pattern: view String, text: view String) -> List<String> {
   var out = List<String>.new()
+  let prog = must(pattern)
   var from = 0
   while from <= text.len() {
-    let found = find_match(pattern, text, from)
+    let found = find_match(prog, pattern, text, from)
     let at = found.get(0)
     let end = found.get(1)
     if at < 0 { break }
@@ -183,9 +359,10 @@ pub fn find_all(pattern: view String, text: view String) -> List<String> {
 
 pub fn replace(pattern: view String, text: view String, replacement: view String) -> String {
   var out = String.new()
+  let prog = must(pattern)
   var from = 0
   while from <= text.len() {
-    let found = find_match(pattern, text, from)
+    let found = find_match(prog, pattern, text, from)
     let at = found.get(0)
     let end = found.get(1)
     if at < 0 { break }
@@ -194,20 +371,22 @@ pub fn replace(pattern: view String, text: view String, replacement: view String
     if end > at {
       from = end
     } else if at < text.len() {
+      out.push_slice(text, at, at + text.char_size(at))
       from = at + text.char_size(at)
     } else {
       from = text.len() + 1
     }
   }
-  out.push_slice(text, from, text.len())
+  if from <= text.len() { out.push_slice(text, from, text.len()) }
   return out
 }
 
 pub fn split(pattern: view String, text: view String) -> List<String> {
   var out = List<String>.new()
+  let prog = must(pattern)
   var from = 0
   while from <= text.len() {
-    let found = find_match(pattern, text, from)
+    let found = find_match(prog, pattern, text, from)
     let at = found.get(0)
     let end = found.get(1)
     if at < 0 { break }
@@ -220,6 +399,6 @@ pub fn split(pattern: view String, text: view String) -> List<String> {
       from = text.len() + 1
     }
   }
-  out.push(text.slice(from, text.len()))
+  if from <= text.len() { out.push(text.slice(from, text.len())) }
   return out
 }

@@ -1,0 +1,35 @@
+^(north|south)$ on north: true at 0
+^(north|south)$ on south: true at 0
+^(north|south)$ on east: false at -1
+^(north|south)$ on northeast: false at -1
+cat|dog on hotdog: true at 3
+a|b|c on xxc: true at 2
+gr(a|e)y on grey: true at 0
+(ab)+c on ababc: true at 0
+(ab)+c on abac: false at -1
+x(yz)*w on xyzyzw: true at 0
+colou?r on color: true at 0
+3 id-south id south
+3 [] [b]
+X and X and blue
+3
+1
+error: missing ')' for the group opened at offset 0
+error: unmatched ')' at offset 3
+error: empty alternative or group at offset 2
+error: empty alternative or group at offset 0
+error: empty alternative or group at offset 2
+error: empty alternative or group at offset 1
+error: unclosed '[' at offset 0
+error: empty character class at offset 0
+error: invalid range in the character class that starts at offset 0
+error: nothing to repeat before the quantifier at offset 0
+error: nested quantifier at offset 2: a repeated item cannot be repeated again (wrap it in a group)
+error: nested quantifier at offset 2: a repeated item cannot be repeated again (wrap it in a group)
+error: trailing backslash at offset 1
+error: unsupported escape at offset 0: only \n, \t and escaped punctuation are defined (use a class such as [0-9])
+a\.b on a.b: true at 0
+a\.b on axb: false at -1
+error: an anchor cannot be repeated (offset 1)
+ok 2 groups: (a(b)c)
+ok 0 groups: 
