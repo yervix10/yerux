@@ -16,6 +16,9 @@ for mode in c native; do
   cmp -s "$T/p" $D/sample_b.txt || { echo "FAIL difftool patch result ($mode)"; fail=1; }
   "$T/dt" diff $D/sample_a.txt $D/sample_a.txt >/dev/null 2>&1; [ $? = 0 ] || { echo "FAIL difftool identical status ($mode)"; fail=1; }
   "$T/dt" patch $D/sample_b.txt "$T/d.diff" >/dev/null 2>"$T/e"; [ $? = 1 ] || { echo "FAIL difftool stale patch status ($mode)"; fail=1; }
+  printf 'a\nb' >"$T/nonl.txt"
+  "$T/dt" diff "$T/nonl.txt" $D/sample_a.txt >/dev/null 2>"$T/e"; [ $? = 2 ] || { echo "FAIL difftool no-newline refused ($mode)"; fail=1; }
+  grep -q "no newline" "$T/e" || { echo "FAIL difftool no-newline message ($mode)"; fail=1; }
   "$T/dt" roundtrip 3000 42 >"$T/rt" 2>"$T/e" || { echo "FAIL difftool roundtrip ($mode)"; cat "$T/e" | head -3; fail=1; }
   grep -q "^roundtrip: 3000 cases ok$" "$T/rt" || { echo "FAIL difftool roundtrip output ($mode)"; fail=1; }
   "$T/dt" roundtrip x >/dev/null 2>&1; [ $? = 2 ] || { echo "FAIL difftool usage ($mode)"; fail=1; }

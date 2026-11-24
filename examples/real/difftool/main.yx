@@ -13,10 +13,18 @@ import std.args
 import std.io
 import std.text
 
-// Lines of a file, or an error message naming the file.
+// Lines of a file, or an error message naming the file. A file whose last line has no newline is refused: the
+// line model cannot keep that difference, so diff and patch would give a wrong answer for it.
 fn read_lines(path: view String) -> Result<List<String>, String> {
   match io.read_file(path) {
-    Ok(data) => { return Ok(text.lines(data)) }
+    Ok(data) => {
+      if data.len() > 0 && data.byte(data.len() - 1) != 10 {
+        var m = String.from(path)
+        m.push_str(": last line has no newline (not supported)")
+        return Err(move m)
+      }
+      return Ok(text.lines(data))
+    }
     Err(e) => {
       var m = String.from(path)
       m.push_str(": ")
