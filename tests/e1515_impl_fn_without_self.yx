@@ -1,0 +1,5 @@
+struct S { x: Int }
+impl S {
+  fn new() -> S { return S { x: 1 } }
+}
+fn main() { let s = S.new(); print(s.x) }

@@ -3082,6 +3082,14 @@ impl Parser {
                 })();
                 self.self_ty = saved;
                 let (h2, body) = r?;
+                if trait_name.is_none() && h2.params.first().map_or(true, |p| p.name != "self") {
+                    return Err(diag(
+                        format!("function '{}' in this `impl` has no `self` parameter, so nothing can call it", h2.name),
+                        h2.pos,
+                    )
+                    .note("a plain struct has no `Type.name()` associated functions")
+                    .note(format!("help: write a free function (`fn {}(..) -> ..`) outside the `impl`, or add `view self` / `mut self` / `self`", h2.name)));
+                }
                 let name = impl_fn_name(&self.types, trait_name.as_deref(), self_ty, &h2.name);
                 funcs.push(Func {
                     name,

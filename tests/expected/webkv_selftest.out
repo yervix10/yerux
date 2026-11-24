@@ -1,0 +1,25 @@
+ok    health
+ok    missing key
+ok    create
+ok    read back
+ok    replace
+ok    read replaced
+ok    empty value
+ok    read empty
+ok    delete
+ok    delete again
+ok    incr new
+ok    incr by 41
+ok    incr negative
+ok    incr bad amount
+ok    incr on text
+ok    wrong method
+ok    wrong method health
+ok    bad key
+ok    nested key
+ok    unknown route
+ok    counter after the race
+ok    stats
+workers: 3  connections served: 122
+store: keys=3 writes=106 deletes=1
+selftest passed

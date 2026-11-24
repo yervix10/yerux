@@ -1,0 +1,91 @@
+// The test client: drives a running server through std.http and counts the checks that fail.
+import std.http
+import std.io
+import std.net
+
+pub fn no_headers() -> List<(String, String)> {
+  return List<(String, String)>.new()
+}
+
+// One check: the response must have `status` and body `body`; prints "ok" or "FAIL" with the label.
+pub fn expect(label: Text, r: Result<http.Response, io.IoError>, status: Int, body: Text) -> Int {
+  match move r {
+    Ok(resp) => {
+      if resp.status == status && resp.body.eq(body) {
+        print("ok    {label}")
+        return 0
+      }
+      print("FAIL  {label}: got {resp.status} [{resp.body}], want {status} [{body}]")
+      return 1
+    }
+    Err(e) => {
+      print("FAIL  {label}: transport error")
+      return 1
+    }
+  }
+}
+
+fn host_of(addr: view net.SocketAddr) -> String {
+  var h = String.from("127.0.0.1:")
+  h.push_int(addr.port)
+  return h
+}
+
+pub fn get(addr: view net.SocketAddr, path: view String) -> Result<http.Response, io.IoError> {
+  return http.get(addr, host_of(addr), path, no_headers())
+}
+
+pub fn put(addr: view net.SocketAddr, path: view String, body: view String) -> Result<http.Response, io.IoError> {
+  return http.put_json(addr, host_of(addr), path, no_headers(), body)
+}
+
+pub fn post(addr: view net.SocketAddr, path: view String, body: view String) -> Result<http.Response, io.IoError> {
+  return http.post_json(addr, host_of(addr), path, no_headers(), body)
+}
+
+pub fn del(addr: view net.SocketAddr, path: view String) -> Result<http.Response, io.IoError> {
+  return http.delete(addr, host_of(addr), path, no_headers())
+}
+
+// The sequential script: every route, every error status. Returns the number of failed checks and the number of
+// requests it made through `count`.
+pub fn script(addr: view net.SocketAddr, count: mut Int) -> Int {
+  var bad = 0
+  bad = bad + expect("health", get(addr, "/health"), 200, "ok\n")
+  bad = bad + expect("missing key", get(addr, "/kv/color"), 404, "no such key\n")
+  bad = bad + expect("create", put(addr, "/kv/color", "azul"), 201, "created\n")
+  bad = bad + expect("read back", get(addr, "/kv/color"), 200, "azul")
+  bad = bad + expect("replace", put(addr, "/kv/color", "rojo"), 200, "replaced\n")
+  bad = bad + expect("read replaced", get(addr, "/kv/color"), 200, "rojo")
+  bad = bad + expect("empty value", put(addr, "/kv/empty", ""), 201, "created\n")
+  bad = bad + expect("read empty", get(addr, "/kv/empty"), 200, "")
+  bad = bad + expect("delete", del(addr, "/kv/color"), 204, "")
+  bad = bad + expect("delete again", del(addr, "/kv/color"), 404, "no such key\n")
+  bad = bad + expect("incr new", post(addr, "/incr/n", ""), 200, "1\n")
+  bad = bad + expect("incr by 41", post(addr, "/incr/n", "41"), 200, "42\n")
+  bad = bad + expect("incr negative", post(addr, "/incr/n", "-50"), 200, "-8\n")
+  bad = bad + expect("incr bad amount", post(addr, "/incr/n", "abc"), 400, "amount is not an integer\n")
+  bad = bad + expect("incr on text", post(addr, "/incr/empty", ""), 400, "value is not an integer\n")
+  bad = bad + expect("wrong method", post(addr, "/kv/n", "x"), 405, "method not allowed\n")
+  bad = bad + expect("wrong method health", put(addr, "/health", "x"), 405, "method not allowed\n")
+  bad = bad + expect("bad key", get(addr, "/kv/a%20b"), 404, "no such route\n")
+  bad = bad + expect("nested key", get(addr, "/kv/a/b"), 404, "no such route\n")
+  bad = bad + expect("unknown route", get(addr, "/nope"), 404, "no such route\n")
+  count = count + 20
+  return bad
+}
+
+// `rounds` increments of the shared counter `key`, one connection each.
+pub fn hammer(port: Int, key: Text, rounds: Int) -> Int {
+  let addr = net.address("127.0.0.1", port).unwrap()
+  var path = String.from("/incr/")
+  path.push_str(key)
+  var bad = 0
+  for i in 0..rounds {
+    match post(addr, path, "1") {
+      Ok(r) => { if r.status != 200 { bad = bad + 1 } }
+      Err(e) => { bad = bad + 1 }
+    }
+  }
+  return bad
+}

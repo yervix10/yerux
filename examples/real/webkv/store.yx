@@ -1,0 +1,79 @@
+// Thread-safe key-value store with request counters. One Mutex guards the whole state, so every operation is
+// atomic with respect to the others (the server's workers share one Store through a Shared handle).
+
+pub struct Data {
+  items: Map<String, String>,
+  reads: Int,
+  misses: Int,
+  writes: Int,
+  deletes: Int,
+}
+
+pub struct Stats {
+  keys: Int,
+  reads: Int,
+  misses: Int,
+  writes: Int,
+  deletes: Int,
+}
+
+pub struct Store { data: Mutex<Data> }
+
+// (a plain struct has no `Store.new()`: constructors are free functions)
+pub fn new_store() -> Store {
+  let d = Data { items: Map<String, String>.new(), reads: 0, misses: 0, writes: 0, deletes: 0 }
+  return Store { data: Mutex<Data>.new(move d) }
+}
+
+pub fn get(s: view Store, key: view String) -> Option<String> {
+  return mutex_with(s.data, |d: mut Data| -> Option<String> {
+    let e = d.items.find(key)
+    if e >= 0 {
+      d.reads = d.reads + 1
+      return Some(d.items.vals.at(e).clone())
+    }
+    d.misses = d.misses + 1
+    return None
+  })
+}
+
+// true when the key was new
+pub fn put(s: view Store, key: view String, value: view String) -> Bool {
+  return mutex_with(s.data, |d: mut Data| -> Bool {
+    let fresh = !d.items.contains(key)
+    d.items.insert(key.clone(), value.clone())
+    d.writes = d.writes + 1
+    return fresh
+  })
+}
+
+pub fn delete(s: view Store, key: view String) -> Bool {
+  return mutex_with(s.data, |d: mut Data| -> Bool {
+    let had = d.items.remove(key)
+    if had { d.deletes = d.deletes + 1 }
+    return had
+  })
+}
+
+// Add `by` to the integer stored at `key` (absent counts as 0); None when the value is not an integer.
+pub fn incr(s: view Store, key: view String, by: Int) -> Option<Int> {
+  return mutex_with(s.data, |d: mut Data| -> Option<Int> {
+    var cur = 0
+    let e = d.items.find(key)
+    if e >= 0 {
+      if !d.items.vals.at(e).parse_int(cur) { return None }
+    }
+    cur = cur + by
+    var text = String.new()
+    text.push_int(cur)
+    d.items.insert(key.clone(), move text)
+    d.writes = d.writes + 1
+    return Some(cur)
+  })
+}
+
+pub fn stats(s: view Store) -> Stats {
+  return mutex_with_view(s.data, |d: view Data| -> Stats {
+    return Stats { keys: d.items.len(), reads: d.reads, misses: d.misses, writes: d.writes, deletes: d.deletes }
+  })
+}

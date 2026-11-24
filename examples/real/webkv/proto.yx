@@ -1,0 +1,126 @@
+// HTTP/1.1 framing for the webkv server: parse one request from a socket, render one response.
+import std.io
+import std.net
+
+pub struct Request {
+  method: String,
+  path: String,
+  headers: List<(String, String)>,
+  body: String,
+}
+
+pub struct Reply {
+  status: Int,
+  ctype: String,
+  body: String,
+}
+
+pub fn head_limit() -> Int { return 8192 }
+pub fn body_limit() -> Int { return 65536 }
+
+pub fn reply(status: Int, ctype: Text, body: view String) -> Reply {
+  return Reply { status: status, ctype: String.from(ctype), body: body.clone() }
+}
+
+pub fn reason(status: Int) -> String {
+  match status {
+    200 => { return String.from("OK") }
+    201 => { return String.from("Created") }
+    204 => { return String.from("No Content") }
+    400 => { return String.from("Bad Request") }
+    404 => { return String.from("Not Found") }
+    405 => { return String.from("Method Not Allowed") }
+    413 => { return String.from("Payload Too Large") }
+    _ => { return String.from("Internal Server Error") }
+  }
+}
+
+pub fn render(r: view Reply) -> String {
+  var out = String.from("HTTP/1.1 ")
+  out.push_int(r.status)
+  out.push_str(" ")
+  out.push_str(reason(r.status))
+  out.push_str("\r\nContent-Type: ")
+  out.push_str(r.ctype)
+  out.push_str("\r\nContent-Length: ")
+  out.push_int(r.body.len())
+  out.push_str("\r\nConnection: close\r\n\r\n")
+  out.push_str(r.body)
+  return out
+}
+
+pub fn header(req: view Request, name: Text) -> Option<String> {
+  let want = String.from(name).to_lower()
+  for i in 0..req.headers.len() {
+    let h = req.headers.at(i)
+    if h.0.to_lower().eq(want) { return Some(h.1.clone()) }
+  }
+  return None
+}
+
+// Parse the head (request line and header lines, without the final blank line).
+pub fn parse_head(head: view String) -> Result<Request, String> {
+  let lines = head.split("\r\n")
+  if lines.is_empty() { return Err(String.from("empty request")) }
+  let parts = lines.at(0).split(" ")
+  if parts.len() != 3 { return Err(String.from("bad request line")) }
+  if !parts.at(2).starts_with("HTTP/1.") { return Err(String.from("unsupported protocol")) }
+  if !parts.at(1).starts_with("/") { return Err(String.from("bad target")) }
+  var headers = List<(String, String)>.new()
+  for i in 1..lines.len() {
+    let colon = lines.at(i).find(":")
+    if colon <= 0 { return Err(String.from("bad header line")) }
+    let name = lines.at(i).slice(0, colon)
+    let value = lines.at(i).slice(colon + 1, lines.at(i).len()).trim()
+    headers.push((move name, move value))
+  }
+  return Ok(Request {
+    method: parts.at(0).clone(),
+    path: parts.at(1).clone(),
+    headers: move headers,
+    body: String.new(),
+  })
+}
+
+// Read one request: the head up to CRLF CRLF, then Content-Length body bytes.
+// Err carries the status to answer with and a message.
+pub fn read_request(peer: view net.TcpStream) -> Result<Request, (Int, String)> {
+  var text = String.new()
+  var buf = [0u8; 2048]
+  var end = -1
+  while end < 0 {
+    let n = match net.read_into(peer, buf) {
+      Ok(n) => n,
+      Err(e) => { return Err((400, String.from("read failed"))) }
+    }
+    if n == 0 { return Err((400, String.from("connection closed before the end of the head"))) }
+    for i in 0..n { text.push_byte(buf[i].to_int()) }
+    end = text.find("\r\n\r\n")
+    if end < 0 && text.len() > head_limit() { return Err((413, String.from("head too large"))) }
+  }
+  if end > head_limit() { return Err((413, String.from("head too large"))) }
+  let parsed = parse_head(text.slice(0, end))
+  var req = match move parsed {
+    Ok(r) => move r,
+    Err(m) => { return Err((400, move m)) }
+  }
+  var want = 0
+  match header(req, "content-length") {
+    Some(v) => {
+      if !v.parse_int(want) || want < 0 { return Err((400, String.from("bad content-length"))) }
+    }
+    None => {}
+  }
+  if want > body_limit() { return Err((413, String.from("body too large"))) }
+  var body = text.slice(end + 4, text.len())
+  while body.len() < want {
+    let n = match net.read_into(peer, buf) {
+      Ok(n) => n,
+      Err(e) => { return Err((400, String.from("body read failed"))) }
+    }
+    if n == 0 { return Err((400, String.from("connection closed inside the body"))) }
+    for i in 0..n { body.push_byte(buf[i].to_int()) }
+  }
+  req.body = body.slice(0, want)
+  return Ok(move req)
+}

@@ -126,3 +126,8 @@ target/release/yerux build examples/real/yxscan/main.yx --native -o /tmp/yxscan
 Grep exits with 0 for a match, 1 for no matches and 2 for errors. Wc exits with
 0 on success and 2 on errors. Use `yxscan --help` for the command syntax.
 See the [development findings](../../docs/REAL_PROGRAMS.md#yxscan).
+
+## webkv
+
+`webkv/` is a key-value HTTP server with threads, channels, `std.net` and a client, with its own tests; see
+`docs/REAL_PROGRAMS.md` and `tests/webkv.sh`.

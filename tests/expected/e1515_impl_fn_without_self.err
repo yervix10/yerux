@@ -1,0 +1,9 @@
+error: function 'new' in this `impl` has no `self` parameter, so nothing can call it
+ --> tests/e1515_impl_fn_without_self.yx:3:6
+  |
+3 |   fn new() -> S { return S { x: 1 } }
+  |      ^^^
+  = a plain struct has no `Type.name()` associated functions
+  = help: write a free function (`fn new(..) -> ..`) outside the `impl`, or add `view self` / `mut self` / `self`
+
+1 error(s). Nothing was generated.
