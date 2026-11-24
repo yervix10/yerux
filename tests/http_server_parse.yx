@@ -1,0 +1,281 @@
+// std.http.server's request parser: what is accepted, what is refused with which status, and that the verdict does
+// not depend on how the bytes arrive. Run with `yerux test tests/http_server_parse.yx` (also with --native).
+import std.http.server
+
+// 0 = more bytes needed, 200 = a request, anything else = the status of the refusal
+fn code(raw: view String) -> Int {
+  let cfg = server.config()
+  match server.parse(raw, 0, cfg) {
+    Need(x) => { return 0 }
+    Done(req, used) => { return 200 }
+    Reject(c, m) => { return c }
+  }
+}
+
+fn code_with(raw: view String, cfg: view server.Config) -> Int {
+  match server.parse(raw, 0, cfg) {
+    Need(x) => { return 0 }
+    Done(req, used) => { return 200 }
+    Reject(c, m) => { return c }
+  }
+}
+
+fn get(path: Text) -> String {
+  return "GET {path} HTTP/1.1\r\nHost: h\r\n\r\n"
+}
+
+fn must(raw: view String) -> server.Request {
+  let cfg = server.config()
+  match server.parse(raw, 0, cfg) {
+    Done(req, used) => { return move req }
+    Need(x) => { panic("need more bytes") }
+    Reject(c, m) => { panic("rejected: {c} {m}") }
+  }
+}
+
+test "a simple request" {
+  let r = must(get("/a/b?x=1&y=2"))
+  assert(r.method.eq("GET"))
+  assert(r.path.eq("/a/b"))
+  assert(r.query.eq("x=1&y=2"))
+  assert(r.minor == 1)
+  assert(r.keep_alive)
+  assert(r.body.is_empty())
+  assert(server.header(r, "HOST").unwrap().eq("h"))
+  assert(server.query_param(r, "y").unwrap().eq("2"))
+  assert(server.query_param(r, "z").is_none())
+}
+
+test "percent decoding of the path and the query" {
+  let r = must(get("/a%20b/%E2%82%AC?k=v%20w+x&e="))
+  assert(r.path.eq("/a b/€"))
+  assert(r.raw_path.eq("/a%20b/%E2%82%AC"))
+  assert(server.query_param(r, "k").unwrap().eq("v w x"))
+  assert(server.query_param(r, "e").unwrap().eq(""))
+  assert(code(get("/a%2")) == 400)
+  assert(code(get("/a%zz")) == 400)
+  assert(code(get("/a%00b")) == 400)
+}
+
+test "Content-Length bodies, pipelining and the bytes used" {
+  let raw = String.from("POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\nhelloGET /next HTTP/1.1\r\nHost: h\r\n\r\n")
+  let cfg = server.config()
+  match server.parse(raw, 0, cfg) {
+    Done(req, used) => {
+      assert(req.body.eq("hello"))
+      assert(used == raw.len() - 31)
+      match server.parse(raw, used, cfg) {
+        Done(second, used2) => {
+          assert(second.path.eq("/next"))
+          assert(used2 == raw.len())
+        }
+        _ => { assert(false) }
+      }
+    }
+    _ => { assert(false) }
+  }
+}
+
+test "chunked bodies with extensions and trailers" {
+  let raw = "POST /c HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nX-Trailer: 1\r\n\r\n"
+  let r = must(raw)
+  assert(r.body.eq("hello world"))
+  assert(code("POST /c HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n") == 400)
+  assert(code("POST /c HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabcde\r\n0\r\n\r\n") == 400)
+  assert(code("POST /c HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n") == 0)
+  assert(code("POST /c HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\nFFFFFFFFFFFFFFF\r\n") == 413)
+  assert(code("POST /c HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n10000000000000000\r\n") == 400)
+  assert(code("POST /c HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: gzip, chunked\r\n\r\n") == 501)
+}
+
+test "request smuggling shapes are refused" {
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n") == 400)
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\nabcd") == 400)
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc") == 200)
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 3, 3\r\n\r\nabc") == 400)
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: -1\r\n\r\n") == 400)
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: +3\r\n\r\nabc") == 400)
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 0x3\r\n\r\nabc") == 400)
+  assert(code("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 99999999999999999999\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: h\r\n X: folded\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: h\r\nX : spaced\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: h\r\nBad Name: v\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: h\nX: bare-lf\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: h\rX: bare-cr\r\n\r\n") == 400)
+  var nul = String.from("GET / HTTP/1.1\r\nHost: h\r\nX: a")
+  nul.push_byte(0)
+  nul.push_str("b\r\n\r\n")
+  assert(code(nul) == 400)
+  var del = String.from("GET / HTTP/1.1\r\nHost: h\r\nX: a")
+  del.push_byte(127)
+  del.push_str("\r\n\r\n")
+  assert(code(del) == 400)
+}
+
+test "the request line" {
+  assert(code("GET /x HTTP/1.1\r\nHost: h\r\n\r\n") == 200)
+  assert(code("GET  /x HTTP/1.1\r\nHost: h\r\n\r\n") == 400)
+  assert(code("GET /x  HTTP/1.1\r\nHost: h\r\n\r\n") == 400)
+  assert(code("GET /x\r\nHost: h\r\n\r\n") == 400)
+  assert(code("GET /x HTTP/1.1 extra\r\nHost: h\r\n\r\n") == 400)
+  assert(code("G(T /x HTTP/1.1\r\nHost: h\r\n\r\n") == 400)
+  assert(code("GET x HTTP/1.1\r\nHost: h\r\n\r\n") == 400)
+  assert(code("GET /x#frag HTTP/1.1\r\nHost: h\r\n\r\n") == 400)
+  assert(code("GET /x HTTP/2.0\r\nHost: h\r\n\r\n") == 505)
+  assert(code("GET /x HTTP/1.2\r\nHost: h\r\n\r\n") == 505)
+  assert(code("GET /x FTP/1.1\r\nHost: h\r\n\r\n") == 400)
+  assert(code("CONNECT h:443 HTTP/1.1\r\nHost: h\r\n\r\n") == 501)
+  assert(code("OPTIONS * HTTP/1.1\r\nHost: h\r\n\r\n") == 200)
+  assert(code("GET http://h/abs?q=1 HTTP/1.1\r\nHost: h\r\n\r\n") == 200)
+  assert(code("GET /é HTTP/1.1\r\nHost: h\r\n\r\n") == 400)
+  assert(code("\r\n\r\nGET /x HTTP/1.1\r\nHost: h\r\n\r\n") == 200)
+}
+
+test "Host and the version" {
+  assert(code("GET / HTTP/1.1\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: \r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.1\r\nHost: a b\r\n\r\n") == 400)
+  assert(code("GET / HTTP/1.0\r\n\r\n") == 200)
+  let old = must("GET / HTTP/1.0\r\n\r\n")
+  assert(old.minor == 0)
+  assert(!old.keep_alive)
+  assert(must("GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n").keep_alive)
+  assert(!must("GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n").keep_alive)
+  assert(!must("GET / HTTP/1.1\r\nHost: h\r\nConnection: TE, Close\r\n\r\n").keep_alive)
+  assert(code("POST / HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n") == 400)
+}
+
+test "Expect: 100-continue" {
+  let head = String.from("POST /e HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n")
+  let cfg = server.config()
+  match server.parse(head, 0, cfg) {
+    Need(wants) => { assert(wants) }
+    _ => { assert(false) }
+  }
+  match server.parse("{head}ab", 0, cfg) {
+    Need(wants) => { assert(!wants) }
+    _ => { assert(false) }
+  }
+  assert(code("{head}abcd") == 200)
+  assert(code("POST /e HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\nExpect: gimme\r\n\r\n") == 417)
+}
+
+test "limits" {
+  var cfg = server.config()
+  cfg.max_head = 100
+  assert(code_with("GET / HTTP/1.1\r\nHost: h\r\nX: {String.from("a").repeat(200)}\r\n\r\n", cfg) == 431)
+  assert(code_with("GET / HTTP/1.1\r\nHost: h\r\nX: {String.from("a").repeat(200)}", cfg) == 431)
+  cfg = server.config()
+  cfg.max_headers = 3
+  assert(code_with("GET / HTTP/1.1\r\nHost: h\r\nA: 1\r\nB: 2\r\n\r\n", cfg) == 200)
+  assert(code_with("GET / HTTP/1.1\r\nHost: h\r\nA: 1\r\nB: 2\r\nC: 3\r\n\r\n", cfg) == 431)
+  cfg = server.config()
+  cfg.max_uri = 10
+  assert(code_with("GET /{String.from("a").repeat(20)} HTTP/1.1\r\nHost: h\r\n\r\n", cfg) == 414)
+  cfg = server.config()
+  cfg.max_body = 8
+  assert(code_with("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 9\r\n\r\n", cfg) == 413)
+  assert(code_with("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 8\r\n\r\n12345678", cfg) == 200)
+  assert(code_with("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5\r\n12345\r\n5\r\n12345\r\n0\r\n\r\n", cfg) == 413)
+}
+
+test "the verdict does not depend on how the bytes arrive" {
+  let raws = [
+    "GET /a?b=c HTTP/1.1\r\nHost: h\r\nAccept: */*\r\n\r\n",
+    "POST /p HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world",
+    "POST /p HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n",
+    "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n"
+  ]
+  for r in 0..raws.len() {
+    let whole = String.from(raws[r])
+    let want = code(whole)
+    // every proper prefix is either incomplete or already refused with the final verdict
+    for cut in 0..whole.len() {
+      let c = code(whole.slice(0, cut))
+      assert(c == 0 || (c == want && c != 200))
+    }
+  }
+}
+
+test "a request that never ends is bounded" {
+  var cfg = server.config()
+  cfg.max_head = 64
+  var raw = String.from("GET / HTTP/1.1\r\nHost: h\r\n")
+  var i = 0
+  while i < 200 {
+    raw.push_str("X-{i}: v\r\n")
+    i = i + 1
+  }
+  assert(code_with(raw, cfg) == 431)
+}
+
+test "responses" {
+  var r = server.text(200, "hi")
+  server.add_header(r, "X-One", "1\r\nInjected: yes")
+  let wire = server.render(r, false, false)
+  assert(wire.starts_with("HTTP/1.1 200 OK\r\n"))
+  assert(wire.contains("Content-Length: 2\r\n"))
+  assert(wire.contains("Connection: keep-alive\r\n"))
+  assert(!wire.contains("\r\nInjected:"))
+  assert(wire.ends_with("\r\n\r\nhi"))
+  let head = server.render(r, true, true)
+  assert(head.contains("Content-Length: 2\r\n"))
+  assert(head.contains("Connection: close\r\n"))
+  assert(head.ends_with("\r\n\r\n"))
+  let none = server.render(server.empty(204), false, false)
+  assert(!none.contains("Content-Length"))
+  assert(server.reason(404).eq("Not Found"))
+}
+
+test "routing" {
+  var r = server.router()
+  r.add("GET", "/kv/:key", 1)
+  r.add("PUT", "/kv/:key", 2)
+  r.add("GET", "/", 3)
+  r.add("GET", "/files/*rest", 4)
+  r.add("GET", "/kv/special", 5)
+  let a = must(get("/kv/a%20b"))
+  match r.route(a) {
+    Found(m) => {
+      assert(m.id == 1)
+      assert(server.param(m, "key").unwrap().eq("a b"))
+    }
+    _ => { assert(false) }
+  }
+  // a literal beats a parameter
+  match r.route(must(get("/kv/special"))) {
+    Found(m) => { assert(m.id == 5) }
+    _ => { assert(false) }
+  }
+  match r.route(must(get("/"))) {
+    Found(m) => { assert(m.id == 3) }
+    _ => { assert(false) }
+  }
+  match r.route(must(get("/files/a/b%2Fc"))) {
+    Found(m) => { assert(server.param(m, "rest").unwrap().eq("a/b/c")) }
+    _ => { assert(false) }
+  }
+  match r.route(must("DELETE /kv/x HTTP/1.1\r\nHost: h\r\n\r\n")) {
+    MethodNotAllowed(allow) => { assert(allow.eq("GET, PUT")) }
+    _ => { assert(false) }
+  }
+  match r.route(must(get("/nothing"))) {
+    NotFound => {}
+    _ => { assert(false) }
+  }
+  match r.route(must(get("/kv/a/b"))) {
+    NotFound => {}
+    _ => { assert(false) }
+  }
+  // HEAD uses the GET routes
+  match r.route(must("HEAD /kv/x HTTP/1.1\r\nHost: h\r\n\r\n")) {
+    Found(m) => { assert(m.id == 1) }
+    _ => { assert(false) }
+  }
+  let nf = r.route(must(get("/nothing")))
+  assert(server.unrouted(nf).status == 404)
+  let na = r.route(must("DELETE /kv/x HTTP/1.1\r\nHost: h\r\n\r\n"))
+  assert(server.unrouted(na).status == 405)
+}
