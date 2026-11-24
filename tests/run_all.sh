@@ -110,6 +110,7 @@ AUX=(
   "modules|bash tests/modules.sh"
   "conv_panic_wording|bash tests/conv_panic_wording.sh"
   "webkv|bash tests/webkv.sh"
+  "http_server|bash tests/http_server.sh"
   "minidb|bash tests/minidb.sh"
   "mdconv|bash tests/mdconv.sh"
   "raytrace|bash tests/raytrace.sh"

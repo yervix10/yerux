@@ -1,0 +1,251 @@
+// std.http.server end to end over loopback: the std.http client, keep-alive, pipelining, chunked bodies,
+// Expect: 100-continue, hostile requests, timeouts and an ordered stop. The client runs in one thread and returns
+// its report; only the main thread prints, so the output is deterministic.
+import std.http
+import std.http.server
+import std.io
+import std.net
+
+struct App {
+  hits: Atomic<Int>,
+}
+
+impl server.Handler for App {
+  fn handle(view self, req: view server.Request) -> server.Response {
+    self.hits.add(1)
+    var r = server.router()
+    r.add("GET", "/health", 1)
+    r.add("POST", "/echo", 2)
+    r.add("GET", "/slow", 3)
+    r.add("GET", "/big", 4)
+    r.add("GET", "/hdr", 5)
+    r.add("GET", "/q", 6)
+    r.add("GET", "/kv/:key", 7)
+    r.add("PUT", "/kv/:key", 8)
+    let routed = r.route(req)
+    match routed {
+      Found(m) => {
+        if m.id == 1 { return server.text(200, "ok") }
+        if m.id == 2 { return server.response(200, "application/octet-stream", req.body) }
+        if m.id == 3 {
+          io.sleep_ms(300)
+          return server.text(200, "slow done")
+        }
+        if m.id == 4 {
+          var n = 0
+          match server.query_param(req, "n") {
+            Some(v) => { let ok = v.parse_int(n) }
+            None => {}
+          }
+          var b = String.new()
+          for i in 0..n { b.push_byte(97 + i % 26) }
+          return server.text(200, b)
+        }
+        if m.id == 5 {
+          match server.header(req, "x-test") {
+            Some(v) => { return server.text(200, v) }
+            None => { return server.text(200, "(none)") }
+          }
+        }
+        if m.id == 6 {
+          match server.query_param(req, "name") {
+            Some(v) => { return server.text(200, v) }
+            None => { return server.text(400, "name is required") }
+          }
+        }
+        if m.id == 7 { return server.text(200, "get {server.param(m, "key").unwrap()}") }
+        return server.text(201, "put {server.param(m, "key").unwrap()} {req.body}")
+      }
+      _ => { return server.unrouted(routed) }
+    }
+  }
+}
+
+// One connection: send `data`, read until the server closes (or `ms` pass without data), return what came back.
+fn exchange(port: Int, data: view String, ms: Int) -> String {
+  let a = net.address("127.0.0.1", port).unwrap()
+  var s = net.connect(a).unwrap()
+  let t = net.set_read_timeout(s, ms)
+  if !data.is_empty() {
+    let w = net.write(s, data)
+  }
+  var got = String.new()
+  while got.len() < 4000000 {
+    match net.read(s, 65536) {
+      Ok(chunk) => {
+        if chunk.is_empty() { break }
+        got.push_str(chunk)
+      }
+      Err(e) => { break }
+    }
+  }
+  return got
+}
+
+fn status_of(raw: view String) -> String {
+  let eol = raw.find("\r\n")
+  if eol < 0 { return String.from("(no response)") }
+  return raw.slice(9, eol)
+}
+
+fn count(raw: view String, needle: Text) -> Int {
+  var n = 0
+  var from = 0
+  while true {
+    let at = raw.slice(from, raw.len()).find(needle)
+    if at < 0 { break }
+    n = n + 1
+    from = from + at + 1
+  }
+  return n
+}
+
+fn last_index(raw: view String, needle: Text) -> Int {
+  var at = -1
+  var from = 0
+  while true {
+    let f = raw.slice(from, raw.len()).find(needle)
+    if f < 0 { break }
+    at = from + f
+    from = from + f + 1
+  }
+  return at
+}
+
+fn body_of(raw: view String) -> String {
+  let at = raw.find("\r\n\r\n")
+  if at < 0 { return String.from("") }
+  return raw.slice(at + 4, raw.len())
+}
+
+fn header_of(raw: view String, name: Text) -> String {
+  let head = raw.slice(0, raw.find("\r\n\r\n"))
+  let lines = head.split("\r\n")
+  let want = String.from(name).to_lower()
+  for i in 1..lines.len() {
+    let colon = lines.at(i).find(":")
+    if colon > 0 && lines.at(i).slice(0, colon).to_lower().eq(want) { return lines.at(i).slice(colon + 1, lines.at(i).len()).trim() }
+  }
+  return String.from("(absent)")
+}
+
+fn client(port: Int, stop: server.Stop) -> List<String> {
+  var out = List<String>.new()
+  let a = net.address("127.0.0.1", port).unwrap()
+  let none = List<(String, String)>.new()
+  // 1. the std.http client
+  let r1 = http.get(a, "x", "/health", none).unwrap()
+  out.push("get /health: {r1.status} {r1.body}")
+  let r2 = http.get(a, "x", "/nothing", none).unwrap()
+  out.push("get /nothing: {r2.status} {r2.body}")
+  let r3 = http.post_json(a, "x", "/echo", none, "{{\"k\":[1,2]}}").unwrap()
+  out.push("post /echo: {r3.status} {r3.body}")
+  let r4 = http.put_json(a, "x", "/kv/color", none, "blue").unwrap()
+  out.push("put /kv/color: {r4.status} {r4.body}")
+  let r5 = http.delete(a, "x", "/kv/color", none).unwrap()
+  out.push("delete /kv/color: {r5.status} allow={r5.headers.len() > 0}")
+  let r6 = http.get(a, "x", "/q?name=a%20b%2Bc+d", none).unwrap()
+  out.push("query decoding: {r6.body}")
+  let r7 = http.get(a, "x", "/big?n=100000", none).unwrap()
+  out.push("big body: {r7.status} {r7.body.len()} {r7.body.slice(0, 5)}")
+  // 2. keep-alive and pipelining
+  let two = exchange(port, "GET /health HTTP/1.1\r\nHost: h\r\n\r\nGET /q?name=second HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", 2000)
+  out.push("pipelined: {count(two, "HTTP/1.1 200 OK")} answers, last body {body_of(two).slice(body_of(two).len() - 6, body_of(two).len())}")
+  out.push("keep-alive header: {header_of(two, "connection")}")
+  let seq = exchange(port, "GET /health HTTP/1.0\r\n\r\n", 2000)
+  out.push("http/1.0 closes: {status_of(seq)} {header_of(seq, "connection")}")
+  // 3. chunked request body
+  let chunked = exchange(port, "POST /echo HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n7;x=y\r\n, world\r\n0\r\nT: v\r\n\r\n", 2000)
+  out.push("chunked: {status_of(chunked)} {body_of(chunked)}")
+  // 4. Expect: 100-continue
+  let a2 = net.address("127.0.0.1", port).unwrap()
+  var s = net.connect(a2).unwrap()
+  let tt = net.set_read_timeout(s, 2000)
+  let w1 = net.write(s, "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n")
+  let interim = net.read(s, 4096).unwrap()
+  out.push("expect: interim {status_of(interim)}")
+  let w2 = net.write(s, "hello")
+  var rest = String.new()
+  while true {
+    let c = net.read(s, 4096).unwrap()
+    if c.is_empty() { break }
+    rest.push_str(c)
+  }
+  out.push("expect: final {status_of(rest)} {body_of(rest)}")
+  // 5. HEAD, routing errors
+  let head = exchange(port, "HEAD /health HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", 2000)
+  out.push("head: {status_of(head)} length={header_of(head, "content-length")} body={body_of(head).len()}")
+  let na = exchange(port, "DELETE /health HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", 2000)
+  out.push("405: {status_of(na)} allow={header_of(na, "allow")}")
+  let hdr = exchange(port, "GET /hdr HTTP/1.1\r\nHost: h\r\nX-Test:    padded value \r\nConnection: close\r\n\r\n", 2000)
+  out.push("header trimmed: [{body_of(hdr)}]")
+  // 6. hostile requests: refused, never a crash
+  var tls = String.new()
+  tls.push_byte(22)
+  tls.push_byte(3)
+  tls.push_byte(1)
+  tls.push_str(" not http at all\r\n\r\n")
+  out.push("garbage: {status_of(exchange(port, tls, 2000))}")
+  out.push("http/2: {status_of(exchange(port, "GET / HTTP/2.0\r\nHost: h\r\n\r\n", 2000))}")
+  out.push("no host: {status_of(exchange(port, "GET / HTTP/1.1\r\n\r\n", 2000))}")
+  out.push("smuggling: {status_of(exchange(port, "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", 2000))}")
+  var huge = String.from("GET / HTTP/1.1\r\nHost: h\r\nX: ")
+  for i in 0..20000 { huge.push_byte(97) }
+  huge.push_str("\r\n\r\n")
+  out.push("huge header: {status_of(exchange(port, huge, 2000))}")
+  out.push("huge body: {status_of(exchange(port, "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 99999999\r\n\r\n", 2000))}")
+  out.push("bad escape: {status_of(exchange(port, "GET /a%zz HTTP/1.1\r\nHost: h\r\n\r\n", 2000))}")
+  // 7. timeouts: a stalled request gets 408, an idle connection is closed without an answer
+  out.push("stalled: {status_of(exchange(port, "GET /health HTTP/1.1\r\nHost: h\r\nX-Slow:", 3000))}")
+  let idle = exchange(port, "", 3000)
+  out.push("idle: {idle.len()} bytes")
+  // 8. max_requests: the third answer on a connection closes it
+  let many = exchange(port, "GET /health HTTP/1.1\r\nHost: h\r\n\r\nGET /health HTTP/1.1\r\nHost: h\r\n\r\nGET /health HTTP/1.1\r\nHost: h\r\n\r\nGET /health HTTP/1.1\r\nHost: h\r\n\r\n", 2000)
+  out.push("max_requests=3: {count(many, "HTTP/1.1 200 OK")} answered, last connection header {header_of(many.slice(last_index(many, "HTTP/1.1 200 OK"), many.len()), "connection")}")
+  // 9. ordered stop: the request in progress is answered before serve returns
+  let a3 = net.address("127.0.0.1", port).unwrap()
+  var slow = net.connect(a3).unwrap()
+  let w3 = net.write(slow, "GET /slow HTTP/1.1\r\nHost: h\r\n\r\n")
+  io.sleep_ms(100)
+  stop.request()
+  var answer = String.new()
+  while true {
+    match net.read(slow, 4096) {
+      Ok(c) => {
+        if c.is_empty() { break }
+        answer.push_str(c)
+      }
+      Err(e) => { break }
+    }
+  }
+  out.push("in progress at stop: {status_of(answer)} {body_of(answer)} connection={header_of(answer, "connection")}")
+  return out
+}
+
+fn main() {
+  let l = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
+  let port = net.listener_local_addr(l).unwrap().port
+  let stop = server.stop_handle()
+  var cfg = server.config()
+  cfg.workers = 3
+  cfg.read_timeout_ms = 400
+  cfg.idle_timeout_ms = 400
+  cfg.max_requests = 3
+  let app = Shared.new(App { hits: Atomic<Int>.new(0) })
+  let probe = app.clone()
+  var report = List<String>.new()
+  var summary = server.Summary { connections: 0, requests: 0, per_worker: List<Int>.new() }
+  scope {
+    let s = stop.share()
+    let h = spawn move || client(port, move s)
+    summary = server.serve(l, move app, cfg, stop)
+    match h.join() {
+      Ok(r) => { report = move r }
+      Err(e) => { report.push("client thread failed") }
+    }
+  }
+  for i in 0..report.len() { print(report.at(i)) }
+  print("workers: {summary.per_worker.len()}")
+  print("connections accepted: {summary.connections}")
+  print("requests answered by the handler: {summary.requests}, handler calls: {probe.get().hits.load()}")
+}

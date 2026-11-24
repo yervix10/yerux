@@ -1,0 +1,306 @@
+// A fuzzer for std.http.server: seeded mutations of valid requests (byte flips, cuts, insertions, duplicated or
+// oversized fields, random bytes) go through the parser in one piece and in fragments, and a sample goes through a real
+// server over loopback. Invariants: no panic, no hang, every verdict is Need, a request that stays inside the limits,
+// or a refusal with one of the documented statuses; a verdict never changes when more bytes arrive; and the server
+// answers each hostile request exactly as the parser judged it and still serves a valid request at the end.
+import std.env
+import std.http.server
+import std.io
+import std.net
+
+struct Rng { state: Int }
+
+fn next(r: mut Rng) -> Int {
+  r.state = (r.state * 1103515245 + 12345) % 2147483648
+  return r.state / 65536
+}
+
+fn below(r: mut Rng, n: Int) -> Int {
+  return next(r) % n
+}
+
+// A copy of bytes [a, b): `String.slice` panics inside a UTF-8 character, random bytes land there.
+fn sub(s: view String, a: Int, b: Int) -> String {
+  var out = String.new()
+  var i = a
+  while i < b {
+    out.push_byte(s.byte(i))
+    i = i + 1
+  }
+  return out
+}
+
+fn corpus() -> List<String> {
+  var c = List<String>.new()
+  c.push(String.from("GET / HTTP/1.1\r\nHost: h\r\n\r\n"))
+  c.push(String.from("GET /a/b%20c?x=1&y=%41 HTTP/1.1\r\nHost: example.org\r\nAccept: */*\r\nUser-Agent: fuzz/1\r\n\r\n"))
+  c.push(String.from("POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\nContent-Type: text/plain\r\n\r\nhello world"))
+  c.push(String.from("POST /echo HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;e=1\r\n world\r\n0\r\nT: v\r\n\r\n"))
+  c.push(String.from("PUT /kv/key HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nExpect: 100-continue\r\nConnection: keep-alive\r\n\r\nabc"))
+  c.push(String.from("HEAD /health HTTP/1.0\r\nConnection: close\r\n\r\n"))
+  c.push(String.from("OPTIONS * HTTP/1.1\r\nHost: h\r\n\r\n"))
+  c.push(String.from("DELETE /kv/x HTTP/1.1\r\nHost: h\r\nX-A: 1\r\nX-B: 2\r\nX-C: 3\r\n\r\n"))
+  return c
+}
+
+fn mutate(r: mut Rng, base: view String) -> String {
+  var s = String.from(base)
+  let rounds = 1 + below(r, 4)
+  for k in 0..rounds {
+    let kind = below(r, 12)
+    let at = if s.len() > 0 { below(r, s.len()) } else { 0 }
+    if kind == 0 && s.len() > 0 {
+      // overwrite a byte
+      var t = sub(s, 0, at)
+      t.push_byte(below(r, 256))
+      t.push_str(sub(s, at + 1, s.len()))
+      s = move t
+    } else if kind == 1 && s.len() > 0 {
+      // delete a range
+      let n = 1 + below(r, 8)
+      var t = sub(s, 0, at)
+      let e = if at + n < s.len() { at + n } else { s.len() }
+      t.push_str(sub(s, e, s.len()))
+      s = move t
+    } else if kind == 2 {
+      // insert random bytes
+      var t = sub(s, 0, at)
+      let n = 1 + below(r, 6)
+      for i in 0..n { t.push_byte(below(r, 256)) }
+      t.push_str(sub(s, at, s.len()))
+      s = move t
+    } else if kind == 3 {
+      // truncate
+      s = sub(s, 0, at)
+    } else if kind == 4 {
+      // a line break in the wrong place
+      var t = sub(s, 0, at)
+      let which = below(r, 3)
+      if which == 0 { t.push_str("\r\n") } else if which == 1 { t.push_str("\n") } else { t.push_str("\r") }
+      t.push_str(sub(s, at, s.len()))
+      s = move t
+    } else if kind == 5 {
+      // a huge header value
+      var t = sub(s, 0, at)
+      let n = below(r, 3) * 4000 + 100
+      t.push_str("X-Big: ")
+      for i in 0..n { t.push_byte(97 + i % 26) }
+      t.push_str("\r\n")
+      t.push_str(sub(s, at, s.len()))
+      s = move t
+    } else if kind == 6 {
+      // a duplicated field
+      var t = sub(s, 0, at)
+      let which = below(r, 4)
+      if which == 0 { t.push_str("\r\nHost: dup") }
+      else if which == 1 { t.push_str("\r\nContent-Length: 7") }
+      else if which == 2 { t.push_str("\r\nTransfer-Encoding: chunked") }
+      else { t.push_str("\r\nConnection: close") }
+      t.push_str(sub(s, at, s.len()))
+      s = move t
+    } else if kind == 7 {
+      // a number out of range
+      var t = sub(s, 0, at)
+      let which = below(r, 4)
+      if which == 0 { t.push_str("99999999999999999999") }
+      else if which == 1 { t.push_str("-1") }
+      else if which == 2 { t.push_str("FFFFFFFFFFFFFFFFF") }
+      else { t.push_str("0x10") }
+      t.push_str(sub(s, at, s.len()))
+      s = move t
+    } else if kind == 8 {
+      // percent escapes
+      var t = sub(s, 0, at)
+      let which = below(r, 3)
+      if which == 0 { t.push_str("%") } else if which == 1 { t.push_str("%00") } else { t.push_str("%zz%4") }
+      t.push_str(sub(s, at, s.len()))
+      s = move t
+    } else if kind == 9 {
+      // a second request glued on
+      s.push_str("GET /next HTTP/1.1\r\nHost: h\r\n\r\n")
+    } else if kind == 10 && s.len() > 1 {
+      // swap two bytes
+      let b = below(r, s.len())
+      var t = String.new()
+      for i in 0..s.len() {
+        if i == at { t.push_byte(s.byte(b)) } else if i == b { t.push_byte(s.byte(at)) } else { t.push_byte(s.byte(i)) }
+      }
+      s = move t
+    } else {
+      // many header fields
+      var t = sub(s, 0, at)
+      let n = below(r, 100) + 1
+      t.push_str("\r\n")
+      for i in 0..n { t.push_str("X-{i}: v\r\n") }
+      t.push_str(sub(s, at, s.len()))
+      s = move t
+    }
+  }
+  return s
+}
+
+fn random_bytes(r: mut Rng) -> String {
+  var s = String.new()
+  let n = below(r, 300)
+  for i in 0..n { s.push_byte(below(r, 256)) }
+  return s
+}
+
+// 0 = need more, 1 = a request, otherwise the refusal status; -1 when the verdict breaks an invariant
+fn verdict(raw: view String, cfg: view server.Config) -> Int {
+  match server.parse(raw, 0, cfg) {
+    Need(x) => { return 0 }
+    Done(req, used) => {
+      if used < 1 || used > raw.len() { return -1 }
+      if req.method.is_empty() || req.body.len() > cfg.max_body || req.headers.len() > cfg.max_headers { return -1 }
+      if !req.path.starts_with("/") && !req.path.eq("*") { return -1 }
+      if req.target.len() > cfg.max_uri { return -1 }
+      return 1
+    }
+    Reject(c, m) => {
+      if c == 400 || c == 413 || c == 414 || c == 417 || c == 431 || c == 501 || c == 505 { return c }
+      return -1
+    }
+  }
+}
+
+// Used bytes of the first request, or -1
+fn used_of(raw: view String, cfg: view server.Config) -> Int {
+  match server.parse(raw, 0, cfg) {
+    Done(req, used) => { return used }
+    _ => { return -1 }
+  }
+}
+
+fn status_of(raw: view String) -> Int {
+  if raw.len() < 12 { return 0 }
+  var n = 0
+  for i in 9..12 { n = n * 10 + (raw.byte(i) - 48) }
+  return n
+}
+
+fn exchange(port: Int, data: view String) -> String {
+  let a = net.address("127.0.0.1", port).unwrap()
+  var s = net.connect(a).unwrap()
+  let t = net.set_read_timeout(s, 1500)
+  let w = net.write(s, data)
+  var got = String.new()
+  while got.len() < 100000 {
+    match net.read(s, 65536) {
+      Ok(chunk) => {
+        if chunk.is_empty() { break }
+        got.push_str(chunk)
+      }
+      Err(e) => { break }
+    }
+  }
+  return got
+}
+
+struct Echo { n: Int }
+impl server.Handler for Echo {
+  fn handle(view self, req: view server.Request) -> server.Response {
+    return server.text(200, "ok")
+  }
+}
+
+fn socket_phase(inputs: view List<String>, cfg: view server.Config, port: Int, stop: server.Stop) -> List<Int> {
+  // [sent, answered, mismatches, healthy]
+  var stats = [0, 0, 0, 0]
+  for i in 0..inputs.len() {
+    let want = verdict(inputs.at(i), cfg)
+    if want == 0 || want < 0 { continue }
+    // a request is answered 200 by the handler; a refusal has the status of the parser
+    var seen = status_of(exchange(port, inputs.at(i)))
+    stats[0] = stats[0] + 1
+    if seen > 0 { stats[1] = stats[1] + 1 }
+    let expect = if want == 1 { 200 } else { want }
+    if seen != expect { stats[2] = stats[2] + 1 }
+  }
+  let ok = exchange(port, "GET /health HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+  if status_of(ok) == 200 { stats[3] = 1 }
+  stop.request()
+  var out = List<Int>.new()
+  for i in 0..4 { out.push(stats[i]) }
+  return out
+}
+
+fn main() {
+  var cfg = server.config()
+  cfg.max_head = 4096
+  cfg.max_body = 4096
+  cfg.max_headers = 32
+  cfg.max_uri = 512
+  cfg.read_timeout_ms = 200
+  cfg.idle_timeout_ms = 200
+  cfg.workers = 2
+  // `fuzz [INPUTS [SEED]]`: the defaults are what the golden output records; a longer run is `fuzz 200000 7`
+  var total = 3000
+  var seed = 20240607
+  match env.arg(1) {
+    Some(a) => { let ok = a.parse_int(total) }
+    None => {}
+  }
+  match env.arg(2) {
+    Some(a) => { let ok = a.parse_int(seed) }
+    None => {}
+  }
+  var rng = Rng { state: seed }
+  let base = corpus()
+  var inputs = List<String>.new()
+  for i in 0..total {
+    if below(rng, 10) == 0 {
+      inputs.push(random_bytes(rng))
+    } else {
+      inputs.push(mutate(rng, base.at(below(rng, base.len()))))
+    }
+  }
+  var counts = [0, 0, 0]
+  var by_status = Map<Int, Int>.new()
+  var violations = 0
+  var unstable = 0
+  var fragmented = 0
+  for i in 0..inputs.len() {
+    let raw = inputs.at(i)
+    let v = verdict(raw, cfg)
+    if v < 0 { violations = violations + 1 }
+    if v == 0 { counts[0] = counts[0] + 1 } else if v == 1 { counts[1] = counts[1] + 1 } else { counts[2] = counts[2] + 1 }
+    // fragments: a prefix that is already decided keeps its verdict when more bytes arrive
+    var cut = 1
+    var step = 1 + raw.len() / 6
+    while cut < raw.len() {
+      let part = sub(raw, 0, cut)
+      let pv = verdict(part, cfg)
+      fragmented = fragmented + 1
+      if pv < 0 { violations = violations + 1 }
+      if pv > 1 && pv != v { unstable = unstable + 1 }
+      if pv == 1 && (v != 1 || used_of(part, cfg) != used_of(raw, cfg)) { unstable = unstable + 1 }
+      cut = cut + step
+    }
+  }
+  print("inputs: {inputs.len()}  need more: {counts[0]}  requests: {counts[1]}  refused: {counts[2]}")
+  print("fragments checked: {fragmented}")
+  print("invariant violations: {violations}")
+  print("verdicts that changed with more bytes: {unstable}")
+  // a sample through a real server
+  let l = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
+  let port = net.listener_local_addr(l).unwrap().port
+  let stop = server.stop_handle()
+  var sample = List<String>.new()
+  for i in 0..inputs.len() {
+    if i % 20 == 0 { sample.push(inputs.at(i).clone()) }
+  }
+  var result = List<Int>.new()
+  var summary = server.Summary { connections: 0, requests: 0, per_worker: List<Int>.new() }
+  scope {
+    let s = stop.share()
+    let c2 = cfg.clone()
+    let h = spawn move || socket_phase(sample, c2, port, move s)
+    summary = server.serve(l, Shared.new(Echo { n: 0 }), cfg, stop)
+    match h.join() {
+      Ok(r) => { result = move r }
+      Err(e) => { result.push(-1) }
+    }
+  }
+  print("over the socket: sent {result.at(0)}, answered {result.at(1)}, answers that differ from the parser's verdict {result.at(2)}, healthy afterwards {result.at(3)}")
+}

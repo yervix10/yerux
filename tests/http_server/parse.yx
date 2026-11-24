@@ -1,5 +1,5 @@
 // std.http.server's request parser: what is accepted, what is refused with which status, and that the verdict does
-// not depend on how the bytes arrive. Run with `yerux test tests/http_server_parse.yx` (also with --native).
+// not depend on how the bytes arrive. Run with `yerux test tests/http_server/parse.yx` (also with --native).
 import std.http.server
 
 // 0 = more bytes needed, 200 = a request, anything else = the status of the refusal

@@ -267,8 +267,8 @@ pub fn query_param(req: view Request, name: Text) -> Option<String> {
     var key = String.from(pairs.at(i))
     var value = String.new()
     if eq >= 0 {
-      key = pairs.at(i).slice(0, eq)
-      value = pairs.at(i).slice(eq + 1, pairs.at(i).len())
+      key = sub(pairs.at(i), 0, eq)
+      value = sub(pairs.at(i), eq + 1, pairs.at(i).len())
     }
     match url_decode(key, true) {
       Some(k) => {
@@ -305,12 +305,20 @@ fn is_token(s: view String) -> Bool {
   return true
 }
 
+// A copy of bytes [a, b) of `buf`. `String.slice` panics when an end falls inside a UTF-8 character, which a body or a
+// pipelined request can make happen, so cuts at arbitrary offsets copy bytes.
+fn sub(buf: view String, a: Int, b: Int) -> String {
+  var out = String.new()
+  if b > a { out.push_raw(buf.raw_addr() + a, b - a) }
+  return out
+}
+
 fn trim_ows(s: view String) -> String {
   var a = 0
   var b = s.len()
   while a < b && (s.byte(a) == 32 || s.byte(a) == 9) { a = a + 1 }
   while b > a && (s.byte(b - 1) == 32 || s.byte(b - 1) == 9) { b = b - 1 }
-  return s.slice(a, b)
+  return sub(s, a, b)
 }
 
 /// A decimal number of at most 18 digits, or -1.
@@ -391,7 +399,7 @@ fn decode_chunked(buf: view String, start: Int, cfg: view Config) -> Result<(Str
         if teol == p { return Ok((move body, p + 2)) }
         trailer = trailer + (teol - p) + 2
         if trailer > cfg.max_head { return Err(431) }
-        let colon = buf.slice(p, teol).find(":")
+        let colon = sub(buf, p, teol).find(":")
         if colon <= 0 { return Err(400) }
         p = teol + 2
       }
@@ -399,7 +407,7 @@ fn decode_chunked(buf: view String, start: Int, cfg: view Config) -> Result<(Str
     if body.len() + size > cfg.max_body { return Err(413) }
     if buf.len() < p + size + 2 { return Err(0) }
     if buf.byte(p + size) != 13 || buf.byte(p + size + 1) != 10 { return Err(400) }
-    body.push_str(buf.slice(p, p + size))
+    body.push_str(sub(buf, p, p + size))
     p = p + size + 2
   }
   return Err(400)
@@ -426,16 +434,19 @@ pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
     }
     i = i + 1
   }
+  // The verdict follows the bytes in order, so it is the same however they are split: a bad byte inside the first
+  // `max_head + 4` bytes is a 400; a head that is still not finished after them (or that finishes later) is a 431.
   var scan_to = buf.len()
   if head_end >= 0 { scan_to = head_end + 4 }
+  if scan_to > p + cfg.max_head + 4 { scan_to = p + cfg.max_head + 4 }
   let bad = bad_head_byte(buf, p, scan_to)
   if bad >= 0 { return reject(400, "invalid character in the request head") }
   if head_end < 0 {
-    if buf.len() - p > cfg.max_head { return reject(431, "request head too large") }
+    if buf.len() - p >= cfg.max_head + 4 { return reject(431, "request head too large") }
     return Step.Need(false)
   }
   if head_end - p > cfg.max_head { return reject(431, "request head too large") }
-  let head = buf.slice(p, head_end)
+  let head = sub(buf, p, head_end)
   let lines = head.split("\r\n")
   // request line: METHOD SP target SP HTTP/1.x
   let parts = lines.at(0).split(" ")
@@ -467,9 +478,9 @@ pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
       path_part = String.from("*")
     } else if target.starts_with("http://") {
       // absolute form: keep the path
-      let rest = target.slice(7, target.len())
+      let rest = sub(target, 7, target.len())
       let slash = rest.find("/")
-      if slash < 0 { path_part = String.from("/") } else { path_part = rest.slice(slash, rest.len()) }
+      if slash < 0 { path_part = String.from("/") } else { path_part = sub(rest, slash, rest.len()) }
     } else {
       return reject(400, "unsupported request target form")
     }
@@ -478,8 +489,8 @@ pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
   var query = String.new()
   let q = path_part.find("?")
   if q >= 0 {
-    query = path_part.slice(q + 1, path_part.len())
-    path_part = path_part.slice(0, q)
+    query = sub(path_part, q + 1, path_part.len())
+    path_part = sub(path_part, 0, q)
   }
   let raw_path = String.from(path_part)
   var path = String.new()
@@ -504,9 +515,9 @@ pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
     if line.byte(0) == 32 || line.byte(0) == 9 { return reject(400, "obsolete line folding is not accepted") }
     let colon = line.find(":")
     if colon <= 0 { return reject(400, "malformed header field") }
-    let name = line.slice(0, colon)
+    let name = sub(line, 0, colon)
     if !is_token(name) { return reject(400, "invalid header field name") }
-    let value = trim_ows(line.slice(colon + 1, line.len()))
+    let value = trim_ows(sub(line, colon + 1, line.len()))
     let lower = name.to_lower()
     if lower.eq("host") {
       hosts = hosts + 1
@@ -556,7 +567,7 @@ pub fn parse(buf: view String, from: Int, cfg: view Config) -> Step {
   } else if length > 0 {
     if length > cfg.max_body { return reject(413, "request body too large") }
     if buf.len() < head_end + 4 + length { return Step.Need(expect_continue && buf.len() == head_end + 4) }
-    body = buf.slice(head_end + 4, head_end + 4 + length)
+    body = sub(buf, head_end + 4, head_end + 4 + length)
     used = head_end + 4 + length
   }
   let req = Request {
@@ -645,7 +656,7 @@ impl Router {
             k = k + 1
           }
           match url_decode(rest, false) {
-            Some(d) => { params.push((p.slice(1, p.len()), move d)) }
+            Some(d) => { params.push((sub(p, 1, p.len()), move d)) }
             None => { ok = false }
           }
           i = route.segments.len() + 1
@@ -653,7 +664,7 @@ impl Router {
           ok = false
         } else if p.starts_with(":") {
           match url_decode(segs.at(i), false) {
-            Some(d) => { params.push((p.slice(1, p.len()), move d)) }
+            Some(d) => { params.push((sub(p, 1, p.len()), move d)) }
             None => { ok = false }
           }
           score = score + 1
@@ -761,7 +772,7 @@ fn serve_connection<H: Handler>(stream: net.TcpStream, handler: view H, cfg: vie
   while true {
     match parse(buf, 0, cfg) {
       Done(req, used) => {
-        buf = buf.slice(used, buf.len())
+        buf = sub(buf, used, buf.len())
         continued = false
         started = 0
         served = served + 1
