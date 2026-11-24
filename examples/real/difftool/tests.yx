@@ -1,0 +1,96 @@
+// Unit tests: `yerux test examples/real/difftool/tests.yx`
+import diff
+import fuzz
+import patch
+import std.text
+
+fn lines(s: view String) -> List<String> {
+  return text.lines(s)
+}
+
+test "identical inputs give an empty diff" {
+  let a = lines("x\ny\n")
+  assert(diff.unified(a, a, "a", "b", 3).len() == 0)
+  let none = lines("")
+  assert(diff.unified(none, none, "a", "b", 3).len() == 0)
+}
+
+test "unified output for one change" {
+  let a = lines("1\n2\n3\n4\n5\n")
+  let b = lines("1\n2\nthree\n4\n5\n")
+  let want = "--- a\n+++ b\n@@ -1,5 +1,5 @@\n 1\n 2\n-3\n+three\n 4\n 5\n"
+  assert(diff.unified(a, b, "a", "b", 3).eq(want))
+}
+
+test "hunks split when the gap is larger than twice the context" {
+  let a = lines("1\n2\n3\n4\n5\n6\n7\n8\n9\n")
+  let b = lines("X\n2\n3\n4\n5\n6\n7\n8\nY\n")
+  let text = diff.unified(a, b, "a", "b", 1)
+  assert(text.find("@@ -1,2 +1,2 @@") > 0)
+  assert(text.find("@@ -8,2 +8,2 @@") > 0)
+  // with 4 lines of context the two changes share one hunk
+  let joined = diff.unified(a, b, "a", "b", 4)
+  assert(joined.find("@@ -1,9 +1,9 @@") > 0)
+}
+
+test "empty old side uses the line before as start" {
+  let a = lines("")
+  let b = lines("p\nq\n")
+  assert(diff.unified(a, b, "a", "b", 3).find("@@ -0,0 +1,2 @@") > 0)
+  assert(diff.range_text(4, 0).eq("4,0"))
+  assert(diff.range_text(4, 1).eq("5"))
+  assert(diff.range_text(4, 3).eq("5,3"))
+}
+
+test "script is minimal on a classic example" {
+  let a = lines("A\nB\nC\nA\nB\nB\nA\n")
+  let b = lines("C\nB\nA\nB\nA\nC\n")
+  let table = diff.lcs_table(a, b)
+  assert(table.get(0) == 4)
+  assert(fuzz.check_pair(a, b, 2).len() == 0)
+}
+
+test "patch parses headers without counts" {
+  let hunks = patch.parse("--- a\n+++ b\n@@ -2 +2 @@\n-old\n+new\n").unwrap()
+  assert(hunks.len() == 1)
+  assert(hunks.at(0).a0 == 1)
+  assert(hunks.at(0).old.len() == 1)
+  assert(hunks.at(0).new.at(0).eq("new"))
+}
+
+test "a changed line that starts with -- is not a file header" {
+  let a = lines("--x\nkeep\n")
+  let b = lines("--y\nkeep\n")
+  let text = diff.unified(a, b, "a", "b", 3)
+  assert(fuzz.check_pair(a, b, 3).len() == 0)
+  let hunks = patch.parse(text).unwrap()
+  let out = patch.apply(a, hunks).unwrap()
+  assert(out.at(0).eq("--y"))
+}
+
+test "patch that does not match the file is rejected with the line" {
+  let a = lines("one\ntwo\nthree\n")
+  let hunks = patch.parse("@@ -1,2 +1,2 @@\n one\n-dos\n+2\n").unwrap()
+  match patch.apply(a, hunks) {
+    Ok(_) => { panic("applied a mismatching patch") }
+    Err(e) => { assert(e.find("hunk 1 expects line 2") >= 0) }
+  }
+}
+
+test "truncated and malformed hunks are errors" {
+  assert(patch.parse("@@ -1,3 +1,3 @@\n a\n").is_err())
+  assert(patch.parse("@@ bogus @@\n").is_err())
+  assert(patch.parse("@@ -1,x +1 @@\n").is_err())
+}
+
+test "join ends every line with a newline" {
+  let l = lines("a\nb")
+  assert(patch.join(l).eq("a\nb\n"))
+}
+
+test "generated round trip passes for a fixed seed" {
+  match fuzz.run(200, 5) {
+    Ok(n) => { assert(n == 200) }
+    Err(e) => { panic(e) }
+  }
+}

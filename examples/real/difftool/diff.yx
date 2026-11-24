@@ -1,0 +1,206 @@
+// Line diff by longest common subsequence, and the unified output format.
+//
+// The LCS table is flat: table[i * (m + 1) + j] is the length of the longest common subsequence of a[i..] and b[j..].
+// The edit script walks the table forward, so an edit script is always minimal: its Keep count is the LCS length.
+import std.text
+
+// One step of the edit script. Keep and Del carry an index into `a`, Add an index into `b`.
+pub enum Op {
+  Keep(Int),
+  Del(Int),
+  Add(Int),
+}
+
+// A run of changes with up to `context` unchanged lines around it. `start` and `end` are indexes into the script.
+pub struct Hunk { start: Int, end: Int }
+
+fn cell(table: view List<Int>, m: Int, i: Int, j: Int) -> Int {
+  return table.get(i * (m + 1) + j)
+}
+
+// Builds the table of suffix LCS lengths. Rows are i = 0..=n, columns j = 0..=m; the last row and column are 0.
+pub fn lcs_table(a: view List<String>, b: view List<String>) -> List<Int> {
+  let n = a.len()
+  let m = b.len()
+  var table = List<Int>.new()
+  for k in 0..((n + 1) * (m + 1)) {
+    table.push(0)
+  }
+  var i = n - 1
+  while i >= 0 {
+    var j = m - 1
+    while j >= 0 {
+      var v = 0
+      if a.at(i).eq(b.at(j)) {
+        v = cell(table, m, i + 1, j + 1) + 1
+      } else {
+        let down = cell(table, m, i + 1, j)
+        let right = cell(table, m, i, j + 1)
+        v = if down > right { down } else { right }
+      }
+      table.set(i * (m + 1) + j, v)
+      j = j - 1
+    }
+    i = i - 1
+  }
+  return table
+}
+
+// The edit script turning `a` into `b`. Ties prefer deleting from `a` first, so output is deterministic.
+pub fn script(a: view List<String>, b: view List<String>) -> List<Op> {
+  let n = a.len()
+  let m = b.len()
+  let table = lcs_table(a, b)
+  var ops = List<Op>.new()
+  var i = 0
+  var j = 0
+  while i < n || j < m {
+    if i < n && j < m && a.at(i).eq(b.at(j)) {
+      ops.push(Op.Keep(i))
+      i = i + 1
+      j = j + 1
+    } else if j >= m {
+      ops.push(Op.Del(i))
+      i = i + 1
+    } else if i >= n {
+      ops.push(Op.Add(j))
+      j = j + 1
+    } else if cell(table, m, i + 1, j) >= cell(table, m, i, j + 1) {
+      ops.push(Op.Del(i))
+      i = i + 1
+    } else {
+      ops.push(Op.Add(j))
+      j = j + 1
+    }
+  }
+  return ops
+}
+
+// Number of `a` lines before script step k, and of `b` lines before it: prefix sums of Keep+Del and Keep+Add.
+pub struct Offsets { a: List<Int>, b: List<Int> }
+
+pub fn offsets(ops: view List<Op>) -> Offsets {
+  var a = List<Int>.new()
+  var b = List<Int>.new()
+  var na = 0
+  var nb = 0
+  a.push(0)
+  b.push(0)
+  for k in 0..ops.len() {
+    match ops.at(k) {
+      Keep(_) => {
+        na = na + 1
+        nb = nb + 1
+      }
+      Del(_) => { na = na + 1 }
+      Add(_) => { nb = nb + 1 }
+    }
+    a.push(na)
+    b.push(nb)
+  }
+  return Offsets { a: move a, b: move b }
+}
+
+// Groups the changes of the script into hunks; two changes closer than 2 * context lines share a hunk.
+pub fn hunks(ops: view List<Op>, context: Int) -> List<Hunk> {
+  var out = List<Hunk>.new()
+  var k = 0
+  let n = ops.len()
+  while k < n {
+    if ops.at(k).is_keep() {
+      k = k + 1
+      continue
+    }
+    let start = if k - context < 0 { 0 } else { k - context }
+    var last = k
+    var scan = k
+    // extend while the next change is within 2 * context unchanged lines
+    while scan < n {
+      if !ops.at(scan).is_keep() {
+        last = scan
+      } else if scan - last > 2 * context {
+        break
+      }
+      scan = scan + 1
+    }
+    let end = if last + context >= n { n - 1 } else { last + context }
+    out.push(Hunk { start: start, end: end })
+    k = end + 1
+  }
+  return out
+}
+
+// Unified diff of two line lists with `context` lines (GNU diff -u layout, but without the "No newline" marker).
+pub fn unified(a: view List<String>, b: view List<String>, a_name: view String, b_name: view String, context: Int) -> String {
+  let ops = script(a, b)
+  let off = offsets(ops)
+  var out = String.new()
+  if ops.len() == 0 || is_identical(ops) {
+    return out
+  }
+  out.push_str("--- ")
+  out.push_str(a_name)
+  out.push_str("\n+++ ")
+  out.push_str(b_name)
+  out.push_str("\n")
+  for h in hunks(ops, context) {
+    let a0 = off.a.get(h.start)
+    let b0 = off.b.get(h.start)
+    let na = off.a.get(h.end + 1) - a0
+    let nb = off.b.get(h.end + 1) - b0
+    out.push_str("@@ -")
+    out.push_str(range_text(a0, na))
+    out.push_str(" +")
+    out.push_str(range_text(b0, nb))
+    out.push_str(" @@\n")
+    for k in h.start..(h.end + 1) {
+      match ops.at(k) {
+        Keep(i) => {
+          out.push_str(" ")
+          out.push_str(a.at(i))
+        }
+        Del(i) => {
+          out.push_str("-")
+          out.push_str(a.at(i))
+        }
+        Add(j) => {
+          out.push_str("+")
+          out.push_str(b.at(j))
+        }
+      }
+      out.push_str("\n")
+    }
+  }
+  return out
+}
+
+// True when the script has no changes at all.
+fn is_identical(ops: view List<Op>) -> Bool {
+  for k in 0..ops.len() {
+    if !ops.at(k).is_keep() {
+      return false
+    }
+  }
+  return true
+}
+
+// "start,count" as in a hunk header. The count is omitted when it is 1; with count 0 the start is the line before.
+pub fn range_text(before: Int, count: Int) -> String {
+  var s = String.new()
+  let start = if count == 0 { before } else { before + 1 }
+  s.push_int(start)
+  if count != 1 {
+    s.push_str(",")
+    s.push_int(count)
+  }
+  return s
+}
+
+impl Op {
+  fn is_keep(view self) -> Bool {
+    match self {
+      Keep(_) => { return true }
+      _ => { return false }
+    }
+  }
+}

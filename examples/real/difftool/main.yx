@@ -1,0 +1,150 @@
+// difftool: line diffs in unified format, patch application, and generated round-trip checks.
+//
+//   difftool diff [-U N] OLD NEW     unified diff with N context lines (default 3) on stdout
+//                                    exit 0 when identical, 1 when different, 2 on error
+//   difftool patch FILE PATCH        applies a unified diff to FILE, writes the result on stdout
+//                                    exit 0 ok, 1 when the patch does not apply, 2 on error
+//   difftool roundtrip N [SEED]      N generated pairs: minimal script, parseable diff, exact patch
+//                                    exit 0 when all pass, 1 on the first failure
+import diff
+import fuzz
+import patch
+import std.args
+import std.io
+import std.text
+
+// Lines of a file, or an error message naming the file.
+fn read_lines(path: view String) -> Result<List<String>, String> {
+  match io.read_file(path) {
+    Ok(data) => { return Ok(text.lines(data)) }
+    Err(e) => {
+      var m = String.from(path)
+      m.push_str(": ")
+      m.push_str(e.message)
+      return Err(move m)
+    }
+  }
+}
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("difftool: {msg}")
+  io.exit(code)
+}
+
+// Writes output exactly as given (no newline is added).
+fn emit(s: view String) {
+  match io.write_stdout(s) {
+    Ok(_) => {}
+    Err(e) => { fail(e.message, 2) }
+  }
+}
+
+fn cmd_diff(p: view args.Parsed) -> Int {
+  let context = args.option_int_or(p, "U", 3)
+  let names = args.positionals(p)
+  if names.len() != 2 || context < 0 {
+    fail("usage: difftool diff [-U N] OLD NEW", 2)
+  }
+  let a = match read_lines(names.at(0)) {
+    Ok(l) => move l
+    Err(e) => {
+      fail(e, 2)
+      return 2
+    }
+  }
+  let b = match read_lines(names.at(1)) {
+    Ok(l) => move l
+    Err(e) => {
+      fail(e, 2)
+      return 2
+    }
+  }
+  let out = diff.unified(a, b, names.at(0), names.at(1), context)
+  emit(out)
+  if out.len() == 0 { return 0 }
+  return 1
+}
+
+fn cmd_patch(p: view args.Parsed) -> Int {
+  let names = args.positionals(p)
+  if names.len() != 2 {
+    fail("usage: difftool patch FILE PATCH", 2)
+  }
+  let orig = match read_lines(names.at(0)) {
+    Ok(l) => move l
+    Err(e) => {
+      fail(e, 2)
+      return 2
+    }
+  }
+  let patch_text = match io.read_file(names.at(1)) {
+    Ok(d) => move d
+    Err(e) => {
+      fail(e.message, 2)
+      return 2
+    }
+  }
+  let hunks = match patch.parse(patch_text) {
+    Ok(h) => move h
+    Err(e) => {
+      fail(e, 1)
+      return 1
+    }
+  }
+  let result = match patch.apply(orig, hunks) {
+    Ok(r) => move r
+    Err(e) => {
+      fail(e, 1)
+      return 1
+    }
+  }
+  emit(patch.join(result))
+  return 0
+}
+
+fn cmd_roundtrip(p: view args.Parsed) -> Int {
+  let names = args.positionals(p)
+  if names.len() < 1 || names.len() > 2 {
+    fail("usage: difftool roundtrip N [SEED]", 2)
+  }
+  let n = match text.parse_int(names.at(0)) {
+    Ok(v) => v
+    Err(e) => {
+      fail("bad count: {e}", 2)
+      return 2
+    }
+  }
+  var seed = 1
+  if names.len() == 2 {
+    match text.parse_int(names.at(1)) {
+      Ok(v) => { seed = v }
+      Err(e) => {
+        fail("bad seed: {e}", 2)
+        return 2
+      }
+    }
+  }
+  match fuzz.run(n, seed) {
+    Ok(count) => {
+      print("roundtrip: {count} cases ok")
+      return 0
+    }
+    Err(e) => {
+      fail(e, 1)
+      return 1
+    }
+  }
+}
+
+fn main() {
+  let p = args.parse_process()
+  let cmd = p.subcommand.clone()
+  if cmd.eq("diff") {
+    io.exit(cmd_diff(p))
+  } else if cmd.eq("patch") {
+    io.exit(cmd_patch(p))
+  } else if cmd.eq("roundtrip") {
+    io.exit(cmd_roundtrip(p))
+  }
+  fail("usage: difftool diff|patch|roundtrip ...", 2)
+}

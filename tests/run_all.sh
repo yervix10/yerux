@@ -114,6 +114,7 @@ AUX=(
   "mdconv|bash tests/mdconv.sh"
   "raytrace|bash tests/raytrace.sh"
   "httpjson|bash tests/httpjson.sh"
+  "difftool|bash tests/difftool.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"

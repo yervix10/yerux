@@ -1,0 +1,147 @@
+// Reading unified diffs back and applying them to a file. Only the format `diff.unified` writes is accepted,
+// plus the usual variants of hunk headers (counts omitted when 1, and the "---"/"+++" lines before the first hunk).
+import std.text
+
+// One hunk of a patch: `a0` is the number of old lines before it, `old` and `new` are its two sides.
+pub struct PHunk { a0: Int, old: List<String>, new: List<String> }
+
+// A "--- ", "+++ " or other line before the first hunk is ignored. Errors name the 1-based line of the patch.
+fn num(s: view String, line: Int) -> Result<Int, String> {
+  match text.parse_int(s) {
+    Ok(v) => { return Ok(v) }
+    Err(_) => {
+      var m = String.from("bad number '")
+      m.push_str(s)
+      m.push_str("' in hunk header at patch line ")
+      m.push_int(line)
+      return Err(move m)
+    }
+  }
+}
+
+// "A,B" or "A" (count 1) from a header range without its sign. Returns (start, count).
+fn range(r: view String, line: Int) -> Result<(Int, Int), String> {
+  let k = r.find(",")
+  if k < 0 {
+    let s = num(r, line)?
+    return Ok((s, 1))
+  }
+  let s = num(r.slice(0, k), line)?
+  let c = num(r.slice(k + 1, r.len()), line)?
+  return Ok((s, c))
+}
+
+// Parses "@@ -A[,B] +C[,D] @@" into (A, B, D). The old side has B lines, the new side D.
+fn header(l: view String, line: Int) -> Result<(Int, Int, Int), String> {
+  let parts = text.split_ws(l)
+  if parts.len() < 3 || !parts.at(1).starts_with("-") || !parts.at(2).starts_with("+") {
+    var m = String.from("malformed hunk header at patch line ")
+    m.push_int(line)
+    return Err(move m)
+  }
+  let old = range(parts.at(1).slice(1, parts.at(1).len()), line)?
+  let new = range(parts.at(2).slice(1, parts.at(2).len()), line)?
+  // a hunk of zero old lines names the line before it, so the index to splice at is that number itself
+  let a0 = if old.1 == 0 { old.0 } else { old.0 - 1 }
+  return Ok((a0, old.1, new.1))
+}
+
+// Parses every hunk of a patch. Lines are read by the counts in the header, so a changed line that begins with
+// "--" (or any other text) is never mistaken for a file header.
+pub fn parse(patch: view String) -> Result<List<PHunk>, String> {
+  let lines = patch.lines()
+  var out = List<PHunk>.new()
+  var i = 0
+  while i < lines.len() {
+    if !lines.at(i).starts_with("@@") {
+      i = i + 1
+      continue
+    }
+    let h = header(lines.at(i), i + 1)?
+    let (a0, nold, nnew) = h
+    var old = List<String>.new()
+    var new = List<String>.new()
+    i = i + 1
+    while old.len() < nold || new.len() < nnew {
+      if i >= lines.len() {
+        var m = String.from("truncated hunk at patch line ")
+        m.push_int(i + 1)
+        return Err(move m)
+      }
+      let l = lines.at(i)
+      i = i + 1
+      if l.len() == 0 {
+        var m = String.from("empty line inside a hunk at patch line ")
+        m.push_int(i)
+        return Err(move m)
+      }
+      let kind = l.byte(0)
+      let body = l.slice(1, l.len())
+      if kind == 32 {
+        old.push(body.clone())
+        new.push(body.clone())
+      } else if kind == 45 {
+        old.push(body.clone())
+      } else if kind == 43 {
+        new.push(body.clone())
+      } else if kind == 92 {
+        // "\ No newline at end of file": informational only
+      } else {
+        var m = String.from("unexpected line in hunk at patch line ")
+        m.push_int(i)
+        return Err(move m)
+      }
+    }
+    out.push(PHunk { a0: a0, old: move old, new: move new })
+  }
+  return Ok(move out)
+}
+
+// Applies the hunks to `orig` (lines without newlines). Every context and deleted line must match.
+pub fn apply(orig: view List<String>, hunks: view List<PHunk>) -> Result<List<String>, String> {
+  var out = List<String>.new()
+  var pos = 0
+  for k in 0..hunks.len() {
+    let h = hunks.at(k)
+    if h.a0 < pos {
+      var m = String.from("hunks out of order at hunk ")
+      m.push_int(k + 1)
+      return Err(move m)
+    }
+    while pos < h.a0 {
+      out.push(orig.at(pos).clone())
+      pos = pos + 1
+    }
+    for t in 0..h.old.len() {
+      if pos >= orig.len() || !orig.at(pos).eq(h.old.at(t)) {
+        var m = String.from("patch does not apply: hunk ")
+        m.push_int(k + 1)
+        m.push_str(" expects line ")
+        m.push_int(pos + 1)
+        m.push_str(" to be '")
+        m.push_str(h.old.at(t))
+        m.push_str("'")
+        return Err(move m)
+      }
+      pos = pos + 1
+    }
+    for t in 0..h.new.len() {
+      out.push(h.new.at(t).clone())
+    }
+  }
+  while pos < orig.len() {
+    out.push(orig.at(pos).clone())
+    pos = pos + 1
+  }
+  return Ok(move out)
+}
+
+// Joins lines the way files are written: every line ends with a newline.
+pub fn join(lines: view List<String>) -> String {
+  var s = String.new()
+  for k in 0..lines.len() {
+    s.push_str(lines.at(k))
+    s.push_str("\n")
+  }
+  return s
+}
