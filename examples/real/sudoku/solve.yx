@@ -1,0 +1,138 @@
+// Backtracking solver with minimum-remaining-values cell choice.
+//
+// A Board holds the cells and the digit bitmasks of every row, column and box (see grid.yx). At each node the empty cell
+// with the fewest candidate digits is chosen (the first one in row order on ties) and its candidates are tried in
+// ascending order. A node with an empty cell that has no candidate is a dead end. The search counts solutions and stops
+// once the count reaches the limit.
+import grid
+
+pub struct Board {
+  cells: List<Int>,
+  rows: List<Int>,
+  cols: List<Int>,
+  boxes: List<Int>,
+}
+
+// Nine zeros.
+pub fn zeros9() -> List<Int> {
+  var out = List<Int>.new()
+  for _ in 0..9 {
+    out.push(0)
+  }
+  return out
+}
+
+// A board with the given cells and the sets of their digits. The cells must not conflict (see grid.first_conflict).
+pub fn board_of(cells: view List<Int>) -> Board {
+  var empty = List<Int>.new()
+  for _ in 0..81 {
+    empty.push(0)
+  }
+  var b = Board { cells: move empty, rows: zeros9(), cols: zeros9(), boxes: zeros9() }
+  for i in 0..81 {
+    let v = cells.at(i)
+    if v != 0 {
+      place(b, i, v)
+    }
+  }
+  return b
+}
+
+// True when digit d may go in cell i: it is not yet used in the cell's row, column or box.
+pub fn can(b: view Board, i: Int, d: Int) -> Bool {
+  let r = i / 9
+  let c = i % 9
+  return !grid.has(b.rows.at(r), d) && !grid.has(b.cols.at(c), d) && !grid.has(b.boxes.at(grid.box_of(r, c)), d)
+}
+
+// Number of digits that may go in cell i.
+pub fn ncands(b: view Board, i: Int) -> Int {
+  var n = 0
+  for d in 1..10 {
+    if can(b, i, d) {
+      n = n + 1
+    }
+  }
+  return n
+}
+
+// Writes digit d into the empty cell i.
+pub fn place(b: mut Board, i: Int, d: Int) {
+  let r = i / 9
+  let c = i % 9
+  let bx = grid.box_of(r, c)
+  b.cells.set(i, d)
+  b.rows.set(r, b.rows.at(r) + grid.pow2(d))
+  b.cols.set(c, b.cols.at(c) + grid.pow2(d))
+  b.boxes.set(bx, b.boxes.at(bx) + grid.pow2(d))
+}
+
+// Clears cell i, which holds digit d.
+pub fn unplace(b: mut Board, i: Int, d: Int) {
+  let r = i / 9
+  let c = i % 9
+  let bx = grid.box_of(r, c)
+  b.cells.set(i, 0)
+  b.rows.set(r, b.rows.at(r) - grid.pow2(d))
+  b.cols.set(c, b.cols.at(c) - grid.pow2(d))
+  b.boxes.set(bx, b.boxes.at(bx) - grid.pow2(d))
+}
+
+// The empty cell with the fewest candidates (first in row order on ties), or -1 when the board is full. Sets dead to
+// true when some empty cell has no candidate at all.
+fn choose(b: view Board, dead: mut Bool) -> Int {
+  var best = -1
+  var bestn = 10
+  for i in 0..81 {
+    if b.cells.at(i) == 0 {
+      let n = ncands(b, i)
+      if n == 0 {
+        dead = true
+        return -1
+      }
+      if n < bestn {
+        bestn = n
+        best = i
+      }
+    }
+  }
+  return best
+}
+
+// Counts the solutions of b, up to limit. b is restored before returning. The first solution found is stored in
+// `first` (when `first` is empty).
+pub fn search(b: mut Board, limit: Int, first: mut List<Int>) -> Int {
+  var dead = false
+  let best = choose(b, dead)
+  if dead {
+    return 0
+  }
+  if best < 0 {
+    if first.is_empty() {
+      first.extend(b.cells.copy())
+    }
+    return 1
+  }
+  var total = 0
+  for d in 1..10 {
+    if can(b, best, d) {
+      place(b, best, d)
+      total = total + search(b, limit - total, first)
+      unplace(b, best, d)
+      if total >= limit {
+        return total
+      }
+    }
+  }
+  return total
+}
+
+// Number of solutions of the grid, up to limit; 0 when the givens conflict. The first solution is stored in `first`.
+pub fn count(cells: view List<Int>, limit: Int, first: mut List<Int>) -> Int {
+  match grid.first_conflict(cells) {
+    Some(_) => { return 0 }
+    None => {}
+  }
+  var b = board_of(cells)
+  return search(b, limit, first)
+}
