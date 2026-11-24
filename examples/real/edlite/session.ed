@@ -1,0 +1,26 @@
+# a session that uses every command at least once
+1,3n
+/
+2a
+Items:
+.
+$p
+3s/call/phone/
+3,4j
+=
+1
+t$
+%p
+u
+r
+4m0
+2,3c
+done
+.
+1,$n
+5s/zz/y/
+x
+w
+2m7
+q
+7p

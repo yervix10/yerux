@@ -1,0 +1,124 @@
+// Unit tests: `yerux test examples/real/edlite/tests.yx`
+import buffer
+import commands
+import std.text
+
+// Runs the script (one command per line) and returns the error messages, one per failing line.
+fn run(ed: mut buffer.Editor, script: view String) -> List<String> {
+  var errors = List<String>.new()
+  var input = commands.Input { lines: text.lines(script), pos: 0 }
+  while input.pos < input.lines.len() {
+    let line = input.lines.at(input.pos).clone()
+    input.pos = input.pos + 1
+    match commands.exec(ed, input, line) {
+      Ok(_) => {}
+      Err(e) => { errors.push(move e) }
+    }
+  }
+  return errors
+}
+
+// A buffer holding the given text, with the current line at the end.
+fn start(s: view String) -> buffer.Editor {
+  var ed = buffer.new("")
+  ed.lines = text.lines(s)
+  ed.cur = ed.count()
+  return ed
+}
+
+test "append and insert place lines and move the current line" {
+  var ed = start("a\nb\n")
+  let errs = run(ed, "1a\nx\n.\n1i\ntop\n.\n")
+  assert(errs.len() == 0)
+  assert(ed.contents().eq("top\na\nx\nb\n"))
+  assert(ed.cur == 1)
+}
+
+test "delete, print and the current line" {
+  var ed = start("1\n2\n3\n4\n")
+  let _ = run(ed, "2,3d\n")
+  assert(ed.contents().eq("1\n4\n"))
+  assert(ed.cur == 2)
+  let _ = run(ed, "1p\n")
+  assert(ed.out.eq("1\n"))
+}
+
+test "addresses: dot, dollar, offsets and percent" {
+  var ed = start("a\nb\nc\nd\ne\n")
+  let _ = run(ed, "2\n")
+  let _ = run(ed, "+2d\n")
+  assert(ed.contents().eq("a\nb\nc\ne\n"))
+  let _ = run(ed, "$-1d\n")
+  assert(ed.contents().eq("a\nb\ne\n"))
+  let _ = run(ed, "%d\n")
+  assert(ed.count() == 0)
+}
+
+test "substitute replaces the first match, or all with g" {
+  var ed = start("aaa\nbab\n")
+  let errs = run(ed, "%s/a/x/\n")
+  assert(errs.len() == 0)
+  assert(ed.contents().eq("xaa\nbxb\n"))
+  let _ = run(ed, "%s/a/y/g\n")
+  assert(ed.contents().eq("xyy\nbxb\n"))
+  let none = run(ed, "s/q/z/\n")
+  assert(none.len() == 1)
+  assert(none.at(0).eq("no match"))
+}
+
+test "move and copy" {
+  var ed = start("1\n2\n3\n4\n")
+  let _ = run(ed, "1,2m$\n")
+  assert(ed.contents().eq("3\n4\n1\n2\n"))
+  let _ = run(ed, "1,2t$\n")
+  assert(ed.contents().eq("3\n4\n1\n2\n3\n4\n"))
+  let bad = run(ed, "1,3m2\n")
+  assert(bad.len() == 1)
+  assert(bad.at(0).eq("destination is inside the range"))
+}
+
+test "join and change" {
+  var ed = start("one\ntwo\nthree\n")
+  let _ = run(ed, "1,2j\n")
+  assert(ed.contents().eq("onetwo\nthree\n"))
+  let _ = run(ed, "2c\nfour\n.\n")
+  assert(ed.contents().eq("onetwo\nfour\n"))
+}
+
+test "undo and redo walk the history, and a new change drops redo" {
+  var ed = start("x\n")
+  let _ = run(ed, "a\ny\n.\n")
+  let _ = run(ed, "1d\n")
+  assert(ed.contents().eq("y\n"))
+  let _ = run(ed, "u\n")
+  assert(ed.contents().eq("x\ny\n"))
+  let _ = run(ed, "u\n")
+  assert(ed.contents().eq("x\n"))
+  let past = run(ed, "u\n")
+  assert(past.at(0).eq("nothing to undo"))
+  let _ = run(ed, "r\n")
+  assert(ed.contents().eq("x\ny\n"))
+  let _ = run(ed, "u\n")
+  let _ = run(ed, "s/x/z/\n")
+  let nothing = run(ed, "r\n")
+  assert(nothing.at(0).eq("nothing to redo"))
+  assert(ed.contents().eq("z\n"))
+}
+
+test "errors name the problem and do not change the buffer" {
+  var ed = start("a\n")
+  let errs = run(ed, "5p\nx1\n0d\n")
+  assert(errs.len() == 3)
+  assert(errs.at(0).eq("invalid address"))
+  assert(errs.at(1).eq("unknown command 'x'"))
+  assert(errs.at(2).eq("invalid address"))
+  assert(ed.contents().eq("a\n"))
+}
+
+test "the number of lines and the file name" {
+  var ed = start("a\nb\n")
+  let _ = run(ed, "=\n")
+  assert(ed.out.eq("2\n"))
+  let _ = run(ed, "f notes.txt\n")
+  assert(ed.name.eq("notes.txt"))
+}
