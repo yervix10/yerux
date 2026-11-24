@@ -1,12 +1,11 @@
-# Yerux compatibility policy (towards 1.0)
+# Yerux 1.0 compatibility freeze
 
-Status: **draft policy**, version 0.9.0-rc1 as of this writing. It defines what users may rely on,
-how versions change, and what must be settled before the syntax and the standard library are
-frozen. The language itself is specified in [SPEC.md](SPEC.md); the stdlib reference is
+This policy defines the 1.0 compatibility surface. The current compiler is 0.9.0-rc1.
+The language itself is specified in [SPEC.md](SPEC.md). The stdlib reference is
 [STDLIB.md](STDLIB.md) with the per-area references [STDLIB_IO.md](STDLIB_IO.md),
 [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md), [STDLIB_PROCESS.md](STDLIB_PROCESS.md),
 [STDLIB_SYNC.md](STDLIB_SYNC.md), [STDLIB_KV.md](STDLIB_KV.md) and
-[STDLIB_COMPRESS.md](STDLIB_COMPRESS.md). Nothing here changes the compiler.
+[STDLIB_COMPRESS.md](STDLIB_COMPRESS.md).
 
 Evidence for each claim is the test named in place (tests/ is the regression suite, run by
 `tests/run_all.sh`). Where no test pins a behaviour, the item is marked **experimental** until it is.
@@ -15,8 +14,8 @@ Evidence for each claim is the test named in place (tests/ is the regression sui
 
 | Level | Meaning | Change rule |
 |---|---|---|
-| **Stable** | Documented in SPEC.md 1-4 or in a stdlib table, covered by tests, and planned for 1.0. | Breaking changes only in a major version, after a deprecation (section 4). |
-| **Stable-candidate** | Covered by tests and documented, but with a pending decision listed in section 6. | May change before 1.0 with a changelog entry; frozen when its pending item closes. |
+| **Stable** | Documented and tested surface covered by the 1.0 freeze. | Breaking changes only in a major version, after a deprecation (sections 4 and 5). |
+| **Stable-candidate** | Documented and tested surface awaiting an explicit freeze decision. | Changes require a changelog entry. The Stable rules apply once the item is promoted. |
 | **Experimental** | Works and has tests, but its surface or semantics may still change in any minor release. | Any change allowed; announced in the changelog. |
 | **Internal** | Reserved names, `__`-prefixed intrinsics, public helpers marked "not part of the stable API". | Not covered by any rule; may change or disappear without notice. |
 
@@ -26,13 +25,14 @@ A feature not mentioned in this document is **Experimental** by default.
 
 | Area | Level | Basis |
 |---|---|---|
-| Lexical structure, literals, operators, grammar (SPEC 1) | Stable-candidate | tests/spec_01_literals.yx |
+| Core source syntax: UTF-8, comments, ordinary literals, operators, declarations and control flow for Stable features (SPEC 1) | Stable | tests/spec_01_literals.yx, tests/spec_04_ownership.yx, tests/spec_conformance.sh |
 | Primitive types, copy/owned types, composite types, structs, enums (SPEC 2.1-2.4) | Stable | tests/spec_01_literals.yx, tests/spec_04_ownership.yx |
 | Generics and traits (SPEC 2.5), `dyn Trait` | Stable-candidate | tests/generic_impls (mod_ok), tests/mod_ok/dyn |
 | Range integers `Int<lo..hi>` (SPEC 2.6) | Stable-candidate | tests/spec_02_range_int.yx; range fixtures `tests/range_*.yx` |
 | `Option`, `Result`, `?`, `defer`, `context` (SPEC 2.7, 4) | Stable | tests/spec_05_result_defer.yx, tests/spec_06_context.yx |
 | Function values and closures (SPEC 2.8) | Stable-candidate | tests/spec_03_closures.yx; closure fixtures `tests/e70*.yx` |
 | Ownership, moves and borrows (SPEC 3) | Stable | tests/spec_04_ownership.yx; error fixtures `tests/own_*.yx` |
+| User-defined destructors (`impl Drop`, SPEC 3.8) | Experimental | tests/drop_generic_move_order.yx, tests/e1966_drop_copy_bound.yx, tests/drop_panic.yx, tests/drop_worker.yx. See [DROP.md](DROP.md#generic-ownership-gap) for the checker gap. |
 | Panics and exit code 101 (SPEC 4.4) | Stable | tests/spec_02_range_int.yx (`.code` 101) |
 | Modules, `import`, `pub`, packages (SPEC 6, PACKAGES.md) | Stable-candidate | tests/mod_ok, tests/mod_err, tests/packages.sh |
 | Concurrency: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, channels, pools (SPEC 5) | Experimental | tests/conc_*.yx, tests/concurrency*.yx |
@@ -42,14 +42,14 @@ A feature not mentioned in this document is **Experimental** by default.
 | `comptime fn`, `comptime for/if`, reflection, comptime allocators | Not yet available | SPEC 10 |
 | Module objects `.yxo` (`yerux obj`) | Experimental | tests/modobj.sh |
 
-Syntax freeze rule: a syntax form moves from Stable-candidate to Stable only when its pending item in
-section 6 is closed and its error messages are fixed by an `e*.yx` test.
+Specific feature levels apply to their syntax. When a syntax form is promoted to Stable, add
+positive coverage and use an `e*.yx` fixture for its documented rejection cases.
 
 ## 3. Standard library
 
 The stdlib has two parts: **prelude** methods (available without import, from `src/prelude*.yx`) and
-**`std.*` modules** (27 files in `src/std/`, imported with `import std.<name>`). Module levels follow the
-risk of the area, not the amount of code.
+**`std.*` modules** (30 files in `src/std/`, imported with `import std.<name>`).
+Stable entries freeze public names, signatures and documented behavior for the tested APIs.
 
 ### 3.1 Prelude
 
@@ -88,13 +88,23 @@ risk of the area, not the amount of code.
 
 Rule for all modules: a function that no test calls is Experimental regardless of the table above.
 
+### 3.3 Compiler and CLI
+
+| Area | Level | Contract and tests |
+|---|---|---|
+| CLI help, version and core commands | Stable | `--help`, `help COMMAND`, `COMMAND --help`, `--version`, `-V`, `version`, `check`, `build`, `run`, `test`, and `fmt --check`. The supported core invocations in [CLI.md](CLI.md) include `build FILE -o OUT` and `run FILE -- ARGS...`. Usage errors exit 2, compile diagnostics exit 1, and `run` forwards the program's exit status. Tests: `tests/cli_help.sh`, `tests/run_args.sh`, `tests/fmt.sh`, `tests/spec_conformance.sh`, `tests/modules.sh`. |
+| Compiler source diagnostic format | Stable | A source error goes to stderr with an `error:` headline. Its source block gives `--> FILE:LINE:COL` with 1-based positions and a caret span. Notes may follow on `=` lines. Existing diagnostic codes retain their meaning where emitted. Message wording, the choice of notes and layout whitespace may change. Tests: `tests/expected/e*.err`, including `tests/expected/e1966_drop_copy_bound.err`. |
+| Canonical formatter layout | Experimental | `tests/fmt.sh` and `tests/fmt/` cover the current layout. |
+| Self-hosted compiler and `--selfhost` | Experimental | [SELFHOST.md](SELFHOST.md) and `tests/selfhost_*.sh` describe the measured coverage and bootstrap. |
+| Windows native PE backend and `--target windows` | Experimental | [WINDOWS.md](WINDOWS.md) describes supported programs and platform limits. Tests: `tests/win_smoke.sh`, `tests/pe_layout.sh`. |
+
 ## 4. Versioning and change rules
 
 Versions are SemVer `MAJOR.MINOR.PATCH`, applied separately to three products:
 
 - **Language** (SPEC.md): the syntax and the semantics of Stable items.
-- **Compiler** (`yerux` binary): command-line flags, diagnostics codes (`E####`, `E-C*`, `E-K*`), the
-  `yerux.toml`/`yerux.lock` file formats, the `.yxo` format.
+- **Compiler** (`yerux` binary): the Stable CLI and diagnostic contracts in section 3.3 and the
+  lockfile readability guarantee below.
 - **Standard library** (`std.*` and prelude): function names, signatures and documented results.
 
 Rules, from 1.0:
@@ -128,10 +138,11 @@ Rules, from 1.0:
 - renaming or removing a Stable function, method, module or keyword;
 - changing a Stable signature (argument order, types, receiver mode `view`/`mut`/owned);
 - changing a documented result or panic condition of a Stable item;
-- making a previously accepted program a compile error, except for soundness fixes;
-- changing the meaning of an existing diagnostic code, or reusing a code for a different error;
+- rejecting a previously accepted program that uses only Stable features, except for soundness fixes;
+- changing the source diagnostic format in section 3.3, changing the meaning of an existing
+  diagnostic code, or reusing a code for a different error;
 - changing the exit code of a panic (101) or of a successful run (0);
-- changing `yerux.lock` or `.yxo` formats in a way 1.x readers cannot read;
+- making a newer 1.x compiler unable to read a `yerux.lock` from an earlier 1.x release;
 - changing the output of a Stable golden test (for example `std.rand` sequences or the layout of
   `print` for scalars).
 
@@ -144,10 +155,10 @@ Rules, from 1.0:
   or the text of a diagnostic message (codes stay fixed);
 - performance changes and optimisation changes that keep the documented results.
 
-## 7. Pending changes before the freeze
+## 7. Decisions from the freeze review
 
-These are inconsistencies found while writing this policy. Each must be resolved (rename, keep as
-alias with deprecation, or document as intended) before the item it touches becomes Stable.
+These decisions settle the listed API inconsistencies. The stability levels in sections 2 and 3
+govern whether each affected feature is frozen.
 
 1. **Resolved — `std.compress` name.** Keep `std.compress` as the definitive name of the byte-oriented
    RLE module. [STDLIB_COMPRESS.md](STDLIB_COMPRESS.md) defines the format and its scope;
@@ -204,9 +215,8 @@ alias with deprecation, or document as intended) before the item it touches beco
 
 ## 8. Relation to the roadmap
 
-M2 (language core) and M3 (stdlib core) in [ROADMAP.md](ROADMAP.md) are the milestones that must
-finish their Stable-candidate items before 1.0. M12 is the release point. This policy takes effect
-when the first item of section 6 is frozen, and then applies to every release after 0.5.0.
+M2 (language core) and M3 (stdlib core) in [ROADMAP.md](ROADMAP.md) track work on the language and
+library. M12 records the 1.0 release point. The Stable commitments in this document apply from 1.0.
 
 ## 9. Features documented only in the root SPEC.md
 
@@ -240,7 +250,6 @@ Experimental.
 | `yerux fmt` canonical layout (Formatter) | Experimental | tests/fmt.sh, tests/fmt/ |
 | Compile-time `comptime` expressions and statements (Comptime) | Stable-candidate | tests/comptime_basic.yx, tests/e966_comptime_string.yx, tests/e1027_comptime_array_oob.yx; step budget 20 million (see section 10) |
 | `Arena<T>` library type, `ArenaRef` tickets and epochs (Arenas) | Experimental | tests/arena_basic.yx, tests/arena_stale.yx |
-| User-defined destructors `impl Drop` / `fn drop(mut self)` (User-defined destructors) | Experimental | tests/drop_basic.yx, tests/drop_panic.yx, tests/drop_worker.yx; docs/DROP.md |
 | Imports with `as`, `<root>` lookup (Modules) | Stable-candidate | tests/mod_ok/shadow_module, tests/modules.sh; the lookup root is in conflict (section 10) |
 | `std.io` and the system modules, `std.process`, `std.fs` (Standard I/O, Standard-library modules) | Stable-candidate for `std.io`/`std.fs`, Experimental for `std.process` | tests/io_*.yx (15 files), tests/std_fs_metadata.yx, tests/process_*.yx; the root list of modules is shorter than STDLIB.md (section 10) |
 | Thread API: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, `parallel for` (Threads) | Experimental | tests/conc_*.yx, tests/concurrency*.yx, tests/e729-e745 |
@@ -256,10 +265,11 @@ before its text was changed. Evidence is a test in `tests/` or a command. Regres
 `tests/conf_*.yx` and `tests/e1960`..`e1963` programs (behaviour; they pin the behaviour that the
 corrected text now states).
 
-1. **Drop.** *Resolved.* User `impl Drop` runs in both backends, and `fs.File` closes itself when dropped.
-   The root SPEC said there is no user `Drop`; that sentence is corrected.
-   Evidence: `tests/drop_basic.yx`, `tests/conf_drop_user_fd.yx` (the descriptor count goes back to 0 with no explicit close).
-   *Resolved:* yes.
+1. **Drop.** The specification now records user `impl Drop` in C and Linux x86-64 native builds.
+   `fs.File` closes on drop (`tests/conf_drop_user_fd.yx`). A move transfers cleanup to the new owner
+   (`tests/drop_generic_move_order.yx`). A main-task panic skips cleanup (`tests/drop_main_panic.yx`).
+   Generic `Drop` can still be duplicated when all fields are Copy. It remains Experimental pending
+   the checker change proposed in [DROP.md](DROP.md#generic-ownership-gap).
 2. **Const generics.** *Resolved.* `fn dot<const N: Int>(a: [Int; N], ...)` works. The root "Range integer
    types" list of unimplemented items no longer names const generics. Evidence: `tests/conf_const_generic_array.yx`
    (prints 32), `tests/arr_const.yx`, `tests/e1023_const_generic_lengths.yx`.
