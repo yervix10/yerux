@@ -12,7 +12,7 @@ jobs:
   fast:
     # quick check on pull requests: build without warnings, unit tests, representative subset of the suite
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
   full:
     # full suite on every push to main
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -40,11 +40,16 @@ jobs:
             target
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
           restore-keys: cargo-${{ runner.os }}-
+      - name: Install AArch64 test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user libc6-arm64-cross
+          echo "QEMU_LD_PREFIX=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
       - run: tests/ci.sh
   release-check:
     # the release tarball builds, installs into a throwaway HOME and `yerux doctor` passes
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +58,7 @@ jobs:
           export HOME="$(mktemp -d)"
           tar -xzf dist/yerux-*.tar.gz -C "$HOME"
           "$HOME"/yerux-*/install.sh
-          "$HOME/.local/bin/yerux" --version
+          "$HOME/.local/bin/yerux" doctor
   windows-check:
     # the compiler must keep compiling for Windows (no Windows-only code is run here)
     runs-on: ubuntu-latest
