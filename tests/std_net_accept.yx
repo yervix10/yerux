@@ -1,6 +1,5 @@
 // std.net: set_accept_timeout bounds accept (expiry is an error, then a real connection is accepted),
-// and a negative timeout is InvalidInput. The expiry code is 11 today although the documentation says
-// 110 (docs/ROBUSTNESS.md), so the test accepts either.
+// and a negative timeout is InvalidInput.
 import std.net
 import std.io
 import std.time
@@ -28,7 +27,7 @@ fn main() {
     }
     Err(e) => {
       print("expired")
-      print("code 11 or 110 {e.code == 11 || e.code == 110}")
+      print("code {e.code}")
       print("kind other {e.kind == io.IoErrorKind.Other}")
     }
   }

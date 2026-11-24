@@ -232,7 +232,7 @@ pub fn set_accept_timeout(l: view TcpListener, timeout_ms: Int) -> Result<Int, i
 /// Accept one incoming connection.
 pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
   let fd = __syscall(43, l.fd, 0, 0, 0, 0, 0)
-  if fd < 0 { return Err(io.os_error("accept", "", 0 - fd)) }
+  if fd < 0 { return Err(socket_io_error("accept", fd)) }
   let stream = TcpStream { fd: fd }
   let defaults = set_default_timeouts(fd)?
   return Ok(move stream)
