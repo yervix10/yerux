@@ -93,10 +93,10 @@ runs_as tests/conf_for_step.yx "$(printf '0\n3\n6\n9')" "item 7: sequential for 
 rejects tests/e1961_parallel_for_step.yx "parallel for requires a read-only iterator without a step" "item 7: parallel for rejects step"
 
 # ---------------------------------------------------------------- 8. std module list
-has SPEC.md "The compiler embeds all 28 modules of \`src/std/\`" "item 8: root SPEC states the module count"
-has docs/STDLIB.md "all 28 modules of \`src/std/\`" "item 8: STDLIB.md states 28 modules"
+has SPEC.md "The compiler embeds all 29 modules of \`src/std/\`" "item 8: root SPEC states the module count"
+has docs/STDLIB.md "all 29 modules of \`src/std/\`" "item 8: STDLIB.md states 29 modules"
 N="$(ls src/std/*.yx | wc -l)"
-if [ "$N" = 28 ]; then pass; else fail "item 8: src/std has $N modules, not 28"; fi
+if [ "$N" = 29 ]; then pass; else fail "item 8: src/std has $N modules, not 29"; fi
 lacks SPEC.md "Besides \`std.io\`, the compiler embeds" "item 8: root SPEC must not give the partial list"
 
 # ---------------------------------------------------------------- 9. generic impl

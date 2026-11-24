@@ -652,7 +652,7 @@ Rules that follow from the language and apply to the calls below:
 - Function arguments are `view fn(..)`: write the closure in place (`|x: view Int| -> Int { return x + 1 }`) or pass a variable holding a function; it may capture local variables.
 - Offsets are byte offsets and always on character boundaries.
 
-**Index** (all 28 modules of `src/std/`; each one is a file of Yerux):
+**Index** (all 29 modules of `src/std/`; each one is a file of Yerux):
 
 | Module | What | Detailed reference |
 |---|---|---|
