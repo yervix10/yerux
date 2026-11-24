@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AArch64 backend check under Unicorn and, when available, QEMU user-mode emulation.
 #   Goldens (examples + tests), debug-alloc stderr, and differential fuzzing against x86-64.
-#   Pass --system or --network to run only the corresponding QEMU fixture group.
+#   Pass --system, --network, --process, --threads, or --ffi to run a QEMU fixture group.
 set -eo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release 2>&1 | tail -n 1

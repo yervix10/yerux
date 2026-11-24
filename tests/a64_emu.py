@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Emulate `yerux --target aarch64` output and compare it with the goldens / the x86-64 backend.
 
-usage: python3 tests/a64_emu.py [--network | --system | --process | --ffi | --qemu] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
+usage: python3 tests/a64_emu.py [--network | --system | --process | --threads | --ffi | --qemu] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
   default: every examples/*.yx and tests/*.yx that the native backend accepts (the e*.yx error programs are
   skipped). Per program the emulated aarch64 build must match tests/expected/<name>.out/.code (stdout, exit code)
   and the x86-64 native build's stderr. Unicorn fixtures also check instruction decoding in capstone.
   --network : run just the socket tests, using qemu-aarch64 for real Linux TCP.
   --system : run the console, filesystem, environment, and time fixtures under qemu-aarch64.
   --process : run the process fixtures under qemu-aarch64.
+  --threads : run worker, synchronization, and threaded network fixtures under QEMU.
   --ffi : run C ABI fixtures under QEMU with an AArch64 glibc sysroot.
   --qemu : use qemu-aarch64 for every selected source.
   --debug-alloc : build with --native-debug-alloc and compare stderr (allocs/frees/live) with the x86-64 build.
 Needs: `cargo build --release` first. The system and socket tests need qemu-aarch64 on PATH.
 Other tests need `pip install unicorn capstone`."""
-import argparse, os, shutil, struct, subprocess, sys, tempfile
+import argparse, os, re, shutil, struct, subprocess, sys, tempfile
 from concurrent.futures import ProcessPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,7 +32,17 @@ SYSTEM_TESTS = (
     "std_kv", "std_kv_hostile", "std_log", "std_misc", "std_rand", "std_time_calendar",
     "time_clock", "time_duration",
 )
-PROCESS = ("process_basic", "process_leaks", "process_pipes", "process_timeout")
+PROCESS = (
+    "caps_deny", "caps_grant", "env_process", "hostile_process",
+    "process_basic", "process_leaks", "process_pipes", "process_timeout",
+)
+THREADS = (
+    "conc_channel_worker_panic", "conc_freeze_api", "conc_parallel", "conc_print",
+    "conc_runtime", "conc_sharing", "conc_spawn", "concurrency_channel",
+    "concurrency_mutex", "concurrency_nested_spawn", "concurrency_rwlock",
+    "concurrency_thread_pool", "drop_double_panic", "drop_panic", "drop_worker",
+    "net_drop", "net_loopback", "std_http_client", "std_sync", "thread_handles_list",
+)
 FFI = ("ffi_basic", "ffi_float32", "ffi_text_contract", "ffi_variadic", "ptr_construct")
 GUEST_LOADER = "lib/ld-linux-aarch64.so.1"
 SHRINK = {"02_fast": ("100000000", "20000"), "own_deep_box_drop": ("return 1000000", "return 2000"), "own_deep_scc_drop": ("return 1000000", "return 2000"), "own_deep_closure_drop": ("return 1000000", "return 2000")}  # loops too long for emulation
@@ -191,7 +202,7 @@ def a64_run(src, tmp, extra, check_decode=True, qemu=None):
 def check_one(args):
     f, debug, force_qemu = args
     name = os.path.basename(f)[:-3]
-    needs_qemu = force_qemu or name in NETWORK + SYSTEM_EXAMPLES + SYSTEM_TESTS + PROCESS + FFI
+    needs_qemu = force_qemu or name in NETWORK + SYSTEM_EXAMPLES + SYSTEM_TESTS + PROCESS + THREADS + FFI
     qemu = shutil.which("qemu-aarch64") if needs_qemu else None
     if needs_qemu and qemu is None:
         return f, "SKIP", "qemu-aarch64 unavailable"
@@ -203,14 +214,14 @@ def check_one(args):
             return f, "SKIP", "AArch64 glibc unavailable (set QEMU_LD_PREFIX)"
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(ROOT, f)
-        if name in SHRINK:
+        shrink = not needs_qemu and name in SHRINK
+        if shrink:
             small = os.path.join(tmp, name + ".yx")
             open(small, "w").write(open(src).read().replace(*SHRINK[name]))
             src = small
         extra = ["--native-debug-alloc"] if debug else []
         if name == "ffi_text_contract":
-            # Keep the function-returned Text in a register, rather than
-            # relying on inlining to turn the argument into a literal.
+            # Exercise a function-returned Text with inlining disabled.
             extra.append("--no-opt")
         x = run_x64(src, tmp, extra)
         if x is None:
@@ -233,13 +244,18 @@ def check_one(args):
             gold_o, gold_c = xo, xc
         else:
             go, gc = os.path.join(ROOT, "tests/expected", name + ".out"), os.path.join(ROOT, "tests/expected", name + ".code")
-            if name in SHRINK or not os.path.exists(go):
+            if shrink or not os.path.exists(go):
                 gold_o, gold_c = xo, xc  # no usable golden: fall back to the x86-64 build
             else:
                 gold_o, gold_c = open(go, "rb").read(), int(open(gc).read())
         why = []
         if ec != gold_c: why.append(f"exit {ec} != {gold_c}")
         if so != gold_o: why.append("stdout differs")
+        if debug and name in THREADS:
+            # The number of temporary allocations can depend on scheduling.
+            # Preserve and compare the live count and any other diagnostics.
+            counts = rb"(?m)^allocs: [0-9]+\nfrees: [0-9]+\n"
+            se, xe = re.sub(counts, b"", se), re.sub(counts, b"", xe)
         if se != xe: why.append(f"stderr differs: a64={se[:80]!r} x64={xe[:80]!r}")
         if needs_qemu and (xo, xc) != (gold_o, gold_c):
             why.append("x86-64 differs from golden")
@@ -253,22 +269,22 @@ def main():
     group.add_argument("--network", action="store_true", help="run socket tests under QEMU")
     group.add_argument("--system", action="store_true", help="run system service tests under QEMU")
     group.add_argument("--process", action="store_true", help="run process fixtures under QEMU")
+    group.add_argument("--threads", action="store_true", help="run threaded fixtures under QEMU")
     group.add_argument("--ffi", action="store_true", help="run C ABI fixtures under QEMU")
     group.add_argument("--qemu", action="store_true", help="run all selected programs under QEMU")
     ap.add_argument("--debug-alloc", action="store_true")
     ap.add_argument("-j", type=int, default=os.cpu_count() or 4)
     ap.add_argument("-k", default="")
     a = ap.parse_args()
-    selected = a.network or a.system or a.process or a.ffi or a.qemu
-    if a.network:
-        files = [f"tests/{name}.yx" for name in NETWORK]
-    elif a.system:
-        files = [f"examples/{name}.yx" for name in SYSTEM_EXAMPLES]
-        files.extend(f"tests/{name}.yx" for name in SYSTEM_TESTS)
-    elif a.process:
-        files = [f"tests/{name}.yx" for name in PROCESS]
-    elif a.ffi:
-        files = [f"tests/{name}.yx" for name in FFI]
+    groups = {
+        "network": NETWORK, "system": SYSTEM_TESTS, "process": PROCESS,
+        "threads": THREADS, "ffi": FFI,
+    }
+    selected = next((group for group in groups if getattr(a, group)), None)
+    if selected:
+        files = [f"tests/{name}.yx" for name in groups[selected]]
+        if selected == "system":
+            files.extend(f"examples/{name}.yx" for name in SYSTEM_EXAMPLES)
     else:
         files = a.files
     if not files:
@@ -281,7 +297,7 @@ def main():
         res = list(ex.map(check_one, [(f, a.debug_alloc, a.qemu) for f in files]))
     fails = 0
     for f, st, msg in res:
-        if st != "SKIP" or selected:
+        if st != "SKIP" or selected or a.qemu:
             print(f"{st:5} {f}: {msg}")
         fails += st == "FAIL"
     cnt = {s: sum(1 for r in res if r[1] == s) for s in ("PASS", "FAIL", "SKIP")}

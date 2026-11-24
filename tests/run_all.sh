@@ -123,6 +123,7 @@ AUX=(
   "a64_net|python3 tests/a64_emu.py --network -j 1"
   "a64_system|python3 tests/a64_emu.py --system -j 1"
   "a64_process|python3 tests/a64_emu.py --process -j 1"
+  "a64_threads|python3 tests/a64_emu.py --threads -j 1"
   "a64_ffi|python3 tests/a64_emu.py --ffi -j 1"
   "noopt_shortcircuit|bash tests/noopt_shortcircuit.sh"
   "lsp_vscode|bash tests/lsp_vscode.sh"

@@ -4282,7 +4282,7 @@ pub fn os_intrinsics_error(p: &IrProgram, allow_linux_os: bool) -> Option<String
         for b in &f.blocks {
             for i in &b.insts {
                 match i {
-                    Inst::Thread(..) | Inst::Atomic(..) => {
+                    Inst::Thread(..) | Inst::Atomic(..) if !allow_linux_os => {
                         return Some(format!(
                             "thread runtime intrinsics (used by function '{}')",
                             f.name
