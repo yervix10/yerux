@@ -1,0 +1,114 @@
+// Output formats: the text plan, the worker timelines, Graphviz DOT and the JSON plan. Every function returns text
+// with a newline after each line; main writes it once.
+import graph
+import schedule
+import std.json
+
+// "ID START FINISH SLACK CRITICAL" for each task in topological order, then the makespan and the critical path.
+pub fn plan_text(g: view graph.Graph, p: view schedule.Plan) -> String {
+  var out = String.new()
+  for pos in 0..g.order.len() {
+    let i = g.order.at(pos)
+    var mark = "no"
+    if p.slack.at(i) == 0 { mark = "yes" }
+    out.push_str("{g.ids.at(i)} {p.es.at(i)} {p.ef.at(i)} {p.slack.at(i)} {mark}\n")
+  }
+  out.push_str("makespan {p.makespan}\n")
+  if p.path.len() == 0 {
+    out.push_str("path (none)\n")
+  } else {
+    out.push_str("path {graph.join_path(g.ids, p.path)}\n")
+  }
+  return out
+}
+
+// "workers W makespan M", then one "worker K: id@start-finish ..." line per worker.
+pub fn workers_text(g: view graph.Graph, s: view schedule.Sched) -> String {
+  var out = String.new()
+  out.push_str("workers {s.timeline.len()} makespan {s.makespan}\n")
+  for k in 0..s.timeline.len() {
+    out.push_str("worker {k}:")
+    for j in 0..s.timeline.at(k).len() {
+      let i = s.timeline.at(k).at(j)
+      out.push_str(" {g.ids.at(i)}@{s.start.at(i)}-{s.finish.at(i)}")
+    }
+    out.push_str("\n")
+  }
+  return out
+}
+
+// The graph in DOT: nodes in id order, then one edge per dependency, from the prerequisite to the task.
+pub fn dot_text(g: view graph.Graph) -> String {
+  var out = String.from("digraph taskplan {{\n")
+  for i in 0..g.ids.len() {
+    out.push_str("  \"{g.ids.at(i)}\" [label=\"{g.ids.at(i)} ({g.dur.at(i)})\"];\n")
+  }
+  for i in 0..g.ids.len() {
+    for j in 0..g.prereq.at(i).len() {
+      let p = g.prereq.at(i).at(j)
+      out.push_str("  \"{g.ids.at(p)}\" -> \"{g.ids.at(i)}\";\n")
+    }
+  }
+  out.push_str("}}\n")
+  return out
+}
+
+fn field(key: Text, v: json.Value) -> json.Member {
+  return json.Member { key: String.from(key), value: move v }
+}
+
+fn text_value(s: view String) -> json.Value {
+  return json.Value.Str(String.from(s))
+}
+
+fn int_value(n: Int) -> json.Value {
+  return json.Value.Int(n)
+}
+
+// The plan as a JSON value: the tasks in topological order, the makespan, the critical path, and with a worker
+// count (above zero) the list schedule.
+pub fn plan_json(g: view graph.Graph, p: view schedule.Plan, s: view schedule.Sched, workers: Int) -> json.Value {
+  var tasks = List<json.Value>.new()
+  for pos in 0..g.order.len() {
+    let i = g.order.at(pos)
+    var m = List<json.Member>.new()
+    m.push(field("id", text_value(g.ids.at(i))))
+    m.push(field("start", int_value(p.es.at(i))))
+    m.push(field("finish", int_value(p.ef.at(i))))
+    m.push(field("slack", int_value(p.slack.at(i))))
+    m.push(field("critical", json.Value.Bool(p.slack.at(i) == 0)))
+    tasks.push(json.Value.Obj(move m))
+  }
+  var path = List<json.Value>.new()
+  for k in 0..p.path.len() {
+    path.push(text_value(g.ids.at(p.path.at(k))))
+  }
+  var top = List<json.Member>.new()
+  top.push(field("tasks", json.Value.Arr(move tasks)))
+  top.push(field("makespan", int_value(p.makespan)))
+  top.push(field("critical_path", json.Value.Arr(move path)))
+  if workers > 0 {
+    var lanes = List<json.Value>.new()
+    for k in 0..s.timeline.len() {
+      var items = List<json.Value>.new()
+      for j in 0..s.timeline.at(k).len() {
+        let i = s.timeline.at(k).at(j)
+        var m = List<json.Member>.new()
+        m.push(field("id", text_value(g.ids.at(i))))
+        m.push(field("start", int_value(s.start.at(i))))
+        m.push(field("finish", int_value(s.finish.at(i))))
+        items.push(json.Value.Obj(move m))
+      }
+      var lane = List<json.Member>.new()
+      lane.push(field("worker", int_value(k)))
+      lane.push(field("tasks", json.Value.Arr(move items)))
+      lanes.push(json.Value.Obj(move lane))
+    }
+    var w = List<json.Member>.new()
+    w.push(field("count", int_value(workers)))
+    w.push(field("makespan", int_value(s.makespan)))
+    w.push(field("timeline", json.Value.Arr(move lanes)))
+    top.push(field("workers", json.Value.Obj(move w)))
+  }
+  return json.Value.Obj(move top)
+}

@@ -449,3 +449,48 @@ Measured: `1000000 0 do i 3 * . loop` (native) about 0.2 s.
 19. **`move` cannot apply to a call, and the message blames the function.** `let t = move f(s)` gives "variable 'f'
     does not exist" with a "check the spelling" help line, though `f` exists. The call result needs no `move`
     (`let t = f(s)`); the diagnostic should say that `move` takes a variable.
+
+## Round 7: tarlite, cachesim, taskplan
+
+### tarlite (`examples/real/tarlite/`)
+
+A tar-like single-file archive with `create`, `list`, `verify` and `extract`. The format (magic `TLA1`; per entry a u16
+name length, the name, u32 mode, u64 size, u32 CRC-32 and the data; a `TEND` trailer with the entry count and the CRC of
+everything before it) is documented in `archive.yx`. Names are canonical relative paths: absolute, `..` and empty names
+are refused. `extract` checks every target before its first write and never overwrites. CRC-32 comes from `std.hash`.
+
+Checked by `tests/tarlite.sh`: 9 unit tests on both backends; archive bytes and `list` output of a fixed file set against
+an independent Python model (zlib CRCs); C and native identical; extract round trip and re-create (`diff -r`); a byte
+flipped every 13 bytes makes `verify` exit 1; hand-made unsafe names refused; 60 seeded random file sets. About 40 s.
+
+### cachesim (`examples/real/cachesim/`)
+
+A trace-driven cache simulator: set-associative, true LRU (a per-set recency list in arrays), write-back and
+write-allocate, with dirty-writeback counting. `run` prints the statistics of one configuration, `sweep` tabulates ways
+1, 2, 4, 8 by sets 4, 16, 64 sorted by miss rate, `gen SEED N` writes a synthetic trace from its own 64-bit LCG, and
+`check` validates a trace. Addresses are full `UInt64` (decimal or `0x` hex).
+
+Checked by `tests/cachesim.sh` (about 21 s): 19 hand-computed unit tests on both backends; fixed and generated traces
+against an inline Python LRU model (exact stdout); C and native identical in status, stdout and stderr; an 80-trace
+seeded corpus (CRLF, comments, mixed hex and decimal, addresses up to 2^64-1); exact error messages and statuses.
+
+### taskplan (`examples/real/taskplan/`)
+
+Plans tasks with dependencies from a JSON file read with `std.json` into typed structs. Commands: `check`, `plan [--workers W]`
+(earliest-start table, slack, critical path, list schedule on W workers), `dot` and `json`. Cycles are reported as a path.
+
+Checked by `tests/taskplan.sh` (about 17 s): 11 unit checks on both backends; a fixed 7-task example compared with goldens
+from an inline Python model for every command; C and native identical; exact stderr and status for 18 error cases; 80
+seeded random DAGs (20 with a cycle or a self dependency) whose `check` and `plan` output must match the model.
+
+### Round 7 frictions (not changed; minimal repros)
+
+20. **A function whose body ends in `io.exit` is not known to diverge.** `fn direct() -> Int { io.exit(2) }` gives
+    "function 'direct' must return a Int on every path". Workaround: a `return` after the call (tarlite, cachesim).
+21. **The Text/String mismatch hint does not name the fix.** `let msg = "bad"; return Err(msg)` in a function returning
+    `Result<Int, String>` gives "expected String but this is Text" with "convert it explicitly"; it does not show
+    `String.from(msg)`.
+22. **A `.at(i)` place cannot be a call argument.** `print(env.args().at(1))` gives "expected a variable or a field
+    here". This is the same limit as datatool friction 5; bind first (`let a = env.args()`).
+23. **Build cost of `yerux test`.** A tests.yx with 11 `test` blocks takes about 25 s on the C backend (9 s native);
+    with 4 blocks about 12 s. Each block is compiled separately. Not a defect, but it is the largest cost of the suite.

@@ -1,0 +1,83 @@
+// The task file: {"tasks": [{"id": "build", "duration": 3, "deps": ["fetch"]}, ...]}.
+// This module checks the shape of each task and the value of each field (id syntax, positive duration, deps as an
+// array of strings). graph.yx checks how the tasks link to each other.
+import std.json
+
+// One task as written in the file. `deps` lists the ids it waits for; it is empty when the file omits it.
+pub struct Task { id: String, duration: Int, deps: List<String> }
+
+// An id is a non-empty string of a-z, 0-9, '_' and '-'.
+pub fn valid_id(s: view String) -> Bool {
+  if s.is_empty() { return false }
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    let ok = (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 95 || b == 45
+    if !ok { return false }
+  }
+  return true
+}
+
+// The tasks of a parsed document, in file order, or the first field error.
+pub fn tasks(root: view json.Value) -> Result<List<Task>, String> {
+  let no_list = "top level must be an object with a \"tasks\" array"
+  match root {
+    Obj(members) => {
+      let i = json.find(members, "tasks")
+      if i < 0 { return Err(String.from(no_list)) }
+      match members.at(i).value {
+        Arr(items) => { return read_list(items) }
+        _ => { return Err(String.from(no_list)) }
+      }
+    }
+    _ => { return Err(String.from(no_list)) }
+  }
+}
+
+fn read_list(items: view List<json.Value>) -> Result<List<Task>, String> {
+  var out = List<Task>.new()
+  for k in 0..items.len() {
+    let t = read_task(items.at(k), k + 1)?
+    out.push(move t)
+  }
+  return Ok(move out)
+}
+
+fn read_task(v: view json.Value, n: Int) -> Result<Task, String> {
+  match v {
+    Obj(members) => {
+      let ii = json.find(members, "id")
+      if ii < 0 { return Err("task #{n}: missing \"id\"") }
+      var id = String.new()
+      match members.at(ii).value {
+        Str(s) => { id = String.from(s) }
+        _ => { return Err("task #{n}: \"id\" must be a string") }
+      }
+      if !valid_id(id) { return Err("bad id \"{id}\": use only a-z, 0-9, _ and -") }
+      let di = json.find(members, "duration")
+      if di < 0 { return Err("task \"{id}\": missing \"duration\"") }
+      var duration = 0
+      match members.at(di).value {
+        Int(d) => { duration = d }
+        _ => { duration = 0 }
+      }
+      if duration < 1 { return Err("task \"{id}\": duration must be a positive integer") }
+      var deps = List<String>.new()
+      let pi = json.find(members, "deps")
+      if pi >= 0 {
+        match members.at(pi).value {
+          Arr(items) => {
+            for k in 0..items.len() {
+              match items.at(k) {
+                Str(s) => { deps.push(String.from(s)) }
+                _ => { return Err("task \"{id}\": \"deps\" must be an array of ids") }
+              }
+            }
+          }
+          _ => { return Err("task \"{id}\": \"deps\" must be an array of ids") }
+        }
+      }
+      return Ok(Task { id: move id, duration: duration, deps: move deps })
+    }
+    _ => { return Err("task #{n}: each task must be an object") }
+  }
+}

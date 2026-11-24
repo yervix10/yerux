@@ -1,0 +1,212 @@
+// tarlite: the archive format and the rules for entry names. Nothing here touches the file system.
+//
+// Layout (every integer is big endian):
+//   "TLA1"                                   magic
+//   per entry, in order:
+//     u16 name length, the name bytes (UTF-8)
+//     u32 mode (permission bits, 0..=0o7777)
+//     u64 size, u32 CRC-32 of the data (the zlib / ISO-HDLC CRC)
+//     the data bytes
+//   "TEND", u32 entry count, u32 CRC-32 of every byte before "TEND"
+// A name is canonical: a relative path with components separated by "/", no empty component, no "." or ".." component,
+// no NUL byte, no leading "/". Names are unique. The reader checks the magic, the names, the modes, the length of
+// every field, each entry CRC and the trailer (count and CRC), and rejects trailing bytes. A damaged archive is an
+// error, and no entry is returned from it.
+import std.fs
+import std.hash
+import std.text
+
+pub const MAX_MODE: Int = 4095
+pub const MAX_NAME: Int = 65535
+// Bytes of an entry around its name and data: u16 + u32 + u64 + u32.
+const ENTRY_FIELDS: Int = 18
+// The trailer: "TEND", u32 count, u32 CRC.
+const TRAILER_LEN: Int = 12
+
+pub struct Entry {
+  name: String,
+  mode: Int,
+  crc: Int,
+  data: List<UInt8>,
+}
+
+// An entry for `data` stored under `name` (already canonical).
+pub fn new_entry(name: view String, mode: Int, data: List<UInt8>) -> Entry {
+  let crc = hash.crc32_bytes(data)
+  return Entry { name: String.from(name), mode: mode, crc: crc, data: move data }
+}
+
+// The canonical archive name of a path as given, or why it is not a valid name.
+pub fn canonical_name(raw: view String) -> Result<String, String> {
+  if raw.is_empty() {
+    return Err("empty name")
+  }
+  if raw.starts_with("/") {
+    return Err("absolute path")
+  }
+  for i in 0..raw.len() {
+    if raw.byte(i) == 0 {
+      return Err("name contains a NUL byte")
+    }
+  }
+  let parts = raw.split("/")
+  var out = String.new()
+  for i in 0..parts.len() {
+    let part = parts.at(i)
+    if part.is_empty() || part.eq(".") {
+      continue
+    }
+    if part.eq("..") {
+      return Err("'..' component")
+    }
+    if out.len() > 0 {
+      out.push_str("/")
+    }
+    out.push_str(part)
+  }
+  if out.is_empty() {
+    return Err("empty name")
+  }
+  if out.len() > MAX_NAME {
+    return Err("name longer than {MAX_NAME} bytes")
+  }
+  return Ok(move out)
+}
+
+// Appends the first `n` bytes of `v`, most significant first. `v` must be non-negative and below 256^n.
+fn put_be(out: mut List<UInt8>, v: Int, n: Int) {
+  var d = 1
+  for _ in 1..n {
+    d = d * 256
+  }
+  for _ in 0..n {
+    out.push(((v / d) % 256).to_uint8())
+    d = d / 256
+  }
+}
+
+fn put_string(out: mut List<UInt8>, s: view String) {
+  for i in 0..s.len() {
+    out.push(s.byte(i).to_uint8())
+  }
+}
+
+fn put_entry(out: mut List<UInt8>, e: view Entry) {
+  put_be(out, e.name.len(), 2)
+  put_string(out, e.name)
+  put_be(out, e.mode, 4)
+  put_be(out, e.data.len(), 8)
+  put_be(out, e.crc, 4)
+  for i in 0..e.data.len() {
+    out.push(e.data.get(i))
+  }
+}
+
+// The archive bytes of `entries`, in the given order. The same entries always give the same bytes.
+pub fn encode(entries: view List<Entry>) -> List<UInt8> {
+  var out = List<UInt8>.new()
+  put_string(out, "TLA1")
+  for i in 0..entries.len() {
+    put_entry(out, entries.at(i))
+  }
+  let crc = hash.crc32_bytes(out)
+  put_string(out, "TEND")
+  put_be(out, entries.len(), 4)
+  put_be(out, crc, 4)
+  return out
+}
+
+// True when the bytes of `magic` are at offset `at` of `b`.
+fn has_at(b: view List<UInt8>, at: Int, magic: view String) -> Bool {
+  if at < 0 || at + magic.len() > b.len() {
+    return false
+  }
+  for i in 0..magic.len() {
+    if b.get(at + i).to_int() != magic.byte(i) {
+      return false
+    }
+  }
+  return true
+}
+
+// The `n` big-endian bytes at `at` as an Int (the caller checks the range).
+fn get_be(b: view List<UInt8>, at: Int, n: Int) -> Int {
+  var v = 0
+  for i in 0..n {
+    v = v * 256 + b.get(at + i).to_int()
+  }
+  return v
+}
+
+// Decodes an archive, checking everything; the entries come back only when all of it is valid.
+pub fn decode(b: view List<UInt8>) -> Result<List<Entry>, String> {
+  if !has_at(b, 0, "TLA1") {
+    return Err("not a tarlite archive")
+  }
+  var entries = List<Entry>.new()
+  var pos = 4
+  while true {
+    let rest = b.len() - pos
+    // An entry is at least ENTRY_FIELDS + 1 bytes, so the 12-byte trailer at the very end is never an entry.
+    if rest == TRAILER_LEN && has_at(b, pos, "TEND") {
+      return finish(b, pos, move entries)
+    }
+    if rest < 2 {
+      return Err("truncated archive")
+    }
+    let nlen = get_be(b, pos, 2)
+    if rest < ENTRY_FIELDS + nlen {
+      return Err("truncated archive")
+    }
+    let name = match fs.bytes_to_string(b.slice(pos + 2, pos + 2 + nlen)) {
+      Ok(s) => move s
+      Err(e) => { return Err("entry name is not UTF-8") }
+    }
+    let canon = match canonical_name(name) {
+      Ok(c) => move c
+      Err(e) => { return Err("entry '{name}': {e}") }
+    }
+    if !canon.eq(name) {
+      return Err("entry '{name}': name is not canonical")
+    }
+    for i in 0..entries.len() {
+      if entries.at(i).name.eq(name) {
+        return Err("entry '{name}': listed twice")
+      }
+    }
+    let mpos = pos + 2 + nlen
+    let mode = get_be(b, mpos, 4)
+    if mode > MAX_MODE {
+      return Err("entry '{name}': mode out of range")
+    }
+    let spos = mpos + 4
+    if b.get(spos).to_int() >= 128 {
+      return Err("entry '{name}': size out of range")
+    }
+    let size = get_be(b, spos, 8)
+    let stored = get_be(b, spos + 8, 4)
+    let start = spos + 12
+    if size > b.len() - start {
+      return Err("entry '{name}': truncated data")
+    }
+    let data = b.slice(start, start + size)
+    let crc = hash.crc32_bytes(data)
+    if crc != stored {
+      return Err("entry '{name}': CRC mismatch")
+    }
+    entries.push(Entry { name: move name, mode: mode, crc: crc, data: move data })
+    pos = start + size
+  }
+  return Err("unreachable")
+}
+
+// Checks the trailer at `pos` (exactly TRAILER_LEN bytes remain) and returns the entries.
+fn finish(b: view List<UInt8>, pos: Int, entries: List<Entry>) -> Result<List<Entry>, String> {
+  if get_be(b, pos + 4, 4) != entries.len() {
+    return Err("trailer entry count does not match")
+  }
+  if hash.crc32_bytes(b.slice(0, pos)) != get_be(b, pos + 8, 4) {
+    return Err("trailer CRC mismatch")
+  }
+  return Ok(move entries)
+}

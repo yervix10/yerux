@@ -1,0 +1,110 @@
+// Unit tests: `yerux test examples/real/taskplan/tests.yx`. In these sources a single quote stands for a double quote,
+// so the JSON literals stay readable.
+import std.io
+import std.json
+import graph
+import report
+import schedule
+import spec
+
+// Compares the output with the expected text; a difference prints both.
+fn expect(got: view String, want: Text) {
+  if !got.eq(want) { io.eprintln("got:\n{got}\nwant:\n{want}") }
+  assert(got.eq(want))
+}
+
+fn q(s: view String) -> String {
+  return s.replace("'", "\"")
+}
+
+// The checked graph of a task document, or the error message.
+fn graph_of(src: view String) -> Result<graph.Graph, String> {
+  let doc = match json.parse(q(src)) {
+    Ok(v) => move v
+    Err(e) => { return Err("json: {e.message}") }
+  }
+  let tasks = match spec.tasks(doc) {
+    Ok(t) => move t
+    Err(e) => { return Err(move e) }
+  }
+  return graph.build(tasks)
+}
+
+// The text plan of a task document, or "ERR: " and the message.
+fn plan_of(src: view String) -> String {
+  match graph_of(src) {
+    Ok(g) => {
+      let p = schedule.plan(g)
+      return report.plan_text(g, p)
+    }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+// The list schedule on w workers, or "ERR: " and the message.
+fn workers_of(src: view String, w: Int) -> String {
+  match graph_of(src) {
+    Ok(g) => {
+      let s = schedule.list_schedule(g, w)
+      return report.workers_text(g, s)
+    }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+fn dot_of(src: view String) -> String {
+  match graph_of(src) {
+    Ok(g) => { return report.dot_text(g) }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+fn json_of(src: view String, w: Int) -> String {
+  match graph_of(src) {
+    Ok(g) => {
+      let p = schedule.plan(g)
+      let s = schedule.list_schedule(g, max(w, 1))
+      return json.to_string(report.plan_json(g, p, s, w))
+    }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+// a(2) -> b(3), a -> c(1), b and c -> d(2). Earliest: a 0-2, b 2-5, c 2-3, d 5-7; slack of c is 2.
+fn diamond() -> String {
+  return String.from("{{'tasks': [{{'id': 'd', 'duration': 2, 'deps': ['b', 'c']}}, {{'id': 'b', 'duration': 3, 'deps': ['a']}}, {{'id': 'c', 'duration': 1, 'deps': ['a']}}, {{'id': 'a', 'duration': 2}}]}}")
+}
+
+test "earliest times, slack, critical path and the text plan" {
+  expect(plan_of(diamond()), "a 0 2 0 yes\nb 2 5 0 yes\nc 2 3 2 no\nd 5 7 0 yes\nmakespan 7\npath a -> b -> d\n")
+  // x(3) -> y(1) and z(5) alone: makespan 5, x and y have slack 1, z is critical.
+  expect(plan_of("{{'tasks': [{{'id': 'z', 'duration': 5}}, {{'id': 'y', 'duration': 1, 'deps': ['x']}}, {{'id': 'x', 'duration': 3}}]}}"), "x 0 3 1 no\ny 3 4 1 no\nz 0 5 0 yes\nmakespan 5\npath z\n")
+  expect(plan_of("{{'tasks': []}}"), "makespan 0\npath (none)\n")
+}
+
+test "list schedules on 2 and 1 workers, and the dot and json outputs" {
+  // 2 workers: t=0 a on w0; t=2 b on w0 (smaller id), c on w1; t=5 d on w0 (lowest free worker).
+  expect(workers_of(diamond(), 2), "workers 2 makespan 7\nworker 0: a@0-2 b@2-5 d@5-7\nworker 1: c@2-3\n")
+  expect(workers_of(diamond(), 1), "workers 1 makespan 8\nworker 0: a@0-2 b@2-5 c@5-6 d@6-8\n")
+  expect(dot_of(diamond()), "digraph taskplan {{\n  \"a\" [label=\"a (2)\"];\n  \"b\" [label=\"b (3)\"];\n  \"c\" [label=\"c (1)\"];\n  \"d\" [label=\"d (2)\"];\n  \"a\" -> \"b\";\n  \"a\" -> \"c\";\n  \"b\" -> \"d\";\n  \"c\" -> \"d\";\n}}\n")
+  expect(json_of(diamond(), 2), "{{\"tasks\":[{{\"id\":\"a\",\"start\":0,\"finish\":2,\"slack\":0,\"critical\":true}},{{\"id\":\"b\",\"start\":2,\"finish\":5,\"slack\":0,\"critical\":true}},{{\"id\":\"c\",\"start\":2,\"finish\":3,\"slack\":2,\"critical\":false}},{{\"id\":\"d\",\"start\":5,\"finish\":7,\"slack\":0,\"critical\":true}}],\"makespan\":7,\"critical_path\":[\"a\",\"b\",\"d\"],\"workers\":{{\"count\":2,\"makespan\":7,\"timeline\":[{{\"worker\":0,\"tasks\":[{{\"id\":\"a\",\"start\":0,\"finish\":2}},{{\"id\":\"b\",\"start\":2,\"finish\":5}},{{\"id\":\"d\",\"start\":5,\"finish\":7}}]}},{{\"worker\":1,\"tasks\":[{{\"id\":\"c\",\"start\":2,\"finish\":3}}]}}]}}}}")
+}
+
+test "cycles are reported as one path, closed on the first id" {
+  // Walk from the smallest unfinished id (x) to its smallest unfinished prerequisite: y, z, then y repeats.
+  expect(plan_of("{{'tasks': [{{'id': 'x', 'duration': 1, 'deps': ['y']}}, {{'id': 'y', 'duration': 1, 'deps': ['z']}}, {{'id': 'z', 'duration': 1, 'deps': ['y']}}]}}"), "ERR: cycle: y -> z -> y")
+  expect(dot_of("{{'tasks': [{{'id': 'a', 'duration': 1, 'deps': ['b']}}, {{'id': 'b', 'duration': 1, 'deps': ['c']}}, {{'id': 'c', 'duration': 1, 'deps': ['a']}}]}}"), "ERR: cycle: a -> b -> c -> a")
+}
+
+test "validation: duplicate, unknown and self dependencies, and field errors" {
+  expect(dot_of("{{'tasks': [{{'id': 'a', 'duration': 1}}, {{'id': 'a', 'duration': 2}}]}}"), "ERR: duplicate id \"a\"")
+  expect(dot_of("{{'tasks': [{{'id': 'a', 'duration': 1, 'deps': ['zz']}}]}}"), "ERR: task \"a\": unknown dependency \"zz\"")
+  expect(dot_of("{{'tasks': [{{'id': 'a', 'duration': 1, 'deps': ['a']}}]}}"), "ERR: task \"a\": depends on itself")
+  expect(dot_of("{{'tasks': [{{'id': 'Bad', 'duration': 1}}]}}"), "ERR: bad id \"Bad\": use only a-z, 0-9, _ and -")
+  expect(dot_of("{{'tasks': [{{'id': '', 'duration': 1}}]}}"), "ERR: bad id \"\": use only a-z, 0-9, _ and -")
+  expect(dot_of("{{'tasks': [{{'id': 'a', 'duration': 0}}]}}"), "ERR: task \"a\": duration must be a positive integer")
+  expect(dot_of("{{'tasks': [{{'id': 'a', 'duration': 1.5}}]}}"), "ERR: task \"a\": duration must be a positive integer")
+  expect(dot_of("{{'tasks': [{{'id': 'a'}}]}}"), "ERR: task \"a\": missing \"duration\"")
+  expect(dot_of("{{'tasks': [{{'id': 'a', 'duration': 1, 'deps': 'b'}}]}}"), "ERR: task \"a\": \"deps\" must be an array of ids")
+  expect(dot_of("{{'items': []}}"), "ERR: top level must be an object with a \"tasks\" array")
+}

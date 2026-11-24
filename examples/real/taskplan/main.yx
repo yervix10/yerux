@@ -1,0 +1,123 @@
+// taskplan: validates and plans tasks with dependencies, read from a JSON file.
+//
+//   taskplan check FILE                  print "ok N tasks"
+//   taskplan plan FILE [--workers W]     the earliest-start table, makespan and critical path; with W workers also a
+//                                        list schedule on W workers
+//   taskplan dot FILE                    the dependency graph in Graphviz DOT
+//   taskplan json FILE [--workers W]     the plan as pretty JSON
+// The input is {"tasks": [{"id": "build", "duration": 3, "deps": ["fetch"]}, ...]}; see spec.yx and graph.yx for the rules.
+// Exit status: 0 ok; 1 an unreadable file, invalid JSON (FILE:LINE:COL: message) or a validation or cycle error
+// (FILE: message), both on stderr with the prefix "taskplan: "; 2 a usage error.
+import std.env
+import std.fs
+import std.io
+import std.json
+import std.text
+import graph
+import report
+import schedule
+import spec
+
+fn usage_error(msg: view String) {
+  io.eprintln("taskplan: {msg}")
+  io.exit(2)
+}
+
+fn fail(msg: view String) {
+  io.eprintln("taskplan: {msg}")
+  io.exit(1)
+}
+
+fn main() {
+  let args = env.args()
+  if args.len() < 3 || args.len() == 4 || args.len() > 5 {
+    usage_error("usage: taskplan check|plan|dot|json FILE [--workers W]")
+    return
+  }
+  let cmd = String.from(args.at(1))
+  if !(cmd.eq("check") || cmd.eq("plan") || cmd.eq("dot") || cmd.eq("json")) {
+    usage_error("unknown command '{cmd}' (use check, plan, dot or json)")
+    return
+  }
+  var workers = 0
+  if args.len() == 5 {
+    if !args.at(3).eq("--workers") {
+      usage_error("unknown option '{args.at(3)}' (the option is --workers W)")
+      return
+    }
+    if cmd.eq("check") || cmd.eq("dot") {
+      usage_error("--workers is only for plan and json")
+      return
+    }
+    match text.parse_int(args.at(4)) {
+      Ok(w) => {
+        if w < 1 {
+          usage_error("--workers needs a positive integer, got '{args.at(4)}'")
+          return
+        }
+        workers = w
+      }
+      Err(_) => {
+        usage_error("--workers needs a positive integer, got '{args.at(4)}'")
+        return
+      }
+    }
+  }
+
+  let path = String.from(args.at(2))
+  var src = String.new()
+  match fs.read_to_string(path) {
+    Ok(s) => { src = move s }
+    Err(e) => {
+      fail("{path}: cannot read: {e}")
+      return
+    }
+  }
+  var root = json.Value.Null
+  match json.parse(src) {
+    Ok(v) => { root = move v }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      fail("{path}:{at.0}:{at.1}: {e.message}")
+      return
+    }
+  }
+  var tasks = List<spec.Task>.new()
+  match spec.tasks(root) {
+    Ok(t) => { tasks = move t }
+    Err(e) => {
+      fail("{path}: {e}")
+      return
+    }
+  }
+  let g = match graph.build(tasks) {
+    Ok(g) => move g
+    Err(e) => {
+      fail("{path}: {e}")
+      return
+    }
+  }
+
+  var out = String.new()
+  if cmd.eq("check") {
+    out.push_str("ok {tasks.len()} tasks\n")
+  } else if cmd.eq("dot") {
+    out.push_str(report.dot_text(g))
+  } else {
+    let p = schedule.plan(g)
+    if cmd.eq("plan") {
+      out.push_str(report.plan_text(g, p))
+      if workers > 0 {
+        let s = schedule.list_schedule(g, workers)
+        out.push_str(report.workers_text(g, s))
+      }
+    } else {
+      let s = schedule.list_schedule(g, max(workers, 1))
+      let doc = report.plan_json(g, p, s, workers)
+      out.push_str(json.to_pretty(doc))
+      out.push_str("\n")
+    }
+  }
+  let _ = io.write_stdout(out)
+  io.exit(0)
+}

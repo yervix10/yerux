@@ -1,0 +1,159 @@
+// Trace files and synthetic traces.
+//
+// A trace has one access per line: `R ADDRESS` (read) or `W ADDRESS` (write). ADDRESS is an unsigned 64-bit number,
+// in decimal or hexadecimal with a 0x or 0X prefix. Blank lines, and lines whose first non-blank character is '#', are
+// ignored. Operations are case-sensitive (`R` and `W` only).
+import std.text
+
+pub struct Access {
+  write: Bool,
+  addr: UInt64,
+}
+
+pub struct TraceError {
+  line: Int,
+  message: String,
+}
+
+// Parses an unsigned 64-bit number: decimal digits, or 0x / 0X followed by hexadecimal digits. Values above 2^64-1
+// are errors (checked before each step, so nothing overflows).
+pub fn parse_addr(s: view String) -> Result<UInt64, String> {
+  let cs = text.chars(s)
+  if cs.len() == 0 {
+    return Err("missing address")
+  }
+  var base = 10
+  var i = 0
+  if cs.len() >= 2 && cs.at(0) == '0' && (cs.at(1) == 'x' || cs.at(1) == 'X') {
+    base = 16
+    i = 2
+  }
+  if i == cs.len() {
+    return Err("missing digits after 0x")
+  }
+  let b = base.to_uint64()
+  let maxv = 18446744073709551615u64
+  var v = 0u64
+  var k = i
+  while k < cs.len() {
+    let c = cs.at(k)
+    let d = text.digit_value(c, base)
+    if d < 0 {
+      if base == 16 {
+        return Err("bad hex digit '{c}'")
+      }
+      return Err("bad decimal digit '{c}'")
+    }
+    let du = d.to_uint64()
+    if v > (maxv - du) / b {
+      return Err("address is above 2^64-1")
+    }
+    v = v * b + du
+    k = k + 1
+  }
+  return Ok(v)
+}
+
+// One non-blank, non-comment line: the operation and the address.
+fn parse_access(body: view String) -> Result<Access, String> {
+  let parts = text.split_ws(body)
+  if parts.len() != 2 {
+    return Err("expected an operation and an address: R ADDRESS or W ADDRESS")
+  }
+  let op = parts.at(0)
+  var write = false
+  if op.eq("R") {
+    write = false
+  } else if op.eq("W") {
+    write = true
+  } else {
+    return Err("unknown operation '{op}', expected R or W")
+  }
+  match parse_addr(parts.at(1)) {
+    Ok(a) => { return Ok(Access { write: write, addr: a }) }
+    Err(e) => { return Err(move e) }
+  }
+}
+
+// All accesses of a trace, in order. The first bad line stops the parse.
+pub fn parse(src: view String) -> Result<List<Access>, TraceError> {
+  var out = List<Access>.new()
+  var n = 0
+  let lines = text.lines(src)
+  for line in lines {
+    n = n + 1
+    let body = line.trim()
+    if body.is_empty() || body.starts_with("#") {
+      continue
+    }
+    match parse_access(body) {
+      Ok(a) => { out.push(a) }
+      Err(e) => { return Err(TraceError { line: n, message: move e }) }
+    }
+  }
+  return Ok(move out)
+}
+
+// Lowercase hexadecimal digits of v, without a prefix (0 gives "0").
+fn push_hex(v: UInt64, out: mut String) {
+  if v >= 16u64 {
+    push_hex(v / 16u64, out)
+  }
+  let d = (v % 16u64).to_int()
+  if d < 10 {
+    out.push_byte(48 + d)
+  } else {
+    out.push_byte(87 + d)
+  }
+}
+
+// One step of the generator: a 64-bit linear congruential generator (mod 2^64).
+fn step(s: mut UInt64) {
+  s = s.wrapping_mul(6364136223846793005u64).wrapping_add(1442695040888963407u64)
+}
+
+// A synthetic trace of n accesses, as text (one `R 0x..` or `W 0x..` line each). The generator is the LCG above,
+// seeded with SEED. For each access it draws, in this order:
+//   d1 = top 32 bits of the next state; kind = d1 % 10
+//   d2 = top 32 bits of the next state; write = d2 % 4 == 0
+//   kind 0..4 (hot set): d3 = top 32 bits of the next state; addr = 65536 + 64 * (d3 % 64)
+//   kind 5..7 (streams): d3 = top 32 bits of the next state; stream s = d3 % 4; addr = its pointer, which then
+//                        advances by 64. Stream s starts at 1073741824 + s * 16777216.
+//   kind 8..9 (random):  addr = the whole next state (any 64-bit value)
+pub fn generate(seed: UInt64, n: Int) -> String {
+  var state = seed
+  var out = String.new()
+  var streams = List<UInt64>.new()
+  for j in 0..4 {
+    streams.push(1073741824u64 + j.to_uint64() * 16777216u64)
+  }
+  var i = 0
+  while i < n {
+    step(state)
+    let kind = (state / 4294967296u64) % 10u64
+    step(state)
+    let write = (state / 4294967296u64) % 4u64 == 0u64
+    var addr = 0u64
+    if kind < 5u64 {
+      step(state)
+      addr = 65536u64 + 64u64 * ((state / 4294967296u64) % 64u64)
+    } else if kind < 8u64 {
+      step(state)
+      let si = ((state / 4294967296u64) % 4u64).to_int()
+      addr = streams.at(si)
+      streams.set(si, addr + 64u64)
+    } else {
+      step(state)
+      addr = state
+    }
+    if write {
+      out.push_str("W 0x")
+    } else {
+      out.push_str("R 0x")
+    }
+    push_hex(addr, out)
+    out.push_str("\n")
+    i = i + 1
+  }
+  return out
+}

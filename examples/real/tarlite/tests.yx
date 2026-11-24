@@ -1,0 +1,134 @@
+// Unit tests: `yerux test examples/real/tarlite/tests.yx` (and with --native). The format is in archive.yx.
+import archive
+import std.fs
+
+fn bytes(s: view String) -> List<UInt8> {
+  return fs.string_bytes(s)
+}
+
+// The canonical name, or "ERR: " and the reason.
+fn canon(s: view String) -> String {
+  match archive.canonical_name(s) {
+    Ok(n) => { return n }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+// "ok N" with the entry count, or "ERR: " and the message.
+fn describe(b: view List<UInt8>) -> String {
+  match archive.decode(b) {
+    Ok(entries) => { return "ok {entries.len()}" }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+fn one(name: view String, data: view String) -> List<UInt8> {
+  var entries = List<archive.Entry>.new()
+  entries.push(archive.new_entry(name, 420, bytes(data)))
+  return archive.encode(entries)
+}
+
+test "canonical names: normalized relative paths" {
+  assert(canon("a").eq("a"))
+  assert(canon("./a//b/").eq("a/b"))
+  assert(canon("dir/./x y.txt").eq("dir/x y.txt"))
+  assert(canon(".hidden").eq(".hidden"))
+  assert(canon("a..b/c").eq("a..b/c"))
+}
+
+test "canonical names: unsafe or empty names are refused" {
+  assert(canon("/abs").eq("ERR: absolute path"))
+  assert(canon("../x").eq("ERR: '..' component"))
+  assert(canon("a/../b").eq("ERR: '..' component"))
+  assert(canon("").eq("ERR: empty name"))
+  assert(canon(".").eq("ERR: empty name"))
+  assert(canon("./").eq("ERR: empty name"))
+  var z = String.from("a")
+  z.push_byte(0)
+  assert(canon(z).eq("ERR: name contains a NUL byte"))
+}
+
+test "an empty archive is the magic, the trailer and a zero count" {
+  let packed = archive.encode(List<archive.Entry>.new())
+  assert(packed.len() == 16)
+  assert(packed.at(4).to_int() == 84)
+  assert(describe(packed).eq("ok 0"))
+}
+
+test "exact layout of one entry" {
+  let packed = one("a", "hi")
+  assert(packed.len() == 37)
+  assert(packed.at(4).to_int() == 0 && packed.at(5).to_int() == 1)
+  assert(packed.at(6).to_int() == 97)
+  assert(packed.at(7).to_int() == 0 && packed.at(8).to_int() == 0)
+  assert(packed.at(9).to_int() == 1 && packed.at(10).to_int() == 164)
+  assert(packed.at(18).to_int() == 2)
+  assert(packed.at(23).to_int() == 104 && packed.at(24).to_int() == 105)
+  assert(packed.at(25).to_int() == 84 && packed.at(26).to_int() == 69)
+  assert(packed.at(28).to_int() == 68)
+  assert(packed.at(32).to_int() == 1)
+  assert(describe(packed).eq("ok 1"))
+}
+
+test "encode and decode agree on names, modes and data" {
+  var entries = List<archive.Entry>.new()
+  var big = List<UInt8>.new()
+  for i in 0..300 {
+    big.push((i % 251).to_uint8())
+  }
+  entries.push(archive.new_entry("a b", 493, bytes("text\n")))
+  entries.push(archive.new_entry("empty", 0, List<UInt8>.new()))
+  entries.push(archive.new_entry("d/big.bin", 384, move big))
+  let packed = archive.encode(entries)
+  match archive.decode(packed) {
+    Ok(back) => {
+      assert(back.len() == 3)
+      assert(back.at(0).name.eq("a b") && back.at(0).mode == 493 && back.at(0).data.len() == 5)
+      assert(back.at(1).name.eq("empty") && back.at(1).data.len() == 0)
+      assert(back.at(2).data.len() == 300)
+      assert(back.at(2).data.at(299).to_int() == 48)
+      assert(back.at(2).crc == entries.at(2).crc)
+    }
+    Err(e) => { assert(false) }
+  }
+}
+
+test "a flipped data byte is an entry CRC mismatch" {
+  var packed = one("a", "hi")
+  packed[23] = 0u8
+  assert(describe(packed).eq("ERR: entry 'a': CRC mismatch"))
+}
+
+test "a flipped header or trailer byte is caught by the trailer CRC" {
+  var packed = one("a", "hi")
+  packed[6] = 98u8
+  assert(describe(packed).eq("ERR: trailer CRC mismatch"))
+  var counted = one("a", "hi")
+  counted[32] = 2u8
+  assert(describe(counted).eq("ERR: trailer entry count does not match"))
+}
+
+test "bad magic, truncation and trailing bytes are errors" {
+  var packed = one("a", "hi")
+  packed[0] = 88u8
+  assert(describe(packed).eq("ERR: not a tarlite archive"))
+  assert(describe(bytes("TLA")).eq("ERR: not a tarlite archive"))
+  let cut = one("a", "hi").slice(0, 36)
+  assert(describe(cut).eq("ERR: truncated archive"))
+  var more = one("a", "hi")
+  more.push(0u8)
+  assert(describe(more).eq("ERR: truncated archive"))
+}
+
+test "decoding refuses unsafe, non-canonical, duplicate and out-of-range entries" {
+  assert(describe(one("../x", "")).eq("ERR: entry '../x': '..' component"))
+  assert(describe(one("/abs", "")).eq("ERR: entry '/abs': absolute path"))
+  assert(describe(one("a//b", "")).eq("ERR: entry 'a//b': name is not canonical"))
+  var twice = List<archive.Entry>.new()
+  twice.push(archive.new_entry("a", 420, bytes("1")))
+  twice.push(archive.new_entry("a", 420, bytes("2")))
+  assert(describe(archive.encode(twice)).eq("ERR: entry 'a': listed twice"))
+  var wide = List<archive.Entry>.new()
+  wide.push(archive.new_entry("a", 4096, bytes("")))
+  assert(describe(archive.encode(wide)).eq("ERR: entry 'a': mode out of range"))
+}

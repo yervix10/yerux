@@ -1,0 +1,119 @@
+// The dependency graph. Tasks are numbered by id: task i is the i-th id in sorted order, so a smaller number is a
+// smaller id, and every "ties by id" rule is a rule on indices.
+//
+// Checks, in this order (the first failure is reported): duplicate ids (the smallest duplicated id), then for each
+// task in id order and each of its deps in file order, a self dependency, then an unknown dependency, then a cycle.
+import spec
+
+pub struct Graph {
+  ids: List<String>, // sorted; the task number is the index
+  dur: List<Int>,
+  prereq: List<List<Int>>, // the tasks each task waits for, ascending
+  after: List<List<Int>>, // the tasks that wait for each task, ascending
+  order: List<Int>, // a topological order: the smallest ready number first
+}
+
+fn index_of_task(tasks: view List<spec.Task>, id: view String) -> Int {
+  for k in 0..tasks.len() {
+    if tasks.at(k).id.eq(id) { return k }
+  }
+  return -1
+}
+
+// "a -> b -> c -> a": the ids of a cycle, each one depending on the next.
+pub fn join_path(ids: view List<String>, path: view List<Int>) -> String {
+  var out = String.new()
+  for k in 0..path.len() {
+    if k > 0 { out.push_str(" -> ") }
+    out.push_str(ids.at(path.at(k)))
+  }
+  return out
+}
+
+pub fn build(tasks: view List<spec.Task>) -> Result<Graph, String> {
+  var ids = List<String>.new()
+  for t in tasks { ids.push(String.from(t.id)) }
+  ids.sort()
+  for i in 1..ids.len() {
+    if ids.at(i - 1).eq(ids.at(i)) { return Err("duplicate id \"{ids.at(i)}\"") }
+  }
+  let n = ids.len()
+  var dur = List<Int>.new()
+  var prereq = List<List<Int>>.new()
+  var after = List<List<Int>>.new()
+  for i in 0..n {
+    prereq.push(List<Int>.new())
+    after.push(List<Int>.new())
+    dur.push(tasks.at(index_of_task(tasks, ids.at(i))).duration)
+  }
+  for i in 0..n {
+    let t = tasks.at(index_of_task(tasks, ids.at(i)))
+    for d in t.deps {
+      if d.eq(ids.at(i)) { return Err("task \"{ids.at(i)}\": depends on itself") }
+      let k = ids.index_of(d)
+      if k < 0 { return Err("task \"{ids.at(i)}\": unknown dependency \"{d}\"") }
+      if !prereq.at(i).contains(k) {
+        prereq.at(i).push(k)
+        after.at(k).push(i)
+      }
+    }
+  }
+  for i in 0..n { prereq.at(i).sort() }
+
+  // Kahn's algorithm: repeatedly take the smallest ready task.
+  var indeg = List<Int>.new()
+  var done = List<Bool>.new()
+  for i in 0..n {
+    indeg.push(prereq.at(i).len())
+    done.push(false)
+  }
+  var order = List<Int>.new()
+  while order.len() < n {
+    var pick = -1
+    for i in 0..n {
+      if !done.at(i) && indeg.at(i) == 0 {
+        pick = i
+        break
+      }
+    }
+    if pick < 0 { break }
+    done.set(pick, true)
+    order.push(pick)
+    for j in 0..after.at(pick).len() {
+      let s = after.at(pick).at(j)
+      indeg.set(s, indeg.at(s) - 1)
+    }
+  }
+  if order.len() < n {
+    return Err("cycle: {cycle_text(ids, prereq, done)}")
+  }
+  return Ok(Graph { ids: move ids, dur: move dur, prereq: move prereq, after: move after, order: move order })
+}
+
+// Every task that is not done has a prerequisite that is not done. Walk from the smallest such task, always to its
+// smallest unfinished prerequisite, until a task repeats; the repeated part is a cycle.
+fn cycle_text(ids: view List<String>, prereq: view List<List<Int>>, done: view List<Bool>) -> String {
+  var start = 0
+  while done.at(start) { start = start + 1 }
+  var path = List<Int>.new()
+  var cur = start
+  while true {
+    path.push(cur)
+    var next = -1
+    for j in 0..prereq.at(cur).len() {
+      let p = prereq.at(cur).at(j)
+      if !done.at(p) {
+        next = p
+        break
+      }
+    }
+    let pos = path.index_of(next)
+    if pos >= 0 {
+      var cycle = path.slice(pos, path.len())
+      cycle.push(next)
+      return join_path(ids, cycle)
+    }
+    cur = next
+  }
+  return ""
+}

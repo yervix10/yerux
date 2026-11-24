@@ -1,0 +1,146 @@
+// Scheduling over a checked graph. Times are in the units of the durations.
+//
+// plan: earliest start ES and finish EF (every task starts as soon as its prerequisites finish), the latest finish LF
+// that keeps the makespan (the largest EF), slack LF - EF, and one critical path (the tasks with zero slack, walked
+// back from the smallest-numbered task that ends at the makespan, always to the smallest-numbered prerequisite that
+// ends when this task starts).
+//
+// list_schedule: W identical workers. At each event time, the ready tasks in id order take the lowest-numbered free
+// workers; a worker is released at the finish time of its task.
+import graph
+
+pub struct Plan {
+  es: List<Int>,
+  ef: List<Int>,
+  slack: List<Int>,
+  makespan: Int,
+  path: List<Int>, // task numbers from the start of the path to its end
+}
+
+pub fn plan(g: view graph.Graph) -> Plan {
+  let n = g.ids.len()
+  var es = List<Int>.new()
+  var ef = List<Int>.new()
+  var lf = List<Int>.new()
+  for i in 0..n {
+    es.push(0)
+    ef.push(0)
+    lf.push(0)
+  }
+  for pos in 0..n {
+    let i = g.order.at(pos)
+    var s = 0
+    for j in 0..g.prereq.at(i).len() {
+      s = max(s, ef.at(g.prereq.at(i).at(j)))
+    }
+    es.set(i, s)
+    ef.set(i, s + g.dur.at(i))
+  }
+  var makespan = 0
+  for i in 0..n { makespan = max(makespan, ef.at(i)) }
+  for i in 0..n { lf.set(i, makespan) }
+  var pos = n
+  while pos > 0 {
+    pos = pos - 1
+    let i = g.order.at(pos)
+    for j in 0..g.after.at(i).len() {
+      let s = g.after.at(i).at(j)
+      lf.set(i, min(lf.at(i), lf.at(s) - g.dur.at(s)))
+    }
+  }
+  var slack = List<Int>.new()
+  for i in 0..n { slack.push(lf.at(i) - ef.at(i)) }
+
+  var path = List<Int>.new()
+  if n > 0 {
+    var end = 0
+    for i in 0..n {
+      if ef.at(i) == makespan {
+        end = i
+        break
+      }
+    }
+    var cur = end
+    path.push(cur)
+    while es.at(cur) > 0 {
+      var pick = -1
+      for j in 0..g.prereq.at(cur).len() {
+        let p = g.prereq.at(cur).at(j)
+        if pick < 0 && ef.at(p) == es.at(cur) { pick = p }
+      }
+      cur = pick
+      path.push(cur)
+    }
+    path.reverse()
+  }
+  return Plan { es: move es, ef: move ef, slack: move slack, makespan: makespan, path: move path }
+}
+
+pub struct Sched {
+  start: List<Int>,
+  finish: List<Int>,
+  worker: List<Int>,
+  timeline: List<List<Int>>, // per worker: the task numbers it runs, in start order
+  makespan: Int,
+}
+
+pub fn list_schedule(g: view graph.Graph, workers: Int) -> Sched {
+  let n = g.ids.len()
+  var start = List<Int>.new()
+  var finish = List<Int>.new()
+  var worker = List<Int>.new()
+  for i in 0..n {
+    start.push(-1)
+    finish.push(0)
+    worker.push(-1)
+  }
+  var timeline = List<List<Int>>.new()
+  var free = List<Bool>.new()
+  for k in 0..workers {
+    timeline.push(List<Int>.new())
+    free.push(true)
+  }
+  var running = List<Int>.new()
+  var time = 0
+  while true {
+    var keep = List<Int>.new()
+    for k in 0..running.len() {
+      let t = running.at(k)
+      if finish.at(t) == time {
+        free.set(worker.at(t), true)
+      } else {
+        keep.push(t)
+      }
+    }
+    running = move keep
+    for i in 0..n {
+      if start.at(i) >= 0 { continue }
+      var ready = true
+      for j in 0..g.prereq.at(i).len() {
+        let p = g.prereq.at(i).at(j)
+        if start.at(p) < 0 || finish.at(p) > time { ready = false }
+      }
+      if !ready { continue }
+      var w = -1
+      for k in 0..workers {
+        if w < 0 && free.at(k) { w = k }
+      }
+      if w < 0 { break }
+      start.set(i, time)
+      finish.set(i, time + g.dur.at(i))
+      worker.set(i, w)
+      free.set(w, false)
+      timeline.at(w).push(i)
+      running.push(i)
+    }
+    if running.len() == 0 { break }
+    var next = finish.at(running.at(0))
+    for k in 0..running.len() {
+      next = min(next, finish.at(running.at(k)))
+    }
+    time = next
+  }
+  var makespan = 0
+  for i in 0..n { makespan = max(makespan, finish.at(i)) }
+  return Sched { start: move start, finish: move finish, worker: move worker, timeline: move timeline, makespan: makespan }
+}

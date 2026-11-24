@@ -1,0 +1,212 @@
+// Unit tests: `yerux test examples/real/cachesim/tests.yx` (and with --native).
+// The expected counts are worked out by hand for each sequence; the trace lines are written out in the sources.
+import cache
+import report
+import std.text
+import trace
+
+// Runs a trace text through one configuration; the trace must parse.
+fn sim(src: view String, sets: Int, ways: Int, line: Int) -> cache.Stats {
+  match trace.parse(src) {
+    Ok(list) => { return cache.simulate(cache.Config { sets: sets, ways: ways, line: line }, list) }
+    Err(e) => { panic("unexpected trace error: {e.line}: {e.message}") }
+  }
+}
+
+// "ok" for a valid address, otherwise the message.
+fn addr_msg(s: view String) -> String {
+  match trace.parse_addr(s) {
+    Ok(_) => { return "ok" }
+    Err(e) => { return e }
+  }
+}
+
+fn addr_is(s: view String, want: UInt64) -> Bool {
+  match trace.parse_addr(s) {
+    Ok(v) => { return v == want }
+    Err(_) => { return false }
+  }
+}
+
+// "ok N" for a valid trace, otherwise "LINE: message".
+fn trace_msg(src: view String) -> String {
+  match trace.parse(src) {
+    Ok(list) => { return "ok {list.len()}" }
+    Err(e) => { return "{e.line}: {e.message}" }
+  }
+}
+
+test "LRU on a 2-way set: A B A C B" {
+  // A, B fill the set; A hits; C evicts B (the LRU); B misses and evicts A
+  let st = sim("R 0\nR 1\nR 0\nR 2\nR 1", 1, 2, 1)
+  assert_eq(st.accesses, 5)
+  assert_eq(st.hits, 1)
+  assert_eq(st.misses, 4)
+  assert_eq(st.evictions, 2)
+  assert_eq(st.writebacks, 0)
+}
+
+test "LRU keeps the recently used line: A B A C A" {
+  // A is touched again before C arrives, so C evicts B and the last A hits
+  let st = sim("R 0\nR 1\nR 0\nR 2\nR 0", 1, 2, 1)
+  assert_eq(st.hits, 2)
+  assert_eq(st.misses, 3)
+  assert_eq(st.evictions, 1)
+}
+
+test "empty ways are filled before any line is evicted" {
+  // A B C D fill a 4-way set with no eviction; A hits (order A D C B); E evicts B; B misses and evicts C
+  let st = sim("R 0\nR 1\nR 2\nR 3\nR 0\nR 4\nR 1", 1, 4, 1)
+  assert_eq(st.accesses, 7)
+  assert_eq(st.hits, 1)
+  assert_eq(st.misses, 6)
+  assert_eq(st.evictions, 2)
+}
+
+test "a dirty line is written back when it is evicted" {
+  // W0 fills dirty; W0 hits; R1 evicts the dirty line 0 (one writeback); R1 hits; R0 evicts the clean line 1
+  let st = sim("W 0\nW 0\nR 1\nR 1\nR 0", 1, 1, 1)
+  assert_eq(st.reads, 3)
+  assert_eq(st.writes, 2)
+  assert_eq(st.hits, 2)
+  assert_eq(st.misses, 3)
+  assert_eq(st.evictions, 2)
+  assert_eq(st.writebacks, 1)
+}
+
+test "clean evictions write nothing back" {
+  let st = sim("R 0\nR 1\nR 2", 1, 1, 1)
+  assert_eq(st.evictions, 2)
+  assert_eq(st.writebacks, 0)
+}
+
+test "a write hit makes a clean line dirty" {
+  let st = sim("R 0\nW 0\nR 1", 1, 1, 1)
+  assert_eq(st.hits, 1)
+  assert_eq(st.evictions, 1)
+  assert_eq(st.writebacks, 1)
+}
+
+test "a write miss fills the line dirty (write-allocate)" {
+  let st = sim("W 0\nR 1", 1, 1, 1)
+  assert_eq(st.misses, 2)
+  assert_eq(st.writebacks, 1)
+}
+
+test "the set index comes from the block number" {
+  // with 2 sets, even blocks use set 0 and odd blocks set 1; every access misses and the evictions are 2, 3, 0
+  let st = sim("R 0\nR 1\nR 2\nR 3\nR 0", 2, 1, 1)
+  assert_eq(st.misses, 5)
+  assert_eq(st.hits, 0)
+  assert_eq(st.evictions, 3)
+}
+
+test "the line size groups addresses into blocks" {
+  // with 4-byte lines, 0 and 3 share block 0; 4 starts block 1 and evicts it
+  let st = sim("R 0\nR 3\nR 4\nR 0", 1, 1, 4)
+  assert_eq(st.hits, 1)
+  assert_eq(st.misses, 3)
+  assert_eq(st.evictions, 2)
+}
+
+test "addresses at the top of the 64-bit range" {
+  // 2^64-1 and 2^63-1 map to set 1 (odd), 2^63 to set 0; the second access hits, the third evicts the first line
+  let st = sim("R 0xffffffffffffffff\nR 18446744073709551615\nR 0x7fffffffffffffff\nR 9223372036854775808", 2, 1, 1)
+  assert_eq(st.hits, 1)
+  assert_eq(st.misses, 3)
+  assert_eq(st.evictions, 1)
+}
+
+test "decimal and hexadecimal addresses" {
+  assert(addr_is("4096", 4096u64))
+  assert(addr_is("0", 0u64))
+  assert(addr_is("0x0", 0u64))
+  assert(addr_is("0x1f40", 8000u64))
+  assert(addr_is("0X1F40", 8000u64))
+  assert(addr_is("0xFfFf", 65535u64))
+  assert(addr_is("18446744073709551615", 18446744073709551615u64))
+  assert(addr_is("0xffffffffffffffff", 18446744073709551615u64))
+  assert(addr_is("0x8000000000000000", 9223372036854775808u64))
+}
+
+test "address errors" {
+  assert(addr_msg("0x1g").eq("bad hex digit 'g'"))
+  assert(addr_msg("12a").eq("bad decimal digit 'a'"))
+  assert(addr_msg("-1").eq("bad decimal digit '-'"))
+  assert(addr_msg("0x").eq("missing digits after 0x"))
+  assert(addr_msg("").eq("missing address"))
+  assert(addr_msg("18446744073709551616").eq("address is above 2^64-1"))
+  assert(addr_msg("0x10000000000000000").eq("address is above 2^64-1"))
+}
+
+test "trace lines: blanks, comments and surrounding spaces" {
+  assert(trace_msg("# header\n\n  R 0x10 \n   # note\nW 5\n\t\nR 1\n").eq("ok 3"))
+  assert(trace_msg("R 0x10\r\nW 16\r\n").eq("ok 2"))
+  assert(trace_msg("").eq("ok 0"))
+  assert(trace_msg("R\t0x10").eq("ok 1"))
+}
+
+test "trace errors name the line" {
+  assert(trace_msg("R 1\n\nX 2\n").eq("3: unknown operation 'X', expected R or W"))
+  assert(trace_msg("r 1").eq("1: unknown operation 'r', expected R or W"))
+  assert(trace_msg("R\n").eq("1: expected an operation and an address: R ADDRESS or W ADDRESS"))
+  assert(trace_msg("R 1 2").eq("1: expected an operation and an address: R ADDRESS or W ADDRESS"))
+  assert(trace_msg("W 1\nR 0x1g").eq("2: bad hex digit 'g'"))
+}
+
+test "power-of-two checks" {
+  assert(cache.is_pow2(1))
+  assert(cache.is_pow2(2))
+  assert(cache.is_pow2(1024))
+  assert(!cache.is_pow2(0))
+  assert(!cache.is_pow2(-4))
+  assert(!cache.is_pow2(3))
+  assert(!cache.is_pow2(6))
+}
+
+test "miss rate in 1/10000, rounded half up" {
+  var st = cache.zero_stats()
+  assert_eq(cache.miss_rate4(st), 0)
+  st.accesses = 3
+  st.misses = 1
+  assert_eq(cache.miss_rate4(st), 3333)
+  st.misses = 2
+  assert_eq(cache.miss_rate4(st), 6667)
+  st.accesses = 2
+  st.misses = 1
+  assert_eq(cache.miss_rate4(st), 5000)
+  st.accesses = 20000
+  st.misses = 1
+  assert_eq(cache.miss_rate4(st), 1)
+}
+
+test "statistics text" {
+  let st = sim("R 0\nR 0\nR 1", 1, 1, 1)
+  let text = report.stats_text(st)
+  assert(text.contains("accesses 3\nreads 3\nwrites 0\nhits 1\nmisses 2\nmiss rate 0.6667\n"))
+  assert(text.contains("evictions 1\nwritebacks 0\n"))
+}
+
+test "sweep table: header and twelve sorted rows" {
+  match trace.parse("R 0\nR 64\nR 0\nW 128\n") {
+    Ok(list) => {
+      let table = report.sweep_text(list, 64)
+      let lines = text.lines(table)
+      assert_eq(lines.len(), 13)
+      assert(lines.at(0).starts_with("config"))
+      assert(lines.at(1).starts_with("S004-W1 "))
+    }
+    Err(_) => { assert(false) }
+  }
+}
+
+test "generator is deterministic and parses back" {
+  let a = trace.generate(7u64, 50)
+  assert(a.eq(trace.generate(7u64, 50)))
+  assert(!a.eq(trace.generate(8u64, 50)))
+  assert(trace.generate(7u64, 0).is_empty())
+  match trace.parse(a) {
+    Ok(list) => { assert_eq(list.len(), 50) }
+    Err(_) => { assert(false) }
+  }
+}
