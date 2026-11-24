@@ -158,8 +158,8 @@ alias with deprecation, or document as intended) before the item it touches beco
    tests/sort_api_names.yx; STDLIB.md `std.sort`.
 3. **Two lock APIs.** *Resolved (documented as final).* `Locked<T>` is the primitive and uses methods
    (`with`, `with_view`, `take`); `Mutex<T>` is its named facade and uses free functions (`mutex_update`,
-   `mutex_with`, `mutex_with_view`), because generic methods with their own type parameters are not available
-   yet. `with_view`/`mutex_with_view` give a read-only view under the same exclusive lock as `with`
+   `mutex_with`, `mutex_with_view`). Since generic methods exist, `Mutex<T>` also has the methods `update`, `with`
+   and `with_view` (tests/mutex_methods.yx); the free functions stay as aliases (not deprecated, no break). `with_view`/`mutex_with_view` give a read-only view under the same exclusive lock as `with`
    (final, no rename); shared reads are `RwLock` (`rwlock_read`). Test: tests/conc_freeze_api.yx.
 4. **Channel and thread constructors.** *Resolved (documented as final).* The frozen forms are the implemented
    ones: `Sender<T>.bounded(n)` / `.unbounded()`, `thread_pool_new(n)`, `JoinHandle<T>`, `spawn move`.
@@ -167,9 +167,10 @@ alias with deprecation, or document as intended) before the item it touches beco
    the surface (banner in CONCURRENCY.md).
 5. **`ok_or` is a free function** (`ok_or(opt, e)`), while `context` and `ok` are methods on the same
    types. Either add the method form or document the difference as final.
-   **Resolved:** both forms. `opt.ok_or("msg")` is a method returning `Result<T, String>` (methods cannot
-   be generic yet, so it mirrors `context`); the free function `ok_or(opt, e)` stays for any error type
-   and is final. Test: tests/option_ok_or_method.yx; STDLIB.md.
+   **Resolved:** `opt.ok_or("msg")` stays a method returning `Result<T, String>`: generic methods now exist, but
+   making `E` generic would turn `opt.ok_or("msg")` into `Result<T, Text>` and break code annotated with `String`, so
+   the compatibility rule wins. Any error type: `opt.ok_or_else(|| e)` (method, lazy) or the free function
+   `ok_or(opt, e)`. Tests: tests/option_ok_or_method.yx, tests/option_result_methods.yx; STDLIB.md.
 6. **Resolved — Module-level free functions vs methods.** Keep both forms. A module function is
    called through its module alias and takes all arguments explicitly. A method is declared on its
    receiver type or through a trait. See [STDLIB.md](STDLIB.md), `tests/std_free_functions.yx` and

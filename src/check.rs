@@ -239,6 +239,27 @@ fn is_place(e: &Expr) -> bool {
 }
 // ── constructors for the synthetic code that `for` loops are rewritten into ──
 /// `None`, `Maybe.None`: a generic enum variant without payload whose type arguments are not written
+fn show_gm(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("__gm__") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 6..];
+        match after.find("__") {
+            Some(j) => {
+                out.push_str(&after[..j]);
+                out.push('.');
+                rest = &after[j + 2..];
+            }
+            None => {
+                rest = &rest[i + 6..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn is_bare_variant(e: &Expr) -> bool {
     match &e.k {
         EK::Var(n, _) => n == "None",
@@ -598,6 +619,11 @@ struct LoopCtx {
 
 impl<'a> Checker<'a> {
     fn err(&mut self, mut d: Diag) {
+        // generic methods live behind `__gm__Type__method`: show them as `Type.method`
+        d.msg = show_gm(&d.msg);
+        for n in d.notes.iter_mut() {
+            *n = show_gm(n);
+        }
         if let Some(origin) = self.inst_origin {
             if d.pos != origin {
                 if d.pos.line >= crate::syntax::PRELUDE_LINE {
@@ -7020,6 +7046,15 @@ impl<'a> Checker<'a> {
         self.ps.gfns.iter().any(|g| g.name == f).then_some(f)
     }
 
+    /// The generic function behind a method with type parameters of its own, when `rt` has one called `m`.
+    fn generic_method_fn(&mut self, rt: Ty, m: &str) -> Option<String> {
+        if !matches!(rt, Ty::Struct(_) | Ty::Enum(_)) {
+            return None;
+        }
+        let f = format!("__gm__{}__{}", type_key(&self.types, rt), m);
+        self.ps.gfns.iter().any(|g| g.name == f).then_some(f)
+    }
+
     /// `x.m(args)` -> `Trait__Type__m(x, args)`.
     fn rewrite_method(&mut self, e: &mut Expr, rt: Ty) -> Result<(), ()> {
         let pos = e.pos;
@@ -7054,6 +7089,25 @@ impl<'a> Checker<'a> {
                     return Err(());
                 }
                 return Ok(()); // the built-in path explains
+            }
+            None if self.generic_method_fn(rt, &m).is_some() => {
+                // `opt.map(f)` -> `__gm__Option__map(opt, f)`: a method with type parameters of its own
+                let f = self.generic_method_fn(rt, &m).unwrap_or_default();
+                let consumes = self.ps.gfns.iter().find(|g| g.name == f).and_then(|g| g.params.first().map(|p| p.0)) == Some(Mode::Own);
+                let EK::Method { recv, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    return Err(());
+                };
+                let mut recv = *recv;
+                if let EK::Var(n, _) = &recv.k {
+                    if n.starts_with('$') || (consumes && self.types.owned(rt)) {
+                        let (n, p, t) = (n.clone(), recv.pos, recv.ty);
+                        recv = Expr { k: EK::Move(n, 0), pos: p, ty: t };
+                    }
+                }
+                let mut all = vec![recv];
+                all.extend(args);
+                e.k = EK::Call(f, all);
+                return Ok(());
             }
             None if self.iter_free_fn(rt, &m).is_some() => {
                 // `it.map(f)` -> `std__iter_map(it, f)`: adapters with an extra type parameter are free functions
@@ -7725,12 +7779,15 @@ impl<'a> Checker<'a> {
             return Ty::Err; // its own errors are already reported
         }
         if g.params.len() != args.len() {
+            // a generic method counts its receiver as the first parameter
+            let skip = usize::from(g.self_tok.is_some());
             self.err(diag(
                 format!(
-                    "'{}' expects {} argument(s) but got {}",
+                    "'{}' expects {} argument(s){} but got {}",
                     g.name,
-                    g.params.len(),
-                    args.len()
+                    g.params.len() - skip,
+                    if skip == 1 { " besides the receiver" } else { "" },
+                    args.len().saturating_sub(skip)
                 ),
                 pos,
             ));
@@ -7969,7 +8026,17 @@ impl<'a> Checker<'a> {
         let mang: Vec<String> = targs.iter().map(|t| self.types.mangle(*t)).collect();
         let name = format!("{}__{}", g.name, mang.join("__"));
         let header_only = self.in_generic;
-        match self.with_ps(|ps| ps.parse_fn_at(g.tok, subst, None, header_only)) {
+        let self_ty = match g.self_tok {
+            Some(t) => match self.with_ps(|ps| ps.self_ty_at(t, subst.clone())) {
+                Ok(t) => Some(t),
+                Err(d) => {
+                    self.err(d);
+                    return None;
+                }
+            },
+            None => None,
+        };
+        match self.with_ps(|ps| ps.parse_fn_at(g.tok, subst, self_ty, header_only)) {
             Err(d) => {
                 self.err(d);
                 None

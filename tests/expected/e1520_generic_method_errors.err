@@ -1,0 +1,15 @@
+error: Q does not implement Show, which 'P.show_with' needs for R
+ --> tests/e1520_generic_method_errors.yx:8:9
+  |
+8 |   print(p.show_with(|x| Q { z: x }))
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = 'P.show_with' is declared `fn P.show_with<R: Show>`
+  = help: add `impl Show for Q { fn show(view self) -> String { .. } }`
+
+error: 'P.show_with' expects 1 argument(s) besides the receiver but got 0
+ --> tests/e1520_generic_method_errors.yx:9:9
+  |
+9 |   print(p.show_with())
+  |         ^^^^^^^^^^^^^
+
+2 error(s). Nothing was generated.

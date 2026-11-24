@@ -1,0 +1,7 @@
+error: methods of a trait impl cannot be generic yet
+ --> tests/e1519_generic_method_in_trait_impl.yx:8:6
+  |
+8 |   fn name<R>(view self) -> Int { return 1 }
+  |      ^^^^
+
+1 error(s). Nothing was generated.
