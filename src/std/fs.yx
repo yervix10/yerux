@@ -83,31 +83,42 @@ fn kind_from_mode(m: Int) -> FileKind {
     return FileKind.Other
 }
 
-// stat (nr 4) or lstat (nr 6) of `path`
-fn stat_with(nr: Int, op: Text, path: view String) -> Result<Metadata, io.IoError> {
-    let cp = io.cpath(path)?
-    let st = __alloc(144)
-    let r = __syscall(nr, cp.raw_addr(), st, 0, 0, 0, 0)
+// statx has the same 256-byte layout on x86-64 and AArch64 Linux.
+const STATX_SIZE: Int = 256
+const AT_FDCWD: Int = -100
+const AT_SYMLINK_NOFOLLOW: Int = 256
+const AT_EMPTY_PATH: Int = 4096
+const STATX_BASIC_STATS: Int = 2047
+
+fn statx(fd: Int, path: Int, flags: Int, st: Int) -> Int {
+    return __syscall(332, fd, path, flags, STATX_BASIC_STATS, st, 0)
+}
+
+fn stat_metadata(fd: Int, raw_path: Int, flags: Int, op: Text, path: view String) -> Result<Metadata, io.IoError> {
+    let st = __alloc(STATX_SIZE)
+    let r = statx(fd, raw_path, flags, st)
     if r < 0 {
         __free(st)
         return Err(io.os_error(op, path, 0 - r))
     }
-    // st_mode is a 32-bit field at offset 24; only its low 16 bits matter
-    let m = __load8(st + 24) + 256 * __load8(st + 25)
-    let size = __load64(st + 48)
-    let mns = __load64(st + 88) * 1000000000 + __load64(st + 96)
+    let m = __load8(st + 28) + 256 * __load8(st + 29)
+    let size = __load64(st + 40)
+    let nsec = __load8(st + 120) + 256 * __load8(st + 121) + 65536 * __load8(st + 122) + 16777216 * __load8(st + 123)
+    let mns = __load64(st + 112) * 1000000000 + nsec
     __free(st)
     return Ok(Metadata { kind: kind_from_mode(m), size: size, mode: m % 4096, modified_ns: mns })
 }
 
 /// Metadata of `path`, following symbolic links.
 pub fn metadata(path: view String) -> Result<Metadata, io.IoError> {
-    return stat_with(4, "stat", path)
+    let cp = io.cpath(path)?
+    return stat_metadata(AT_FDCWD, cp.raw_addr(), 0, "stat", path)
 }
 
 /// Metadata of `path` itself (a symbolic link is reported as `FileKind.Symlink`).
 pub fn symlink_metadata(path: view String) -> Result<Metadata, io.IoError> {
-    return stat_with(6, "lstat", path)
+    let cp = io.cpath(path)?
+    return stat_metadata(AT_FDCWD, cp.raw_addr(), AT_SYMLINK_NOFOLLOW, "lstat", path)
 }
 
 /// Does `path` exist (following symbolic links)?
@@ -487,18 +498,21 @@ impl Drop for DirFd {
 }
 
 fn same_directory(a: Int, b: Int) -> Result<Bool, io.IoError> {
-    let st = __alloc(288)
-    let ra = __syscall(5, a, st, 0, 0, 0, 0)
+    let empty = io.cpath("")?
+    let st = __alloc(2 * STATX_SIZE)
+    let other = st + STATX_SIZE
+    let ra = statx(a, empty.raw_addr(), AT_EMPTY_PATH, st)
     if ra < 0 {
         __free(st)
         return Err(io.os_error("stat directory", "", 0 - ra))
     }
-    let rb = __syscall(5, b, st + 144, 0, 0, 0, 0)
+    let rb = statx(b, empty.raw_addr(), AT_EMPTY_PATH, other)
     if rb < 0 {
         __free(st)
         return Err(io.os_error("stat directory", "", 0 - rb))
     }
-    let same = __load64(st) == __load64(st + 144) && __load64(st + 8) == __load64(st + 152)
+    // Compare inode and the two adjacent device fields (major and minor).
+    let same = __load64(st + 32) == __load64(other + 32) && __load64(st + 136) == __load64(other + 136)
     __free(st)
     return Ok(same)
 }
@@ -1045,19 +1059,10 @@ impl File {
         return Ok(0)
     }
 
-    /// fstat of the open file.
+    /// Metadata of the open file.
     fn metadata(view self) -> Result<Metadata, io.IoError> {
-        let st = __alloc(144)
-        let r = __syscall(5, self.fd, st, 0, 0, 0, 0)
-        if r < 0 {
-            __free(st)
-            return Err(io.os_error("stat", self.path, 0 - r))
-        }
-        let m = __load8(st + 24) + 256 * __load8(st + 25)
-        let size = __load64(st + 48)
-        let mns = __load64(st + 88) * 1000000000 + __load64(st + 96)
-        __free(st)
-        return Ok(Metadata { kind: kind_from_mode(m), size: size, mode: m % 4096, modified_ns: mns })
+        let empty = io.cpath("")?
+        return stat_metadata(self.fd, empty.raw_addr(), AT_EMPTY_PATH, "stat", self.path)
     }
 
     /// The raw descriptor (still owned by the File).

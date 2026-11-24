@@ -529,6 +529,7 @@ const G_BUMP: i32 = 0; // next free byte of the current arena
 const G_END: i32 = 8; // end of the current arena
 const G_NALLOC: i32 = 16; // debug counters
 const G_NFREE: i32 = 24;
+const G_USER: i64 = 256; // cells addressed by __global
 const G_FREE: i32 = 32; // free-list heads, one per size class 2^k (k = 4..=16)
 const ARENA: i64 = 1 << 20;
 const SMALL_MAX: i64 = 65536;
@@ -570,75 +571,172 @@ pub fn discard_unused_functions(ir: &mut IrProgram) {
     }
 }
 
-/// Translate the x86-64 numbers used by the raw syscall intrinsic before A64 code generation.
-pub fn translate_syscalls(ir: &mut IrProgram) -> Result<(), String> {
-    for f in &mut ir.funcs {
-        if !f
-            .blocks
-            .iter()
-            .flat_map(|b| &b.insts)
-            .any(|i| matches!(i, Inst::Syscall(..)))
-        {
-            continue;
-        }
-        // Accept only a single-definition constant. A first argument computed at runtime
-        // could otherwise accidentally invoke a different AArch64 syscall.
-        let mut defined = vec![false; f.nvregs];
-        let mut constants = vec![None; f.nvregs];
-        defined[..f.nparams].fill(true);
-        for inst in f.blocks.iter().flat_map(|b| &b.insts) {
-            if let Some(d) = crate::opt::def(inst) {
-                constants[d] = match inst {
-                    Inst::Const(_, n) if !defined[d] => Some(*n),
-                    _ => None,
-                };
-                defined[d] = true;
+/// The source intrinsic uses x86-64 syscall numbers and argument layouts.
+enum LinuxSyscall {
+    Direct(i64),
+    At(i64),
+    UnlinkAt(i64),
+    TwoPathsAt(i64),
+    SymlinkAt,
+    OpenAt { has_dirfd: bool },
+}
+
+impl LinuxSyscall {
+    fn from_x64(number: i64) -> Option<Self> {
+        use LinuxSyscall::*;
+        Some(match number {
+            0 => Direct(63), // read
+            1 => Direct(64), // write
+            2 => OpenAt { has_dirfd: false },
+            3 => Direct(57),      // close
+            8 => Direct(62),      // lseek
+            9 => Direct(222),     // mmap
+            10 => Direct(226),    // mprotect
+            11 => Direct(215),    // munmap
+            21 => At(48),         // access -> faccessat
+            25 => Direct(216),    // mremap
+            35 => Direct(101),    // nanosleep
+            39 => Direct(172),    // getpid
+            41 => Direct(198),    // socket
+            42 => Direct(203),    // connect
+            43 => Direct(202),    // accept
+            44 => Direct(206),    // sendto
+            49 => Direct(200),    // bind
+            50 => Direct(201),    // listen
+            51 => Direct(204),    // getsockname
+            52 => Direct(205),    // getpeername
+            54 => Direct(208),    // setsockopt
+            60 => Direct(93),     // exit
+            74 => Direct(82),     // fsync
+            77 => Direct(46),     // ftruncate
+            79 => Direct(17),     // getcwd
+            80 => Direct(49),     // chdir
+            82 => TwoPathsAt(38), // rename -> renameat
+            83 => At(34),         // mkdir -> mkdirat
+            84 => UnlinkAt(512),  // rmdir -> unlinkat with AT_REMOVEDIR
+            86 => TwoPathsAt(37), // link -> linkat
+            87 => UnlinkAt(0),    // unlink -> unlinkat
+            88 => SymlinkAt,
+            89 => At(78),       // readlink -> readlinkat
+            90 => At(53),       // chmod -> fchmodat
+            107 => Direct(175), // geteuid
+            217 => Direct(61),  // getdents64
+            228 => Direct(113), // clock_gettime
+            231 => Direct(94),  // exit_group
+            257 => OpenAt { has_dirfd: true },
+            263 => Direct(35),  // unlinkat
+            271 => Direct(73),  // ppoll
+            332 => Direct(291), // statx
+            _ => return None,
+        })
+    }
+
+    fn emit(self, a: &mut Asm) {
+        const AT_FDCWD: i64 = -100;
+        let number = match self {
+            Self::Direct(number) => number,
+            Self::At(number) => {
+                a.mov(X3, X2);
+                a.mov(X2, X1);
+                a.mov(X1, X0);
+                a.mov_imm(X0, AT_FDCWD);
+                number
             }
-        }
-        for block in &mut f.blocks {
-            let mut translated = Vec::with_capacity(block.insts.len());
-            for mut inst in std::mem::take(&mut block.insts) {
-                if let Inst::Syscall(_, args) = &mut inst {
-                    let number = constants[args[0]];
-                    let Some(a64) = number.and_then(linux_syscall_number) else {
-                        let number =
-                            number.map_or_else(|| "dynamic number".to_string(), |n| n.to_string());
-                        return Err(format!(
-                            "raw system calls ({} in function '{}')",
-                            number, f.name
-                        ));
-                    };
-                    args[0] = f.nvregs;
-                    f.nvregs += 1;
-                    translated.push(Inst::Const(args[0], a64));
+            Self::UnlinkAt(flags) => {
+                a.mov(X1, X0);
+                a.mov_imm(X0, AT_FDCWD);
+                a.mov_imm(X2, flags);
+                35
+            }
+            Self::TwoPathsAt(number) => {
+                a.mov(X3, X1);
+                a.mov(X1, X0);
+                a.mov_imm(X0, AT_FDCWD);
+                a.mov(X2, X0);
+                a.mov_imm(X4, 0);
+                number
+            }
+            Self::SymlinkAt => {
+                a.mov(X2, X1);
+                a.mov_imm(X1, AT_FDCWD);
+                36
+            }
+            Self::OpenAt { has_dirfd } => {
+                if !has_dirfd {
+                    a.mov(X3, X2);
+                    a.mov(X2, X1);
+                    a.mov(X1, X0);
+                    a.mov_imm(X0, AT_FDCWD);
                 }
-                translated.push(inst);
+                Self::open_flags(a);
+                56
             }
-            block.insts = translated;
+        };
+        // Linux AArch64 kernel ABI: x8 = number, x0..x5 = arguments.
+        a.mov_imm(X8, number);
+        a.svc();
+    }
+
+    fn open_flags(a: &mut Asm) {
+        // asm-generic/fcntl.h (x86-64) and arm64's asm/fcntl.h swap these pairs.
+        const DIRECT_LARGEFILE: i64 = 0o140000;
+        const DIRECTORY_NOFOLLOW: i64 = 0o600000;
+        a.mov_imm(X6, DIRECT_LARGEFILE);
+        a.and_reg(X6, X2, X6);
+        a.lsl_imm(X6, X6, 2);
+        a.mov_imm(X7, DIRECTORY_NOFOLLOW);
+        a.and_reg(X7, X2, X7);
+        a.lsr_imm(X7, X7, 2);
+        a.orr_reg(X6, X6, X7);
+        a.mov_imm(X7, !(DIRECT_LARGEFILE | DIRECTORY_NOFOLLOW));
+        a.and_reg(X2, X2, X7);
+        a.orr_reg(X2, X2, X6);
+    }
+}
+
+fn syscall_constants(f: &IrFunc) -> Vec<Option<i64>> {
+    if !f
+        .blocks
+        .iter()
+        .flat_map(|b| &b.insts)
+        .any(|i| matches!(i, Inst::Syscall(..)))
+    {
+        return Vec::new();
+    }
+    // A runtime number could accidentally invoke a different AArch64 syscall.
+    let mut defined = vec![false; f.nvregs];
+    let mut constants = vec![None; f.nvregs];
+    defined[..f.nparams].fill(true);
+    for inst in f.blocks.iter().flat_map(|b| &b.insts) {
+        if let Some(d) = crate::opt::def(inst) {
+            constants[d] = match inst {
+                Inst::Const(_, n) if !defined[d] => Some(*n),
+                _ => None,
+            };
+            defined[d] = true;
+        }
+    }
+    constants
+}
+
+pub fn validate_syscalls(ir: &IrProgram) -> Result<(), String> {
+    for f in &ir.funcs {
+        let constants = syscall_constants(f);
+        for inst in f.blocks.iter().flat_map(|b| &b.insts) {
+            if let Inst::Syscall(_, args) = inst {
+                let number = constants[args[0]];
+                if number.and_then(LinuxSyscall::from_x64).is_none() {
+                    let number =
+                        number.map_or_else(|| "dynamic number".to_string(), |n| n.to_string());
+                    return Err(format!(
+                        "raw system calls ({} in function '{}')",
+                        number, f.name
+                    ));
+                }
+            }
         }
     }
     Ok(())
-}
-
-fn linux_syscall_number(x64: i64) -> Option<i64> {
-    Some(match x64 {
-        // These Linux calls share argument layouts and return conventions on both targets.
-        0 => 63,    // read
-        1 => 64,    // write
-        3 => 57,    // close
-        41 => 198,  // socket
-        42 => 203,  // connect
-        43 => 202,  // accept
-        44 => 206,  // sendto
-        49 => 200,  // bind
-        50 => 201,  // listen
-        51 => 204,  // getsockname
-        52 => 205,  // getpeername
-        54 => 208,  // setsockopt
-        228 => 113, // clock_gettime
-        271 => 73,  // ppoll
-        _ => return None,
-    })
 }
 
 pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
@@ -685,8 +783,11 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     let l_panic: Vec<usize> = (0..PANIC_MSGS.len()).map(|_| a.label()).collect();
     let l_funcs: Vec<usize> = ir.funcs.iter().map(|_| a.label()).collect();
 
-    // _start: main(); exit(0)
+    // _start: expose the initial Linux stack for std.io and std.env.
     a.bind(l_start);
+    a.mov_imm(X0, G + G_USER);
+    a.mov_sp(X1, SP);
+    a.str_i(X1, X0, 0);
     a.mov_imm(X17, 0);
     a.bl(l_funcs[ir.main]);
     if debug_alloc {
@@ -1238,6 +1339,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         l
     };
     for (fi, f) in ir.funcs.iter().enumerate() {
+        let constants = syscall_constants(f);
         let (sf, flocs) = strip_locs(f);
         let f = &sf;
         let mut stubs: Vec<(usize, usize, u32)> = vec![];
@@ -1267,16 +1369,21 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                 match ins {
                     Inst::Loc(_) => {}
                     Inst::Sel(..) => unreachable!("x86-64 if-conversion only"),
-                    Inst::Thread(..) | Inst::Atomic(..) | Inst::Global(..) => {
+                    Inst::Thread(..) | Inst::Atomic(..) => {
                         unreachable!("rejected by os_intrinsics_error")
                     }
+                    Inst::Global(d, n) => {
+                        a.mov_imm(X0, G + G_USER + 8 * *n as i64);
+                        a.str(X0, SP, slot(*d));
+                    }
                     Inst::Syscall(d, args) => {
-                        // Linux AArch64 kernel ABI: x8 = number, x0..x5 = arguments.
-                        a.ldr(X8, SP, slot(args[0]));
                         for (reg, arg) in [X0, X1, X2, X3, X4, X5].into_iter().zip(&args[1..]) {
                             a.ldr(reg, SP, slot(*arg));
                         }
-                        a.svc();
+                        constants[args[0]]
+                            .and_then(LinuxSyscall::from_x64)
+                            .expect("validated Linux syscall")
+                            .emit(&mut a);
                         a.str(X0, SP, slot(*d));
                     }
                     Inst::Const(d, n) => {

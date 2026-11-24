@@ -85,18 +85,22 @@ Pipeline: `AST -> Yerux IR -> machine code -> executable file`.
   after the bounds check), so a borrowed `l.at(i)` never dangles when another argument grows the list.
 - `tests/fuzz.py --agg` differential-fuzzes String/List programs (and checks `live: 0`).
 
-## Done (aarch64 Linux, core IR coverage)
+## AArch64 Linux
 - `a64.rs` supports the core IR instructions (`Slot/Load/Store/Lea/Copy/ListPush/ListGet/ListFree`,
   `Alloc/Free/MemCpy/Load8/Store8/PrintBytes/Check/CheckNonEmpty`), with the same panic messages and exit code 101.
   `--target aarch64 [--native-debug-alloc]`; the debug build prints `allocs/frees/live` on stderr and detects double frees.
 - Runtime allocator mirrors x64: size classes 2^4..2^16 with free lists, 1 MiB arenas, larger blocks own an mmap;
-  state lives in a zero-filled RW PT_LOAD at 0x600000. Syscalls: write 64, mmap 222, munmap 215, exit_group 94.
+  state lives in a zero-filled RW PT_LOAD at 0x600000.
+- Native programs can now use `std.io`, `std.fs`, `std.env`, `std.time` and blocking TCP through `std.net`.
+  See the [AArch64 system service coverage and limits](docs/BACKEND.md).
 - Still the simple model: every vreg in a stack slot, args on the stack, no register allocation, no optimisations
   beyond `opt.rs` (shared IR pass); `MemCpy` is a byte loop. Not run on real hardware, only emulated.
 - Verification: `tests/a64_emu.py` (Unicorn + capstone) runs every example/test the native backend accepts and checks
   stdout + exit code against `tests/expected` and stderr against the x86-64 build (`--debug-alloc` compares the
-  allocator counters too); `tests/a64_fuzz.py [--agg]` differential-fuzzes against x86-64. `tests/a64_all.sh` runs all
-  of it (not part of `run_all.sh`, it is slower). Needs `pip install unicorn capstone`.
+  allocator counters too). The system and socket fixtures use QEMU user-mode emulation and are also
+  part of `tests/run_all.sh` when `qemu-aarch64` is available. `tests/a64_all.sh` additionally runs the full
+  emulation corpus and `tests/a64_fuzz.py [--agg]` against x86-64. The Unicorn checks need
+  `pip install unicorn capstone`.
 
 ## Done (N2, range analysis)
 - `opt.rs` pass `rangeopt`: forward interval analysis over vregs (signed i64) with threshold widening at loop headers

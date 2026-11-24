@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Emulate `yerux --target aarch64` output and compare it with the goldens / the x86-64 backend.
 
-usage: python3 tests/a64_emu.py [--network] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
+usage: python3 tests/a64_emu.py [--network | --system] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
   default: every examples/*.yx and tests/*.yx that the native backend accepts (the e*.yx error programs are
   skipped). Per program the emulated aarch64 build must match tests/expected/<name>.out/.code (stdout, exit code)
-  and the x86-64 native build's stderr; every code word must also decode in capstone.
+  and the x86-64 native build's stderr. Unicorn fixtures also check instruction decoding in capstone.
   --network : run just the socket tests, using qemu-aarch64 for real Linux TCP.
+  --system : run the console, filesystem, environment, and time fixtures under qemu-aarch64.
   --debug-alloc : build with --native-debug-alloc and compare stderr (allocs/frees/live) with the x86-64 build.
-Needs: `cargo build --release` first. The socket tests need qemu-aarch64 on PATH.
+Needs: `cargo build --release` first. The system and socket tests need qemu-aarch64 on PATH.
 Other tests need `pip install unicorn capstone`."""
 import argparse, os, shutil, struct, subprocess, sys, tempfile
 from concurrent.futures import ProcessPoolExecutor
@@ -18,6 +19,15 @@ STACK = 0x7F000000
 MMAP_BASE = 0x10000000
 MAX_INSNS = 400_000_000
 NETWORK = ("net_errors", "net_hostile_address", "net_read_timeout", "net_timeouts")
+SYSTEM_EXAMPLES = ("21_mini_echo", "23_directory_inventory")
+SYSTEM_TESTS = (
+    "chain_temps", "env_basic", "env_set", "fs_autoclose", "fs_basic", "fs_buffered",
+    "fs_handles", "fs_links", "hostile_fs", "io_args", "io_basic", "io_exit", "io_exit_drop",
+    "io_exit_skips_drop", "io_stdin_all", "io_stdin_bad", "io_stdin_final_cr",
+    "io_stdin_lines", "native_linux_memory", "std_env_typed", "std_fs_metadata",
+    "std_kv", "std_kv_hostile", "std_log", "std_misc", "std_rand", "std_time_calendar",
+    "time_clock", "time_duration",
+)
 SHRINK = {"02_fast": ("100000000", "20000"), "own_deep_box_drop": ("return 1000000", "return 2000"), "own_deep_scc_drop": ("return 1000000", "return 2000"), "own_deep_closure_drop": ("return 1000000", "return 2000")}  # loops too long for emulation
 
 
@@ -126,12 +136,26 @@ def build(src, exe, extra):
     return subprocess.run([YERUX, "build", src, "--native", "-o", exe] + extra, capture_output=True)
 
 
+def run_binary(command, src, timeout):
+    name = os.path.basename(src)[:-3]
+    fixture = os.path.join(ROOT, "tests", name)
+    av = []
+    if os.path.isfile(fixture + ".args"):
+        with open(fixture + ".args", encoding="utf-8", newline="\n") as args:
+            av = [line.removesuffix("\n") for line in args]
+    env = dict(os.environ, YX_IO_TEST="hello_env")
+    stdin = fixture + ".stdin"
+    with open(stdin if os.path.isfile(stdin) else os.devnull, "rb") as stream:
+        return subprocess.run(command + av, capture_output=True, cwd=ROOT, env=env,
+                              stdin=stream, timeout=timeout)
+
+
 def run_x64(src, tmp, extra):
     exe = os.path.join(tmp, "x64.bin")
     p = build(src, exe, extra)
     if p.returncode != 0:
         return None
-    r = subprocess.run([exe], capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
+    r = run_binary([exe], src, 120)
     return r.returncode, r.stdout, r.stderr
 
 
@@ -143,7 +167,7 @@ def a64_run(src, tmp, extra, check_decode=True, qemu=None):
         return None, b"", p.stderr, "aarch64 build failed: " + p.stderr.decode(errors="replace")[:300], None
     if qemu:
         try:
-            r = subprocess.run([qemu, path], capture_output=True, stdin=subprocess.DEVNULL, timeout=45)
+            r = run_binary([qemu, path], src, 45)
         except subprocess.TimeoutExpired:
             return None, b"", b"", "QEMU timed out", None
         return r.returncode, r.stdout, r.stderr, None, None
@@ -159,9 +183,9 @@ def a64_run(src, tmp, extra, check_decode=True, qemu=None):
 def check_one(args):
     f, debug = args
     name = os.path.basename(f)[:-3]
-    network = name in NETWORK
-    qemu = shutil.which("qemu-aarch64") if network else None
-    if network and qemu is None:
+    needs_qemu = name in NETWORK or name in SYSTEM_EXAMPLES or name in SYSTEM_TESTS
+    qemu = shutil.which("qemu-aarch64") if needs_qemu else None
+    if needs_qemu and qemu is None:
         return f, "SKIP", "qemu-aarch64 unavailable"
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(ROOT, f)
@@ -172,12 +196,12 @@ def check_one(args):
         extra = ["--native-debug-alloc"] if debug else []
         x = run_x64(src, tmp, extra)
         if x is None:
-            if network:
+            if needs_qemu:
                 return f, "FAIL", "x86-64 build failed"
             return f, "SKIP", "native backend rejects it"
         ec, so, se, err, rep = a64_run(src, tmp, extra, qemu=qemu)
         xc, xo, xe = x
-        if err and not network and "is not supported on the aarch64 target yet" in err:
+        if err and not needs_qemu and "is not supported on the aarch64 target yet" in err:
             return f, "SKIP", "aarch64 target rejects it (documented limitation)"
         if err:
             return f, "FAIL", err
@@ -199,7 +223,7 @@ def check_one(args):
         if ec != gold_c: why.append(f"exit {ec} != {gold_c}")
         if so != gold_o: why.append("stdout differs")
         if se != xe: why.append(f"stderr differs: a64={se[:80]!r} x64={xe[:80]!r}")
-        if network and (xo, xc) != (gold_o, gold_c):
+        if needs_qemu and (xo, xc) != (gold_o, gold_c):
             why.append("x86-64 differs from golden")
         return f, ("FAIL" if why else "PASS"), "; ".join(why) or detail
 
@@ -207,12 +231,21 @@ def check_one(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
-    ap.add_argument("--network", action="store_true", help="run socket tests under QEMU")
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument("--network", action="store_true", help="run socket tests under QEMU")
+    group.add_argument("--system", action="store_true", help="run system service tests under QEMU")
     ap.add_argument("--debug-alloc", action="store_true")
     ap.add_argument("-j", type=int, default=os.cpu_count() or 4)
     ap.add_argument("-k", default="")
     a = ap.parse_args()
-    files = [f"tests/{name}.yx" for name in NETWORK] if a.network else a.files
+    selected = a.network or a.system
+    if a.network:
+        files = [f"tests/{name}.yx" for name in NETWORK]
+    elif a.system:
+        files = [f"examples/{name}.yx" for name in SYSTEM_EXAMPLES]
+        files.extend(f"tests/{name}.yx" for name in SYSTEM_TESTS)
+    else:
+        files = a.files
     if not files:
         for d in ("examples", "tests"):
             for fn in sorted(os.listdir(os.path.join(ROOT, d))):
@@ -223,7 +256,7 @@ def main():
         res = list(ex.map(check_one, [(f, a.debug_alloc) for f in files]))
     fails = 0
     for f, st, msg in res:
-        if st != "SKIP" or a.network:
+        if st != "SKIP" or selected:
             print(f"{st:5} {f}: {msg}")
         fails += st == "FAIL"
     cnt = {s: sum(1 for r in res if r[1] == s) for s in ("PASS", "FAIL", "SKIP")}
