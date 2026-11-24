@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end smoke tests for the Linux x86-64 dynamic ELF import path.
+# Smoke tests for Linux dynamic ELF imports and Windows target diagnostics.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -20,14 +20,18 @@ true
 EOF
 cmp "$TMP/want" "$TMP/out"
 
-# Until those native ABIs exist, both targets must stop with an explicit diagnostic.
-for target in aarch64 windows; do
-  if "$Y" build tests/ffi_basic.yx --native --target "$target" -o "$TMP/unsupported" >"$TMP/unsupported.log" 2>&1; then
-    echo "ffi_native: expected $target extern rejection" >&2
-    exit 1
-  fi
-  grep -q "extern C is not supported on the $target target yet" "$TMP/unsupported.log"
-done
+# The AArch64 image uses its own interpreter and ABI. Execution is covered
+# by the QEMU FFI fixture group in tests/a64_emu.py.
+"$Y" build tests/ffi_basic.yx --target aarch64 -o "$TMP/ffi_a64"
+readelf -h "$TMP/ffi_a64" | grep -q 'Machine:.*AArch64'
+readelf -lW "$TMP/ffi_a64" | grep -q 'Requesting program interpreter: /lib/ld-linux-aarch64.so.1'
+readelf -lW "$TMP/ffi_a64" | awk '$1 == "LOAD" { n++; if ($0 ~ /RWE|RWX/) bad=1 } END { exit (n == 2 && !bad) ? 0 : 1 }'
+
+if "$Y" build tests/ffi_basic.yx --native --target windows -o "$TMP/unsupported" >"$TMP/unsupported.log" 2>&1; then
+  echo "ffi_native: expected Windows extern rejection" >&2
+  exit 1
+fi
+grep -q "extern C is not supported on the windows target yet" "$TMP/unsupported.log"
 
 cat >"$TMP/write.yx" <<'EOF'
 extern "C" {
@@ -146,11 +150,9 @@ cmp "$TMP/want" "$TMP/out_c"
 "$TMP/fv_c" >"$TMP/fv_c.out"
 "$TMP/fv_n" >"$TMP/fv_n.out"
 cmp "$TMP/fv_c.out" "$TMP/fv_n.out"
-for target in aarch64 windows; do
-  if "$Y" build tests/ffi_variadic.yx --native --target "$target" -o "$TMP/unsupported" >"$TMP/unsupported.log" 2>&1; then
-    echo "ffi_native: expected $target variadic extern rejection" >&2
-    exit 1
-  fi
-  grep -q "extern C is not supported on the $target target yet" "$TMP/unsupported.log"
-done
+if "$Y" build tests/ffi_variadic.yx --native --target windows -o "$TMP/unsupported" >"$TMP/unsupported.log" 2>&1; then
+  echo "ffi_native: expected Windows variadic extern rejection" >&2
+  exit 1
+fi
+grep -q "extern C is not supported on the windows target yet" "$TMP/unsupported.log"
 echo "ffi_native: libc/libm, custom shared library and variadic calls passed"
