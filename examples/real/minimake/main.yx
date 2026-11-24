@@ -1,0 +1,5 @@
+import engine
+
+fn main() {
+  engine.run()
+}

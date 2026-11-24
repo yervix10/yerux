@@ -117,6 +117,7 @@ AUX=(
   "sumtool|bash tests/sumtool.sh"
   "datatool|bash tests/datatool.sh"
   "minimake_errors|bash tests/minimake_errors.sh"
+  "minimake_graph|bash tests/minimake_graph.sh"
   "yxscan|bash tests/yxscan.sh"
   "io_targets|bash tests/io_targets.sh"
   "a64_net|python3 tests/a64_emu.py --network -j 1"

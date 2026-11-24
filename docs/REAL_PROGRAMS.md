@@ -87,8 +87,9 @@ Frictions and their resolution (1.0 freeze round):
    fast path for integers only.
 2. `Char.from_int(n)` panics on invalid scalars; use `Char.is_valid(n)` first. **Final** (checked conversion
    style, like `Int<lo..hi>.from`).
-3. A top-level `fn` cannot be passed by name as a `fn` value (`sort.stable_by(l, compare)` fails); wrap it:
-   `|a, b| compare(a, b)`. **Open, language gap** (not a 1.0 blocker: a closure is the workaround).
+3. **Closed.** `sort.stable_by(l, compare)` accepts a named comparator with a concrete signature.
+   Generic calls now also infer the type of an argument such as `identity(compare)`, including
+   module-qualified functions. [Regression test](../tests/named_fn_sort.yx).
 4. `Result::unwrap` needs `E: Show`. **Final:** the diagnostic already says `add impl Show for E`.
 5. `assert_eq` rejected `String`. **Fixed:** `assert_eq` is now `assert(a == b)` checked like any `==`, so
    numbers, Bool and String/Text variables or literals work, and other types get the precise `==`
@@ -134,3 +135,31 @@ Open (no fix; minimal repros):
 Figures: 435 lines of datatool, 1 library defect fixed, 6 open findings (2 of
 them silent wrong results with regex), 4 golden cases, 2 oracles and 14 error
 checks, 3000-row oracle file, both backends identical.
+
+## minimake
+
+[minimake](../examples/real/minimake/main.yx) reads a Makefile, visits prerequisites
+depth first, memoizes completed targets per pass, and detects back edges as cycles.
+It compares `std.fs.metadata` timestamps after visiting the prerequisites and runs
+each recipe line through `std.process`. The original `examples/real/minimake.yx`
+entry loads the same engine.
+
+- A declared phony prerequisite now forces the dependent to rebuild, even when
+  a file has the phony name. A declaration alone is enough. A successful rule
+  that leaves its output absent also forces a rebuild.
+- Metadata distinguishes a missing path from an error. A symlink loop now
+  reports the filesystem error, and negative timestamps remain valid.
+- The parser accepts tabs between prerequisites and handles `NAME := value`.
+  Duplicate rules and a missing `-f` argument now get specific diagnostics.
+- Arguments require UTF-8 so a malformed filename cannot resolve to another
+  file whose name contains `?`.
+- Accessing an owned `String` in `Map<String, String>` requires
+  `m.vals.at(m.find(key))` after checking the index because `Map.get` requires
+  `Copy`. For example, `vars.get("CC")` fails when `vars` has that type.
+  The engine uses one lookup and borrows the value in place.
+
+The supported Makefile subset evaluates both variable assignment forms once, in
+file order. It supports one rule per target and uses a new shell for each recipe
+line. The [graph tests](../tests/minimake_graph.sh) verify stdout, stderr and
+status on C and native, including an older, newer and equal prerequisite mtime,
+a shared prerequisite, phony prerequisites, cycle and invalid inputs.
