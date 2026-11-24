@@ -1,0 +1,9 @@
+error: cannot use 'o': it was already moved
+ --> tests/e1529_option_unwrap_then_use.yx:5:9
+  |
+5 |   print(o.is_some())
+  |         ^
+  = 'o' was moved on line 4
+  = help: if the function only needs to read it, declare that parameter as `view` and it won't be moved
+
+1 error(s). Nothing was generated.

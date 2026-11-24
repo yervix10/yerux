@@ -1,0 +1,8 @@
+error: expected Int but this is String
+ --> tests/e1533_option_payload_type.yx:3:36
+  |
+3 |   let o: Option<Int> = Option.Some(String.from("a"))
+  |                                    ^^^^^^^^^^^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+1 error(s). Nothing was generated.

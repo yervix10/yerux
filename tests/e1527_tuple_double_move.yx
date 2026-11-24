@@ -1,0 +1,6 @@
+// The same owned value cannot be moved twice in one tuple literal.
+fn main() {
+  let s = String.from("a")
+  let pair = (move s, move s)
+  print(pair.1)
+}

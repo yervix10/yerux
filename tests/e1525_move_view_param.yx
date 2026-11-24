@@ -1,0 +1,6 @@
+// A `view` parameter only borrows its value, so it cannot be moved (or returned) as an owner.
+fn steal(s: view String) -> String {
+  return move s
+}
+
+fn main() { }

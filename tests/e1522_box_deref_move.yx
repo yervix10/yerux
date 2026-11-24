@@ -1,0 +1,6 @@
+// Dereferencing a Box is a place, not a move: taking the owned value out needs `take()`.
+fn main() {
+  let b = Box.new(String.from("a"))
+  let s = *b
+  print(s)
+}

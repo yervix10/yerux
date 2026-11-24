@@ -1,0 +1,5 @@
+// The payload type of Option.Some must match the annotated Option<T>.
+fn main() {
+  let o: Option<Int> = Option.Some(String.from("a"))
+  print(o.is_some())
+}

@@ -1,0 +1,9 @@
+// `for x in move xs` consumes the list, so `xs` cannot be used after the loop.
+fn main() {
+  var xs = List<String>.new()
+  xs.push(String.from("a"))
+  for x in move xs {
+    print(x)
+  }
+  print(xs.len())
+}

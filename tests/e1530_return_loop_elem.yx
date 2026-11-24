@@ -1,0 +1,9 @@
+// A `for` loop variable borrows the element: it cannot be returned as an owner.
+fn first(xs: view List<String>) -> String {
+  for x in xs {
+    return x
+  }
+  return String.new()
+}
+
+fn main() { }

@@ -1,0 +1,8 @@
+error: cannot move '*b' out of its Box
+ --> tests/e1522_box_deref_move.yx:4:11
+  |
+4 |   let s = *b
+  |           ^^
+  = help: `b.take()` moves the value out and frees the Box; or borrow it (`b.get().len()`, or pass `b.get()` to a `view`/`mut` parameter)
+
+1 error(s). Nothing was generated.

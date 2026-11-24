@@ -1,0 +1,9 @@
+// A field of an owned list element is borrowed, not moved out of the element.
+struct Item { name: String }
+
+fn main() {
+  var xs = List<Item>.new()
+  xs.push(Item { name: String.from("a") })
+  let n = xs.at(0).name
+  print(n)
+}
