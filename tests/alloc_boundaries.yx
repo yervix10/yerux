@@ -1,0 +1,69 @@
+// Allocator boundaries on safe collections: lengths around every power-of-two size class (block = 8-byte header +
+// payload), around the 64 KiB small/large split and the 1 MiB arena size; blocks of many sizes live side by side,
+// are checked for overlap, freed in a scrambled order, re-allocated from the free lists and checked again.
+fn fill(l: mut List<UInt8>, n: Int, seed: Int) {
+  for i in 0..n { l.push(((i * 7 + seed) % 251).to_uint8()) }
+}
+
+fn intact(l: view List<UInt8>, n: Int, seed: Int) -> Bool {
+  if l.len() != n { return false }
+  for i in 0..n {
+    if l.get(i).to_int() != (i * 7 + seed) % 251 { return false }
+  }
+  return true
+}
+
+fn sizes() -> List<Int> {
+  var s = List<Int>.new()
+  s.push(0)
+  s.push(1)
+  var k = 4
+  while k <= 20 {
+    var pow = 1
+    for _ in 0..k { pow = pow * 2 }
+    s.push(pow - 9)
+    s.push(pow - 8)
+    s.push(pow - 7)
+    s.push(pow)
+    s.push(pow + 1)
+    k = k + 1
+  }
+  s.push(65528)
+  s.push(65529)
+  s.push(65536)
+  s.push(1048576 - 8)
+  s.push(1048576 + 1)
+  s.push(3000000)
+  return s
+}
+
+fn main() {
+  let sz = sizes()
+  var blocks = List<List<UInt8>>.new()
+  var bad = 0
+  for round in 0..2 {
+    for i in 0..sz.len() {
+      var b = List<UInt8>.new()
+      fill(b, sz.get(i), i + round)
+      blocks.push(move b)
+    }
+    for i in 0..blocks.len() {
+      if !intact(blocks.at(i), sz.get(i), i + round) { bad = bad + 1 }
+    }
+    // free every third block, then every other one of the rest, then allocate again over the holes
+    var keep = List<List<UInt8>>.new()
+    while blocks.len() > 0 {
+      let idx = blocks.len() - 1
+      let b = blocks.pop()
+      if idx % 3 != 0 { keep.push(move b) }
+    }
+    blocks = move keep
+    blocks.clear()
+  }
+  print("bad {bad}")
+  var s = String.new()
+  for i in 0..100000 { s.push_char('x') }
+  print(s.len())
+  var empty = List<Int>.new()
+  print(empty.len())
+}

@@ -37,7 +37,7 @@ A feature not mentioned in this document is **Experimental** by default.
 | Modules, `import`, `pub`, packages (SPEC 6, PACKAGES.md) | Stable-candidate | tests/mod_ok, tests/mod_err, tests/packages.sh |
 | Concurrency: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, channels, pools (SPEC 5) | Experimental | tests/conc_*.yx, tests/concurrency*.yx |
 | Raw runtime intrinsics `__thread_*`, `__atomic_*`, `__futex_*` | Internal | SPEC 5.6 |
-| FFI: `extern "C"`, `link`, variadic calls, `Ptr<T>` (SPEC 7) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx |
+| FFI: `extern "C"`, `link`, variadic calls, `Ptr<T>` (SPEC 7) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx |
 | `const` items and `comptime` expressions (SPEC 8.1-8.2) | Stable-candidate | tests/comptime_basic.yx, tests/const_item_basic.yx |
 | `comptime fn`, `comptime for/if`, reflection, comptime allocators | Not yet available | SPEC 10 |
 | Module objects `.yxo` (`yerux obj`) | Experimental | tests/modobj.sh |
@@ -80,6 +80,7 @@ risk of the area, not the amount of code.
 | `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable-candidate | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |
 | `std.process` | Experimental | docs/STDLIB_PROCESS.md; tests/process_*.yx |
 | `std.net`, `std.http` | Experimental | docs/NET.md, docs/HTTP.md; tests/net_loopback.yx, tests/std_http_client.yx |
+| `std.http.server` (HTTP/1.1 server, router, worker pool; Linux x86-64 native and C backend) | Experimental | docs/NET.md; tests/http_server/parse.yx, tests/http_server_loopback.yx, tests/http_server_fuzz.yx, examples/real/webkv |
 | `std.sync` | Experimental | spinning primitives, docs/STDLIB_SYNC.md; tests/std_sync.yx |
 | `std.log` | Stable-candidate | tests/std_log.yx |
 | `std.kv` | Experimental | single-writer store, docs/STDLIB_KV.md; tests/std_kv.yx |
@@ -159,8 +160,8 @@ alias with deprecation, or document as intended) before the item it touches beco
    tests/sort_api_names.yx; STDLIB.md `std.sort`.
 3. **Two lock APIs.** *Resolved (documented as final).* `Locked<T>` is the primitive and uses methods
    (`with`, `with_view`, `take`); `Mutex<T>` is its named facade and uses free functions (`mutex_update`,
-   `mutex_with`, `mutex_with_view`), because generic methods with their own type parameters are not available
-   yet. `with_view`/`mutex_with_view` give a read-only view under the same exclusive lock as `with`
+   `mutex_with`, `mutex_with_view`). Since generic methods exist, `Mutex<T>` also has the methods `update`, `with`
+   and `with_view` (tests/mutex_methods.yx); the free functions stay as aliases (not deprecated, no break). `with_view`/`mutex_with_view` give a read-only view under the same exclusive lock as `with`
    (final, no rename); shared reads are `RwLock` (`rwlock_read`). Test: tests/conc_freeze_api.yx.
 4. **Channel and thread constructors.** *Resolved (documented as final).* The frozen forms are the implemented
    ones: `Sender<T>.bounded(n)` / `.unbounded()`, `thread_pool_new(n)`, `JoinHandle<T>`, `spawn move`.
@@ -168,9 +169,10 @@ alias with deprecation, or document as intended) before the item it touches beco
    the surface (banner in CONCURRENCY.md).
 5. **`ok_or` is a free function** (`ok_or(opt, e)`), while `context` and `ok` are methods on the same
    types. Either add the method form or document the difference as final.
-   **Resolved:** both forms. `opt.ok_or("msg")` is a method returning `Result<T, String>` (methods cannot
-   be generic yet, so it mirrors `context`); the free function `ok_or(opt, e)` stays for any error type
-   and is final. Test: tests/option_ok_or_method.yx; STDLIB.md.
+   **Resolved:** `opt.ok_or("msg")` stays a method returning `Result<T, String>`: generic methods now exist, but
+   making `E` generic would turn `opt.ok_or("msg")` into `Result<T, Text>` and break code annotated with `String`, so
+   the compatibility rule wins. Any error type: `opt.ok_or_else(|| e)` (method, lazy) or the free function
+   `ok_or(opt, e)`. Tests: tests/option_ok_or_method.yx, tests/option_result_methods.yx; STDLIB.md.
 6. **Resolved — Module-level free functions vs methods.** Keep both forms. A module function is
    called through its module alias and takes all arguments explicitly. A method is declared on its
    receiver type or through a trait. See [STDLIB.md](STDLIB.md), `tests/std_free_functions.yx` and
@@ -223,7 +225,8 @@ Experimental.
 | Fixed-size arrays `[T; N]`, slices `view [T]` / `mut [T]`, `chunks`, `windows`, `split_at_mut` | Stable-candidate | tests/slice_basic.yx, tests/slice_chunks.yx, tests/arr_const.yx, tests/comptime_arrays.yx, tests/range_array_loops.yx |
 | Sized integers, checked conversions `to_int8()` etc., wrapping ops, Float semantics and shortest printing (Numbers) | Stable-candidate | tests/num_sized.yx, tests/num_float_basic.yx, tests/num_panic_conv.yx, tests/num_math.yx |
 | Generics by monomorphisation, inference, bounds, generic `impl` blocks (Generics) | Stable-candidate | tests/gen_basic.yx, tests/gen_owned.yx, tests/gen_traits.yx, tests/gen_methods.yx, tests/mod_ok/generic_impls, tests/derive_basic.yx |
-| Explicit type arguments on calls, generic methods, default type arguments (Generics: "not yet") | Not yet available | listed as not implemented in SPEC.md |
+| Explicit type arguments on calls (`f<Int>(x)`) | Stable-candidate | tests/generic_explicit_args.yx, tests/e1518_explicit_type_args.yx |
+| Generic methods, default type arguments (Generics: "not yet") | Not yet available | listed as not implemented in SPEC.md |
 | Traits, `Box<dyn Trait>`, built-in traits `Equal`/`Ordered`/`Show`/`Hash`/`Copy` (Traits) | Stable-candidate | tests/dyn_shapes.yx, tests/dyn_handlers.yx, tests/dyn_call_order.yx, tests/mod_ok/dyn |
 | `Box<T>` and recursive types; iterative release of box chains (Box) | Stable-candidate | 27 tests use `Box<`; release of deep chains: tests/drop_flow.yx, tests/drop_generic.yx. Mutual recursion through `dyn` and join handles: Experimental (SPEC.md says not iterative) |
 | `match`: patterns, guards, ranges, or-patterns, exhaustiveness (Match, Enums and match) | Stable-candidate | tests/match_move_option_tuple.yx, tests/match_temp_text_arg.yx, tests/e772_range_match_not_exhaustive.yx, tests/e785_range_match_wildcard.yx |
@@ -241,7 +244,7 @@ Experimental.
 | Imports with `as`, `<root>` lookup (Modules) | Stable-candidate | tests/mod_ok/shadow_module, tests/modules.sh; the lookup root is in conflict (section 10) |
 | `std.io` and the system modules, `std.process`, `std.fs` (Standard I/O, Standard-library modules) | Stable-candidate for `std.io`/`std.fs`, Experimental for `std.process` | tests/io_*.yx (15 files), tests/std_fs_metadata.yx, tests/process_*.yx; the root list of modules is shorter than STDLIB.md (section 10) |
 | Thread API: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, `parallel for` (Threads) | Experimental | tests/conc_*.yx, tests/concurrency*.yx, tests/e729-e745 |
-| FFI, `link`, `extern "C"`, variadics, `Ptr<T>` (C declarations) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/e40-e53 |
+| FFI, `link`, `extern "C"`, variadics, `Ptr<T>` (C declarations) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx, tests/e40-e53 |
 | Panic exit code 101 and messages (Panic) | Stable | tests/panic_list_slice_past_end.yx and the `panic_*` series |
 
 ## 10. Contradictions between docs/SPEC.md, the root SPEC.md and the other design documents
@@ -282,8 +285,9 @@ corrected text now states).
    `impl<T: Label> Label for Pair<T, T>`. The root text no longer restricts it to the library. Evidence:
    `tests/conf_generic_impl_user.yx` (prints `(i1, i2)`).
 10. **Explicit type arguments.** *Resolved.* They are accepted on the constructors (`Shared<Int>.new`,
-    `Locked<Int>.new`, `Atomic<Int>.new`), and not on calls: `id<Int>(3)` is an error. The Threads text now says
-    so. Evidence: `tests/conf_type_args_ctor.yx`, and the call error in `tests/spec_conformance.sh` (item 10).
+    `Locked<Int>.new`, `Atomic<Int>.new`) and on calls of generic functions (`id<Int>(3)`, `conv<Int, Bool>(x, f)`:
+    all type parameters, in order). Evidence: `tests/conf_type_args_ctor.yx`, `tests/generic_explicit_args.yx`,
+    the errors in `tests/e1518_explicit_type_args.yx`.
 11. **Thread handle retention.** *Resolved.* A standalone `spawn` statement is joined when its enclosing block
     exits; a spawn directly in the scope is joined at scope end. docs/SPEC.md 5.1 and docs/CONCURRENCY.md now
     say so. Evidence: `tests/conf_spawn_block_join.yx` (`after if 1`: the worker finished before the `if` block ended).

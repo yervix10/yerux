@@ -1,0 +1,97 @@
+// The webkv application: routes and handlers on top of std.http.server (the HTTP/1.1 parsing, keep-alive, limits,
+// worker threads and the ordered stop all live in the standard library).
+// Routes: GET/PUT/DELETE /kv/<key>   POST /incr/<key> (body = amount, default 1)   GET /stats   GET /health
+import std.http.server
+import store
+
+pub struct KvApp {
+  st: store.Store,
+  routes: server.Router,
+}
+
+pub fn new_app() -> KvApp {
+  var r = server.router()
+  r.add("GET", "/health", 1)
+  r.add("GET", "/stats", 2)
+  r.add("GET", "/kv/:key", 3)
+  r.add("PUT", "/kv/:key", 4)
+  r.add("DELETE", "/kv/:key", 5)
+  r.add("POST", "/incr/:key", 6)
+  return KvApp { st: store.new_store(), routes: move r }
+}
+
+fn valid_key(key: view String) -> Bool {
+  if key.is_empty() { return false }
+  for i in 0..key.len() {
+    let b = key.byte(i)
+    let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 45 || b == 46 || b == 95
+    if !ok { return false }
+  }
+  return true
+}
+
+fn text_reply(status: Int, body: Text) -> server.Response {
+  var b = String.from(body)
+  b.push_str("\n")
+  return server.text(status, b)
+}
+
+fn stats_json(st: view store.Stats) -> String {
+  var j = String.from("{{\"keys\":")
+  j.push_int(st.keys)
+  j.push_str(",\"reads\":")
+  j.push_int(st.reads)
+  j.push_str(",\"misses\":")
+  j.push_int(st.misses)
+  j.push_str(",\"writes\":")
+  j.push_int(st.writes)
+  j.push_str(",\"deletes\":")
+  j.push_int(st.deletes)
+  j.push_str("}}")
+  return j
+}
+
+impl server.Handler for KvApp {
+  fn handle(view self, req: view server.Request) -> server.Response {
+    let routed = self.routes.route(req)
+    match routed {
+      Found(m) => {
+        if m.id == 1 { return text_reply(200, "ok") }
+        if m.id == 2 { return server.json(200, stats_json(store.stats(self.st))) }
+        let key = server.param(m, "key").unwrap()
+        if !valid_key(key) { return text_reply(404, "no such route") }
+        if m.id == 3 {
+          match store.get(self.st, key) {
+            Some(v) => { return server.text(200, v) }
+            None => { return text_reply(404, "no such key") }
+          }
+        }
+        if m.id == 4 {
+          if store.put(self.st, key, req.body) { return text_reply(201, "created") }
+          return text_reply(200, "replaced")
+        }
+        if m.id == 5 {
+          if store.delete(self.st, key) { return server.empty(204) }
+          return text_reply(404, "no such key")
+        }
+        var by = 1
+        if !req.body.is_empty() && !req.body.trim().parse_int(by) { return text_reply(400, "amount is not an integer") }
+        match store.incr(self.st, key, by) {
+          Some(n) => {
+            var b = String.new()
+            b.push_int(n)
+            b.push_str("\n")
+            return server.text(200, b)
+          }
+          None => { return text_reply(400, "value is not an integer") }
+        }
+      }
+      MethodNotAllowed(allow) => {
+        var r = text_reply(405, "method not allowed")
+        server.add_header(r, "Allow", allow)
+        return r
+      }
+      NotFound => { return text_reply(404, "no such route") }
+    }
+  }
+}

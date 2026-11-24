@@ -1,0 +1,107 @@
+// rxdfa: a regex parser with two matchers, an NFA (leftmost-longest) and a lazily built DFA, checked against std.regex.
+//
+//   rxdfa is_match PATTERN TEXT   prints true or false (DFA, unanchored); exit 0
+//   rxdfa find PATTERN TEXT       prints "START END" for the leftmost-longest match, or "none"; exit 0 or 1 for none
+//   rxdfa diff N [SEED]           N generated cases compared with std.regex and the reference matcher
+//                                 exit 0 when all agree, 1 on the first disagreement
+//   exit 2 on usage errors and on an invalid pattern (the message gives the byte offset)
+import fuzz
+import parse
+import prog
+import std.args
+import std.io
+import std.text
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("rxdfa: {msg}")
+  io.exit(code)
+}
+
+// The parsed pattern, or a usage-style failure with status 2.
+fn compile_or_fail(pattern: view String) -> prog.Prog {
+  match parse.parse(pattern) {
+    Ok(re) => { return prog.compile(re) }
+    Err(e) => {
+      fail("invalid pattern '{pattern}': {e}", 2)
+      return prog.compile(parse.parse("a").unwrap())
+    }
+  }
+}
+
+fn cmd_is_match(p: view args.Parsed) -> Int {
+  let names = args.positionals(p)
+  if names.len() != 2 {
+    fail("usage: rxdfa is_match PATTERN TEXT", 2)
+  }
+  let pr = compile_or_fail(names.at(0))
+  var d = prog.new_dfa(pr, true)
+  let hit = prog.accepts(d, pr, names.at(1))
+  if hit {
+    print("true")
+    return 0
+  }
+  print("false")
+  return 0
+}
+
+fn cmd_find(p: view args.Parsed) -> Int {
+  let names = args.positionals(p)
+  if names.len() != 2 {
+    fail("usage: rxdfa find PATTERN TEXT", 2)
+  }
+  let pr = compile_or_fail(names.at(0))
+  let span = prog.search(pr, names.at(1))
+  if span.start < 0 {
+    print("none")
+    return 1
+  }
+  print("{span.start} {span.end}")
+  return 0
+}
+
+fn cmd_diff(p: view args.Parsed) -> Int {
+  let names = args.positionals(p)
+  if names.len() < 1 || names.len() > 2 {
+    fail("usage: rxdfa diff N [SEED]", 2)
+  }
+  let n = match text.parse_int(names.at(0)) {
+    Ok(v) => v
+    Err(e) => {
+      fail("bad count: {e}", 2)
+      return 2
+    }
+  }
+  var seed = 1
+  if names.len() == 2 {
+    seed = match text.parse_int(names.at(1)) {
+      Ok(v) => v
+      Err(e) => {
+        fail("bad seed: {e}", 2)
+        return 2
+      }
+    }
+  }
+  match fuzz.run(n, seed) {
+    Ok(count) => {
+      print("diff: {count} cases ok")
+      return 0
+    }
+    Err(e) => {
+      fail(e, 1)
+      return 1
+    }
+  }
+}
+
+fn main() {
+  let p = args.parse_process()
+  let cmd = p.subcommand.clone()
+  if cmd.eq("is_match") {
+    io.exit(cmd_is_match(p))
+  } else if cmd.eq("find") {
+    io.exit(cmd_find(p))
+  } else if cmd.eq("diff") {
+    io.exit(cmd_diff(p))
+  }
+  fail("usage: rxdfa is_match|find|diff ...", 2)
+}

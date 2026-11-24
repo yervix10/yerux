@@ -1,0 +1,129 @@
+// Unit tests: `yerux test examples/real/rxdfa/tests.yx`
+import fuzz
+import parse
+import prog
+import std.regex
+import std.text
+
+// Leftmost-longest span of `p` in `t` as "start end", or "none" (also "error" for an invalid pattern).
+fn span(p: view String, t: view String) -> String {
+  match parse.parse(p) {
+    Ok(re) => {
+      let pr = prog.compile(re)
+      let s = prog.search(pr, t)
+      if s.start < 0 {
+        return String.from("none")
+      }
+      var out = String.from("")
+      out.push_int(s.start)
+      out.push_str(" ")
+      out.push_int(s.end)
+      return out
+    }
+    Err(e) => { return String.from("error") }
+  }
+}
+
+// True when the DFA (unanchored) accepts `t`.
+fn found(p: view String, t: view String) -> Bool {
+  let re = parse.parse(p).unwrap()
+  let pr = prog.compile(re)
+  var d = prog.new_dfa(pr, true)
+  return prog.accepts(d, pr, t)
+}
+
+// True when the anchored DFA accepts all of `t`.
+fn whole(p: view String, t: view String) -> Bool {
+  let re = parse.parse(p).unwrap()
+  let pr = prog.compile(re)
+  var d = prog.new_dfa(pr, false)
+  return prog.accepts(d, pr, t)
+}
+
+test "literals, dot and escapes" {
+  assert(span("abc", "xxabcx").eq("2 5"))
+  assert(span("a.c", "abc").eq("0 3"))
+  assert(span("a\\.c", "abc").eq("none"))
+  assert(span("a\\.c", "a.c").eq("0 3"))
+  assert(span("a\\nb", "a\nb").eq("0 3"))
+  assert(span("\\(x\\)", "(x)").eq("0 3"))
+}
+
+test "repeats are greedy in the longest match" {
+  assert(span("ab*", "xabbbb").eq("1 6"))
+  assert(span("a+", "baaa").eq("1 4"))
+  assert(span("ca?", "ca").eq("0 2"))
+  assert(span("ca?", "c").eq("0 1"))
+  assert(span("(ab)+", "ababa").eq("0 4"))
+}
+
+test "alternation and groups" {
+  assert(span("cat|dog", "hotdog").eq("3 6"))
+  assert(span("(north|south)(east|west)", "southwest").eq("0 9"))
+  assert(span("x(a|ab)(c|bcd)", "xabcd").eq("0 5"))
+}
+
+test "classes and negation" {
+  assert(span("[a-c]+", "zzbcaz").eq("2 5"))
+  assert(span("[^a-c]+", "abcxyz").eq("3 6"))
+  assert(span("[]", "x").eq("error"))
+  assert(span("[ba]", "ab").eq("0 1"))
+  assert(span("[a-]", "-").eq("0 1"))
+}
+
+test "anchors" {
+  assert(span("^a", "ba").eq("none"))
+  assert(span("a$", "ab").eq("none"))
+  assert(span("^$", "").eq("0 0"))
+  assert(span("^(ab|a)$", "ab").eq("0 2"))
+  assert(found("^abc$", "abc"))
+  assert(!found("^abc$", "xabc"))
+}
+
+test "invalid patterns are reported with an offset" {
+  assert(span("a(b", "x").eq("error"))
+  assert(span("a)", "x").eq("error"))
+  assert(span("*a", "x").eq("error"))
+  assert(span("a\\", "x").eq("error"))
+  assert(span("[z-a]", "x").eq("error"))
+  match parse.parse("a(b") {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.eq("offset 3: unclosed group")) }
+  }
+}
+
+test "DFA accepts exactly what the reference does" {
+  assert(whole("(ab|c)*", "abcab"))
+  assert(!whole("(ab|c)*", "abca"))
+  assert(found("a.*z", "a and z"))
+  assert(!found("a.*z", "a and y"))
+  assert(whole("", ""))
+  assert(!whole("", "x"))
+}
+
+test "a DFA that has seen many inputs keeps its states consistent" {
+  let re = parse.parse("(a|b)*abb").unwrap()
+  let pr = prog.compile(re)
+  var d = prog.new_dfa(pr, true)
+  assert(prog.accepts(d, pr, "babb"))
+  assert(!prog.accepts(d, pr, "baba"))
+  assert(prog.accepts(d, pr, "aaabb abb"))
+  assert(prog.states(d) > 1)
+}
+
+test "oracle agrees on the fixed cases" {
+  let cases = ["a+b", "^x*$", "(a|bc)+", "[^a]b?", "a.b"]
+  let texts = ["", "aab", "xxx", "bcbca", "a.b"]
+  for p in cases {
+    for t in texts {
+      assert(regex.is_match(p, t) == found(p, t))
+    }
+  }
+}
+
+test "generated cases agree with std.regex" {
+  match fuzz.run(300, 11) {
+    Ok(n) => { assert(n == 300) }
+    Err(e) => { assert(false) }
+  }
+}

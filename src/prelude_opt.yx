@@ -85,6 +85,82 @@ impl<T> Option<T> {
         }
     }
 
+    // Methods with type parameters of their own (`map<U>`): the closure's result type is inferred.
+    // The value inside, transformed; None stays None.
+    fn map<U>(self, f: view fn(T) -> U) -> Option<U> {
+        match move self {
+            Some(v) => {
+                return Option.Some(f(move v))
+            }
+            None => {
+                return Option.None
+            }
+        }
+    }
+
+    // `f` applied to the value; the result is itself an Option (None stays None).
+    fn and_then<U>(self, f: view fn(T) -> Option<U>) -> Option<U> {
+        match move self {
+            Some(v) => {
+                return f(move v)
+            }
+            None => {
+                return Option.None
+            }
+        }
+    }
+
+    // The value, or what `f` makes when there is none.
+    fn unwrap_or_else(self, f: view fn() -> T) -> T {
+        match move self {
+            Some(v) => {
+                return v
+            }
+            None => {
+                return f()
+            }
+        }
+    }
+
+    // `self` when it has a value that `f` accepts, else None.
+    fn filter(self, f: view fn(view T) -> Bool) -> Option<T> {
+        match move self {
+            Some(v) => {
+                if f(v) {
+                    return Option.Some(move v)
+                }
+                return Option.None
+            }
+            None => {
+                return Option.None
+            }
+        }
+    }
+
+    // True when there is a value and `f` accepts it.
+    fn is_some_and(view self, f: view fn(view T) -> Bool) -> Bool {
+        match self {
+            Some(v) => {
+                return f(v)
+            }
+            None => {
+                return false
+            }
+        }
+    }
+
+    // Some(v) becomes Ok(v), None becomes Err(f()).
+    fn ok_or_else<E>(self, f: view fn() -> E) -> Result<T, E> {
+        match move self {
+            Some(v) => {
+                return Result.Ok(move v)
+            }
+            None => {
+                return Result.Err(f())
+            }
+        }
+    }
+
     // `self` if it has a value, else `other`.
     fn or(self, other: Option<T>) -> Option<T> {
         match move self {
@@ -164,6 +240,78 @@ impl<T, E> Result<T, E> {
             }
             Err(_) => {
                 return d
+            }
+        }
+    }
+
+    // The success value, transformed; an error stays as it is.
+    fn map<U>(self, f: view fn(T) -> U) -> Result<U, E> {
+        match move self {
+            Ok(v) => {
+                return Result.Ok(f(move v))
+            }
+            Err(e) => {
+                return Result.Err(move e)
+            }
+        }
+    }
+
+    // The error, transformed; a success stays as it is.
+    fn map_err<F>(self, f: view fn(E) -> F) -> Result<T, F> {
+        match move self {
+            Ok(v) => {
+                return Result.Ok(move v)
+            }
+            Err(e) => {
+                return Result.Err(f(move e))
+            }
+        }
+    }
+
+    // `f` applied to the success value; the result is itself a Result with the same error type.
+    fn and_then<U>(self, f: view fn(T) -> Result<U, E>) -> Result<U, E> {
+        match move self {
+            Ok(v) => {
+                return f(move v)
+            }
+            Err(e) => {
+                return Result.Err(move e)
+            }
+        }
+    }
+
+    // The success value, or what `f` makes from the error.
+    fn unwrap_or_else(self, f: view fn(E) -> T) -> T {
+        match move self {
+            Ok(v) => {
+                return v
+            }
+            Err(e) => {
+                return f(move e)
+            }
+        }
+    }
+
+    // True when it is a success that `f` accepts.
+    fn is_ok_and(view self, f: view fn(view T) -> Bool) -> Bool {
+        match self {
+            Ok(v) => {
+                return f(v)
+            }
+            Err(_) => {
+                return false
+            }
+        }
+    }
+
+    // True when it is an error that `f` accepts.
+    fn is_err_and(view self, f: view fn(view E) -> Bool) -> Bool {
+        match self {
+            Ok(_) => {
+                return false
+            }
+            Err(e) => {
+                return f(e)
             }
         }
     }

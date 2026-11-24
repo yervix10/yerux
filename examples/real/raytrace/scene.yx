@@ -1,0 +1,89 @@
+// Scene description and ray queries: spheres and planes with simple surfaces, and one point light.
+import std.math
+import vec
+
+// Distances below this are treated as "no hit" (avoids re-hitting the surface a ray starts on).
+pub fn epsilon() -> Float { return 0.0001 }
+
+pub enum Shape {
+  // center, radius
+  Sphere(vec.V3, Float),
+  // a point on the plane, unit normal
+  Plane(vec.V3, vec.V3),
+}
+
+pub enum Surface {
+  // albedo: the color reflected under light
+  Matte(vec.V3),
+  // a reflective surface tinted by its color: the reflection is blended in at `mix`
+  Mirror(vec.V3, Float),
+}
+
+pub struct Object { shape: Shape, surface: Surface }
+
+pub struct Light { position: vec.V3, intensity: Float }
+
+pub struct Scene { objects: List<Object>, light: Light, sky_top: vec.V3, sky_bottom: vec.V3 }
+
+pub struct Hit { t: Float, point: vec.V3, normal: vec.V3, object: Int }
+
+// The ray parameter of the nearest hit with t in (epsilon, limit), or -1.0 when there is none.
+pub fn shape_distance(s: view Shape, origin: view vec.V3, dir: view vec.V3, limit: Float) -> Float {
+  match s {
+    Sphere(center, radius) => {
+      let oc = origin.sub(center)
+      let b = oc.dot(dir)
+      let c = oc.dot(oc) - radius * radius
+      let disc = b * b - c
+      if disc < 0.0 { return -1.0 }
+      let root = disc.sqrt()
+      var t = -b - root
+      if t <= epsilon() {
+        t = -b + root
+      }
+      if t > epsilon() && t < limit { return t }
+      return -1.0
+    }
+    Plane(point, normal) => {
+      let denom = normal.dot(dir)
+      if denom.abs() < 0.000000001 { return -1.0 }
+      let t = point.sub(origin).dot(normal) / denom
+      if t > epsilon() && t < limit { return t }
+      return -1.0
+    }
+  }
+}
+
+pub fn normal_at(s: view Shape, p: view vec.V3) -> vec.V3 {
+  match s {
+    Sphere(center, radius) => { return p.sub(center).scale(1.0 / radius) }
+    Plane(_, normal) => { return normal }
+  }
+}
+
+// The nearest object hit by the ray within `limit`, if any.
+pub fn closest(scene: view Scene, origin: view vec.V3, dir: view vec.V3, limit: Float) -> Option<Hit> {
+  var best = limit
+  var found = -1
+  for i in 0..scene.objects.len() {
+    let t = shape_distance(scene.objects.at(i).shape, origin, dir, best)
+    if t > 0.0 {
+      best = t
+      found = i
+    }
+  }
+  if found < 0 { return None }
+  let p = origin.add(dir.scale(best))
+  let n = normal_at(scene.objects.at(found).shape, p)
+  return Some(Hit { t: best, point: p, normal: n, object: found })
+}
+
+// The first object hit by a shadow ray toward the light, within `limit`.
+pub fn occluded(scene: view Scene, origin: view vec.V3, dir: view vec.V3, limit: Float) -> Bool {
+  for i in 0..scene.objects.len() {
+    if shape_distance(scene.objects.at(i).shape, origin, dir, limit) > 0.0 {
+      return true
+    }
+  }
+  return false
+}

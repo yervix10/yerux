@@ -1,0 +1,10 @@
+// `pub` is not written on a method: methods are visible wherever their type is
+struct Counter { n: Int }
+
+impl Counter {
+  pub fn get(view self) -> Int {
+    return self.n
+  }
+}
+
+fn main() {}

@@ -3,6 +3,15 @@
 Versions follow the language roadmap in SPEC.md (v0.4 = generics and traits, v0.5 = Option/Result and `?`);
 the crate was `0.1.0` until this release, which aligns it.
 
+## Unreleased
+
+- Added reproducible self-host bootstrap checks and an opt-in Yerux compiler driver (`0c98ed5`).
+- Added semantic version ranges, transitive path and Git dependencies, and lockfile resolution (`78f9f62`).
+- Added named functions as callable values and froze standard-library API decisions (`f0aadd2`, `46d0d5f`).
+- Extended native debug information with local variables and parameters (`a11d428`).
+- Added AArch64 Linux process, concurrency, and C FFI support (`9986945`).
+- Prepared Linux x86-64 and AArch64 release artifacts, checksum verification and installation.
+
 ## 0.5.0
 
 ### Language

@@ -27,7 +27,9 @@ Formats files in place with the canonical style (2-space indent). With no argume
 recursively, skipping `target/`, `node_modules/` and hidden directories. `--check` changes nothing: it prints the path
 of every file that would change and exits 1 (use it in CI); `--stdout` prints the formatted source. A file with a
 syntax error is reported as `path: line N: message` and makes the exit code 1; a missing path or unknown option exits 2.
-Formatting is idempotent and never changes the generated program (`tests/fmt.sh` checks this on every example).
+Formatting is idempotent, never changes the generated program and keeps every `//` comment (`tests/fmt.sh` checks all 568 compilable programs of `examples/` and `tests/`, including the multi-file projects of `examples/real/`).
+
+The full list of subcommands, flags and exit codes is in [CLI.md](CLI.md) (`yerux --help`, `yerux COMMAND --help`).
 
 ## `yerux doc`
 
@@ -42,7 +44,7 @@ files are named `a.b`); a file argument is one module.
 
 What is documented is read from the text, so it works even if the program does not compile:
 
-- `pub` top-level `fn`, `struct`, `enum`, `trait`, `const` and `type` (alias), with the declaration as written (no body);
+- `pub` top-level `fn`, `struct`, `enum`, `trait`, `const` and `type` (alias), with the declaration as written (functions without their body; structs and enums with their fields and variants);
 - the methods of `impl` blocks of public types, and the methods declared in public traits;
 - `///` lines directly above an item are its documentation (Markdown-ish: paragraphs, `` `code` `` and fenced blocks);
   a blank line detaches the comment from the next item;

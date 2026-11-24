@@ -1,0 +1,23 @@
+--- examples/real/difftool/sample_a.txt
++++ examples/real/difftool/sample_b.txt
+@@ -1,13 +1,18 @@
+ # Changelog
+ 
++## 1.1
++- second release
++- parser
++- printer
++- formatter
++
+ ## 1.0
+ - first release
+ - parser
+-- printer
+ 
+ ## 0.9
+ - beta
+ - lexer
+ - tests
+ 
+-Thanks to everyone.
++Thanks to everyone who helped.

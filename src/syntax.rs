@@ -1612,6 +1612,9 @@ pub struct GenFn {
     pub pos: Pos,
     pub params: Vec<(Mode, Ty)>, // with the type parameters left abstract (patterns for inference)
     pub ret: Ty,
+    /// a generic method (`impl<T> Option<T> { fn map<U>(self, ..) }`): token of the impl's self type, re-read
+    /// per instantiation to get `Self`; the function is called as `recv.map(..)` through `__gm__Type__map`
+    pub self_tok: Option<usize>,
 }
 
 pub struct TraitMethod {
@@ -1722,6 +1725,15 @@ pub const PRELUDE: &str = concat!(
     include_str!("prelude_num.yx"),
     "\n"
 );
+
+/// Key of a user or library struct/enum for the names of its generic methods (`Option`, `Stack`).
+pub fn type_key(types: &Types, ty: Ty) -> String {
+    match ty {
+        Ty::Struct(s) => types.structs[s].origin.as_ref().map(|o| o.0.clone()).unwrap_or_else(|| types.structs[s].name.clone()),
+        Ty::Enum(e) => types.enums[e].origin.as_ref().map(|o| o.0.clone()).unwrap_or_else(|| types.enums[e].name.clone()),
+        _ => types.name(ty),
+    }
+}
 
 pub fn impl_fn_name(types: &Types, trait_name: Option<&str>, ty: Ty, m: &str) -> String {
     match trait_name {
@@ -2719,6 +2731,7 @@ impl Parser {
                         pos: h.pos,
                         params: vec![],
                         ret: Ty::Unit,
+                        self_tok: None,
                     });
                     continue;
                 }
@@ -2752,14 +2765,18 @@ impl Parser {
                 .zip(&g.pids)
                 .map(|(p, id)| (p.name.clone(), Ty::Param(*id)))
                 .collect();
-            let (h, body) = self.parse_fn_at(g.tok, subst, None, g.tok < self.prelude_len)?;
+            let self_ty = match g.self_tok {
+                Some(t) => Some(self.self_ty_at(t, subst.clone())?),
+                None => None,
+            };
+            let (h, body) = self.parse_fn_at(g.tok, subst, self_ty, g.tok < self.prelude_len)?;
             self.gfns[gi].params = h.params.iter().map(|p| (p.mode, p.ty)).collect();
             self.gfns[gi].ret = h.ret;
             if g.tok < self.prelude_len {
                 continue; // the built-in library is trusted: only its instantiations are checked
             }
             templates.push(Func {
-                name: h.name,
+                name: if g.self_tok.is_some() { g.name.clone() } else { h.name },
                 params: h.params,
                 ret: h.ret,
                 body: body.unwrap_or_default(),
@@ -2800,6 +2817,17 @@ impl Parser {
         self.i = saved.0;
         self.tparams = saved.1;
         self.self_ty = saved.2;
+        r
+    }
+
+    /// The type written at token `tok` (the self type of an impl) with `subst` as its type parameters.
+    pub fn self_ty_at(&mut self, tok: usize, subst: Vec<(String, Ty)>) -> PR<Ty> {
+        let saved = (self.i, std::mem::take(&mut self.tparams));
+        self.i = tok;
+        self.tparams = subst.into_iter().collect();
+        let r = self.ty();
+        self.i = saved.0;
+        self.tparams = saved.1;
         r
     }
 
@@ -3050,18 +3078,54 @@ impl Parser {
             trait_name = Some(n);
             trait_pos = p;
         }
+        let self_tok = self.i;
         let self_ty = self.ty()?;
         self.tparams = saved_tp;
         self.expect_sym("{")?;
         let mut methods: Vec<ImplMethod> = vec![];
         while !self.is_sym("}") {
             if !self.is_kw("fn") {
+                if self.is_kw("pub") {
+                    return Err(diag(
+                        "methods take no `pub`: they are visible wherever their type is",
+                        self.pos(),
+                    ));
+                }
                 return Err(diag("expected 'fn' inside `impl`", self.pos()));
             }
             let tok = self.i;
             let (h, _) = self.parse_fn_at(tok, subst.clone(), Some(self_ty), true)?;
             if !h.generics.is_empty() {
-                return Err(diag("methods cannot be generic yet", h.pos));
+                // a generic method: a generic function over the impl's parameters plus its own, called as
+                // `recv.m(..)` (see `rewrite_method`); its body is parsed per instantiation
+                if trait_name.is_some() {
+                    return Err(diag("methods of a trait impl cannot be generic yet", h.pos));
+                }
+                let name = format!("__gm__{}__{}", type_key(&self.types, self_ty), h.name);
+                if self.gfns.iter().any(|g| g.name == name) {
+                    return Err(diag(format!("method '{}' is defined twice in this impl", h.name), h.pos));
+                }
+                self.skip_item()?;
+                let mut tparams = generics.clone();
+                tparams.extend(h.generics.clone());
+                let gpids = tparams
+                    .iter()
+                    .map(|p| match self.new_param(&p.name, vec![]) {
+                        Ty::Param(i) => i,
+                        _ => 0,
+                    })
+                    .collect();
+                self.gfns.push(GenFn {
+                    name,
+                    tparams,
+                    pids: gpids,
+                    tok,
+                    pos: h.pos,
+                    params: vec![],
+                    ret: Ty::Unit,
+                    self_tok: Some(self_tok),
+                });
+                continue;
             }
             if methods.iter().any(|m| m.name == h.name) {
                 return Err(diag(
@@ -4402,6 +4466,23 @@ impl Parser {
         if self.is_sym("(") {
             let (args, end) = self.args()?;
             return self.postfix(mk(EK::Call(x, args), span(pos, end)));
+        }
+        if self.is_sym("<") && x.chars().next().map_or(false, |c| c.is_lowercase() || c == '_') {
+            // `id<Int>(5)`: explicit type arguments of a generic function. `a < b` is a comparison, so this is
+            // only taken when a type list follows and is closed by `>` and a `(`
+            let save = self.i;
+            if let Ok(targs) = self.type_args() {
+                if self.is_sym("(") {
+                    let (args, end) = self.args()?;
+                    // encoded as a generic-variant literal with an empty variant name: the checker turns it
+                    // into a call that carries the type arguments
+                    return self.postfix(mk(
+                        EK::GenVariant { name: x, targs: Some(targs), vname: String::new(), args },
+                        span(pos, end),
+                    ));
+                }
+            }
+            self.i = save;
         }
         if (x == "List" && (self.is_sym(".") || self.is_sym("<")))
             || ((x == "String" || x == "Char") && self.is_sym("."))

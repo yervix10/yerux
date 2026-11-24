@@ -62,7 +62,8 @@ fn issue(resolver: mut Resolver, module_id: Int, message: view String) {
 }
 
 fn dependency_file(resolver: view Resolver, dep: view String) -> String {
-  let relative = dep.replace(".", "/")
+  var relative = dep.replace(".", "/")
+  if dep == "std.http.server" { relative = String.from("std/http_server") }
   let file = "{relative}.yx"
   if dep.starts_with("std.") {
     let standard = path.join(resolver.cache, String.from("src"))

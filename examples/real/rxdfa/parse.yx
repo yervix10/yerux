@@ -1,0 +1,362 @@
+// Regex parser for rxdfa: a recursive-descent parser that builds an arena of syntax nodes, and a reference matcher
+// that computes every end position of a match from a start position.
+//
+// The syntax is the one of std.regex, so the differential checks can use it as the oracle: literal bytes, `.`,
+// classes `[abc] [a-z] [^...]`, groups `(...)`, alternation `|`, the repeats `* + ?`, the anchors `^` and `$`, and
+// the escapes `\n \t` and `\` before any other byte. Matching is by bytes, not by UTF-8 characters.
+// Differences from std.regex: an empty alternative such as `a||b` or `()` is accepted and matches the empty text;
+// a repeat may follow another repeat (`a**`), which means the same as `a*`.
+import std.text
+
+// Syntax node. Children are indexes into Re.nodes. Set(i) is a class, an index into Re.sets.
+pub enum Node {
+  Byte(Int),
+  Set(Int),
+  Cat(Int, Int),
+  Alt(Int, Int),
+  Star(Int),
+  Plus(Int),
+  Opt(Int),
+  Bol,
+  Eol,
+  Empty,
+}
+
+// A parsed pattern: the node arena, the class table (256 flags each, 1 when the byte is in the class), and the root.
+// The cursor fields are used while parsing: `err` is empty while parsing succeeds, `at` is the offset of the first error.
+pub struct Re {
+  nodes: List<Node>,
+  sets: List<List<Int>>,
+  root: Int,
+  pat: String,
+  pos: Int,
+  err: String,
+  at: Int,
+}
+
+
+fn add(p: mut Re, n: Node) -> Int {
+  p.nodes.push(n)
+  return p.nodes.len() - 1
+}
+
+// Records the first error only; the caller returns -1 after every failing step.
+fn fail(p: mut Re, msg: view String) -> Int {
+  if p.err.len() == 0 {
+    p.err = String.from(msg)
+    p.at = p.pos
+  }
+  return -1
+}
+
+// The byte at the cursor, or -1 at the end of the pattern.
+fn peek(p: view Re) -> Int {
+  if p.pos >= p.pat.len() {
+    return -1
+  }
+  return p.pat.byte(p.pos)
+}
+
+fn is_repeat(c: Int) -> Bool {
+  return c == 42 || c == 43 || c == 63
+}
+
+// The byte written by an escape. `c` is the byte after the backslash.
+fn escaped(c: Int) -> Int {
+  if c == 110 {
+    return 10
+  }
+  if c == 116 {
+    return 9
+  }
+  return c
+}
+
+// Parses a class after its `[`. Returns the index of the new set, or -1.
+fn class(p: mut Re) -> Int {
+  var flags = List<Int>.new()
+  for k in 0..256 {
+    flags.push(0)
+  }
+  var negate = false
+  if peek(p) == 94 {
+    negate = true
+    p.pos = p.pos + 1
+  }
+  var count = 0
+  while true {
+    let c = peek(p)
+    if c < 0 {
+      return fail(p, "unclosed character class")
+    }
+    if c == 93 && count > 0 {
+      p.pos = p.pos + 1
+      break
+    }
+    if c == 93 {
+      return fail(p, "empty character class")
+    }
+    var lo = c
+    p.pos = p.pos + 1
+    if c == 92 {
+      let e = peek(p)
+      if e < 0 {
+        return fail(p, "trailing backslash")
+      }
+      lo = escaped(e)
+      p.pos = p.pos + 1
+    }
+    var hi = lo
+    // a '-' followed by a byte other than ']' makes a range
+    if peek(p) == 45 && p.pos + 1 < p.pat.len() && p.pat.byte(p.pos + 1) != 93 {
+      p.pos = p.pos + 1
+      hi = peek(p)
+      p.pos = p.pos + 1
+      if hi == 92 {
+        let e = peek(p)
+        if e < 0 {
+          return fail(p, "trailing backslash")
+        }
+        hi = escaped(e)
+        p.pos = p.pos + 1
+      }
+      if hi < lo {
+        return fail(p, "reversed range in character class")
+      }
+    }
+    for b in lo..(hi + 1) {
+      flags.set(b, 1)
+    }
+    count = count + 1
+  }
+  if negate {
+    for b in 0..256 {
+      flags.set(b, 1 - flags.get(b))
+    }
+  }
+  p.sets.push(move flags)
+  return p.sets.len() - 1
+}
+
+// One atom: a byte, `.`, a class, an anchor, a group or an escape. Returns its node, or -1.
+fn atom(p: mut Re) -> Int {
+  let c = peek(p)
+  if c == 40 {
+    p.pos = p.pos + 1
+    let inner = alt(p)
+    if p.err.len() > 0 {
+      return -1
+    }
+    if peek(p) != 41 {
+      return fail(p, "unclosed group")
+    }
+    p.pos = p.pos + 1
+    return inner
+  }
+  if c == 91 {
+    p.pos = p.pos + 1
+    let s = class(p)
+    if s < 0 {
+      return -1
+    }
+    return add(p, Node.Set(s))
+  }
+  if c == 46 {
+    p.pos = p.pos + 1
+    var flags = List<Int>.new()
+    for b in 0..256 {
+      flags.push(1)
+    }
+    p.sets.push(move flags)
+    return add(p, Node.Set(p.sets.len() - 1))
+  }
+  if c == 94 {
+    p.pos = p.pos + 1
+    return add(p, Node.Bol)
+  }
+  if c == 36 {
+    p.pos = p.pos + 1
+    return add(p, Node.Eol)
+  }
+  if c == 92 {
+    p.pos = p.pos + 1
+    let e = peek(p)
+    if e < 0 {
+      return fail(p, "trailing backslash")
+    }
+    p.pos = p.pos + 1
+    return add(p, Node.Byte(escaped(e)))
+  }
+  if is_repeat(c) {
+    return fail(p, "nothing to repeat")
+  }
+  p.pos = p.pos + 1
+  return add(p, Node.Byte(c))
+}
+
+// An atom followed by at most one repeat (a second repeat is accepted and applied on top of the first).
+fn piece(p: mut Re) -> Int {
+  var n = atom(p)
+  if n < 0 {
+    return -1
+  }
+  while is_repeat(peek(p)) {
+    let c = peek(p)
+    p.pos = p.pos + 1
+    if c == 42 {
+      n = add(p, Node.Star(n))
+    } else if c == 43 {
+      n = add(p, Node.Plus(n))
+    } else {
+      n = add(p, Node.Opt(n))
+    }
+  }
+  return n
+}
+
+// A concatenation up to `|`, `)` or the end. An empty sequence is the Empty node.
+fn seq(p: mut Re) -> Int {
+  var result = -1
+  while p.pos < p.pat.len() && peek(p) != 124 && peek(p) != 41 {
+    let a = piece(p)
+    if a < 0 {
+      return -1
+    }
+    if result < 0 {
+      result = a
+    } else {
+      result = add(p, Node.Cat(result, a))
+    }
+  }
+  if result < 0 {
+    return add(p, Node.Empty)
+  }
+  return result
+}
+
+// Alternatives separated by `|`.
+fn alt(p: mut Re) -> Int {
+  var left = seq(p)
+  if left < 0 {
+    return -1
+  }
+  while peek(p) == 124 {
+    p.pos = p.pos + 1
+    let right = seq(p)
+    if right < 0 {
+      return -1
+    }
+    left = add(p, Node.Alt(left, right))
+  }
+  return left
+}
+
+// Parses a whole pattern. On failure the result has an empty `nodes` list and `err` holds "offset N: message".
+pub fn parse(pattern: view String) -> Result<Re, String> {
+  var p = Re { nodes: List<Node>.new(), sets: List<List<Int>>.new(), root: -1, pat: String.from(pattern), pos: 0, err: String.from(""), at: 0 }
+  var root = alt(p)
+  if p.err.len() == 0 && p.pos < p.pat.len() {
+    root = fail(p, "unmatched ')'")
+  }
+  if p.err.len() > 0 {
+    var m = String.from("offset ")
+    m.push_int(p.at)
+    m.push_str(": ")
+    m.push_str(p.err)
+    return Err(move m)
+  }
+  p.root = root
+  return Ok(move p)
+}
+
+// Adds `v` to `list` unless it is already there.
+pub fn add_unique(list: mut List<Int>, v: Int) {
+  for k in 0..list.len() {
+    if list.get(k) == v {
+      return
+    }
+  }
+  list.push(v)
+}
+
+// Every position where a match of node `n` starting at `pos` can end, in order of discovery and without repeats.
+// This is the reference matcher: it follows the syntax tree directly, so it shares no code with the automata.
+pub fn ends(re: view Re, n: Int, text: view String, pos: Int) -> List<Int> {
+  var out = List<Int>.new()
+  match re.nodes.at(n) {
+    Node.Byte(b) => {
+      if pos < text.len() && text.byte(pos) == b {
+        out.push(pos + 1)
+      }
+    }
+    Node.Set(s) => {
+      if pos < text.len() && re.sets.at(s).get(text.byte(pos)) == 1 {
+        out.push(pos + 1)
+      }
+    }
+    Node.Cat(l, r) => {
+      for e in ends(re, l, text, pos) {
+        for f in ends(re, r, text, e) {
+          add_unique(out, f)
+        }
+      }
+    }
+    Node.Alt(l, r) => {
+      for e in ends(re, l, text, pos) {
+        add_unique(out, e)
+      }
+      for e in ends(re, r, text, pos) {
+        add_unique(out, e)
+      }
+    }
+    Node.Opt(a) => {
+      add_unique(out, pos)
+      for e in ends(re, a, text, pos) {
+        add_unique(out, e)
+      }
+    }
+    Node.Star(a) => {
+      out = star_closure(re, a, text, pos)
+    }
+    Node.Plus(a) => {
+      var first = List<Int>.new()
+      for e in ends(re, a, text, pos) {
+        add_unique(first, e)
+      }
+      for e in first {
+        for f in star_closure(re, a, text, e) {
+          add_unique(out, f)
+        }
+      }
+    }
+    Node.Bol => {
+      if pos == 0 {
+        out.push(pos)
+      }
+    }
+    Node.Eol => {
+      if pos == text.len() {
+        out.push(pos)
+      }
+    }
+    Node.Empty => {
+      out.push(pos)
+    }
+  }
+  return out
+}
+
+// Zero or more repetitions of `a` from `pos`: a fixed point over the end positions.
+fn star_closure(re: view Re, a: Int, text: view String, pos: Int) -> List<Int> {
+  var out = List<Int>.new()
+  out.push(pos)
+  var k = 0
+  while k < out.len() {
+    let at = out.get(k)
+    for e in ends(re, a, text, at) {
+      add_unique(out, e)
+    }
+    k = k + 1
+  }
+  return out
+}

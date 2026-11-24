@@ -1,0 +1,15 @@
+fn main() {
+  unsafe {
+    let f = Ptr<Float>.null()
+    let b = Ptr<Bool>.null()
+    f.read()
+    b.write(true)
+    let p = Ptr<Int>.null()
+    p.write("text")
+    p.add()
+    p.add(1.5)
+    p.offset_from(f)
+    p.write(1, 2)
+    Ptr<Int>.from_addr("x")
+  }
+}

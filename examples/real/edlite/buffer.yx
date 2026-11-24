@@ -1,0 +1,143 @@
+// The edit buffer of edlite: a list of lines, the current line, and undo / redo history.
+//
+// Line numbers are 1-based, as in ed. Line 0 is the position before the first line (valid for inserts only).
+// Every change first saves a snapshot of the whole buffer, so undo and redo restore it exactly.
+import std.text
+
+pub struct Snapshot { lines: List<String>, cur: Int }
+
+pub struct Editor {
+  lines: List<String>,
+  cur: Int,
+  name: String,
+  undo: List<Snapshot>,
+  redo: List<Snapshot>,
+  // text printed by commands, taken by the caller after each command
+  out: String,
+}
+
+pub fn new(name: view String) -> Editor {
+  return Editor {
+    lines: List<String>.new(),
+    cur: 0,
+    name: name.clone(),
+    undo: List<Snapshot>.new(),
+    redo: List<Snapshot>.new(),
+    out: String.new(),
+  }
+}
+
+// Decimal text of a number (for output).
+pub fn int_text(n: Int) -> String {
+  var s = String.new()
+  s.push_int(n)
+  return s
+}
+
+// A deep copy of a list of lines.
+pub fn copy_lines(src: view List<String>) -> List<String> {
+  var out = List<String>.new()
+  for k in 0..src.len() {
+    out.push(src.at(k).clone())
+  }
+  return out
+}
+
+impl Editor {
+  fn count(view self) -> Int {
+    return self.lines.len()
+  }
+
+  // Text of line n (1-based); the caller has checked the range.
+  fn line(view self, n: Int) -> String {
+    return self.lines.at(n - 1).clone()
+  }
+
+  // Appends a line of output.
+  fn print_line(mut self, s: view String) {
+    self.out.push_str(s)
+    self.out.push_str("\n")
+  }
+
+  // Saves the state before a change; a new change ends the redo history.
+  fn checkpoint(mut self) {
+    self.undo.push(Snapshot { lines: copy_lines(self.lines), cur: self.cur })
+    self.redo.clear()
+  }
+
+  fn restore(mut self, s: view Snapshot) {
+    self.lines = copy_lines(s.lines)
+    self.cur = s.cur
+  }
+
+  // Undoes the last change. Fails when there is nothing to undo.
+  fn undo_step(mut self) -> Result<Int, String> {
+    if self.undo.len() == 0 {
+      return Err(String.from("nothing to undo"))
+    }
+    let now = Snapshot { lines: copy_lines(self.lines), cur: self.cur }
+    self.redo.push(move now)
+    let s = self.undo.pop()
+    self.restore(s)
+    return Ok(self.cur)
+  }
+
+  // Redoes the last undone change. Fails when there is nothing to redo.
+  fn redo_step(mut self) -> Result<Int, String> {
+    if self.redo.len() == 0 {
+      return Err(String.from("nothing to redo"))
+    }
+    let now = Snapshot { lines: copy_lines(self.lines), cur: self.cur }
+    self.undo.push(move now)
+    let s = self.redo.pop()
+    self.restore(s)
+    return Ok(self.cur)
+  }
+
+  // Inserts `text` after line `at` (0 puts it first). The current line becomes the last inserted line.
+  fn insert_after(mut self, at: Int, text: view List<String>) {
+    for t in 0..text.len() {
+      self.lines.insert(at + t, text.at(t).clone())
+    }
+    if text.len() > 0 {
+      self.cur = at + text.len()
+    }
+  }
+
+  // Removes lines s..e and returns them. The current line becomes the line that followed, or the last line.
+  fn take(mut self, s: Int, e: Int) -> List<String> {
+    var out = List<String>.new()
+    for k in s..(e + 1) {
+      out.push(self.lines.remove(s - 1))
+    }
+    self.cur = if s <= self.lines.len() { s } else { self.lines.len() }
+    return out
+  }
+
+  // Lines s..e as a new list, without removing them.
+  fn copy_range(view self, s: Int, e: Int) -> List<String> {
+    var out = List<String>.new()
+    for k in s..(e + 1) {
+      out.push(self.lines.at(k - 1).clone())
+    }
+    return out
+  }
+
+  // Replaces lines s..e (at least one line) by one line.
+  fn replace_range(mut self, s: Int, e: Int, text: view String) {
+    let old = self.take(s, e)
+    var one = List<String>.new()
+    one.push(text.clone())
+    self.insert_after(s - 1, one)
+  }
+
+  // The lines of the buffer, for writing and for tests.
+  fn contents(view self) -> String {
+    var s = String.new()
+    for k in 0..self.lines.len() {
+      s.push_str(self.lines.at(k))
+      s.push_str("\n")
+    }
+    return s
+  }
+}

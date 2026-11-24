@@ -1,0 +1,134 @@
+// httpjson-server: a local JSON test server for the client. Usage: httpjson-server PORT COUNT
+// PORT 0 picks a free port. The server prints "port N" on its first line, then answers COUNT
+// requests one connection at a time and exits. Routes:
+//   GET /users        200, an array of three user objects
+//   GET /users/ID     200 with the user object for ID 1..3, else 404 {"error": ...}
+//   POST /echo        200 with the same JSON body, or 400 when the body is not valid JSON
+//   anything else     404
+import json
+import std.env
+import std.io
+import std.net
+import std.text
+
+struct Request { method: String, path: String, body: String }
+
+// Reads one request: the head, then Content-Length bytes of body when the head declares them.
+fn read_request(s: view net.TcpStream) -> Result<Request, io.IoError> {
+  var raw = String.new()
+  var split = -1
+  while split < 0 {
+    let chunk = net.read(s, 4096)?
+    if chunk.len() == 0 { break }
+    raw.push_str(chunk)
+    split = raw.find("\r\n\r\n")
+  }
+  if split < 0 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "request head incomplete")) }
+  let head = raw.slice(0, split)
+  let lines = head.split("\r\n")
+  let parts = lines.at(0).split(" ")
+  if parts.len() != 3 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "bad request line")) }
+  var want = 0
+  for line in lines {
+    let lower = line.to_lower()
+    if lower.starts_with("content-length:") {
+      want = text.parse_int(lower.slice(15, lower.len()).trim()).unwrap_or(-1)
+    }
+  }
+  if want < 0 || want > 65536 { return Err(io.custom_error(io.IoErrorKind.InvalidData, "bad Content-Length")) }
+  while raw.len() < split + 4 + want {
+    let chunk = net.read(s, 4096)?
+    if chunk.len() == 0 { break }
+    raw.push_str(chunk)
+  }
+  let body = raw.slice(split + 4, raw.len())
+  return Ok(Request { method: String.from(parts.at(0)), path: String.from(parts.at(1)), body: String.from(body) })
+}
+
+// The status line, the body and the answer's Content-Type are fixed by the route.
+fn reply(s: view net.TcpStream, status: Text, body: view String) -> Result<Int, io.IoError> {
+  var msg = String.from("HTTP/1.1 ")
+  msg.push_str(status)
+  msg.push_str("\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: ")
+  msg.push_int(body.len())
+  msg.push_str("\r\n\r\n")
+  msg.push_str(body)
+  return net.write(s, msg)
+}
+
+fn user(id: Int, name: Text, active: Bool) -> String {
+  let flag = if active { "true" } else { "false" }
+  return "{{\"id\":{id},\"name\":\"{name}\",\"active\":{flag}}}"
+}
+
+fn route(req: view Request) -> (Text, String) {
+  if req.method.eq("GET") && req.path.eq("/users") {
+    var all = String.from("[")
+    all.push_str(user(1, "ada", true))
+    all.push_str(",")
+    all.push_str(user(2, "bob", false))
+    all.push_str(",")
+    all.push_str(user(3, "cy \\\"c\\\"", true))
+    all.push_str("]")
+    return ("200 OK", move all)
+  }
+  if req.method.eq("GET") && req.path.starts_with("/users/") {
+    let id = text.parse_int(req.path.slice(7, req.path.len())).unwrap_or(0)
+    if id == 1 { return ("200 OK", user(1, "ada", true)) }
+    if id == 2 { return ("200 OK", user(2, "bob", false)) }
+    if id == 3 { return ("200 OK", user(3, "cy \\\"c\\\"", true)) }
+    return ("404 Not Found", String.from("{{\"error\":\"no such user\"}}"))
+  }
+  if req.method.eq("POST") && req.path.eq("/echo") {
+    match json.parse(req.body) {
+      Ok(_) => { return ("200 OK", String.from(req.body)) }
+      Err(e) => { return ("400 Bad Request", "{{\"error\":\"{e.message}\"}}") }
+    }
+  }
+  return ("404 Not Found", String.from("{{\"error\":\"not found\"}}"))
+}
+
+fn serve(listener: view net.TcpListener, count: Int) -> Result<Int, io.IoError> {
+  for i in 0..count {
+    let stream = net.accept(listener)?
+    match read_request(stream) {
+      Ok(req) => {
+        let (status, body) = route(req)
+        reply(stream, status, body)?
+      }
+      Err(e) => {
+        io.eprintln("httpjson-server: {e.message}")
+        reply(stream, "400 Bad Request", "{{\"error\":\"bad request\"}}")?
+      }
+    }
+  }
+  return Ok(0)
+}
+
+fn main() {
+  let argv = env.args()
+  if argv.len() != 3 {
+    io.eprintln("usage: httpjson-server PORT COUNT")
+    io.exit(2)
+  }
+  let port = text.parse_int(argv.at(1)).unwrap_or(-1)
+  let count = text.parse_int(argv.at(2)).unwrap_or(-1)
+  if port < 0 || port > 65535 || count < 1 {
+    io.eprintln("httpjson-server: PORT must be 0..65535 and COUNT at least 1")
+    io.exit(2)
+  }
+  match run(port, count) {
+    Ok(_) => {}
+    Err(e) => {
+      io.eprintln("httpjson-server: {e.message}")
+      io.exit(1)
+    }
+  }
+}
+
+fn run(port: Int, count: Int) -> Result<Int, io.IoError> {
+  let listener = net.listen(net.address("127.0.0.1", port)?)?
+  let bound = net.listener_local_addr(listener)?
+  io.write_stdout("port {bound.port}\n")?
+  return serve(listener, count)
+}

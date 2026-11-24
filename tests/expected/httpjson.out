@@ -1,0 +1,7 @@
+users: 3
+  1 ada active
+  2 bob inactive
+  3 cy "c" active
+user 2: bob active=false
+echo: {"ping":[1.0,2.5,"x"],"ok":null}
+missing: status 404: no such user

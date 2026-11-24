@@ -1,0 +1,111 @@
+// JSON over HTTP: requests with std.http against a loopback server, responses parsed with json.yx.
+import json
+import std.http
+import std.io
+import std.net
+
+fn loopback(port: Int) -> Result<net.SocketAddr, String> {
+  match net.address("127.0.0.1", port) {
+    Ok(a) => { return Ok(move a) }
+    Err(e) => { return Err(String.from(e.message)) }
+  }
+}
+
+// A user as the server describes it.
+pub struct User { id: Int, name: String, active: Bool }
+
+// Status codes 200..299 are success; the body is parsed as JSON. For other statuses the error text is the
+// "error" member of the body when there is one.
+pub fn exchange(port: Int, method: view String, path: view String, body: view String) -> Result<json.Json, String> {
+  let addr = loopback(port)?
+  var headers = List<(String, String)>.new()
+  headers.push((String.from("Accept"), String.from("application/json")))
+  var reply = http.Response { status: 0, headers: List<(String, String)>.new(), body: String.new() }
+  if method.eq("GET") {
+    match http.get(addr, "127.0.0.1", path, headers) {
+      Ok(r) => { reply = move r }
+      Err(e) => { return Err(String.from(e.message)) }
+    }
+  } else {
+    match http.post_json(addr, "127.0.0.1", path, headers, body) {
+      Ok(r) => { reply = move r }
+      Err(e) => { return Err(String.from(e.message)) }
+    }
+  }
+  let parsed = match json.parse(reply.body) {
+    Ok(v) => { move v }
+    Err(e) => { return Err("status {reply.status}: body is not JSON ({e.message})") }
+  }
+  if reply.status >= 200 && reply.status < 300 {
+    return Ok(move parsed)
+  }
+  var message = String.from("no error text")
+  match json.field(parsed, "error") {
+    Some(found) => {
+      match found {
+        Str(s) => { message = String.from(s) }
+        _ => {}
+      }
+    }
+    None => {}
+  }
+  return Err("status {reply.status}: {message}")
+}
+
+// Converts a user object; a field that is missing or of the wrong type is an error.
+pub fn user_of(v: view json.Json) -> Result<User, String> {
+  let id = number_field(v, "id")?
+  let name = string_field(v, "name")?
+  let active = bool_field(v, "active")?
+  return Ok(User { id: id.round_int(), name: move name, active: active })
+}
+
+fn number_field(v: view json.Json, key: view String) -> Result<Float, String> {
+  match json.field(v, key) {
+    Some(found) => {
+      match found {
+        Number(f) => { return Ok(f) }
+        _ => { return Err("'{key}' is not a number") }
+      }
+    }
+    None => { return Err("'{key}' is missing") }
+  }
+}
+
+fn string_field(v: view json.Json, key: view String) -> Result<String, String> {
+  match json.field(v, key) {
+    Some(found) => {
+      match found {
+        Str(s) => { return Ok(String.from(s)) }
+        _ => { return Err("'{key}' is not a string") }
+      }
+    }
+    None => { return Err("'{key}' is missing") }
+  }
+}
+
+fn bool_field(v: view json.Json, key: view String) -> Result<Bool, String> {
+  match json.field(v, key) {
+    Some(found) => {
+      match found {
+        Bool(b) => { return Ok(b) }
+        _ => { return Err("'{key}' is not a boolean") }
+      }
+    }
+    None => { return Err("'{key}' is missing") }
+  }
+}
+
+// The users of an array response.
+pub fn users_of(v: view json.Json) -> Result<List<User>, String> {
+  match v {
+    Arr(items) => {
+      var out = List<User>.new()
+      for i in 0..items.len() {
+        out.push(user_of(items.at(i))?)
+      }
+      return Ok(move out)
+    }
+    _ => { return Err("expected a JSON array") }
+  }
+}

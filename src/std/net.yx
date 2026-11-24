@@ -223,6 +223,12 @@ pub fn listen(a: view SocketAddr) -> Result<TcpListener, io.IoError> {
   return Ok(move listener)
 }
 
+/// Set how long `accept` waits for a connection, in milliseconds (default 5000); on expiry it fails with a timeout
+/// error (code 110). Zero waits forever. A server uses a short timeout to notice a stop request.
+pub fn set_accept_timeout(l: view TcpListener, timeout_ms: Int) -> Result<Int, io.IoError> {
+  return set_timeout(l.fd, 20, timeout_ms)
+}
+
 /// Accept one incoming connection.
 pub fn accept(l: view TcpListener) -> Result<TcpStream, io.IoError> {
   let fd = __syscall(43, l.fd, 0, 0, 0, 0, 0)

@@ -1,0 +1,95 @@
+// Unit tests: `yerux test examples/real/raytrace/tests.yx`
+import demo
+import ppm
+import render
+import scene
+import std.math
+import vec
+
+fn near(a: Float, b: Float) -> Bool {
+  return (a - b).abs() < 0.000001
+}
+
+test "vector arithmetic and reflection" {
+  let a = vec.v3(1.0, 2.0, 2.0)
+  assert(near(a.length(), 3.0))
+  assert(near(a.unit().length(), 1.0))
+  assert(near(a.dot(vec.v3(0.0, 1.0, 0.0)), 2.0))
+  let r = vec.v3(1.0, -1.0, 0.0).reflect(vec.v3(0.0, 1.0, 0.0))
+  assert(near(r.x, 1.0) && near(r.y, 1.0) && near(r.z, 0.0))
+}
+
+test "sphere distance: the near root, and the far root from inside" {
+  let s = scene.Shape.Sphere(vec.v3(0.0, 0.0, 5.0), 1.0)
+  let o = vec.v3(0.0, 0.0, 0.0)
+  let d = vec.v3(0.0, 0.0, 1.0)
+  assert(near(scene.shape_distance(s, o, d, 100.0), 4.0))
+  assert(near(scene.shape_distance(s, vec.v3(0.0, 0.0, 5.0), d, 100.0), 1.0))
+  assert(scene.shape_distance(s, o, d, 3.0) < 0.0)
+  assert(scene.shape_distance(s, o, vec.v3(0.0, 1.0, 0.0), 100.0) < 0.0)
+}
+
+test "plane distance: parallel rays miss, facing rays hit" {
+  let p = scene.Shape.Plane(vec.v3(0.0, 0.0, 0.0), vec.v3(0.0, 1.0, 0.0))
+  assert(near(scene.shape_distance(p, vec.v3(0.0, 1.0, 0.0), vec.v3(0.0, -1.0, 0.0), 10.0), 1.0))
+  assert(scene.shape_distance(p, vec.v3(0.0, 1.0, 0.0), vec.v3(1.0, 0.0, 0.0), 10.0) < 0.0)
+}
+
+test "closest returns the nearest object and its normal" {
+  let s = demo.demo_scene()
+  // aimed at the center of the blue sphere (object 2): the near side, facing the ray
+  let aim = vec.v3(0.0, -0.5, 2.5).unit()
+  match scene.closest(s, vec.v3(0.0, 0.0, 0.0), aim, 1.0e30) {
+    None => { assert(false) }
+    Some(h) => {
+      assert(h.object == 2)
+      assert(near(h.t, vec.v3(0.0, -0.5, 2.5).length() - 0.5))
+      assert(h.normal.dot(aim) < 0.0)
+    }
+  }
+  match scene.closest(s, vec.v3(0.0, 0.0, 0.0), vec.v3(0.0, 0.0, -1.0), 1.0e30) {
+    None => {}
+    Some(_) => { assert(false) }
+  }
+}
+
+test "shadow rays see occluders between the point and the light" {
+  let s = demo.demo_scene()
+  let up = vec.v3(0.0, 1.0, 0.0)
+  assert(!scene.occluded(s, vec.v3(3.0, -1.0, 0.0), up, 100.0))
+  // from the ground toward the blue sphere: blocked only when the sphere lies within the limit
+  let to_sphere = vec.v3(0.0, 0.5, 2.5)
+  let origin = vec.v3(0.0, -1.0, 0.0)
+  assert(scene.occluded(s, origin, to_sphere.unit(), 100.0))
+  assert(!scene.occluded(s, origin, to_sphere.unit(), 1.0))
+}
+
+test "a ray that misses everything sees the sky gradient" {
+  let s = demo.demo_scene()
+  let up = render.trace(s, vec.v3(0.0, 0.0, 0.0), vec.v3(0.0, 1.0, 0.0), 0)
+  assert(near(up.x, 0.5) && near(up.y, 0.7) && near(up.z, 1.0))
+  let level = render.trace(s, vec.v3(0.0, 0.0, 0.0), vec.v3(0.0, 0.0, -1.0), 0)
+  assert(near(level.x, 0.75) && near(level.y, 0.85))
+}
+
+test "mirror color stays finite at full depth" {
+  let s = demo.demo_scene()
+  let c = render.trace(s, vec.v3(1.0, 0.0, 0.0), vec.v3(0.0, 0.0, 1.0), render.max_depth())
+  assert(c.x == c.x && c.y == c.y && c.z == c.z)
+  assert(c.x >= 0.0 && c.x <= 2.0)
+}
+
+test "channels are clamped and gamma corrected" {
+  assert(ppm.channel(0.0) == 0)
+  assert(ppm.channel(1.0) == 255)
+  assert(ppm.channel(7.5) == 255)
+  assert(ppm.channel(-1.0) == 0)
+  assert(ppm.channel(0.25) == 128)
+}
+
+test "PPM header and pixel count" {
+  let img = render.render(demo.demo_scene(), 3, 2, 0.8)
+  let text = ppm.encode(img)
+  assert(text.starts_with("P3\n3 2\n255\n"))
+  assert(text.split("\n").len() == 3 + 6 + 1)
+}

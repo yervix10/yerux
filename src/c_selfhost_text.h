@@ -6,6 +6,7 @@ static inline bool sc_boundary(String *s, int64_t i) {
 }
 
 static inline String sc_str_slice(String *s, int64_t start, int64_t end) {
+  if (start > end) nx_panic("String.slice start is after end");
   if (start >= 0 && start <= s->len && !sc_boundary(s, start))
     nx_panic("String.slice start is not a character boundary");
   if (end >= 0 && end <= s->len && !sc_boundary(s, end))

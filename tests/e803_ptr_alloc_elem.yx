@@ -3,6 +3,6 @@ fn main() {
     let p = Ptr<Bool>.alloc(8)
     p.free()
     let q = Ptr<Int>.null()
-    q.read(0)
+    q.nothing()
   }
 }

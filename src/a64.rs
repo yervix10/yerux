@@ -551,36 +551,6 @@ fn slot(v: V) -> u32 {
 
 // ───────────────────────── Compiler ─────────────────────────
 
-/// Imported modules include all their functions. Keep function IDs stable while
-/// dropping code that cannot be called, including unsupported OS APIs.
-pub fn discard_unused_functions(ir: &mut IrProgram) {
-    let mut reachable = vec![false; ir.funcs.len()];
-    let mut pending = vec![ir.main];
-    while let Some(fid) = pending.pop() {
-        if std::mem::replace(&mut reachable[fid], true) {
-            continue;
-        }
-        for inst in ir.funcs[fid].blocks.iter().flat_map(|b| &b.insts) {
-            match inst {
-                Inst::Call(_, callee, _) | Inst::FnAddr(_, callee) => pending.push(*callee),
-                Inst::VTableAddr(_, table) => pending.extend(&ir.vtables[*table]),
-                _ => {}
-            }
-        }
-    }
-    for (f, used) in ir.funcs.iter_mut().zip(reachable) {
-        if !used {
-            f.nparams = 0;
-            f.nvregs = 0;
-            f.slots.clear();
-            f.blocks = vec![Block {
-                insts: vec![],
-                term: Term::Unreachable,
-            }];
-        }
-    }
-}
-
 /// The source intrinsic uses x86-64 syscall numbers and argument layouts.
 enum LinuxSyscall {
     Direct(i64),
@@ -770,34 +740,9 @@ impl LinuxSyscall {
     }
 }
 
-fn syscall_constants(f: &IrFunc) -> Vec<Option<i64>> {
-    if !f
-        .blocks
-        .iter()
-        .flat_map(|b| &b.insts)
-        .any(|i| matches!(i, Inst::Syscall(..)))
-    {
-        return Vec::new();
-    }
-    // A runtime number could accidentally invoke a different AArch64 syscall.
-    let mut defined = vec![false; f.nvregs];
-    let mut constants = vec![None; f.nvregs];
-    defined[..f.nparams].fill(true);
-    for inst in f.blocks.iter().flat_map(|b| &b.insts) {
-        if let Some(d) = crate::opt::def(inst) {
-            constants[d] = match inst {
-                Inst::Const(_, n) if !defined[d] => Some(*n),
-                _ => None,
-            };
-            defined[d] = true;
-        }
-    }
-    constants
-}
-
 pub fn validate_syscalls(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
-        let constants = syscall_constants(f);
+        let constants = crate::ir::syscall_constants(f);
         for inst in f.blocks.iter().flat_map(|b| &b.insts) {
             if let Inst::Syscall(_, args) = inst {
                 let number = constants[args[0]];
@@ -1489,7 +1434,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         l
     };
     for (fi, f) in ir.funcs.iter().enumerate() {
-        let constants = syscall_constants(f);
+        let constants = crate::ir::syscall_constants(f);
         let (sf, flocs) = strip_locs(f);
         let f = &sf;
         let mut stubs: Vec<(usize, usize, u32)> = vec![];

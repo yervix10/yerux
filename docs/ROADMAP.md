@@ -50,7 +50,7 @@ expensive milestones and are at zero.
 
 | M | Done / items | % | Evidence and gaps |
 |---|---|---|---|
-| M1 | 9 / 9 | 100 | x86-64 backend, register allocation, structs/enums/match, borrows, allocator, drop glue, AArch64 core IR and Linux system services (`tests/a64_all.sh`), Windows PE (`tests/wine_all.sh`; not run on real Windows), C backend as oracle |
+| M1 | 9 / 9 | 100 | x86-64 backend, register allocation, structs/enums/match, borrows, allocator, drop glue, AArch64 core IR and Linux system services (`tests/a64_all.sh`), Windows PE (see M9), C backend as oracle |
 | M2 | 12 / 12 | 100 | sized ints, floats, `Ptr<T>`, `String`, `List<T>`, `Option`/`Result`/`?`, modules, formatting, ranges, `comptime`, arrays, slices |
 | M3 | 12 / 13 | 92 | `std.io/fs/env/time/process/net`, handles, binary/buffered I/O, links, `Duration`, C FFI, dynamic ELF; missing: the broader capability design |
 | M4 | 0 / 6 | 0 | no Wayland, shm, xdg-shell, windowing code in the repository (RENDERING.md is design only) |
@@ -58,7 +58,7 @@ expensive milestones and are at zero.
 | M6 | 0 / 8 | 0 | SIGNALS.md is a design document |
 | M7 | 6.5 / 8 | 81 | formatter, LSP, package manager (path/Git resolution, no registry), disassembler check, fuzzing done; self-hosting partial (0.5, 431/447 candidates, see below); DWARF debug info done (`--native --dwarf`: line tables, stack unwinding, locals/params in gdb); module object format stage 1 done (docs/MODULE_OBJECT.md); stage 2 done for the C backend (`--separate`, per-module C objects cached); missing: native backend and objects embedded in .yxo |
 | M8 | 0 / 7 | 0 | |
-| M9 | 1.5 / 7 | 21 | PE writer (1.0: `.pdata`/`.xdata` unwind info, ASLR with an empty `.reloc`, checked on a Windows Server 2022 VM; console only) and Win64 calling convention at the OS boundary; no callbacks, Win32 window, IME, DPI, Vulkan |
+| M9 | 1.5 / 7 | 21 | PE writer with `.pdata`/`.xdata` unwind info, ASLR, Win64 calling convention and console runtime. On Windows Server 2022, stdout and exit parity rose from 337/402 to 353/402, then with clocks, sleep, process arguments and environment, and file open/close/unlink/rename to 377/417 (the corpus grew from 402 to 417 eligible tests; all 377 built programs match every golden). See [WINDOWS.md](WINDOWS.md) for the 40 unsupported cases. Callbacks, Win32 windows, IME, DPI and Vulkan remain pending. |
 | M10 | 0 / 6 | 0 | `std.unicode` is a small helper set, not a shaping engine |
 | M11 | 0 / 6 | 0 | `std.compress` is run-length encoding, not an image codec |
 | M12 | 0.5 / 9 | 6 | AArch64 Linux backend (0.5: core IR, system services, workers and C imports); Apple, mobile and web pending |

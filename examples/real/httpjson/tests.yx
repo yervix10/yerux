@@ -1,0 +1,64 @@
+// Unit tests: `yerux test examples/real/httpjson/tests.yx`
+import json
+
+fn roundtrip(source: view String) -> String {
+  match json.parse(source) {
+    Ok(v) => { return json.to_text(v) }
+    Err(e) => { return "error at {e.offset}: {e.message}" }
+  }
+}
+
+test "scalars and nesting round-trip in compact form" {
+  assert(roundtrip(" [1, -2.5e3, true, false, null, \"a\", {{\"k\": [ ]}}] ").eq("[1.0,-2500.0,true,false,null,\"a\",{{\"k\":[]}}]"))
+  assert(roundtrip("{{\"b\": 1, \"a\": {{}}}}").eq("{{\"b\":1.0,\"a\":{{}}}}"))
+}
+
+test "string escapes decode, including surrogate pairs" {
+  match json.parse("\"x\\n\\t\\\"\\\\\\/\\u00e9\\ud83d\\ude00\"") {
+    Ok(v) => {
+      match v {
+        Str(s) => { assert(s.eq("x\n\t\"\\/é😀")) }
+        _ => { assert(false) }
+      }
+    }
+    Err(_) => { assert(false) }
+  }
+  assert(roundtrip("\"\\u0001\"").eq("\"\\u0001\""))
+}
+
+test "invalid documents report the offset of the failure" {
+  assert(roundtrip("[1,]").eq("error at 3: value expected"))
+  assert(roundtrip("{{\"a\" 1}}").eq("error at 5: ':' expected"))
+  assert(roundtrip("01").eq("error at 1: end of input expected"))
+  assert(roundtrip("\"abc").eq("error at 4: unterminated string"))
+  assert(roundtrip("\"\\ud800x\"").eq("error at 7: unpaired surrogate"))
+  assert(roundtrip("1 2").eq("error at 2: end of input expected"))
+  assert(roundtrip("-").eq("error at 1: invalid number"))
+  assert(roundtrip("1.").eq("error at 2: digit expected after '.'"))
+  assert(roundtrip("tru").eq("error at 0: value expected"))
+  assert(roundtrip("[1e400]").eq("error at 6: number out of range"))
+}
+
+test "nesting depth is limited" {
+  var deep = String.new()
+  for i in 0..70 { deep.push_byte(91) }
+  assert(roundtrip(deep).eq("error at 65: nesting too deep"))
+}
+
+test "field looks up members of an object" {
+  match json.parse("{{\"id\": 7, \"name\": \"ann\"}}") {
+    Ok(v) => {
+      match json.field(v, "name") {
+        Some(found) => {
+          match found {
+            Str(s) => { assert(s.eq("ann")) }
+            _ => { assert(false) }
+          }
+        }
+        None => { assert(false) }
+      }
+      assert(json.field(v, "missing").is_none())
+    }
+    Err(_) => { assert(false) }
+  }
+}

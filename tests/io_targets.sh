@@ -8,7 +8,7 @@ TMP="$(mktemp -d /tmp/yerux_iotargets.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 services=(
-  io_basic fs_basic env_basic time_clock fs_handles fs_autoclose fs_buffered env_set
+  io_basic fs_basic env_basic fs_handles fs_autoclose fs_buffered
   process_basic env_process process_pipes process_leaks
 )
 for m in "${services[@]}"; do
@@ -18,8 +18,15 @@ for m in "${services[@]}"; do
   if "$Y" build "tests/$m.yx" --target windows -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
     echo "FAIL: $m built for windows"; fail=1; continue
   fi
-  grep -q "native backend: raw system calls .* is not supported on the windows target yet" "$TMP/err" ||
+  grep -Eq "native backend: (raw system call [0-9]+|process arguments and environment|thread runtime intrinsics) .* is not supported on the windows target yet" "$TMP/err" ||
     { echo "FAIL: unclear message for $m on windows"; cat "$TMP/err"; fail=1; }
+done
+# clocks, sleep, process arguments and environment build for both targets (the Windows PE maps them to Win32)
+for m in time_clock env_set; do
+  for t in aarch64 windows; do
+    "$Y" build "tests/$m.yx" --target "$t" -o "$TMP/x" >"$TMP/out" 2>"$TMP/err" ||
+      { echo "FAIL: $m did not build for $t"; cat "$TMP/err"; fail=1; }
+  done
 done
 if ! "$Y" build tests/conc_runtime.yx --target aarch64 -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
   echo "FAIL: thread runtime did not build for aarch64"; cat "$TMP/err"; fail=1

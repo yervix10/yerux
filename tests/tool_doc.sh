@@ -13,6 +13,7 @@ for f in index.md doc_sample.md; do [ -f "$T/md/$f" ] || note "FAIL missing $f";
 grep -q '^# Module `doc_sample`' "$T/md/doc_sample.md" || note "FAIL module heading"
 grep -q 'Geometry helpers for the doc test.' "$T/md/doc_sample.md" || note "FAIL module doc (//!)"
 grep -q '^### `Point`' "$T/md/doc_sample.md" || note "FAIL struct entry"
+grep -q '^  x: Int,$' "$T/md/doc_sample.md" || note "FAIL struct fields are not shown in the signature"
 grep -q '^#### `Point.total`' "$T/md/doc_sample.md" || note "FAIL method entry"
 grep -q 'Sum of both coordinates.' "$T/md/doc_sample.md" || note "FAIL method doc"
 grep -q '^fn add(a: Int, b: Int) -> Int$' "$T/md/doc_sample.md" || note "FAIL signature of add"

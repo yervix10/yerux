@@ -1,0 +1,56 @@
+// lisp: a small Lisp interpreter (integers, booleans, symbols, pairs, closures, recursion).
+//
+//   lisp [FILE]     runs FILE, or standard input when no file is given
+//
+// Output of display and newline goes to standard output. An error stops the run after the output so far, is written to
+// standard error as "NAME:LINE:COL: error: MESSAGE", and gives exit status 1. Usage or read errors give status 2.
+import eval
+import std.args
+import std.io
+import std.text
+import types
+
+fn main() {
+  var valued = List<String>.new()
+  let parsed = args.parse_with(io.args(), valued, false)
+  let files = args.positionals(parsed)
+  if files.len() > 1 {
+    io.eprintln("usage: lisp [FILE]")
+    io.exit(2)
+  }
+  var name = String.from("<stdin>")
+  var source = String.new()
+  if files.len() == 1 {
+    name = files.at(0).clone()
+    match io.read_file(name) {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("lisp: {name}: {e.message}")
+        io.exit(2)
+      }
+    }
+  } else {
+    match io.read_all() {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("lisp: {e.message}")
+        io.exit(2)
+      }
+    }
+  }
+  var it = types.new_interp(source)
+  let result = eval.run(it)
+  if it.out.len() > 0 {
+    match io.write_stdout(it.out) {
+      Ok(_) => {}
+      Err(e) => { io.eprintln("lisp: {e.message}") }
+    }
+  }
+  match result {
+    Ok(_) => {}
+    Err(f) => {
+      io.eprintln("{name}:{types.locate(it.source, f.at)}: error: {f.msg}")
+      io.exit(1)
+    }
+  }
+}

@@ -46,13 +46,24 @@ derive Clone, Equal, Show for Pair
 
 Owned type arguments work (`Stack<String>`), drops are generated per instantiation.
 
+## Generic methods (implemented)
+
+`impl<T> Option<T> { fn map<U>(self, f: view fn(T) -> U) -> Option<U> { .. } }` and `impl Plain { fn conv<R>(view self, f: view fn(Int) -> R) -> R { .. } }`.
+The method becomes a generic function `__gm__Type__method` over the impl's parameters plus its own, whose first
+parameter is `self`; `recv.m(args)` is rewritten to a call of it (a consuming `self` moves the receiver) and
+`generic_call` infers everything: the impl's parameters from the receiver, the method's from the other arguments
+(closures last). `Self` is re-read per instantiation from the impl's type tokens. Diagnostics name it `Type.method`.
+Tests: `tests/generic_methods.yx`, `tests/option_result_methods.yx`, `tests/mutex_methods.yx`,
+`tests/e1519_generic_method_in_trait_impl.yx`, `tests/e1520_generic_method_errors.yx`.
+
 ## Not yet
 
-- Generic *methods* (`fn map<U>(view self, ..)` inside an impl): still "methods cannot be generic yet".
+- Generic methods in a *trait* impl (`impl Show for P { fn show<R>(..) }`): rejected ("methods of a trait impl cannot be generic yet").
 - Adding methods/impls to library types (`impl<T> Describe for List<T>`): still rejected ("cannot add methods to
   the built-in type"); wrap them in your own struct.
 - `impl<T> Drop for Stack<T>` (generic Drop) is rejected; `Ordered`/`Hash` cannot be derived.
 - Bodies of never-instantiated generic impls are not type-checked; errors show per instantiation.
-- Bounds on struct/enum parameters, explicit type arguments on calls and default type arguments.
+- Bounds on struct/enum parameters and default type arguments. (Explicit type arguments on calls exist since the
+  freeze rounds: `f<Int>(x)`, all parameters in order; `tests/generic_explicit_args.yx`.)
 
 Tests: `tests/generic_impls.yx`, `tests/mod_ok/generic_impls/`, `tests/e1035..e1037_generic_impl_*.yx`.

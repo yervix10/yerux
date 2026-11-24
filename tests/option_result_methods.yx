@@ -1,0 +1,36 @@
+// Option and Result helper methods with closures: map, and_then, unwrap_or_else, filter, is_some_and, ok_or_else, map_err, is_ok_and, is_err_and.
+fn half(x: Int) -> Option<Int> {
+  if x % 2 == 0 { return Some(x / 2) }
+  return None
+}
+fn parse(s: view String) -> Result<Int, String> {
+  if s.len() == 0 { return Err(String.from("empty")) }
+  return Ok(s.len())
+}
+fn bump(n: Int) -> Result<Int, String> { return Ok(n + 1) }
+fn main() {
+  let a = Some(8)
+  print(a.map(|x| x + 1).unwrap())
+  print(a.and_then(|x| half(x)).unwrap())
+  let b: Option<Int> = None
+  print(b.unwrap_or_else(|| 7))
+  print(a.filter(|x| x > 5).is_some())
+  print(a.is_some_and(|x| x > 100))
+  let r = b.ok_or_else(|| String.from("none!"))
+  print(r.is_err())
+  let p = parse("abc")
+  print(p.map(|n| n * 10).unwrap())
+  let q = parse("")
+  print(q.map_err(|e| e.len()).err().unwrap())
+  print(parse("xy").and_then(|n| bump(n)).unwrap())
+  print(parse("").unwrap_or_else(|e| e.len() * 100))
+  print(parse("q").is_ok_and(|n| n == 1))
+  let name = Some(String.from("yerux"))
+  let n = name.map(|s| s.len())
+  print(n.unwrap())
+  let words = Some(String.from("abc"))
+  let up = words.filter(|w| w.len() == 3).and_then(|w| Some(w.len() + 1))
+  print(up.unwrap())
+  let e: Result<Int, String> = Err(String.from("bad"))
+  print(e.is_err_and(|m| m.len() == 3))
+}

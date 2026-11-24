@@ -1,0 +1,30 @@
+get /health: 200 ok
+get /nothing: 404 no such route
+post /echo: 200 {"k":[1,2]}
+put /kv/color: 201 put color blue
+delete /kv/color: 405 allow=true
+query decoding: a b+c d
+big body: 200 100000 abcde
+pipelined: 2 answers, last body second
+keep-alive header: keep-alive
+http/1.0 closes: 200 OK close
+chunked: 200 OK hello, world
+expect: interim 100 Continue
+expect: final 200 OK hello
+head: 200 OK length=2 body=0
+405: 405 Method Not Allowed allow=GET
+header trimmed: [padded value]
+garbage: 400 Bad Request
+http/2: 505 HTTP Version Not Supported
+no host: 400 Bad Request
+smuggling: 400 Bad Request
+huge header: 431 Request Header Fields Too Large
+huge body: 413 Content Too Large
+bad escape: 400 Bad Request
+stalled: 408 Request Timeout
+idle: 0 bytes
+max_requests=3: 3 answered, last connection header close
+in progress at stop: 200 OK slow done connection=close
+workers: 3
+connections accepted: 25
+requests answered by the handler: 19, handler calls: 19

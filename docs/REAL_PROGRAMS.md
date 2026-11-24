@@ -42,10 +42,10 @@ create a name with `touch -- "$(printf '\377')"` and run `yxscan wc -r .`.
 
 ## webkv (`examples/real/webkv/`)
 
-A key-value HTTP server: `proto` (request parsing with head/body limits, replies), `store` (`Mutex<Data>`),
-`router`, `server` (acceptor + worker threads fed by bounded channels), `client` (`std.net` raw client),
-`main` (self test: server and clients as threads on a loopback port, or `webkv serve PORT [WORKERS [MAX]]`)
-and `tests.yx` (6 `yerux test` tests, including a raw-socket server test). 698 lines in 8 files.
+A key-value HTTP server on `std.http.server` (it used to carry its own parser, router and acceptor): `app` (the routes
+and handlers), `store` (`Mutex<Data>`), `client` (`std.http` client), `main` (self test: server and clients as threads
+on a loopback port, or `webkv serve PORT [WORKERS [MAX]]`) and `tests.yx` (4 `yerux test` tests, including a
+raw-socket server test).
 
 Checked by `tests/webkv.sh` (in `run_all.sh`): the unit tests, and the self test built with the C and the native
 backend, both compared with `tests/expected/webkv_selftest.out` (122 connections, 106 writes, identical output).
@@ -67,7 +67,7 @@ backend, both compared with `tests/expected/webkv_selftest.out` (122 connections
   (`mutex_with(m, |d: mut Data| -> Int { .. })`).
 - The result type of a block closure with several `return`s is not inferred ("cannot infer the type parameter R"):
   write `-> R` on the closure.
-- A field of an owning temporary cannot be read when the *field* owns memory (`f().body.len()`): bind it first. A Copy field (`f().status`) is fine since the minidb round (below).
+- A field of an owning temporary can be borrowed or read (`f().status`, `f().body.len()`) since the minidb round (below); moving it out or using it in an interpolation still needs a binding.
 - `Map<String, String>.get` needs `Copy` values: use `find` + `vals.at(i).clone()`.
 - `Text` and `String` are different types ("expected Text but this is String"): pick one per API.
 
@@ -186,7 +186,7 @@ Fixed (regression test fails before the fix):
 1. **A Copy field of an owning temporary could not be read** (`record.decode(b, 0).status`: "cannot take a field of a
    temporary ... that owns memory"), the friction hit by webkv and minidb alike. The temporary now moves into a hidden
    variable that lives to the end of the enclosing expression, and the rest of it is freed there (Drop runs, no leak).
-   A field that owns memory still has to be bound first. Test: `tests/field_of_temporary.yx`.
+   The same holds for fields that own memory when they are only borrowed (`make(1).name.len()`, `show(make(4).name)`, `tests/field_of_temporary_owned.yx`). Still bound first: moving such a field out (`let k = make(7).name`, an error) and `"{make(5).name}"` inside an interpolation. Test: `tests/field_of_temporary.yx`.
 2. **`std.hash.crc32` / `crc32_bytes` were 2.3x slower than needed**: the bitwise loop did eight 32-step XORs per byte
    (the language has no bitwise operators). A 256-entry table now does one 8-step and one 32-step XOR per byte; results
    are unchanged (`tests/std_hash.yx`). Opening a 653 KB log (20,000 records): 0.42 s before, 0.19 s after.
@@ -203,3 +203,110 @@ Open (no fix):
 - `Map<K, V>` needs a `Copy` value for `get`: the index stores the packed `offset * 2^24 + length` as an `Int`.
 - A `File` has no positional read, so every `get` is `seek` + `read`; there is no read buffering.
 - `compact` rebuilds the log in memory (all live values) before writing it: bounded by RAM, not streamed.
+
+# Round 3: Markdown converter, ray tracer, JSON over HTTP
+
+Three programs of 380 to 730 lines, each with unit tests (`yerux test`) and a golden run on the C and the native
+backend. The suite runs them as `mdconv`, `raytrace` and `httpjson` in `tests/run_all.sh`.
+
+- [mdconv](../examples/real/mdconv/): Markdown to HTML over an enum block tree (`Block`, `Inline`). Checked by
+  `tests/mdconv.sh` (sample golden `tests/expected/mdconv_sample.out`). Round 2's `md2html.yx` is line based; this one
+  builds the tree first, so the renderer matches on enum payloads.
+- [raytrace](../examples/real/raytrace/): spheres, planes, shadows and recursive mirrors; writes P3 PPM. Checked by
+  `tests/raytrace.sh` (32x20 golden `tests/expected/raytrace_32x20.ppm`, byte-identical on both backends).
+- [httpjson](../examples/real/httpjson/): `std.http` client, a hand-written JSON parser (`json.yx`) and a loopback test
+  server (`server.yx`). Checked by `tests/httpjson.sh`, which starts the server on port 0 and reads the port it prints.
+
+## Fixed in round 3
+
+- **`String.slice(from, to)` with `from > to` panicked with "index out of range".** It now panics with
+  `String.slice start is after end` (in `src/prelude_string.yx` and the bootstrap helper `src/c_selfhost_text.h`).
+  Test: `tests/string_slice_inverted.yx` (its golden includes the position, so it runs under `YERUX_LOCS=1`, as
+  `run_all.sh` does).
+
+## Open (not changed; minimal repros)
+
+1. **A type parameter that appears only in the result cannot be inferred.** A helper that builds an error for any
+   result type does not compile:
+   ```
+   fn fail<T>(m: Text) -> Result<T, String> { return Err(String.from(m)) }
+   fn main() { let r: Result<Int, String> = fail("x") }
+   ```
+   Error: `cannot infer the type parameter T of 'fail'`. Workaround: return a plain error value and wrap it with
+   `Err(...)` at each call site (`httpjson` does this with `json.fail`).
+2. **A `Text` literal is not a `String` inside a tuple.** `var h = List<(String, String)>.new(); h.push(("Accept", "x"))`
+   fails with `expected (String, String) but this is (Text, Text)`. Use `String.from("Accept")` in each slot.
+3. **A pattern cannot reach into an owned payload.** `match json.parse(s) { Ok(Json.Str(t)) => { .. } .. }` gives
+   `cannot look inside an owned payload in match move`. The diagnostic is clear; bind the value first, then match it
+   (`Ok(v) => { match v { Str(t) => ... } }`).
+4. **A field of a borrowed error cannot be moved.** `Err(e) => { return Err(e.message) }` fails with
+   `cannot move 'e.message' out of its struct`. `Err(String.from(e.message))` works.
+5. **Pushing a borrowed list element needs a copy.** `body.push(lines.at(i))` fails with `cannot move 'lines.at(..)'`.
+   Use `.clone()` (same as open item 2 of round 2).
+6. **An interpolation cannot contain an escaped quote.** `"n = {text.parse_int(\"1\")}"` gives `this { in a string is never
+   closed`. Inside `{...}` the quotes are plain (`"n = {text.parse_int("1")}"`); outside them, a literal brace is `{{`
+   and `}}`, which JSON text needs everywhere.
+7. **I/O messages repeat the path.** `io.write_file("/nonexistent/x", "a")` yields
+   `open '/nonexistent/x': No such file or directory (os error 2)`; a program that prefixes the path prints it twice.
+   Programs must choose: prefix the operation, or print the message alone.
+8. **`text.parse_int` errors do not name the input.** `text.parse_int("4x")` returns `invalid digit at byte 1` without
+   the text, so a caller that wants `bad size "4x"` must add it.
+9. **`text.parse_float("1e400")` is `Ok(inf)`.** This matches Rust's `f64::from_str`, but the `std.text` reference does
+   not say so. The JSON parser rejects infinite results itself. (Documentation only.)
+
+# Round 4: an interpreter, a line editor, a diff tool
+
+Three programs with unit tests (`yerux test`) and golden runs on the C and the native backend. The suite runs them as
+`difftool`, `edlite` and `lisp` in `tests/run_all.sh`.
+
+- [difftool](../examples/real/difftool/): LCS line diff (`diff.yx`), unified output with hunks, a patch parser and
+  applier (`patch.yx`), and generated round-trip checks (`fuzz.yx`: 3000 pairs with seed 42 in `tests/difftool.sh`).
+  The round trip checks that the script is minimal (Keep count = LCS length), that the unified text parses, and that
+  applying it to the old side gives the new side. Golden: `tests/expected/difftool_sample.diff`.
+- [edlite](../examples/real/edlite/): an ed-style editor: buffer with 1-based lines, ranges (`N`, `.`, `$`, `+N`, `-N`,
+  `A,B`, `%`), `a i c d p n j m t s=/PAT/REP/[g] = w e f q`, undo and redo (`u`, `r`) by whole-buffer snapshots.
+  Script mode (`-f`), stdin mode, file load and write. Golden session `tests/expected/edlite_session.*` (its stderr
+  and exit status 1 are checked). The pattern in `s` is literal text, not a regular expression.
+- [lisp](../examples/real/lisp/): a mini Lisp: reader with positions, special forms (`quote if define set! lambda begin
+  let and or`), closures in an arena of frames, pairs, strings, 21 primitives, errors as `file:line:col: error:`.
+  Golden programs: `queens` (N-queens counts 2, 10, 4, 40, 92), `accounts` (closures as objects), `error` (fails on
+  purpose; stderr golden). Checked by `tests/lisp.sh`.
+
+Sizes: difftool 724 lines in all (its tests included), edlite 776, lisp 1013 (about 890 for the interpreter and 125 for
+its tests).
+
+## Fixed in round 4
+
+- **`pub fn` inside an `impl` gave "expected 'fn' inside `impl`".** Methods take no `pub`: they are visible wherever
+  their type is. The diagnostic now says so (`src/syntax.rs`). Test: `tests/e1964_impl_pub_method.yx`.
+- **A Text literal receiver of a std.text function gave a method error with the wrong hint** (it suggested an `impl`
+  block). The `std.text` hint now also applies to a Text receiver (`src/check.rs`). Test:
+  `tests/e1965_text_method_std_text.yx`.
+- **difftool reported two files that differ only in the final newline as identical** (exit 0). The line model cannot
+  keep that difference, so difftool now refuses such inputs with status 2. Repro:
+  `printf 'a\nb' > x; printf 'a\nb\n' > y; difftool diff x y` (was exit 0, no output). Test: `tests/difftool.sh`.
+
+## Open (not changed; minimal repros)
+
+1. **`Result` has no `unwrap_err`.** `let e = r.unwrap_err()` on a `Result<Int, String>` gives "type Result<Int,
+   String> has no method 'unwrap_err'". Use `match` (`lisp` and `difftool` do).
+2. **An integer has no `to_text()`.** `let n = 5; print(n.to_text())` gives "type Int has no method 'to_text'". Build the
+   text with `var s = String.new(); s.push_int(n)` (a helper in each program).
+3. **A method on a Text literal needs the module function, and `parse_int` exists in two forms.** `"4".parse_int(n)`
+   (a `String` method taking an out parameter) does not apply to a literal (Text), and `text.parse_int(s)` returns a
+   `Result`. Both are correct; the names are easy to mix up.
+4. **A payload moved out of a match arm needs `move`.** `match io.read_file(p) { Ok(d) => d, .. }` gives "'d' is a
+   String and is not copied"; `Ok(d) => move d` works. The diagnostic is clear; this is listed for the next reader.
+5. **A call that returns an owned value must be used or discarded.** `run(ed, script)` returning a `List<String>` as a
+   statement gives "must be used or explicitly discarded". `let _ = run(..)` works.
+6. **Types of an imported module need the module prefix, but variants do not.** In a file that does `import types`,
+   `Value` and `Fault` are "not defined in this file" and must be written `types.Value` and `types.Fault`, while
+   `Num(n)` in a `match` arm needs no prefix. Repro: `import types` then `fn f(v: Value) -> Bool { .. }`.
+7. **`text.lines` drops a `\r` before each `\n`.** `text.lines("a\r\nb\r\n").at(0).len()` is 1. A CRLF file therefore
+   cannot be diffed and patched back byte for byte (difftool works on the lines and writes LF).
+8. **difftool cannot diff files whose last line has no newline.** It refuses them (see Fixed). The unified format's
+   `\ No newline at end of file` marker is not implemented; that would be the real fix.
+9. **Lisp: no tail calls, and closure frames are never freed.** A non-tail recursion deeper than about 650 Lisp calls
+   gives "recursion too deep" (the limit is 2000 nested `eval` calls). Every call allocates a frame in an arena that is
+   not reclaimed, so a long loop written as recursion grows memory. This is a design limit of the 900-line program, not
+   a compiler bug.

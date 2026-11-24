@@ -1,0 +1,21 @@
+// A block closure whose first `return` is a bare `None`: the result type comes from a later return.
+fn apply<T: Copy, R>(x: T, f: view fn(T) -> R) -> R { return f(x) }
+
+fn main() {
+  let a = apply(9, |v| {
+    if v > 5 { return None }
+    return Some(v)
+  })
+  print(a.is_some())
+  let b = apply(3, |v| {
+    if v > 5 { return None }
+    if v > 2 { return Some(v * 2) }
+    return None
+  })
+  print(b.unwrap())
+  let c = apply(1, |v| {
+    if v > 5 { return Some(String.from("big")) }
+    return None
+  })
+  print(c.is_none())
+}

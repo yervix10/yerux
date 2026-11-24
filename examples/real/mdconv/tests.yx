@@ -1,0 +1,76 @@
+// Unit tests: `yerux test examples/real/mdconv/tests.yx`
+import ast
+import parse
+import render
+
+test "plain text and emphasis" {
+  assert(render.to_html("a *b* _c_ **d**").eq("<p>a <em>b</em> <em>c</em> <strong>d</strong></p>\n"))
+}
+
+test "emphasis nests inside strong" {
+  assert(render.to_html("**a *b* c**").eq("<p><strong>a <em>b</em> c</strong></p>\n"))
+}
+
+test "unclosed markers stay literal" {
+  assert(render.to_html("a *b and `c").eq("<p>a *b and `c</p>\n"))
+}
+
+test "backslash escapes a marker" {
+  assert(render.to_html("\\*x\\* and \\\\").eq("<p>*x* and \\</p>\n"))
+}
+
+test "code span escapes its content" {
+  assert(render.to_html("`<a&b>`").eq("<p><code>&lt;a&amp;b&gt;</code></p>\n"))
+}
+
+test "link and image with label spans" {
+  assert(render.to_html("[**go**](http://x.y/?a=1&b=2) ![pic](p.png)")
+    .eq("<p><a href=\"http://x.y/?a=1&amp;b=2\"><strong>go</strong></a> <img src=\"p.png\" alt=\"pic\"></p>\n"))
+}
+
+test "a bracket without a destination is text" {
+  assert(render.to_html("[x] and [y](").eq("<p>[x] and [y](</p>\n"))
+}
+
+test "headings get slug ids and keep their level" {
+  assert(render.to_html("## Hello, World 2!").eq("<h2 id=\"hello-world-2\">Hello, World 2!</h2>\n"))
+  assert(render.to_html("####### seven").eq("<p>####### seven</p>\n"))
+  assert(render.to_html("#nospace").eq("<p>#nospace</p>\n"))
+}
+
+test "lists: continuation lines join the item, kinds do not mix" {
+  let html = render.to_html("1. first\n   more\n2. second\n- bullet")
+  assert(html.eq("<ol>\n<li>first more</li>\n<li>second</li>\n</ol>\n<ul>\n<li>bullet</li>\n</ul>\n"))
+}
+
+test "a list ends at a blank line" {
+  let blocks = parse.parse_document("- a\n\n- b")
+  assert(blocks.len() == 2)
+}
+
+test "fenced code keeps its body verbatim and an open fence runs to the end" {
+  assert(render.to_html("```\n<b> *x*\n\n```").eq("<pre><code>&lt;b&gt; *x*\n</code></pre>\n"))
+  assert(render.to_html("```py\nx = 1").eq("<pre><code class=\"language-py\">x = 1</code></pre>\n"))
+}
+
+test "quotes hold blocks" {
+  assert(render.to_html("> # T\n>\n> body").eq("<blockquote>\n<h1 id=\"t\">T</h1>\n<p>body</p>\n</blockquote>\n"))
+}
+
+test "rule and paragraph breaks" {
+  let blocks = parse.parse_document("a\nb\n---\nc")
+  assert(blocks.len() == 3)
+  match blocks.at(1) {
+    Rule => { assert(true) }
+    _ => { assert(false) }
+  }
+}
+
+test "plain text of a span list" {
+  let spans = parse.parse_inline("a **b** [c](d) ![e](f) `g`")
+  assert(ast.plain(spans).eq("a b c e g"))
+}
+
+test "html special characters in text are escaped" {
+  assert(render.to_html("5 < 6 & \"q\"").eq("<p>5 &lt; 6 &amp; &quot;q&quot;</p>\n"))
+}

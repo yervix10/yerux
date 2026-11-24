@@ -12,7 +12,7 @@
 //  6. String arguments of `push_str`/`String.from`/... are borrowed (no `move`), and may not alias the
 //     string being modified.
 use crate::layout::GLOBAL_CELLS;
-use crate::numeric::{int_range, is_float, is_int, is_num};
+use crate::numeric::{int_range, is_float, is_int, is_num, Nk};
 use crate::syntax::*;
 use std::collections::{HashMap, HashSet};
 
@@ -238,6 +238,36 @@ fn is_place(e: &Expr) -> bool {
     matches!(e.k, EK::Var(..) | EK::Field(..)) || is_at(e)
 }
 // ── constructors for the synthetic code that `for` loops are rewritten into ──
+/// `None`, `Maybe.None`: a generic enum variant without payload whose type arguments are not written
+fn show_gm(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("__gm__") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 6..];
+        match after.find("__") {
+            Some(j) => {
+                out.push_str(&after[..j]);
+                out.push('.');
+                rest = &after[j + 2..];
+            }
+            None => {
+                rest = &rest[i + 6..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn is_bare_variant(e: &Expr) -> bool {
+    match &e.k {
+        EK::Var(n, _) => n == "None",
+        EK::GenVariant { targs: None, args, .. } => args.is_empty(),
+        _ => false,
+    }
+}
+
 fn sx(k: EK, pos: Pos) -> Expr {
     Expr {
         k,
@@ -561,6 +591,8 @@ struct Checker<'a> {
     capture_ids: HashSet<usize>, // variables that are captures inside a closure body
     closure_borrow_pos: HashSet<(usize, usize)>, // positions of closure literals that borrow variables
     ret_free: bool,        // checking a closure whose result type is not known yet
+    explicit_targs: Option<Vec<Ty>>, // type arguments written at the call being checked (`f<Int>(x)`)
+    pending_bare: usize,   // `return None`-like returns of a closure whose result type was still unknown
     free_pids: Vec<usize>, // type parameters of the generic callee that are still unknown
     closure_loans: HashMap<usize, Vec<(usize, u8, Pos)>>, // hidden closure variable -> what it borrows
 }
@@ -587,6 +619,11 @@ struct LoopCtx {
 
 impl<'a> Checker<'a> {
     fn err(&mut self, mut d: Diag) {
+        // generic methods live behind `__gm__Type__method`: show them as `Type.method`
+        d.msg = show_gm(&d.msg);
+        for n in d.notes.iter_mut() {
+            *n = show_gm(n);
+        }
         if let Some(origin) = self.inst_origin {
             if d.pos != origin {
                 if d.pos.line >= crate::syntax::PRELUDE_LINE {
@@ -745,11 +782,11 @@ impl<'a> Checker<'a> {
                             );
                             return None;
                         }
-                        // a Copy field (Int, Bool, ..) of an owning temporary (`parse(x).status`): the temporary
+                        // a field of an owning temporary (`parse(x).status`, `f().name.len()`): the temporary
                         // moves into a hidden variable that lives as long as the enclosing expression, so the
                         // rest of the value is freed at its end instead of leaking
                         let copy_field = match t {
-                            Ty::Struct(s) => self.types.structs[s].fields.iter().find(|(fname, _)| fname == f).map(|x| x.1).filter(|ft| !self.types.owned(*ft)),
+                            Ty::Struct(s) => self.types.structs[s].fields.iter().find(|(fname, _)| fname == f).map(|x| x.1),
                             _ => None,
                         };
                         if copy_field.is_some() {
@@ -997,6 +1034,48 @@ impl<'a> Checker<'a> {
             );
         }
         t
+    }
+
+    /// `a + b + c` where the leftmost sum starts a String concatenation (`s + "x"`, `"(" + s`): the left operand
+    /// is itself a concatenation, so the whole chain builds Strings step by step.
+    fn concat_chain(&self, e: &Expr) -> bool {
+        match &e.k {
+            EK::Bin("+", a, b) => {
+                (self.isp(a) && self.peek_ty(a) == Some(Ty::String))
+                    || (matches!(a.k, EK::Text(_)) && self.isp(b) && self.peek_ty(b) == Some(Ty::String))
+                    || self.concat_chain(a)
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns left unchecked by `return None` while the closure's result type was unknown: check them now, with
+    /// the result type that a later return fixed (or without one, which reports the usual inference error).
+    pub(super) fn fix_bare_returns(&mut self, body: &mut [Stmt], hint: Option<Ty>) {
+        for st in body {
+            match &mut st.k {
+                SK::Return(Some(e)) if is_bare_variant(e) => {
+                    self.hint = hint;
+                    let t = self.expr(e);
+                    if let Some(r) = hint {
+                        self.expect(t, r, e.pos);
+                    }
+                }
+                SK::Block(b, _) | SK::While(_, b, _) => self.fix_bare_returns(b, hint),
+                SK::If(_, yes, no) => {
+                    self.fix_bare_returns(yes, hint);
+                    if let Some(no) = no {
+                        self.fix_bare_returns(no, hint);
+                    }
+                }
+                SK::Match(_, arms) => {
+                    for arm in arms {
+                        self.fix_bare_returns(&mut arm.body, hint);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     fn expr_checked(&mut self, e: &mut Expr) -> Ty {
@@ -1321,9 +1400,11 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        // `a + b` on a String variable: a new String (`std__concat`); b is a String variable or a Text
-        if let EK::Bin("+", a, _) = &e.k {
-            if self.isp(a) && self.peek_ty(a) == Some(Ty::String) {
+        // `a + b` on a String variable: a new String (`std__concat`); b is a String variable or a Text.
+        // A Text literal on the left (`"(" + s`) concatenates the same way: the literal is lent as a hidden String.
+        if let EK::Bin("+", a, b) = &e.k {
+            let lit_left = matches!(a.k, EK::Text(_)) && self.isp(b) && self.peek_ty(b) == Some(Ty::String);
+            if lit_left || (self.isp(a) && self.peek_ty(a) == Some(Ty::String)) || self.concat_chain(a) {
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
                 if let EK::Bin(_, a, b) = k {
                     e.k = EK::Call("std__concat".into(), vec![*a, *b]);
@@ -1733,6 +1814,31 @@ impl<'a> Checker<'a> {
                 t
             }
             EK::Sequence(..) => e.ty,
+            EK::GenVariant { targs: Some(_), vname, .. } if vname.is_empty() => {
+                // `f<A, B>(x)`: a call with explicit type arguments
+                let EK::GenVariant { name, targs, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else { unreachable!() };
+                let explicit = targs.unwrap_or_default();
+                let mut args = args;
+                let t = match self.ps.gfns.iter().position(|g| g.name == name) {
+                    Some(gi) => {
+                        self.explicit_targs = Some(explicit);
+                        self.generic_call(gi, &mut args, pos)
+                    }
+                    None => {
+                        let mut d = diag(format!("'{}' takes no type arguments", name), pos);
+                        if self.sigs.contains_key(&name) || self.lookup(&name).is_some() {
+                            d = d.note("it is not a generic function: remove the `<..>`");
+                        } else {
+                            d = d.note("no generic function has this name");
+                        }
+                        self.err(d);
+                        Ty::Err
+                    }
+                };
+                let name = self.rename.take().unwrap_or(name);
+                e.k = EK::Call(name, args);
+                t
+            }
             EK::GenStruct { .. } | EK::GenVariant { .. } => {
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
                 let (t, nk) = self.generic_lit(k, pos, hint);
@@ -1748,28 +1854,7 @@ impl<'a> Checker<'a> {
             | EK::Deref(_) => e.ty, // built by the checker itself
         };
         e.ty = ty;
-        if let Some((op, size)) = self.ptr_op.take() {
-            // `Ptr<T>` construction and management: an intrinsic call the backends know
-            let mut args = match std::mem::replace(&mut e.k, EK::Int(0)) {
-                EK::Method { recv, args, .. } => {
-                    let mut a = vec![*recv];
-                    a.extend(args);
-                    a
-                }
-                EK::Static { args, .. } => args,
-                k => {
-                    e.k = k;
-                    return ty;
-                }
-            };
-            if let Some(n) = size {
-                args.push(Expr {
-                    k: EK::Int(n),
-                    pos,
-                    ty: Ty::Int,
-                });
-            }
-            e.k = EK::Call(op.into(), args);
+        if self.apply_ptr_op(e, pos) {
             return ty;
         }
         if ty != Ty::Err {
@@ -1778,17 +1863,39 @@ impl<'a> Checker<'a> {
         ty
     }
 
+    /// Turn a checked `Ptr` method/static call into its intrinsic call (`ptr_op` was set by the check).
+    fn apply_ptr_op(&mut self, e: &mut Expr, pos: Pos) -> bool {
+        let Some((op, size)) = self.ptr_op.take() else { return false };
+        let mut args = match std::mem::replace(&mut e.k, EK::Int(0)) {
+            EK::Method { recv, args, .. } => {
+                let mut a = vec![*recv];
+                a.extend(args);
+                a
+            }
+            EK::Static { args, .. } => args,
+            k => {
+                e.k = k;
+                return true;
+            }
+        };
+        if let Some(n) = size {
+            args.push(Expr { k: EK::Int(n), pos, ty: Ty::Int });
+        }
+        e.k = EK::Call(op.into(), args);
+        true
+    }
+
     /// `Ptr<T>.null()`, `Ptr<T>.alloc(n)`: raw pointers made by the language (no `malloc` declaration needed).
     fn ptr_static(&mut self, ty: Ty, f: &str, args: &mut Vec<Expr>, pos: Pos) -> Ty {
         let Ty::Ptr(pi) = ty else { return Ty::Err };
         let tn = self.tn(ty);
         let nargs = match f {
             "null" => 0,
-            "alloc" => 1,
+            "alloc" | "from_addr" => 1,
             _ => {
                 self.err(
                     diag(format!("{} has no function '{}'", tn, f), pos)
-                        .note("functions: null(), alloc(n)"),
+                        .note("functions: null(), alloc(n), from_addr(a)"),
                 );
                 return Ty::Err;
             }
@@ -1802,6 +1909,16 @@ impl<'a> Checker<'a> {
         }
         if f == "null" {
             self.ptr_op = Some(("__ptr_null", None));
+            return ty;
+        }
+        if f == "from_addr" {
+            if self.unsafe_depth == 0 {
+                self.err(diag(format!("{}.from_addr(a) requires an unsafe block", tn), pos)
+                    .note("help: the compiler cannot check that the address is valid"));
+            }
+            let t = self.expr(&mut args[0]);
+            self.expect(t, Ty::Int, args[0].pos);
+            self.ptr_op = Some(("__ptr_from", None));
             return ty;
         }
         if self.unsafe_depth == 0 {
@@ -1834,26 +1951,70 @@ impl<'a> Checker<'a> {
         ty
     }
 
-    /// Methods of `Ptr<T>`: `p.is_null()` and `p.free()` (null is allowed; only for pointers made by `Ptr<T>.alloc`).
-    fn ptr_method(&mut self, m: &str, args: &mut Vec<Expr>, pos: Pos) -> Ty {
-        let (op, ret) = match m {
-            "is_null" => ("__ptr_is_null", Ty::Bool),
-            "free" => ("__ptr_free", Ty::Unit),
+    /// Element size in bytes of `Ptr<T>` for the typed operations (read/write/add/...): 1 or 8 byte
+    /// integers and pointers, the same on both backends. Reports a diagnostic for any other T.
+    fn ptr_elem_size(&mut self, pi: usize, m: &str, pos: Pos) -> i64 {
+        match self.types.ptrs[pi] {
+            Ty::Int | Ty::Ptr(_) | Ty::Num(Nk::U64) => 8,
+            Ty::Num(Nk::U8) => 1,
+            Ty::Err => 8,
+            other => {
+                let (tn, n) = (self.tn(Ty::Ptr(pi)), self.tn(other));
+                self.err(
+                    diag(format!("{}.{}() needs an element type of Int, UInt64, UInt8 or Ptr, not {}", tn, m, n), pos)
+                        .note("help: read other types through a Ptr<UInt8> byte by byte"),
+                );
+                8
+            }
+        }
+    }
+
+    /// Methods of `Ptr<T>`: `is_null()`, `free()`, and (unsafe only) `read()`, `write(v)`, `add(n)`, `sub(n)`,
+    /// `offset_from(q)`, `addr()`. Offsets are in elements; read/write of null panic.
+    fn ptr_method(&mut self, m: &str, recv_ty: Ty, args: &mut Vec<Expr>, pos: Pos) -> Ty {
+        let Ty::Ptr(pi) = recv_ty else { return Ty::Err };
+        let (op, ret, nargs) = match m {
+            "is_null" => ("__ptr_is_null", Ty::Bool, 0),
+            "free" => ("__ptr_free", Ty::Unit, 0),
+            "read" => ("__ptr_read", self.types.ptrs[pi], 0),
+            "write" => ("__ptr_write", Ty::Unit, 1),
+            "add" => ("__ptr_add", recv_ty, 1),
+            "sub" => ("__ptr_sub", recv_ty, 1),
+            "offset_from" => ("__ptr_diff", Ty::Int, 1),
+            "addr" => ("__ptr_addr", Ty::Int, 0),
             _ => {
                 self.err(diag(format!("Ptr has no method '{}'", m), pos).note(
-                    "methods: is_null(), free()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n))",
+                    "methods: is_null(), free(), read(), write(v), add(n), sub(n), offset_from(q), addr()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n), Ptr<T>.from_addr(a))",
                 ));
                 return Ty::Err;
             }
         };
-        if !args.is_empty() {
-            self.err(diag(format!("'{}' expects 0 argument(s)", m), pos));
+        if args.len() != nargs {
+            self.err(diag(format!("'{}' expects {} argument(s)", m, nargs), pos));
+            return ret;
         }
-        if m == "free" && self.unsafe_depth == 0 {
-            self.err(diag("p.free() requires an unsafe block", pos)
-                .note("help: free only pointers made by `Ptr<T>.alloc(n)`, once; a pointer from C's malloc is released with C's free"));
+        if m != "is_null" && self.unsafe_depth == 0 {
+            let help = match m {
+                "free" => "help: free only pointers made by `Ptr<T>.alloc(n)`, once; a pointer from C's malloc is released with C's free",
+                _ => "help: wrap it in `unsafe { ... }`; the compiler cannot check that the pointer is valid",
+            };
+            self.err(diag(format!("p.{}() requires an unsafe block", m), pos).note(help));
         }
-        self.ptr_op = Some((op, None));
+        let size = if matches!(m, "is_null" | "free" | "addr") {
+            None
+        } else {
+            Some(self.ptr_elem_size(pi, m, pos))
+        };
+        if nargs == 1 {
+            let t = self.expr(&mut args[0]);
+            let want = match m {
+                "write" => self.types.ptrs[pi],
+                "offset_from" => recv_ty,
+                _ => Ty::Int,
+            };
+            self.expect(t, want, args[0].pos);
+        }
+        self.ptr_op = Some((op, size));
         ret
     }
 
@@ -1903,6 +2064,7 @@ impl<'a> Checker<'a> {
         if !option_or_result && !self.types.owned(t) && !hoistable {
             let ty = match t {
                 Ty::Char => self.char_method(m, args, e.pos),
+                Ty::Ptr(_) => self.ptr_method(m, t, args, e.pos),
                 Ty::Err => Ty::Err,
                 _ => {
                     self.err(diag("expected a variable or a field here", recv.pos));
@@ -1912,6 +2074,8 @@ impl<'a> Checker<'a> {
             let pre = std::mem::replace(&mut self.pre, outer_pre);
             self.pre.extend(pre);
             e.ty = ty;
+            let ep = e.pos;
+            self.apply_ptr_op(e, ep);
             return ty;
         }
         self.scopes.push(HashMap::new());
@@ -2576,7 +2740,7 @@ impl<'a> Checker<'a> {
             let t = self.expr(recv);
             return match t {
                 Ty::Char => self.char_method(m, args, pos),
-                Ty::Ptr(_) => self.ptr_method(m, args, pos),
+                Ty::Ptr(_) => self.ptr_method(m, t, args, pos),
                 Ty::Err => Ty::Err,
                 _ => {
                     self.err(diag("expected a variable or a field here", recv.pos));
@@ -2604,7 +2768,7 @@ impl<'a> Checker<'a> {
                 self.array_method(p, recv, m, args, pos, elem, n)
             }
             Ty::String => self.string_method(p, recv, m, args, pos),
-            Ty::Ptr(_) => self.ptr_method(m, args, pos),
+            Ty::Ptr(_) => self.ptr_method(m, p.ty, args, pos),
             Ty::Char => self.char_method(m, args, pos),
             t => {
                 let n = self.tn(t);
@@ -4625,6 +4789,13 @@ impl<'a> Checker<'a> {
                             return;
                         }
                         e.k = EK::Move(n, 0);
+                    }
+                    if self.ret_free && is_bare_variant(e) {
+                        // `return None` before any return that says what the closure produces: check it again
+                        // once a later return has fixed the result type (see `fix_bare_returns`)
+                        self.pending_bare += 1;
+                        self.st.dead = true;
+                        return;
                     }
                     self.hint = if self.ret_free { None } else { Some(self.ret) };
                     let t = self.expr(e);
@@ -6933,6 +7104,15 @@ impl<'a> Checker<'a> {
         self.ps.gfns.iter().any(|g| g.name == f).then_some(f)
     }
 
+    /// The generic function behind a method with type parameters of its own, when `rt` has one called `m`.
+    fn generic_method_fn(&mut self, rt: Ty, m: &str) -> Option<String> {
+        if !matches!(rt, Ty::Struct(_) | Ty::Enum(_)) {
+            return None;
+        }
+        let f = format!("__gm__{}__{}", type_key(&self.types, rt), m);
+        self.ps.gfns.iter().any(|g| g.name == f).then_some(f)
+    }
+
     /// `x.m(args)` -> `Trait__Type__m(x, args)`.
     fn rewrite_method(&mut self, e: &mut Expr, rt: Ty) -> Result<(), ()> {
         let pos = e.pos;
@@ -6967,6 +7147,25 @@ impl<'a> Checker<'a> {
                     return Err(());
                 }
                 return Ok(()); // the built-in path explains
+            }
+            None if self.generic_method_fn(rt, &m).is_some() => {
+                // `opt.map(f)` -> `__gm__Option__map(opt, f)`: a method with type parameters of its own
+                let f = self.generic_method_fn(rt, &m).unwrap_or_default();
+                let consumes = self.ps.gfns.iter().find(|g| g.name == f).and_then(|g| g.params.first().map(|p| p.0)) == Some(Mode::Own);
+                let EK::Method { recv, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else {
+                    return Err(());
+                };
+                let mut recv = *recv;
+                if let EK::Var(n, _) = &recv.k {
+                    if n.starts_with('$') || (consumes && self.types.owned(rt)) {
+                        let (n, p, t) = (n.clone(), recv.pos, recv.ty);
+                        recv = Expr { k: EK::Move(n, 0), pos: p, ty: t };
+                    }
+                }
+                let mut all = vec![recv];
+                all.extend(args);
+                e.k = EK::Call(f, all);
+                return Ok(());
             }
             None if self.iter_free_fn(rt, &m).is_some() => {
                 // `it.map(f)` -> `std__iter_map(it, f)`: adapters with an extra type parameter are free functions
@@ -7015,6 +7214,13 @@ impl<'a> Checker<'a> {
                         "help: `{}` is a method of trait {}: write `impl {} for {} {{ .. }}`",
                         m, t, t, tyn
                     ));
+                } else if matches!(rt, Ty::Text)
+                    && crate::stdlib::source("std.text").is_some_and(|src| {
+                        let head = format!("pub fn {}(", m);
+                        src.lines().any(|l| l.starts_with(&head) && l[head.len()..].contains(": view String") && l[head.len()..].starts_with(|c: char| c.is_alphabetic()))
+                    })
+                {
+                    d = d.note(format!("help: `{m}` is a function of std.text: add `import std.text` and write `text.{m}(s, ..)`"));
                 } else if matches!(
                     rt,
                     Ty::Int | Ty::Bool | Ty::Text | Ty::Struct(_) | Ty::Enum(_)
@@ -7638,12 +7844,15 @@ impl<'a> Checker<'a> {
             return Ty::Err; // its own errors are already reported
         }
         if g.params.len() != args.len() {
+            // a generic method counts its receiver as the first parameter
+            let skip = usize::from(g.self_tok.is_some());
             self.err(diag(
                 format!(
-                    "'{}' expects {} argument(s) but got {}",
+                    "'{}' expects {} argument(s){} but got {}",
                     g.name,
-                    g.params.len(),
-                    args.len()
+                    g.params.len() - skip,
+                    if skip == 1 { " besides the receiver" } else { "" },
+                    args.len().saturating_sub(skip)
                 ),
                 pos,
             ));
@@ -7684,6 +7893,24 @@ impl<'a> Checker<'a> {
             }
         }
         let mut bind: Vec<Option<Ty>> = vec![None; g.pids.len()];
+        if let Some(explicit) = self.explicit_targs.take() {
+            if explicit.len() != g.pids.len() {
+                self.err(diag(
+                    format!(
+                        "'{}' has {} type parameter(s) ({}) but {} type argument(s) were given",
+                        g.name,
+                        g.pids.len(),
+                        g.tparams.iter().map(|t| t.name.clone()).collect::<Vec<_>>().join(", "),
+                        explicit.len()
+                    ),
+                    pos,
+                ));
+                return Ty::Err;
+            }
+            for (k, t) in explicit.into_iter().enumerate() {
+                bind[k] = Some(t);
+            }
+        }
         let mut bad = false;
         // closure literals are checked after the other arguments: those fix the type parameters that the
         // closure's parameters need, and the closure's body then fixes the ones in its result type
@@ -7864,7 +8091,17 @@ impl<'a> Checker<'a> {
         let mang: Vec<String> = targs.iter().map(|t| self.types.mangle(*t)).collect();
         let name = format!("{}__{}", g.name, mang.join("__"));
         let header_only = self.in_generic;
-        match self.with_ps(|ps| ps.parse_fn_at(g.tok, subst, None, header_only)) {
+        let self_ty = match g.self_tok {
+            Some(t) => match self.with_ps(|ps| ps.self_ty_at(t, subst.clone())) {
+                Ok(t) => Some(t),
+                Err(d) => {
+                    self.err(d);
+                    return None;
+                }
+            },
+            None => None,
+        };
+        match self.with_ps(|ps| ps.parse_fn_at(g.tok, subst, self_ty, header_only)) {
             Err(d) => {
                 self.err(d);
                 None
@@ -8146,6 +8383,8 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         capture_ids: HashSet::new(),
         closure_borrow_pos: HashSet::new(),
         ret_free: false,
+        pending_bare: 0,
+        explicit_targs: None,
         free_pids: vec![],
         closure_loans: HashMap::new(),
     };

@@ -1,0 +1,93 @@
+// edlite: a line editor in the style of ed, with an edit buffer, undo and redo, and file read and write.
+//
+//   edlite [FILE]            edits FILE (created on the first write when missing); commands come from stdin
+//   edlite -f SCRIPT [FILE]  commands come from SCRIPT
+//
+// Command output goes to standard output. Errors go to standard error as "edlite: line N: message"; the run goes on
+// and the exit status is 1 when any command failed, 2 for usage or unreadable input.
+import buffer
+import commands
+import std.args
+import std.io
+import std.text
+
+fn flush(ed: mut buffer.Editor) {
+  if ed.out.len() > 0 {
+    match io.write_stdout(ed.out) {
+      Ok(_) => {}
+      Err(e) => { io.eprintln("edlite: {e.message}") }
+    }
+    ed.out.clear()
+  }
+}
+
+fn main() {
+  var valued = List<String>.new()
+  valued.push(String.from("f"))
+  let parsed = args.parse_with(io.args(), valued, false)
+  let files = args.positionals(parsed)
+  if files.len() > 1 {
+    io.eprintln("usage: edlite [-f SCRIPT] [FILE]")
+    io.exit(2)
+  }
+  var name = String.new()
+  if files.len() == 1 {
+    name = files.at(0).clone()
+  }
+  var ed = buffer.new(name)
+  if name.len() > 0 && io.file_exists(name) {
+    match io.read_file(name) {
+      Ok(data) => {
+        ed.lines = text.lines(data)
+        ed.cur = ed.count()
+      }
+      Err(e) => {
+        io.eprintln("edlite: {name}: {e.message}")
+        io.exit(2)
+      }
+    }
+  }
+  var source = String.new()
+  let script = args.option(parsed, "f")
+  if script.is_some() {
+    let path = script.unwrap()
+    match io.read_file(path) {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("edlite: {path}: {e.message}")
+        io.exit(2)
+      }
+    }
+  } else {
+    match io.read_all() {
+      Ok(data) => { source = move data }
+      Err(e) => {
+        io.eprintln("edlite: {e.message}")
+        io.exit(2)
+      }
+    }
+  }
+  var input = commands.Input { lines: text.lines(source), pos: 0 }
+  var failures = 0
+  while input.pos < input.lines.len() {
+    let line = input.lines.at(input.pos).clone()
+    input.pos = input.pos + 1
+    match commands.exec(ed, input, line) {
+      Ok(go_on) => {
+        flush(ed)
+        if !go_on {
+          break
+        }
+      }
+      Err(e) => {
+        flush(ed)
+        failures = failures + 1
+        io.eprintln("edlite: line {input.pos}: {e}")
+      }
+    }
+  }
+  flush(ed)
+  if failures > 0 {
+    io.exit(1)
+  }
+}

@@ -5,8 +5,8 @@
 name gets `.exe`. `yerux run ... --target windows` runs the result through `wine` when it is not on Windows.
 
 The IR -> x86-64 code generator is the same as on Linux (`src/x64.rs`). Only the OS boundary is
-abstracted by `x64::Os::{Linux, Windows}`: write, exit, and map/unmap memory. The Linux output is
-byte-identical to before the change (checked on all native-supported programs, normal and debug-alloc).
+abstracted by `x64::Os::{Linux, Windows}`. The compiler checks reachable code for PE support,
+so a module import can include platform-specific functions that the program never calls.
 
 ## What is generated
 
@@ -24,26 +24,83 @@ byte-identical to before the change (checked on all native-supported programs, n
 Preferred image base `0x140000000` (ASLR may load it elsewhere), section alignment 0x1000, file alignment 0x200, timestamp 0 (reproducible output),
 checksum 0, stack 8 MiB reserve **and** commit.
 
-Imports (all from kernel32.dll): `GetStdHandle`, `WriteFile`, `ExitProcess`, `VirtualAlloc`, `VirtualFree`,
-`SetConsoleOutputCP` (called once at start with 65001 so UTF-8 text prints correctly in a console).
+Imports from `KERNEL32.dll` include `GetStdHandle`, `ReadFile`, `WriteFile`, `GetLastError`,
+`ExitProcess`, `GetCurrentProcessId`, `VirtualAlloc`, `VirtualFree`, and `SetConsoleOutputCP`
+(the startup code requests UTF-8 output).
 
 ## Runtime (replaces the raw Linux syscalls)
 
-* Every Windows API call goes through four small stubs (`os_write`, `os_exit`, `os_alloc`, `os_free`) that follow the
-  Microsoft x64 convention: arguments in rcx, rdx, r8, r9, 32 bytes of shadow space, and rsp realigned to 16
+* Startup and the runtime stubs call Windows APIs using the Microsoft x64 convention: arguments in rcx, rdx, r8, r9, 32 bytes of shadow space, and rsp realigned to 16
   (`and rsp,-16`) *inside the stub*, because the Yerux calling convention (arguments on the stack) does not keep
   rsp aligned at runtime call sites. Non-volatile rbx, rsi, rdi, rbp are untouched. The program's own functions
   keep the internal Yerux convention; only the OS boundary uses Win64.
-* print int / bool / text: `GetStdHandle(-10 - fd)` + `WriteFile`. fd 2 (stderr) is used by panics and the debug report.
-* Panic: `panic: <message>\n` on stderr, then `ExitProcess(101)`. Same messages and exit code as Linux.
+* Console I/O uses `GetStdHandle(-10 - fd)` with `ReadFile` for stdin and `WriteFile` for stdout
+  and stderr. The stubs return the transfer count and translate common errors into the codes
+  expected by `std.io`. A closed input pipe returns EOF. This covers line and byte reads,
+  prompts, raw standard output, and explicit process exit.
+* Panics print the message and, when the compiler emits source locations, the source position to
+  stderr before calling `ExitProcess(101)`.
 * Allocator: the same size-class free lists + 1 MiB arenas as on Linux, with `mmap` replaced by
   `VirtualAlloc(NULL, n, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)` (NULL -> "out of memory" panic) and `munmap` by
   `VirtualFree(p, 0, MEM_RELEASE)` for large blocks.
 * `--native-debug-alloc` works unchanged (allocs / frees / live on stderr, double free detection).
 
-## Verification (no Windows machine was available)
+## Corpus on Windows Server 2022
 
-Everything below was run on Linux. **The result has not been run on real Windows.**
+`python3 tests/windows_vm_corpus.py` cross-builds the top-level `tests/*.yx` that have
+both `.out` and `.code` goldens and runs the PE binaries on Windows Server 2022 x86-64
+(build 20348) in QEMU. It compares redirected stdout byte for byte, the exit status,
+and stderr for tests with a `.stderr` golden. It feeds the same `.stdin` and `.args`
+fixtures as the Linux suite. The driver lists the 12 excluded POSIX-specific goldens
+and counts compiler rejections among the eligible tests (402 at the first two rows, 417 now).
+
+| Windows Server 2022 run | PE binaries built | Stdout and exit code match | All available goldens match |
+|---|---:|---:|---:|
+| Before console runtime changes (`b92021b`) | 337 | 337/402 | 239/402 |
+| With console I/O and panic source locations (`a05427a`) | 353 | 353/402 | 353/402 |
+| With clocks, sleep, arguments, environment and file handles (`5f976aa`) | 377 | 377/417 | 377/417 |
+
+In the baseline, 98 panics matched stdout and exit status but lacked the source
+location in the stderr golden. After the change, every built program matched all
+its goldens. The 49 compiler rejections of the first two rows were reduced to 40 (of 417 eligible) by mapping more Linux
+system calls onto Win32 imports: `clock_gettime` (`QueryPerformanceCounter` for the monotonic clock,
+`GetSystemTimePreciseAsFileTime` for the wall clock), `nanosleep` (`Sleep`, rounded up to milliseconds), process
+arguments (`GetCommandLineW` converted to UTF-8 and split on blanks outside double quotes; backslash escapes are not
+interpreted) and environment (`GetEnvironmentStringsA`), both laid out like the Linux initial stack so `std.env`
+is unchanged, and `open`/`close`/`unlink`/`rename` (`CreateFileA`, `CloseHandle`, `DeleteFileA`,
+`MoveFileExA`; the handle is the descriptor, `read`/`write` accept it; `/tmp/...` paths resolve to `C:\tmp`, which
+the corpus job creates). The remaining 40 group by the first reported unsupported feature:
+
+| Feature | Rejections |
+|---|---:|
+| Threads, channels, locks and atomics (need `CreateThread`, TLS and a futex replacement) | 23 |
+| Extern C (need DLL imports and a Win64 call shim) | 6 |
+| Sockets | 4 |
+| `getcwd` and directory iteration | 4 |
+| `statx` | 2 |
+| Raw Linux memory syscalls | 1 |
+
+The driver boots `~/vm-windows/run-vm.sh` and uses `host.py` and the guest agent.
+It runs sequential jobs of 32 programs by default. Use `--batch-size` to set
+the number of programs per job. On hosts with limited memory, configure QEMU
+with `-m 2560 -smp 2` and share the Linux suite's lock:
+
+```sh
+flock /tmp/yerux-run_all.lock python3 tests/windows_vm_corpus.py
+```
+
+With this VM configuration, all 353 built programs matched their goldens
+again across 12 sequential jobs, and all 377 built programs of the 417 eligible tests matched in the latest run.
+
+If the agent was configured only for the first logon, run the following in a guest
+PowerShell after sign-in while the driver waits. The driver submits
+`Stop-Computer -Force` and waits for QEMU to exit, including on job failure.
+
+```powershell
+Invoke-Expression (Invoke-RestMethod 'http://10.0.2.2:8000/agent.ps1')
+```
+
+## Other verification
 
 1. **Wine 9.0** (`apt install wine64`; the binary is `/usr/lib/wine/wine64`): `tests/wine_all.sh` builds every
    native-supported program in `examples/` and `tests/` with `--target windows`, runs it under wine and compares
@@ -63,9 +120,7 @@ Everything below was run on Linux. **The result has not been run on real Windows
    * Mutation check: removing the realignment from the stubs makes it fail with a message naming the API.
 3. `llvm-objdump -x` and pefile parse the file without complaints.
 
-Not verified / known gaps:
-
-* Real Windows, one machine: Windows Server 2022 (build 20348) in a QEMU VM, driven by `tests/windows_vm_smoke.sh`
+* Earlier loader and unwind smoke on Windows Server 2022 (build 20348) in a QEMU VM, driven by `tests/windows_vm_smoke.sh`
   (`~/vm-windows/run-vm.sh` boots it, `host.py` and the guest's `agent.ps1` pass jobs). Measured there with
   `tests/windows_vm_smoke.ps1`: 5 programs (`01_lists`, fib, sort, textops, hashmap) print exactly the C backend's
   output with exit code 0; every image has the ASLR flags; the loader relocated the image to `0x7FF6E88D0000` (it
@@ -87,26 +142,23 @@ Not verified / known gaps:
   code; epilogues (`leave; ret`) are not in the unwinder's recognised epilogue forms, so an asynchronous unwind landing
   exactly there is wrong; shrink-wrapping is off on Windows (code before the prologue would be described by the
   prologue's unwind codes). Programs do not use SEH: panics still end the process.
-  Verification: `tests/pe_layout.sh` (in `run_all.sh`; `tests/pe_check.py` checks flags, `.reloc`, sorted and
-  in-range `.pdata`, well-formed `.xdata`, no `movabs` of an image address) and, on a real Windows Server 2022 VM,
-  `tests/windows_vm_smoke.sh` / `tests/windows_vm_smoke.ps1` (see below).
+  Verification uses `tests/pe_layout.sh` in `run_all.sh` and the Windows VM smoke test.
 * The stack is committed up front (8 MiB) instead of using the guard page, so large frames need no `__chkstk` probes.
   Deep recursion beyond 8 MiB crashes with an access violation instead of a clean message (Linux: SIGSEGV too).
-* `WriteFile` is not retried on a short write (does not happen on console, files and pipes in synchronous mode).
-  Output goes straight to the handle (no buffering), as on Linux. No check of `WriteFile` errors (closed pipe).
-* Console: UTF-8 output depends on `SetConsoleOutputCP(65001)`; fonts and redirection to a file give raw UTF-8 bytes.
-* Only the console subsystem; no GUI entry, no command line arguments, no environment, no files (same as Linux).
+* `std.io` retries short standard-output writes. The built-in `print` uses a single synchronous write.
+* Redirected I/O preserves bytes. Console rendering depends on the code page and font. Interactive Unicode input
+  needs separate verification.
+* PE supports the console subsystem. Filesystem access and Windows path handling, command-line arguments, the
+  environment, clocks, subprocesses, sockets, threads, extern C, and runtime backtraces remain outside this support.
 * The code is the unoptimised "every vreg in a stack slot" output (see BACKEND.md); no Windows-specific speed work.
 * `aarch64` Windows and 32-bit x86 are out of scope.
 
 
 ## Running the compiler on Windows (host support)
 
-The compiler itself is portable Rust with no OS-specific code besides POSIX file permissions, now behind
-`#[cfg(unix)]`. **Verified:** `cargo check --tests --target x86_64-pc-windows-gnu` passes (CI job
-`windows-check`). **Not verified on real Windows** (none was available): the behaviour below is implemented
-and covered by the `windows` CI job (`.github/workflows/ci.yml`, `windows-latest`, Git Bash), which will be the
-first real run.
+The `windows-check` CI job cross-checks the Rust compiler with
+`cargo check --tests --target x86_64-pc-windows-gnu`. The `windows` job runs the compiler on
+`windows-latest` under Git Bash. The VM corpus above measures the generated PE binaries.
 
 | Topic | Behaviour |
 |---|---|
@@ -115,8 +167,9 @@ first real run.
 | No C compiler | build/run fall back to the native backend with a note; `check`, `c`, `ir`, `fmt`, `lsp` need none |
 | `yerux doctor` | reports the compiler found (or MISSING and why), wine, temp dir, platform, and compiles + runs a program with each backend; exit 1 only if no backend works |
 | Paths and command lines | temp files use `std::env::temp_dir()`; file arguments may contain spaces and either slash; CRLF and BOM sources are accepted (checked by `tests/win_smoke.sh`) |
-| Limits | the native Windows backend has the limits listed above (no extern C, OS intrinsics such as files, processes and sockets are rejected with `not supported on the windows target yet`); programs using them need the C backend (MinGW) or Linux |
+| Limits | the native Windows backend has the limits listed above (extern C and OS intrinsics outside the supported console subset are rejected with `not supported on the windows target yet`); programs using them need the C backend (MinGW) or Linux |
 
-`tests/win_smoke.sh` is host-agnostic (passes on Linux too: 33 programs): `--version`, `doctor`, `run` on a CRLF
-source in a directory with spaces, the default output name, and every example plus `tests/fast.list` through
-the native backend, compared with the goldens. `--all` covers every program with a golden.
+`tests/win_smoke.sh` runs on Linux and Windows. It checks `--version`, `doctor`, `run` on a CRLF
+source in a directory with spaces, the default output name, and native output against the
+goldens for examples, `tests/fast.list` and dedicated console regressions. `--all` covers
+every program with a golden.

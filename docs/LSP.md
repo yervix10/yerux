@@ -83,5 +83,10 @@ scope, imports, snippets, prefix filter), signature help, references, rename (ac
 semantic tokens (decoded and checked token by token), incremental edits (ranges, UTF-16, burst of edits gives one
 publication), formatting, bad input and exit codes. Fixtures are in `tests/lsp/`. `tests/lsp_vscode.sh` checks the
 extension's JSON files, that every grammar regex compiles and that every compiler keyword is highlighted. Both
-run from `tests/run_all.sh`. The VS Code package was built with `vsce` and installed with
+run from `tests/run_all.sh`. `tests/lsp_real.sh` (`tests/lsp_session.py`) drives scripted sessions over every program of
+`examples/real/` (23 programs, 728 items): didOpen without error diagnostics, documentSymbol, formatting equal to `yerux fmt`,
+hover/definition/references of every item (each use must resolve back to its declaration), renames of items and locals whose
+WorkspaceEdit is applied to a copy and must still compile (a sample by default, `--all` renames everything: 2374 renames), didChange
+sessions with syntax and type errors (diagnostic on the right line with a range, cleared by the fix), completion after `.`,
+signature help and refused renames. The VS Code package was built with `vsce` and installed with
 `code --install-extension` (see `editors/vscode/README.md`).

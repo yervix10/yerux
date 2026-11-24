@@ -203,8 +203,9 @@ impl String {
         return b < 128 || b >= 192
     }
 
-    // Copy of the bytes [from, to). Both ends must lie on character boundaries.
+    // Copy of the bytes [from, to). Both ends must lie on character boundaries, and from <= to.
     fn slice(view self, from: Int, to: Int) -> String {
+        if from > to { panic("String.slice start is after end") }
         if from >= 0 && from <= self.len() {
             if !self.is_boundary(from) { panic("String.slice start is not a character boundary") }
         }

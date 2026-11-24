@@ -1,0 +1,7 @@
+error: methods take no `pub`: they are visible wherever their type is
+ --> tests/e1964_impl_pub_method.yx:5:3
+  |
+5 |   pub fn get(view self) -> Int {
+  |   ^^^
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,39 @@
+name: release
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release tag
+        run: |
+          if [[ "$GITHUB_REF_NAME" != "v$(cat VERSION)" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION" >&2
+            exit 1
+          fi
+      - name: Install cross tools
+        run: |
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y qemu-user
+      - name: Build and test both Linux archives
+        run: |
+          scripts/release.sh dist x86_64-unknown-linux-musl
+          scripts/release.sh dist aarch64-unknown-linux-musl
+          (cd dist && sha256sum -c ./*.sha256)
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+            dist/VERSION dist/*.tar.gz dist/*.tar.gz.sha256

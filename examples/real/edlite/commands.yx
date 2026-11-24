@@ -1,0 +1,295 @@
+// The commands of edlite. One command per line; `a`, `i` and `c` read their text from the following lines up to ".".
+//
+//   [range] p            print lines                      [range] n   print with line numbers
+//   [range] d            delete lines                     [range] j   join lines into one
+//   [range] c            replace lines by the text that follows
+//   a / i                append / insert the text that follows (up to a line holding ".")
+//   [range] m DEST       move lines after DEST            [range] t DEST   copy lines after DEST
+//   [range] s/PAT/REP/[g]  replace the first (or every, with g) PAT in each line of the range; PAT is literal
+//   u / r                undo / redo the last change      = print the number of lines
+//   w [FILE]             write the buffer                 e FILE   replace the buffer with FILE
+//   f [FILE]             print or set the file name       q        quit
+//   # ...                comment
+// Ranges: N, ., $, +N, -N, A,B, %. Errors are reported and do not stop the script.
+import buffer
+import parse
+import std.io
+import std.text
+
+// The script lines still to be read (from a file, or standard input).
+pub struct Input { lines: List<String>, pos: Int }
+
+// The text of an `a`, `i` or `c` command: lines up to a line holding "." (or the end of input).
+fn read_text(input: mut Input) -> List<String> {
+  var out = List<String>.new()
+  while input.pos < input.lines.len() {
+    let l = input.lines.at(input.pos).clone()
+    input.pos = input.pos + 1
+    if l.eq(".") {
+      break
+    }
+    out.push(move l)
+  }
+  return out
+}
+
+// Checks that a range names existing lines. `zero_ok` allows line 0 (for `a` and `i`).
+fn check_range(ed: view buffer.Editor, r: view parse.Range, zero_ok: Bool) -> Result<Int, String> {
+  let n = ed.count()
+  if r.start < 0 || r.end < r.start || r.end > n {
+    return Err(String.from("invalid address"))
+  }
+  if !zero_ok && (r.start < 1 || n == 0) {
+    return Err(String.from("invalid address"))
+  }
+  return Ok(n)
+}
+
+// `s/PAT/REP/[g]`. Returns how many lines changed.
+fn substitute(ed: mut buffer.Editor, r: view parse.Range, line: view String, pos: mut Int) -> Result<Int, String> {
+  if pos >= line.len() {
+    return Err(String.from("substitute needs a delimiter, as in s/a/b/"))
+  }
+  let delim = line.byte(pos)
+  let pat_end = parse.find_delim(line, pos + 1, delim)
+  let pat = line.slice(pos + 1, pat_end)
+  if pat.len() == 0 {
+    return Err(String.from("empty pattern"))
+  }
+  let rep_end = parse.find_delim(line, pat_end + 1, delim)
+  let rep = if pat_end < line.len() { line.slice(pat_end + 1, rep_end) } else { String.new() }
+  let flags = if rep_end < line.len() { line.slice(rep_end + 1, line.len()) } else { String.new() }
+  let global = flags.find("g") >= 0
+  var changed = 0
+  var touched = 0
+  for k in r.start..(r.end + 1) {
+    let before = ed.line(k)
+    var after = String.new()
+    if global {
+      after = text.replace(before, pat, rep)
+    } else {
+      let at = before.find(pat)
+      if at >= 0 {
+        after = before.slice(0, at)
+        after.push_str(rep)
+        after.push_str(before.slice(at + pat.len(), before.len()))
+      } else {
+        after = before.clone()
+      }
+    }
+    if !after.eq(before) {
+      if touched == 0 {
+        ed.checkpoint()
+      }
+      ed.lines.set(k - 1, move after)
+      changed = changed + 1
+      touched = touched + 1
+      ed.cur = k
+    }
+  }
+  if changed == 0 {
+    return Err(String.from("no match"))
+  }
+  return Ok(changed)
+}
+
+// `m` and `t`: moves or copies lines r.start..r.end after the destination.
+fn transfer(ed: mut buffer.Editor, r: view parse.Range, dest: Int, copy: Bool) -> Result<Int, String> {
+  if dest < 0 || dest > ed.count() {
+    return Err(String.from("invalid address"))
+  }
+  if !copy && dest >= r.start && dest < r.end {
+    return Err(String.from("destination is inside the range"))
+  }
+  ed.checkpoint()
+  let size = r.end - r.start + 1
+  if copy {
+    let block = ed.copy_range(r.start, r.end)
+    ed.insert_after(dest, block)
+    return Ok(size)
+  }
+  let block = ed.take(r.start, r.end)
+  var at = dest
+  if dest >= r.end {
+    at = dest - size
+  }
+  ed.insert_after(at, block)
+  return Ok(size)
+}
+
+// Writes the buffer to `file`; prints the number of bytes written, as ed does.
+fn write_buffer(ed: mut buffer.Editor, file: view String) -> Result<Int, String> {
+  let data = ed.contents()
+  match io.write_file(file, data) {
+    Ok(n) => {
+      ed.print_line(buffer.int_text(n))
+      return Ok(n)
+    }
+    Err(e) => { return Err(String.from(e.message)) }
+  }
+}
+
+// Loads `file` as the new buffer. The file name becomes the buffer's name.
+fn load_file(ed: mut buffer.Editor, file: view String) -> Result<Int, String> {
+  match io.read_file(file) {
+    Ok(data) => {
+      ed.checkpoint()
+      ed.lines = text.lines(data)
+      ed.name = String.from(file)
+      ed.cur = ed.count()
+      return Ok(ed.count())
+    }
+    Err(e) => { return Err(String.from(e.message)) }
+  }
+}
+
+// Runs one command line. Ok(false) means quit; errors are returned as text.
+pub fn exec(ed: mut buffer.Editor, input: mut Input, line: view String) -> Result<Bool, String> {
+  var pos = 0
+  let r = parse.range(line, pos, ed)
+  while pos < line.len() && line.byte(pos) == 32 {
+    pos = pos + 1
+  }
+  if pos >= line.len() {
+    // an address alone prints its line; no address and no command does nothing
+    if r.count == 0 {
+      return Ok(true)
+    }
+    check_range(ed, r, false)?
+    ed.cur = r.end
+    let only = ed.line(r.end)
+    ed.print_line(only)
+    return Ok(true)
+  }
+  let c = line.byte(pos)
+  pos = pos + 1
+  // the argument after the command letter, with leading blanks removed
+  while pos < line.len() && line.byte(pos) == 32 {
+    pos = pos + 1
+  }
+  let arg = line.slice(pos, line.len()).trim_end()
+
+  if c == 113 || c == 81 {
+    // q, Q
+    return Ok(false)
+  }
+  if c == 35 {
+    return Ok(true)
+  }
+  if c == 117 {
+    ed.undo_step()?
+    return Ok(true)
+  }
+  if c == 114 {
+    ed.redo_step()?
+    return Ok(true)
+  }
+  if c == 61 {
+    ed.print_line(buffer.int_text(ed.count()))
+    return Ok(true)
+  }
+  if c == 97 || c == 105 {
+    // a (after r.end) and i (before r.end)
+    let zero_ok = true
+    check_range(ed, r, zero_ok)?
+    let block = read_text(input)
+    if c == 105 && r.end == 0 && ed.count() > 0 {
+      return Err(String.from("invalid address"))
+    }
+    ed.checkpoint()
+    if c == 97 {
+      ed.insert_after(r.end, block)
+    } else {
+      ed.insert_after(r.end - 1, block)
+    }
+    return Ok(true)
+  }
+  if c == 102 {
+    // f: print or set the name
+    if arg.len() > 0 {
+      ed.name = String.from(arg)
+    }
+    let shown = ed.name.clone()
+    ed.print_line(shown)
+    return Ok(true)
+  }
+  if c == 101 {
+    // e FILE
+    if arg.len() == 0 {
+      return Err(String.from("file name expected"))
+    }
+    load_file(ed, arg)?
+    return Ok(true)
+  }
+  if c == 119 {
+    // w [FILE]
+    var file = ed.name.clone()
+    if arg.len() > 0 {
+      file = String.from(arg)
+    }
+    if file.len() == 0 {
+      return Err(String.from("no file name"))
+    }
+    write_buffer(ed, file)?
+    return Ok(true)
+  }
+  if c == 115 {
+    // s/PAT/REP/
+    check_range(ed, r, false)?
+    substitute(ed, r, line, pos)?
+    return Ok(true)
+  }
+  if c == 109 || c == 116 {
+    // m DEST, t DEST
+    check_range(ed, r, false)?
+    var p = pos
+    let dest = parse.address(line, p, ed)?
+    transfer(ed, r, dest, c == 116)?
+    return Ok(true)
+  }
+  if c == 112 || c == 110 {
+    // p, n
+    check_range(ed, r, false)?
+    for k in r.start..(r.end + 1) {
+      if c == 110 {
+        var s = buffer.int_text(k)
+        s.push_str("\t")
+        s.push_str(ed.line(k))
+        ed.print_line(s)
+      } else {
+        let plain = ed.line(k)
+        ed.print_line(plain)
+      }
+    }
+    ed.cur = r.end
+    return Ok(true)
+  }
+  if c == 100 || c == 99 || c == 106 {
+    // d, c (delete, then insert the following text), j (join)
+    check_range(ed, r, false)?
+    if c == 106 {
+      if r.end == r.start {
+        return Ok(true)
+      }
+      ed.checkpoint()
+      var joined = String.new()
+      for k in r.start..(r.end + 1) {
+        joined.push_str(ed.line(k))
+      }
+      ed.replace_range(r.start, r.end, joined)
+      ed.cur = r.start
+      return Ok(true)
+    }
+    ed.checkpoint()
+    let gone = ed.take(r.start, r.end)
+    if c == 99 {
+      let block = read_text(input)
+      ed.insert_after(r.start - 1, block)
+    }
+    return Ok(true)
+  }
+  var m = String.from("unknown command '")
+  m.push_byte(c)
+  m.push_str("'")
+  return Err(move m)
+}

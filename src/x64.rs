@@ -51,13 +51,27 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 6] = [
+const IMPORTS: [&str; 20] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
     "VirtualAlloc",
     "VirtualFree",
     "SetConsoleOutputCP",
+    "ReadFile",
+    "GetLastError",
+    "GetCurrentProcessId",
+    "QueryPerformanceCounter",
+    "QueryPerformanceFrequency",
+    "GetSystemTimePreciseAsFileTime",
+    "Sleep",
+    "GetCommandLineW",
+    "GetEnvironmentStringsA",
+    "WideCharToMultiByte",
+    "CreateFileA",
+    "CloseHandle",
+    "DeleteFileA",
+    "MoveFileExA",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -65,6 +79,39 @@ const IMP_EXITPROCESS: usize = 2;
 const IMP_VIRTUALALLOC: usize = 3;
 const IMP_VIRTUALFREE: usize = 4;
 const IMP_SETCONSOLEOUTPUTCP: usize = 5;
+const IMP_READFILE: usize = 6;
+const IMP_GETLASTERROR: usize = 7;
+const IMP_GETCURRENTPROCESSID: usize = 8;
+const IMP_QPC: usize = 9;
+const IMP_QPF: usize = 10;
+const IMP_SYSTIME: usize = 11;
+const IMP_SLEEP: usize = 12;
+const IMP_GETCOMMANDLINE: usize = 13;
+const IMP_GETENVIRONMENT: usize = 14;
+const IMP_WIDETOMULTI: usize = 15;
+const IMP_CREATEFILE: usize = 16;
+const IMP_CLOSEHANDLE: usize = 17;
+const IMP_DELETEFILE: usize = 18;
+const IMP_MOVEFILE: usize = 19;
+
+pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
+    for f in &ir.funcs {
+        let constants = crate::ir::syscall_constants(f);
+        for inst in f.blocks.iter().flat_map(|b| &b.insts) {
+            let unsupported = match inst {
+                Inst::Thread(..) | Inst::Atomic(..) => "thread runtime intrinsics".into(),
+                Inst::Syscall(_, args) => match constants[args[0]] {
+                    Some(0 | 1 | 2 | 3 | 35 | 39 | 60 | 82 | 87 | 228 | 231) => continue,
+                    Some(n) => format!("raw system call {n}"),
+                    None => "raw system call with a dynamic number".into(),
+                },
+                _ => continue,
+            };
+            return Err(format!("{unsupported} (used by function '{}')", f.name));
+        }
+    }
+    Ok(())
+}
 
 // ───────────────────────── Assembler ─────────────────────────
 
@@ -114,6 +161,7 @@ struct Asm {
     // Windows runtime stubs (labels are only bound when os == Windows)
     l_oswrite: usize,
     l_osexit: usize,
+    l_winsyscall: usize,
 }
 
 impl Asm {
@@ -143,6 +191,7 @@ impl Asm {
             cfi: vec![],
             l_oswrite: 0,
             l_osexit: 0,
+            l_winsyscall: 0,
         }
     }
     /// call qword [rip+disp32] through the import address table slot `imp`
@@ -388,6 +437,19 @@ impl Asm {
         self.code.push(0xFF);
         self.modrm_mem(6, RBP, disp);
     }
+    /// movzx r32, word [base+disp]
+    fn movzx16_mem(&mut self, r: u8, base: u8, disp: i32) {
+        self.rex(false, r, base);
+        self.raw(&[0x0F, 0xB7]);
+        self.modrm_mem(r, base, disp);
+    }
+    /// mov word [base+disp], r16
+    fn mov16_mem(&mut self, base: u8, disp: i32, r: u8) {
+        self.code.push(0x66);
+        self.rex(false, r, base);
+        self.code.push(0x89);
+        self.modrm_mem(r, base, disp);
+    }
     /// movzx r32, byte [base+disp]
     fn movzx8_mem(&mut self, r: u8, base: u8, disp: i32) {
         self.rex(false, r, base);
@@ -425,9 +487,6 @@ impl Asm {
     }
     fn inc(&mut self, r: u8) {
         self.raw(&[0x48 | (r >> 3), 0xFF, 0xC0 + (r & 7)]);
-    }
-    fn dec(&mut self, r: u8) {
-        self.raw(&[0x48 | (r >> 3), 0xFF, 0xC8 + (r & 7)]);
     }
     /// lock inc qword [base+disp32]
     fn atomic_inc_mem(&mut self, base: u8, disp: i32) {
@@ -1284,6 +1343,28 @@ impl<'a> G<'a> {
         let unchecked = op.is_unchecked(); // divisor proven non-zero and not (MIN / -1)
         let op = op.checked();
         let is_div = op == Op::Div;
+        if is_div {
+            if let Loc::Const(c) = self.loc(y) {
+                if c >= 2 && (c as u64).is_power_of_two() {
+                    let shift = c.trailing_zeros() as u8;
+                    self.mov_to(RAX, x);
+                    self.a.mov_rr(RCX, RAX);
+                    if shift == 1 {
+                        self.a.shift_imm(5, RCX, 63); // shr: one for a negative numerator
+                    } else {
+                        self.a.shift_imm(7, RCX, 63); // sar: all ones or all zeros
+                        self.a.shift_imm(5, RCX, 64 - shift); // shr: reduce to c - 1 or zero
+                    }
+                    // Adding the bias makes the arithmetic shift truncate toward zero.
+                    self.a.alu(0x01, RAX, RCX);
+                    self.a.shift_imm(7, RAX, shift);
+                    let dr = self.dreg(d, RAX);
+                    self.a.mov_rr(dr, RAX);
+                    self.fin(d, dr);
+                    return;
+                }
+            }
+        }
         // A signed remainder by a positive power of two can use a mask while
         // preserving Rust/C truncation-toward-zero semantics for negative x.
         // This also handles constants outside the sign-extended i32 immediate
@@ -1998,7 +2079,10 @@ impl<'a> G<'a> {
                 for r in [R9, R8, R10, RDX, RSI, RDI, RAX] {
                     self.a.pop(r);
                 }
-                self.a.syscall(); // clobbers rcx and r11
+                match self.a.os {
+                    Os::Linux => self.a.syscall(), // clobbers rcx and r11
+                    Os::Windows => self.a.call(self.a.l_winsyscall),
+                }
                 let dr = self.dreg(*d, RAX);
                 self.a.mov_rr(dr, RAX);
                 self.fin(*d, dr);
@@ -3110,11 +3194,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     a.gbase = g;
     a.win_data_rel = win.data_rel;
     // panic reports (position, backtrace) exist when some user code has a checked operation or calls the library
-    a.report = os == Os::Linux
-        && ir
-            .funcs
-            .iter()
-            .any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Loc(_)))));
+    a.report = ir
+        .funcs
+        .iter()
+        .any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Loc(_)))));
     let report = a.report;
     let has_workers = os == Os::Linux
         && ir.funcs.iter().any(|f| {
@@ -3197,6 +3280,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     let (l_oswrite, l_osexit, l_osalloc, l_osfree) = (a.label(), a.label(), a.label(), a.label());
     a.l_oswrite = l_oswrite;
     a.l_osexit = l_osexit;
+    let (l_osread, l_winsyscall) = (a.label(), a.label());
+    a.l_winsyscall = l_winsyscall;
 
     // _start: main(); exit(0)
     a.bind(l_start);
@@ -3208,6 +3293,116 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.raw(&[0xB9]); // mov ecx, 65001
         a.imm32(65001);
         a.call_iat(IMP_SETCONSOLEOUTPUTCP);
+        if ir.funcs.iter().any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Global(..))))) {
+            // global cell 0: the process arguments and environment laid out like the Linux initial stack
+            // (argc, argv.., 0, envp.., 0) in one VirtualAlloc'd block; the command line is split on blanks
+            // outside double quotes (the quotes are dropped; backslash escapes are not interpreted)
+            let (skip, skip_adv, tok, chr, inq, lit, end_ws, end_nul, done_args) = (
+                a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(),
+            );
+            let (eloop, scan, edone) = (a.label(), a.label(), a.label());
+            a.mov_imm(RCX, 0);
+            a.mov_imm(RDX, 2 << 20);
+            a.mov_imm(R8, 0x3000);
+            a.mov_imm(R9, 4);
+            a.call_iat(IMP_VIRTUALALLOC);
+            a.mov_rr(RBX, RAX);
+            a.call_iat(IMP_GETCOMMANDLINE);
+            // UTF-16 -> UTF-8 into the last quarter of the block (the ANSI command line would lose characters)
+            a.mov_rr(RSI, RAX);
+            a.mov_rr(RDI, RBX);
+            a.alu_imm(0, RDI, 3 << 19);
+            a.alu_imm(5, RSP, 32);
+            a.mov_imm(RCX, 65001);
+            a.mov_imm(RDX, 0);
+            a.mov_rr(R8, RSI);
+            a.mov_imm(R9, -1);
+            a.st(RSP, 32, RDI);
+            a.mov_imm(RAX, 1 << 19);
+            a.st(RSP, 40, RAX);
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 48, RAX);
+            a.st(RSP, 56, RAX);
+            a.call_iat(IMP_WIDETOMULTI);
+            a.alu_imm(0, RSP, 32);
+            a.mov_rr(RSI, RBX);
+            a.alu_imm(0, RSI, 3 << 19);
+            a.mov_rr(RDI, RBX);
+            a.alu_imm(0, RDI, 1 << 20); // characters go to the second half of the block
+            a.lea(R8, RBX, 8);
+            a.mov_imm(R9, 0);
+            a.bind(skip);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.cmp_imm(RAX, 32);
+            a.jcc(CC_E, skip_adv);
+            a.cmp_imm(RAX, 9);
+            a.jcc(CC_E, skip_adv);
+            a.test_rr(RAX);
+            a.jcc(CC_E, done_args);
+            a.jmp(tok);
+            a.bind(skip_adv);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(skip);
+            a.bind(tok);
+            a.st(R8, 0, RDI);
+            a.alu_imm(0, R8, 8);
+            a.alu_imm(0, R9, 1);
+            a.mov_imm(R10, 0);
+            a.bind(chr);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.test_rr(RAX);
+            a.jcc(CC_E, end_nul);
+            a.cmp_imm(R10, 0);
+            a.jcc(CC_NE, inq);
+            a.cmp_imm(RAX, 32);
+            a.jcc(CC_E, end_ws);
+            a.cmp_imm(RAX, 9);
+            a.jcc(CC_E, end_ws);
+            a.bind(inq);
+            a.cmp_imm(RAX, 34);
+            a.jcc(CC_NE, lit);
+            a.alu_imm(6, R10, 1);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(chr);
+            a.bind(lit);
+            a.mov8_mem(RDI, 0, RAX);
+            a.alu_imm(0, RDI, 1);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(chr);
+            a.bind(end_ws);
+            a.alu_imm(0, RSI, 1);
+            a.bind(end_nul);
+            a.mov_imm(RAX, 0);
+            a.mov8_mem(RDI, 0, RAX);
+            a.alu_imm(0, RDI, 1);
+            a.jmp(skip);
+            a.bind(done_args);
+            a.mov_imm(RAX, 0);
+            a.st(R8, 0, RAX);
+            a.alu_imm(0, R8, 8);
+            a.st(RBX, 0, R9);
+            a.mov_rr(RDI, R8); // the environment pointers follow argv
+            a.call_iat(IMP_GETENVIRONMENT);
+            a.mov_rr(RSI, RAX);
+            a.bind(eloop);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.test_rr(RAX);
+            a.jcc(CC_E, edone);
+            a.st(RDI, 0, RSI);
+            a.alu_imm(0, RDI, 8);
+            a.bind(scan);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.alu_imm(0, RSI, 1);
+            a.test_rr(RAX);
+            a.jcc(CC_NE, scan);
+            a.jmp(eloop);
+            a.bind(edone);
+            a.mov_imm(RAX, 0);
+            a.st(RDI, 0, RAX);
+            a.gaddr(RAX, 0);
+            a.st(RAX, G_USER as i32, RBX);
+        }
+        a.mov_imm(RBP, 0); // the panic reporter walks Yerux frames up to this sentinel
     }
     if os == Os::Linux {
         // Stack overflow guard: a SIGSEGV handler on an alternate stack turns a fault at the stack pointer
@@ -3328,10 +3523,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     }
 
 
-    // report: called by the panic routines after the message, on Linux. r12 = where the return address of the
+    // report: called by the panic routines after the message. r12 = where the return address of the
     // panic site is on the stack (0: the panic came from the runtime), r13 = rbp. Prints "  at file:line:col" (the
     // first return address on the stack, the site and then the rbp chain, that is in the site table: library code
-    // has none, so its panics are reported at the user call that led to them), then, with YERUX_BACKTRACE set,
+    // has none, so its panics are reported at the user call that led to them), then, on Linux with YERUX_BACKTRACE set,
     // the Yerux function of every frame. The tables are the `dbg` blob (u64 words), see below.
     if report {
         let (done, l_find, l_scan, l_hit, l_next, l_noloc, l_ok) =
@@ -3413,112 +3608,114 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.mov_imm(RDX, 1);
         a.call(l_write2);
         a.bind(l_noloc);
-        // YERUX_BACKTRACE in the environment (cell 0 holds the initial stack: argc, argv.., 0, envp.., 0)?
-        let (l_env, l_envnext, l_bt) = (a.label(), a.label(), a.label());
-        a.gaddr(RAX, G_USER as i64);
-        a.ld(RAX, RAX, 0);
-        a.test_rr(RAX);
-        a.jcc(CC_E, done);
-        a.ld(RCX, RAX, 0);
-        a.shl(RCX, 3);
-        a.alu(0x01, RAX, RCX);
-        a.add_imm(RAX, 16); // &envp[0]
-        a.bind(l_env);
-        a.ld(RSI, RAX, 0);
-        a.test_rr(RSI);
-        a.jcc(CC_E, done);
-        a.mov_imm(RDX, 0x41425F5855524559u64 as i64); // "YERUX_BA"
-        a.ld(RCX, RSI, 0);
-        a.alu(0x39, RCX, RDX);
-        a.jcc(CC_NE, l_envnext);
-        a.mov_imm(RDX, 0x3D45434152544B43u64 as i64); // "CKTRACE="
-        a.ld(RCX, RSI, 8);
-        a.alu(0x39, RCX, RDX);
-        a.jcc(CC_NE, l_envnext);
-        a.movzx8_mem(RCX, RSI, 16);
-        a.test_rr(RCX);
-        a.jcc(CC_E, l_envnext); // empty value
-        a.cmp_imm(RCX, 0x30);
-        a.jcc(CC_NE, l_bt);
-        a.movzx8_mem(RCX, RSI, 17);
-        a.test_rr(RCX);
-        a.jcc(CC_NE, l_bt); // "0" alone switches it off
-        a.bind(l_envnext);
-        a.add_imm(RAX, 8);
-        a.jmp(l_env);
-        a.bind(l_bt);
-        a.lea_data(RSI, d_bt_hdr);
-        a.mov_imm(RDX, 17);
-        a.call(l_write2);
-        let (l_frame, l_fscan, l_fdone, l_fnext, l_fok, l_pad) =
-            (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
-        a.ld(RBX, R12, 0);
-        a.mov_rr(R8, R13);
-        a.mov_imm(R9, 64); // frames left
-        a.mov_imm(R10, 0); // frames printed
-        a.bind(l_frame);
-        // the function containing the call (return address - 1): the last table entry that starts at or before it
-        a.mov_rr(RAX, RBX);
-        a.alu(0x29, RAX, R14);
-        a.sub_imm(RAX, 1);
-        a.ld32(RCX, R15, 4); // nfuncs
-        a.ld32(RDI, R15, 20);
-        a.alu(0x01, RDI, R15); // &funcs[0]: (start, name offset, name length)
-        a.mov_imm(RDX, 0); // best entry
-        a.bind(l_fscan);
-        a.test_rr(RCX);
-        a.jcc(CC_E, l_fdone);
-        a.ld32(RSI, RDI, 0);
-        a.alu(0x39, RSI, RAX);
-        a.jcc(CC_A, l_fdone);
-        a.mov_rr(RDX, RDI);
-        a.add_imm(RDI, 12);
-        a.sub_imm(RCX, 1);
-        a.jmp(l_fscan);
-        a.bind(l_fdone);
-        a.test_rr(RDX);
-        a.jcc(CC_E, l_fnext);
-        a.ld32(RCX, RDX, 8);
-        a.test_rr(RCX);
-        a.jcc(CC_E, l_fnext); // a runtime helper: not shown
-        a.mov_rr(RBP, RDX); // entry kept in rbp (the system call clobbers r11)
-        a.lea_data(RSI, d_sp2);
-        a.mov_imm(RDX, 2);
-        a.call(l_write2);
-        a.cmp_imm(R10, 10);
-        a.jcc(CC_AE, l_pad);
-        a.lea_data(RSI, d_sp1);
-        a.mov_imm(RDX, 1);
-        a.call(l_write2);
-        a.bind(l_pad);
-        a.mov_rr(RAX, R10);
-        a.call(l_write_int2);
-        a.lea_data(RSI, D_RNG0); // ": "
-        a.mov_imm(RDX, 2);
-        a.call(l_write2);
-        a.ld32(RSI, RBP, 4);
-        a.ld32(RCX, R15, 24);
-        a.alu(0x01, RSI, RCX);
-        a.alu(0x01, RSI, R15);
-        a.ld32(RDX, RBP, 8);
-        a.call(l_write2);
-        a.lea_data(RSI, D_NL);
-        a.mov_imm(RDX, 1);
-        a.call(l_write2);
-        a.add_imm(R10, 1);
-        a.bind(l_fnext);
-        a.test_rr(R8);
-        a.jcc(CC_E, done);
-        a.sub_imm(R9, 1);
-        a.jcc(CC_E, done);
-        a.ld(RBX, R8, 8);
-        a.ld(RAX, R8, 0);
-        a.alu(0x39, RAX, R8);
-        a.jcc(CC_A, l_fok);
-        a.mov_imm(RAX, 0);
-        a.bind(l_fok);
-        a.mov_rr(R8, RAX);
-        a.jmp(l_frame);
+        if os == Os::Linux {
+            // YERUX_BACKTRACE in the environment (cell 0 holds the initial stack: argc, argv.., 0, envp.., 0)?
+            let (l_env, l_envnext, l_bt) = (a.label(), a.label(), a.label());
+            a.gaddr(RAX, G_USER as i64);
+            a.ld(RAX, RAX, 0);
+            a.test_rr(RAX);
+            a.jcc(CC_E, done);
+            a.ld(RCX, RAX, 0);
+            a.shl(RCX, 3);
+            a.alu(0x01, RAX, RCX);
+            a.add_imm(RAX, 16); // &envp[0]
+            a.bind(l_env);
+            a.ld(RSI, RAX, 0);
+            a.test_rr(RSI);
+            a.jcc(CC_E, done);
+            a.mov_imm(RDX, 0x41425F5855524559u64 as i64); // "YERUX_BA"
+            a.ld(RCX, RSI, 0);
+            a.alu(0x39, RCX, RDX);
+            a.jcc(CC_NE, l_envnext);
+            a.mov_imm(RDX, 0x3D45434152544B43u64 as i64); // "CKTRACE="
+            a.ld(RCX, RSI, 8);
+            a.alu(0x39, RCX, RDX);
+            a.jcc(CC_NE, l_envnext);
+            a.movzx8_mem(RCX, RSI, 16);
+            a.test_rr(RCX);
+            a.jcc(CC_E, l_envnext); // empty value
+            a.cmp_imm(RCX, 0x30);
+            a.jcc(CC_NE, l_bt);
+            a.movzx8_mem(RCX, RSI, 17);
+            a.test_rr(RCX);
+            a.jcc(CC_NE, l_bt); // "0" alone switches it off
+            a.bind(l_envnext);
+            a.add_imm(RAX, 8);
+            a.jmp(l_env);
+            a.bind(l_bt);
+            a.lea_data(RSI, d_bt_hdr);
+            a.mov_imm(RDX, 17);
+            a.call(l_write2);
+            let (l_frame, l_fscan, l_fdone, l_fnext, l_fok, l_pad) =
+                (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+            a.ld(RBX, R12, 0);
+            a.mov_rr(R8, R13);
+            a.mov_imm(R9, 64); // frames left
+            a.mov_imm(R10, 0); // frames printed
+            a.bind(l_frame);
+            // the function containing the call (return address - 1): the last table entry that starts at or before it
+            a.mov_rr(RAX, RBX);
+            a.alu(0x29, RAX, R14);
+            a.sub_imm(RAX, 1);
+            a.ld32(RCX, R15, 4); // nfuncs
+            a.ld32(RDI, R15, 20);
+            a.alu(0x01, RDI, R15); // &funcs[0]: (start, name offset, name length)
+            a.mov_imm(RDX, 0); // best entry
+            a.bind(l_fscan);
+            a.test_rr(RCX);
+            a.jcc(CC_E, l_fdone);
+            a.ld32(RSI, RDI, 0);
+            a.alu(0x39, RSI, RAX);
+            a.jcc(CC_A, l_fdone);
+            a.mov_rr(RDX, RDI);
+            a.add_imm(RDI, 12);
+            a.sub_imm(RCX, 1);
+            a.jmp(l_fscan);
+            a.bind(l_fdone);
+            a.test_rr(RDX);
+            a.jcc(CC_E, l_fnext);
+            a.ld32(RCX, RDX, 8);
+            a.test_rr(RCX);
+            a.jcc(CC_E, l_fnext); // a runtime helper: not shown
+            a.mov_rr(RBP, RDX); // entry kept in rbp (the system call clobbers r11)
+            a.lea_data(RSI, d_sp2);
+            a.mov_imm(RDX, 2);
+            a.call(l_write2);
+            a.cmp_imm(R10, 10);
+            a.jcc(CC_AE, l_pad);
+            a.lea_data(RSI, d_sp1);
+            a.mov_imm(RDX, 1);
+            a.call(l_write2);
+            a.bind(l_pad);
+            a.mov_rr(RAX, R10);
+            a.call(l_write_int2);
+            a.lea_data(RSI, D_RNG0); // ": "
+            a.mov_imm(RDX, 2);
+            a.call(l_write2);
+            a.ld32(RSI, RBP, 4);
+            a.ld32(RCX, R15, 24);
+            a.alu(0x01, RSI, RCX);
+            a.alu(0x01, RSI, R15);
+            a.ld32(RDX, RBP, 8);
+            a.call(l_write2);
+            a.lea_data(RSI, D_NL);
+            a.mov_imm(RDX, 1);
+            a.call(l_write2);
+            a.add_imm(R10, 1);
+            a.bind(l_fnext);
+            a.test_rr(R8);
+            a.jcc(CC_E, done);
+            a.sub_imm(R9, 1);
+            a.jcc(CC_E, done);
+            a.ld(RBX, R8, 8);
+            a.ld(RAX, R8, 0);
+            a.alu(0x39, RAX, R8);
+            a.jcc(CC_A, l_fok);
+            a.mov_imm(RAX, 0);
+            a.bind(l_fok);
+            a.mov_rr(R8, RAX);
+            a.jmp(l_frame);
+        }
         a.bind(done);
         a.ret();
     }
@@ -3777,6 +3974,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         let (l_large, l_bump, l_newarena, l_release, l_done, l_shared) =
             (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
         a.bind(l_alloc);
+        // a negative size is a bug in the caller: the C backend and this runtime must agree on failing
+        a.raw(&[0x48, 0x85, 0xFF]); // test rdi, rdi
+        a.jcc(CC_S, l_panic[P_OOM]);
         a.add_imm(RDI, 8);
         a.cmp_imm(RDI, SMALL_MAX);
         a.jcc(CC_A, l_large);
@@ -3973,9 +4173,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     a.ret();
 
     // rt_memcpy: rdi = dst, rsi = src, rcx = n (regions do not overlap). Clobbers rax, rcx, rdx, rsi, rdi only.
-    // n <= 16: overlapping head/tail moves; n <= 256: 8-byte words plus an overlapping tail; else rep movsb.
+    // Up to 3 bytes use a word and/or a byte. Up to 16 use overlapping head/tail moves.
+    // Up to 256 use 8-byte words plus an overlapping tail. Larger copies use rep movsb.
     {
-        let (l_lt8, l_lt4, l_byte, l_big, l_words, l_rep, l_ret) = (
+        let (l_lt8, l_lt4, l_lt2, l_big, l_words, l_rep, l_ret) = (
             a.label(),
             a.label(),
             a.label(),
@@ -4007,15 +4208,19 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.st32(RDI, -4, RDX);
         a.ret();
         a.bind(l_lt4);
+        a.cmp_imm(RCX, 2);
+        a.jcc(CC_B, l_lt2);
+        a.movzx16_mem(RAX, RSI, 0);
+        a.mov16_mem(RDI, 0, RAX);
+        a.jcc(CC_E, l_ret); // MOV preserves the comparison flags.
+        a.movzx8_mem(RAX, RSI, 2);
+        a.mov8_mem(RDI, 2, RAX);
+        a.ret();
+        a.bind(l_lt2);
         a.test_rcx();
         a.jcc(CC_E, l_ret);
-        a.bind(l_byte);
         a.movzx8_mem(RAX, RSI, 0);
         a.mov8_mem(RDI, 0, RAX);
-        a.inc(RSI);
-        a.inc(RDI);
-        a.dec(RCX);
-        a.jcc(CC_NE, l_byte);
         a.bind(l_ret);
         a.ret();
         a.bind(l_big);
@@ -4233,20 +4438,345 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     //    rsp 16-aligned at every call; the runtime above calls them with arbitrary alignment, so the
     //    stubs realign themselves) ──
     if os == Os::Windows {
-        // os_write: rdi = fd (1 or 2), rsi = buffer, rdx = length. Preserves rdi, rsi, rdx, rbx.
-        a.bind(l_oswrite);
-        a.win_prologue(32);
-        a.raw(&[0x48, 0x89, 0x54, 0x24, 0x30]); // mov [rsp+48], rdx   (save length)
-        a.mov_imm(RCX, -10);
-        a.alu(0x29, RCX, RDI); // rcx = -10 - fd = STD_OUTPUT_HANDLE (-11) / STD_ERROR_HANDLE (-12)
-        a.call_iat(IMP_GETSTDHANDLE);
-        a.mov_rr(RCX, RAX); // hFile
-        a.raw(&[0x4C, 0x8B, 0x44, 0x24, 0x30]); // mov r8, [rsp+48]   (nNumberOfBytesToWrite)
-        a.mov_rr(RDX, RSI); // lpBuffer
-        a.raw(&[0x4C, 0x8D, 0x4C, 0x24, 0x28]); // lea r9, [rsp+40]   (lpNumberOfBytesWritten)
-        a.raw(&[0x48, 0xC7, 0x44, 0x24, 0x20, 0, 0, 0, 0]); // mov qword [rsp+32], 0  (lpOverlapped)
-        a.call_iat(IMP_WRITEFILE);
-        a.raw(&[0x48, 0x8B, 0x54, 0x24, 0x30]); // mov rdx, [rsp+48]
+        // Both console I/O stubs take fd/buffer/count in rdi/rsi/rdx.
+        // Keep the Linux convention used by std.io: byte count or negative errno.
+        for (read, label, import) in [(true, l_osread, IMP_READFILE), (false, l_oswrite, IMP_WRITEFILE)] {
+            let (bad_fd, error, broken_pipe, eof, done) =
+                (a.label(), a.label(), a.label(), a.label(), a.label());
+            a.bind(label);
+            // fd 0 is the console input and 1, 2 the console outputs; a larger fd is a handle from `open`
+            if !read {
+                a.test_rr(RDI);
+                a.jcc(CC_E, bad_fd);
+            }
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX); // save the original count
+            // The panic reporter keeps the source column and file index across writes.
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            let (use_fd, have) = (a.label(), a.label());
+            a.cmp_imm(RDI, 2);
+            a.jcc(CC_A, use_fd);
+            a.mov_imm(RCX, -10);
+            a.alu(0x29, RCX, RDI); // STD_INPUT_HANDLE (-10) through STD_ERROR_HANDLE (-12)
+            a.call_iat(IMP_GETSTDHANDLE);
+            a.mov_rr(RCX, RAX);
+            a.jmp(have);
+            a.bind(use_fd);
+            a.mov_rr(RCX, RDI);
+            a.bind(have);
+            a.ld(R8, RSP, 48);
+            a.mov_imm(RAX, u32::MAX as i64);
+            a.alu(0x39, R8, RAX);
+            a.cmov_rr(CC_A, R8, RAX); // ReadFile and WriteFile take a DWORD count
+            a.mov_rr(RDX, RSI);
+            a.lea(R9, RSP, 40); // bytes transferred
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 32, RAX); // no OVERLAPPED
+            a.st(RSP, 40, RAX);
+            a.call_iat(import);
+            a.raw(&[0x85, 0xC0]); // test eax, eax (Win32 BOOL)
+            a.jcc(CC_E, error);
+            a.ld32(RAX, RSP, 40);
+            a.jmp(done);
+            a.bind(error);
+            a.call_iat(IMP_GETLASTERROR);
+            a.raw(&[0x89, 0xC0]); // zero-extend eax (DWORD)
+            a.cmp_imm(RAX, 38); // ERROR_HANDLE_EOF
+            a.jcc(CC_E, eof);
+            for code in [109, 232, 233] { // BROKEN_PIPE, NO_DATA, PIPE_NOT_CONNECTED
+                a.cmp_imm(RAX, code);
+                a.jcc(CC_E, broken_pipe);
+            }
+            a.cmp_imm(RAX, 6); // ERROR_INVALID_HANDLE
+            a.mov_imm(RCX, -9); // EBADF
+            a.mov_imm(RDX, -5); // EIO
+            a.cmov_rr(CC_E, RDX, RCX);
+            a.cmp_imm(RAX, 5); // ERROR_ACCESS_DENIED
+            a.mov_imm(RAX, -13); // EACCES
+            a.cmov_rr(CC_NE, RAX, RDX);
+            a.jmp(done);
+            a.bind(broken_pipe);
+            a.mov_imm(RAX, if read { 0 } else { -32 }); // EOF or EPIPE
+            a.jmp(done);
+            a.bind(eof);
+            a.mov_imm(RAX, 0);
+            a.bind(done);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.win_epilogue();
+            a.bind(bad_fd);
+            a.mov_imm(RAX, -9); // EBADF
+            a.ret();
+        }
+
+        // Only calls accepted by validate_windows can reach this dispatch.
+        a.bind(l_winsyscall);
+        let (pid, clock, nap) = (a.label(), a.label(), a.label());
+        let (open, close, unlink, rename, winerr) = (a.label(), a.label(), a.label(), a.label(), a.label());
+        for (number, stub) in [
+            (0, l_osread),
+            (1, l_oswrite),
+            (2, open),
+            (3, close),
+            (35, nap),
+            (39, pid),
+            (60, l_osexit),
+            (82, rename),
+            (87, unlink),
+            (228, clock),
+            (231, l_osexit),
+        ] {
+            a.cmp_imm(RAX, number);
+            a.jcc(CC_E, stub);
+        }
+        a.raw(&[0x0F, 0x0B]); // ud2
+
+        // GetLastError mapped to a negative errno in rax (a callee with its own frame)
+        a.bind(winerr);
+        {
+            let (enoent, eexist, eacces, done) = (a.label(), a.label(), a.label(), a.label());
+            a.win_prologue(0);
+            a.call_iat(IMP_GETLASTERROR);
+            a.raw(&[0x89, 0xC0]); // zero-extend eax
+            for (code, target) in [(2, enoent), (3, enoent), (80, eexist), (183, eexist), (5, eacces)] {
+                a.cmp_imm(RAX, code);
+                a.jcc(CC_E, target);
+            }
+            a.mov_imm(RAX, -5); // EIO
+            a.jmp(done);
+            a.bind(enoent);
+            a.mov_imm(RAX, -2);
+            a.jmp(done);
+            a.bind(eexist);
+            a.mov_imm(RAX, -17);
+            a.jmp(done);
+            a.bind(eacces);
+            a.mov_imm(RAX, -13);
+            a.bind(done);
+            a.win_epilogue();
+        }
+
+        // open(path, flags, mode): CreateFileA with the O_* flags mapped; the handle is the descriptor
+        a.bind(open);
+        {
+            let (acc_done, acc_w, noapp, nocreat, c1, c2, disp_done, fail) =
+                (a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+            let ret = a.label();
+            a.win_prologue(80);
+            a.st(RSP, 64, RDX);
+            a.st(RSP, 72, R8);
+            a.st(RSP, 80, R9);
+            a.st(RSP, 88, R10);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 3);
+            a.mov_imm(RCX, 0x8000_0000); // GENERIC_READ
+            a.cmp_imm(RAX, 0);
+            a.jcc(CC_E, acc_done);
+            a.mov_imm(RCX, 0x4000_0000); // GENERIC_WRITE
+            a.cmp_imm(RAX, 1);
+            a.jcc(CC_E, acc_w);
+            a.mov_imm(RCX, 0xC000_0000);
+            a.bind(acc_w);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x400); // O_APPEND: FILE_APPEND_DATA instead of FILE_WRITE_DATA
+            a.test_rr(RAX);
+            a.jcc(CC_E, noapp);
+            a.alu_imm(4, RCX, 0xBFFF_FFFFu32 as i32);
+            a.alu_imm(1, RCX, 4);
+            a.bind(noapp);
+            a.bind(acc_done);
+            a.mov_imm(R8, 3); // OPEN_EXISTING
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x40);
+            a.test_rr(RAX);
+            a.jcc(CC_E, nocreat);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x80); // O_EXCL: CREATE_NEW
+            a.test_rr(RAX);
+            a.jcc(CC_E, c1);
+            a.mov_imm(R8, 1);
+            a.jmp(disp_done);
+            a.bind(c1);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x200); // O_TRUNC: CREATE_ALWAYS
+            a.test_rr(RAX);
+            a.jcc(CC_E, c2);
+            a.mov_imm(R8, 2);
+            a.jmp(disp_done);
+            a.bind(c2);
+            a.mov_imm(R8, 4); // OPEN_ALWAYS
+            a.jmp(disp_done);
+            a.bind(nocreat);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x200);
+            a.test_rr(RAX);
+            a.jcc(CC_E, disp_done);
+            a.mov_imm(R8, 5); // TRUNCATE_EXISTING
+            a.bind(disp_done);
+            a.st(RSP, 32, R8); // dwCreationDisposition
+            a.mov_imm(RAX, 0x0200_0080); // FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS (directories open too)
+            a.st(RSP, 40, RAX);
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 48, RAX); // no template
+            a.mov_rr(RDX, RCX); // dwDesiredAccess
+            a.mov_rr(RCX, RDI); // lpFileName
+            a.mov_imm(R8, 7); // share read, write and delete
+            a.mov_imm(R9, 0);
+            a.call_iat(IMP_CREATEFILE);
+            a.cmp_imm(RAX, -1);
+            a.jcc(CC_E, fail);
+            a.jmp(ret);
+            a.bind(fail);
+            a.call(winerr);
+            a.bind(ret);
+            a.ld(RDX, RSP, 64);
+            a.ld(R8, RSP, 72);
+            a.ld(R9, RSP, 80);
+            a.ld(R10, RSP, 88);
+            a.win_epilogue();
+        }
+
+        // close(fd): CloseHandle (the console descriptors 0..2 are left open)
+        a.bind(close);
+        {
+            let (skip, ok) = (a.label(), a.label());
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.mov_imm(RAX, 0);
+            a.cmp_imm(RDI, 2);
+            a.jcc(CC_BE, skip);
+            a.mov_rr(RCX, RDI);
+            a.call_iat(IMP_CLOSEHANDLE);
+            a.raw(&[0x85, 0xC0]); // test eax, eax
+            a.jcc(CC_NE, ok);
+            a.mov_imm(RAX, -9); // EBADF
+            a.jmp(skip);
+            a.bind(ok);
+            a.mov_imm(RAX, 0);
+            a.bind(skip);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // unlink(path) and rename(old, new)
+        for (label, import) in [(unlink, IMP_DELETEFILE), (rename, IMP_MOVEFILE)] {
+            let (fail, done) = (a.label(), a.label());
+            a.bind(label);
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.mov_rr(RCX, RDI);
+            if import == IMP_MOVEFILE {
+                a.mov_rr(RDX, RSI);
+                a.mov_imm(R8, 1); // MOVEFILE_REPLACE_EXISTING
+            }
+            a.call_iat(import);
+            a.raw(&[0x85, 0xC0]); // test eax, eax
+            a.jcc(CC_E, fail);
+            a.mov_imm(RAX, 0);
+            a.jmp(done);
+            a.bind(fail);
+            a.call(winerr);
+            a.bind(done);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // clock_gettime: rdi = clock (1 = monotonic, otherwise realtime), rsi = timespec* -> 0
+        a.bind(clock);
+        {
+            let (mono, done) = (a.label(), a.label());
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.cmp_imm(RDI, 1);
+            a.jcc(CC_E, mono);
+            a.lea(RCX, RSP, 32);
+            a.call_iat(IMP_SYSTIME); // 100 ns ticks since 1601
+            a.ld(RAX, RSP, 32);
+            a.mov_imm(RCX, 116444736000000000);
+            a.alu(0x29, RAX, RCX); // sub rax, rcx: ticks since 1970
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.mov_imm(RCX, 10_000_000);
+            a.raw(&[0x48, 0xF7, 0xF1]); // div rcx
+            a.st(RSI, 0, RAX);
+            a.raw(&[0x48, 0x69, 0xD2]); // imul rdx, rdx, 100
+            a.imm32(100);
+            a.st(RSI, 8, RDX);
+            a.jmp(done);
+            a.bind(mono);
+            a.lea(RCX, RSP, 32);
+            a.call_iat(IMP_QPC);
+            a.lea(RCX, RSP, 40);
+            a.call_iat(IMP_QPF);
+            a.ld(RAX, RSP, 32);
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.raw(&[0x48, 0xF7, 0x74, 0x24, 0x28]); // div qword [rsp+40]: rax = seconds, rdx = remainder
+            a.st(RSI, 0, RAX);
+            a.raw(&[0x48, 0x69, 0xD2]); // imul rdx, rdx, 1000000000
+            a.imm32(1_000_000_000);
+            a.mov_rr(RAX, RDX);
+            a.raw(&[0x31, 0xD2]);
+            a.raw(&[0x48, 0xF7, 0x74, 0x24, 0x28]); // div qword [rsp+40]: nanoseconds
+            a.st(RSI, 8, RAX);
+            a.bind(done);
+            a.mov_imm(RAX, 0);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // nanosleep: rdi = timespec* {seconds, nanoseconds}: Sleep for the milliseconds rounded up -> 0
+        a.bind(nap);
+        {
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.ld(RAX, RDI, 8);
+            a.alu_imm(0, RAX, 999_999);
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.mov_imm(RCX, 1_000_000);
+            a.raw(&[0x48, 0xF7, 0xF1]); // div rcx
+            a.ld(RCX, RDI, 0);
+            a.raw(&[0x48, 0x69, 0xC9]); // imul rcx, rcx, 1000
+            a.imm32(1000);
+            a.alu(0x01, RAX, RCX); // add rax, rcx
+            a.mov_rr(RCX, RAX);
+            a.mov_imm(RDX, u32::MAX as i64);
+            a.alu(0x39, RCX, RDX);
+            a.cmov_rr(CC_A, RCX, RDX); // Sleep takes a DWORD
+            a.call_iat(IMP_SLEEP);
+            a.mov_imm(RAX, 0);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        a.bind(pid);
+        a.win_prologue(0);
+        a.call_iat(IMP_GETCURRENTPROCESSID);
+        a.raw(&[0x89, 0xC0]); // zero-extend eax (DWORD)
         a.win_epilogue();
 
         // os_exit: rdi = exit code

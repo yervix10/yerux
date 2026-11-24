@@ -1,0 +1,469 @@
+// The evaluator of the mini Lisp: special forms, procedure application, closures and primitives.
+//
+// Special forms: quote, if, define (also (define (f x) body...)), set!, lambda, begin, let, and, or.
+// Lexical scope: every call and every let makes a frame whose parent is the frame the closure was made in.
+// Recursion is limited to MAX_DEPTH nested evaluations; deeper programs get an error instead of a stack overflow.
+import reader
+import types
+import std.text
+
+const MAX_DEPTH = 2000
+
+fn fault(at: Int, msg: view String) -> Result<types.Value, types.Fault> {
+  return Err(types.Fault { at: at, msg: String.from(msg) })
+}
+
+fn truthy(v: types.Value) -> Bool {
+  match v {
+    Bool(b) => { return b }
+    _ => { return true }
+  }
+}
+
+// Evaluates node `n` in frame `env`.
+pub fn eval(it: mut types.Interp, n: Int, env: Int) -> Result<types.Value, types.Fault> {
+  if it.depth >= MAX_DEPTH {
+    return fault(it.nodes.at(n).at, "recursion too deep")
+  }
+  it.depth = it.depth + 1
+  let r = eval_node(it, n, env)
+  it.depth = it.depth - 1
+  return r
+}
+
+fn is_special(name: view String) -> Bool {
+  return name.eq("quote") || name.eq("if") || name.eq("define") || name.eq("set!") || name.eq("lambda")
+    || name.eq("begin") || name.eq("let") || name.eq("and") || name.eq("or")
+}
+
+fn eval_node(it: mut types.Interp, n: Int, env: Int) -> Result<types.Value, types.Fault> {
+  let tag = it.nodes.at(n).tag
+  let value = it.nodes.at(n).value
+  let at = it.nodes.at(n).at
+  if tag == 0 {
+    return Ok(types.Value.Num(value))
+  }
+  if tag == 1 {
+    return Ok(types.Value.Bool(value == 1))
+  }
+  if tag == 4 {
+    return Ok(types.Value.Str(value))
+  }
+  if tag == 2 {
+    match it.lookup(env, value) {
+      Some(v) => { return Ok(v) }
+      None => {
+        var m = String.from("unbound symbol '")
+        m.push_str(it.syms.at(value))
+        m.push_str("'")
+        return Err(types.Fault { at: at, msg: move m })
+      }
+    }
+  }
+  let count = it.nodes.at(n).kids.len()
+  if count == 0 {
+    return fault(at, "empty combination ()")
+  }
+  let head = it.nodes.at(n).kids.get(0)
+  if it.nodes.at(head).tag == 2 {
+    let name = it.syms.at(it.nodes.at(head).value).clone()
+    if is_special(name) {
+      return special(it, n, env, name)
+    }
+  }
+  let f = eval(it, head, env)?
+  var args = List<types.Value>.new()
+  for k in 1..count {
+    let child = it.nodes.at(n).kids.get(k)
+    args.push(eval(it, child, env)?)
+  }
+  return apply(it, f, move args, at)
+}
+
+// The value of a quoted node: numbers, booleans and symbols as themselves, forms as pair lists.
+fn datum(it: mut types.Interp, n: Int) -> types.Value {
+  let tag = it.nodes.at(n).tag
+  let value = it.nodes.at(n).value
+  if tag == 0 {
+    return types.Value.Num(value)
+  }
+  if tag == 1 {
+    return types.Value.Bool(value == 1)
+  }
+  if tag == 2 {
+    return types.Value.Sym(value)
+  }
+  if tag == 4 {
+    return types.Value.Str(value)
+  }
+  let kids = it.nodes.at(n).kids.clone()
+  var acc = types.Value.Nil
+  for j in 0..kids.len() {
+    let child = datum(it, kids.get(kids.len() - 1 - j))
+    acc = it.cons(child, acc)
+  }
+  return acc
+}
+
+// The symbol ids of the nodes `ids`, or an error at `at` when one of them is not a symbol.
+fn symbols(it: view types.Interp, ids: view List<Int>, at: Int) -> Result<List<Int>, types.Fault> {
+  var out = List<Int>.new()
+  for k in 0..ids.len() {
+    let node = ids.get(k)
+    if it.nodes.at(node).tag != 2 {
+      return Err(types.Fault { at: at, msg: String.from("expected a symbol") })
+    }
+    out.push(it.nodes.at(node).value)
+  }
+  return Ok(move out)
+}
+
+// Evaluates the nodes kids[from..] in order and returns the last value (() when there are none).
+fn body(it: mut types.Interp, kids: view List<Int>, from: Int, env: Int) -> Result<types.Value, types.Fault> {
+  var last = types.Value.Nil
+  for k in from..kids.len() {
+    last = eval(it, kids.get(k), env)?
+  }
+  return Ok(last)
+}
+
+// Makes a closure over frame `env` with the given parameters and body; returns it as a value.
+fn make_closure(it: mut types.Interp, params: List<Int>, body_nodes: List<Int>, env: Int) -> types.Value {
+  let lam = it.lams.len()
+  it.lams.push(types.Lambda { params: move params, body: move body_nodes })
+  let c = it.clos.len()
+  it.clos.push(types.Closure { lam: lam, env: env })
+  return types.Value.Clo(c)
+}
+
+fn special(it: mut types.Interp, n: Int, env: Int, name: view String) -> Result<types.Value, types.Fault> {
+  let kids = it.nodes.at(n).kids.clone()
+  let at = it.nodes.at(n).at
+  let count = kids.len()
+
+  if name.eq("quote") {
+    if count != 2 {
+      return fault(at, "quote takes one argument")
+    }
+    return Ok(datum(it, kids.get(1)))
+  }
+
+  if name.eq("if") {
+    if count < 3 || count > 4 {
+      return fault(at, "if takes a test and one or two branches")
+    }
+    let test = eval(it, kids.get(1), env)?
+    if truthy(test) {
+      return eval(it, kids.get(2), env)
+    }
+    if count == 4 {
+      return eval(it, kids.get(3), env)
+    }
+    return Ok(types.Value.Nil)
+  }
+
+  if name.eq("define") {
+    if count < 3 {
+      return fault(at, "define needs a name and a value")
+    }
+    let target = kids.get(1)
+    if it.nodes.at(target).tag == 2 {
+      if count != 3 {
+        return fault(at, "define of a value takes exactly one expression")
+      }
+      let v = eval(it, kids.get(2), env)?
+      it.define(env, it.nodes.at(target).value, v)
+      return Ok(types.Value.Nil)
+    }
+    // (define (name param...) body...)
+    if it.nodes.at(target).tag == 3 && it.nodes.at(target).kids.len() > 0 {
+      let head = it.nodes.at(target).kids.clone()
+      let names = symbols(it, head, at)?
+      if names.len() == 0 {
+        return fault(at, "define needs a name")
+      }
+      let params = names.copy()
+      let fname = params.get(0)
+      var rest = List<Int>.new()
+      for k in 1..params.len() {
+        rest.push(params.get(k))
+      }
+      var body_nodes = List<Int>.new()
+      for k in 2..count {
+        body_nodes.push(kids.get(k))
+      }
+      let clo = make_closure(it, move rest, move body_nodes, env)
+      it.define(env, fname, clo)
+      return Ok(types.Value.Nil)
+    }
+    return fault(at, "define needs a name")
+  }
+
+  if name.eq("set!") {
+    if count != 3 || it.nodes.at(kids.get(1)).tag != 2 {
+      return fault(at, "set! takes a name and an expression")
+    }
+    let v = eval(it, kids.get(2), env)?
+    if !it.assign(env, it.nodes.at(kids.get(1)).value, v) {
+      return fault(at, "set! of an unbound name")
+    }
+    return Ok(types.Value.Nil)
+  }
+
+  if name.eq("lambda") {
+    if count < 3 || it.nodes.at(kids.get(1)).tag != 3 {
+      return fault(at, "lambda takes a parameter list and a body")
+    }
+    let params = symbols(it, it.nodes.at(kids.get(1)).kids.clone(), at)?
+    var body_nodes = List<Int>.new()
+    for k in 2..count {
+      body_nodes.push(kids.get(k))
+    }
+    return Ok(make_closure(it, move params, move body_nodes, env))
+  }
+
+  if name.eq("begin") {
+    return body(it, kids, 1, env)
+  }
+
+  if name.eq("let") {
+    if count < 3 || it.nodes.at(kids.get(1)).tag != 3 {
+      return fault(at, "let takes a list of bindings and a body")
+    }
+    let bindings = it.nodes.at(kids.get(1)).kids.clone()
+    let frame = it.new_frame(env)
+    for b in 0..bindings.len() {
+      let pair = it.nodes.at(bindings.get(b)).kids.clone()
+      if pair.len() != 2 || it.nodes.at(pair.get(0)).tag != 2 {
+        return fault(it.nodes.at(bindings.get(b)).at, "a let binding is (name expression)")
+      }
+      let v = eval(it, pair.get(1), env)?
+      it.define(frame, it.nodes.at(pair.get(0)).value, v)
+    }
+    return body(it, kids, 2, frame)
+  }
+
+  if name.eq("and") {
+    var last = types.Value.Bool(true)
+    for k in 1..count {
+      last = eval(it, kids.get(k), env)?
+      if !truthy(last) {
+        return Ok(last)
+      }
+    }
+    return Ok(last)
+  }
+
+  // or
+  for k in 1..count {
+    let v = eval(it, kids.get(k), env)?
+    if truthy(v) {
+      return Ok(v)
+    }
+  }
+  return Ok(types.Value.Bool(false))
+}
+
+// Applies a procedure value to evaluated arguments.
+pub fn apply(it: mut types.Interp, f: types.Value, args: List<types.Value>, at: Int) -> Result<types.Value, types.Fault> {
+  match f {
+    Prim(k) => { return prim(it, k, move args, at) }
+    Clo(c) => {
+      let lam = it.clos.at(c).lam
+      let nparams = it.lams.at(lam).params.len()
+      if args.len() != nparams {
+        var m = String.from("procedure expects ")
+        m.push_int(nparams)
+        m.push_str(" argument(s), got ")
+        m.push_int(args.len())
+        return Err(types.Fault { at: at, msg: move m })
+      }
+      let outer = it.clos.at(c).env
+      let frame = it.new_frame(outer)
+      for k in 0..nparams {
+        let p = it.lams.at(lam).params.get(k)
+        it.define(frame, p, args.get(k))
+      }
+      let nbody = it.lams.at(lam).body.len()
+      var last = types.Value.Nil
+      for k in 0..nbody {
+        let b = it.lams.at(lam).body.get(k)
+        last = eval(it, b, frame)?
+      }
+      return Ok(last)
+    }
+    _ => {
+      var m = String.from("not a procedure: ")
+      m.push_str(it.show(f))
+      return Err(types.Fault { at: at, msg: move m })
+    }
+  }
+}
+
+fn num(it: view types.Interp, v: types.Value, at: Int) -> Result<Int, types.Fault> {
+  match v {
+    Num(n) => { return Ok(n) }
+    _ => {
+      var m = String.from("expected a number, got ")
+      m.push_str(it.show(v))
+      return Err(types.Fault { at: at, msg: move m })
+    }
+  }
+}
+
+// Checks the argument count of primitive `name`.
+fn want(name: view String, have: Int, need: Int, at: Int) -> Result<Int, types.Fault> {
+  if have != need {
+    var m = String.from(name)
+    m.push_str(" expects ")
+    m.push_int(need)
+    m.push_str(" argument(s), got ")
+    m.push_int(have)
+    return Err(types.Fault { at: at, msg: move m })
+  }
+  return Ok(need)
+}
+
+fn prim(it: mut types.Interp, k: Int, args: List<types.Value>, at: Int) -> Result<types.Value, types.Fault> {
+  let names = types.prim_names()
+  let name = names.at(k).clone()
+  let n = args.len()
+  match k {
+    0 => {
+      var acc = 0
+      for j in 0..n {
+        acc = acc + num(it, args.get(j), at)?
+      }
+      return Ok(types.Value.Num(acc))
+    }
+    1 => {
+      if n == 0 {
+        return fault(at, "- needs at least one argument")
+      }
+      var acc = num(it, args.get(0), at)?
+      if n == 1 {
+        return Ok(types.Value.Num(-acc))
+      }
+      for j in 1..n {
+        acc = acc - num(it, args.get(j), at)?
+      }
+      return Ok(types.Value.Num(acc))
+    }
+    2 => {
+      var acc = 1
+      for j in 0..n {
+        acc = acc * num(it, args.get(j), at)?
+      }
+      return Ok(types.Value.Num(acc))
+    }
+    3 | 4 => {
+      want(name, n, 2, at)?
+      let a = num(it, args.get(0), at)?
+      let b = num(it, args.get(1), at)?
+      if b == 0 {
+        return fault(at, "division by zero")
+      }
+      if k == 3 {
+        return Ok(types.Value.Num(a / b))
+      }
+      return Ok(types.Value.Num(a % b))
+    }
+    5 | 6 | 7 | 8 | 9 => {
+      want(name, n, 2, at)?
+      let a = num(it, args.get(0), at)?
+      let b = num(it, args.get(1), at)?
+      var r = false
+      if k == 5 {
+        r = a < b
+      } else if k == 6 {
+        r = a > b
+      } else if k == 7 {
+        r = a <= b
+      } else if k == 8 {
+        r = a >= b
+      } else {
+        r = a == b
+      }
+      return Ok(types.Value.Bool(r))
+    }
+    10 => {
+      want(name, n, 2, at)?
+      return Ok(it.cons(args.get(0), args.get(1)))
+    }
+    11 | 12 => {
+      want(name, n, 1, at)?
+      match args.get(0) {
+        Pair(c) => {
+          if k == 11 { return Ok(it.cells.at(c).car) }
+          return Ok(it.cells.at(c).cdr)
+        }
+        _ => { return fault(at, "car and cdr need a pair") }
+      }
+    }
+    13 => {
+      var acc = types.Value.Nil
+      for j in 0..n {
+        acc = it.cons(args.get(n - 1 - j), acc)
+      }
+      return Ok(acc)
+    }
+    14 => {
+      want(name, n, 1, at)?
+      match args.get(0) {
+        Nil => { return Ok(types.Value.Bool(true)) }
+        _ => { return Ok(types.Value.Bool(false)) }
+      }
+    }
+    15 => {
+      want(name, n, 1, at)?
+      match args.get(0) {
+        Pair(_) => { return Ok(types.Value.Bool(true)) }
+        _ => { return Ok(types.Value.Bool(false)) }
+      }
+    }
+    16 => {
+      want(name, n, 1, at)?
+      return Ok(types.Value.Bool(!truthy(args.get(0))))
+    }
+    17 => {
+      for j in 0..n {
+        if j > 0 {
+          it.out.push_str(" ")
+        }
+        let text = it.show(args.get(j))
+        it.out.push_str(text)
+      }
+      return Ok(types.Value.Nil)
+    }
+    18 => {
+      it.out.push_str("\n")
+      return Ok(types.Value.Nil)
+    }
+    19 => {
+      want(name, n, 1, at)?
+      match args.get(0) {
+        Num(_) => { return Ok(types.Value.Bool(true)) }
+        _ => { return Ok(types.Value.Bool(false)) }
+      }
+    }
+    20 => {
+      want(name, n, 1, at)?
+      match args.get(0) {
+        Sym(_) => { return Ok(types.Value.Bool(true)) }
+        _ => { return Ok(types.Value.Bool(false)) }
+      }
+    }
+    _ => { return fault(at, "internal error: unknown primitive") }
+  }
+}
+
+// Reads and evaluates every top-level form of the interpreter's source. Returns the value of the last form, shown as
+// text. Display output stays in `it.out`.
+pub fn run(it: mut types.Interp) -> Result<String, types.Fault> {
+  let forms = reader.read_program(it)?
+  var last = types.Value.Nil
+  for k in 0..forms.len() {
+    last = eval(it, forms.get(k), 0)?
+  }
+  return Ok(it.show(last))
+}

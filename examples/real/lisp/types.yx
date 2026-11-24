@@ -1,0 +1,221 @@
+// Data of the mini Lisp: syntax nodes, values, environments, closures and pairs.
+//
+// Everything lives in arenas (lists) and is referred to by index. A Value holds only numbers, booleans and indexes,
+// so it is Copy and never needs cloning; symbols are interned once and compared by id.
+import std.text
+
+// An error with the byte offset of the form that caused it.
+pub struct Fault { at: Int, msg: String }
+
+pub enum Value {
+  Num(Int),
+  Bool(Bool),
+  Nil,
+  // index into Interp.cells
+  Pair(Int),
+  // index into prim_names()
+  Prim(Int),
+  // index into Interp.clos
+  Clo(Int),
+  // interned symbol id, from a quoted symbol
+  Sym(Int),
+  // index into Interp.strs
+  Str(Int),
+}
+
+pub struct Cell { car: Value, cdr: Value }
+
+// A variable frame. `parent` is -1 for the global frame, which is frame 0.
+pub struct Frame { syms: List<Int>, vals: List<Value>, parent: Int }
+
+// A procedure body: parameter symbol ids and the body expressions (node indexes).
+pub struct Lambda { params: List<Int>, body: List<Int> }
+
+// A lambda together with the frame it was created in.
+pub struct Closure { lam: Int, env: Int }
+
+// Syntax tree node. tag 0 number (value), 1 boolean (value 0 or 1), 2 symbol (value = symbol id),
+// 3 form (kids = node indexes of the elements), 4 string (value = index into Interp.strs).
+// `at` is the byte offset in the source.
+pub struct Node { tag: Int, value: Int, kids: List<Int>, at: Int }
+
+pub struct Interp {
+  nodes: List<Node>,
+  syms: List<String>,
+  strs: List<String>,
+  frames: List<Frame>,
+  lams: List<Lambda>,
+  clos: List<Closure>,
+  cells: List<Cell>,
+  // text written by display and newline
+  out: String,
+  // current nesting of eval calls, limited to keep the native stack bounded
+  depth: Int,
+  source: String,
+}
+
+// Names of the primitives; a primitive value is its index here.
+pub fn prim_names() -> List<String> {
+  var n = List<String>.new()
+  for name in ["+", "-", "*", "/", "mod", "<", ">", "<=", ">=", "=", "cons", "car", "cdr", "list", "null?", "pair?", "not", "display", "newline", "number?", "symbol?"] {
+    n.push(String.from(name))
+  }
+  return n
+}
+
+// An interpreter for `source`, with the primitives bound in the global frame.
+pub fn new_interp(source: view String) -> Interp {
+  var it = Interp {
+    nodes: List<Node>.new(),
+    syms: List<String>.new(),
+    strs: List<String>.new(),
+    frames: List<Frame>.new(),
+    lams: List<Lambda>.new(),
+    clos: List<Closure>.new(),
+    cells: List<Cell>.new(),
+    out: String.new(),
+    depth: 0,
+    source: source.clone(),
+  }
+  it.frames.push(Frame { syms: List<Int>.new(), vals: List<Value>.new(), parent: -1 })
+  let names = prim_names()
+  for k in 0..names.len() {
+    let id = it.intern(names.at(k))
+    it.define(0, id, Value.Prim(k))
+  }
+  return it
+}
+
+// "line:column" (both 1-based) of byte offset `at` in `src`.
+pub fn locate(src: view String, at: Int) -> String {
+  var line = 1
+  var col = 1
+  var i = 0
+  while i < at && i < src.len() {
+    if src.byte(i) == 10 {
+      line = line + 1
+      col = 1
+    } else {
+      col = col + 1
+    }
+    i = i + 1
+  }
+  var s = String.new()
+  s.push_int(line)
+  s.push_str(":")
+  s.push_int(col)
+  return s
+}
+
+impl Interp {
+  // The id of a symbol name, adding it to the table on first use.
+  fn intern(mut self, name: view String) -> Int {
+    for k in 0..self.syms.len() {
+      if self.syms.at(k).eq(name) {
+        return k
+      }
+    }
+    self.syms.push(name.clone())
+    return self.syms.len() - 1
+  }
+
+  fn add_node(mut self, tag: Int, value: Int, kids: List<Int>, at: Int) -> Int {
+    self.nodes.push(Node { tag: tag, value: value, kids: move kids, at: at })
+    return self.nodes.len() - 1
+  }
+
+  fn new_frame(mut self, parent: Int) -> Int {
+    self.frames.push(Frame { syms: List<Int>.new(), vals: List<Value>.new(), parent: parent })
+    return self.frames.len() - 1
+  }
+
+  // Binds `sym` in frame `f` (a new binding or a redefinition in the same frame).
+  fn define(mut self, f: Int, sym: Int, v: Value) {
+    for k in 0..self.frames.at(f).syms.len() {
+      if self.frames.at(f).syms.get(k) == sym {
+        self.frames.at(f).vals.set(k, v)
+        return
+      }
+    }
+    self.frames.at(f).syms.push(sym)
+    self.frames.at(f).vals.push(v)
+  }
+
+  // The value bound to `sym` in frame `f` or one of its parents.
+  fn lookup(view self, f: Int, sym: Int) -> Option<Value> {
+    var cur = f
+    while cur >= 0 {
+      for k in 0..self.frames.at(cur).syms.len() {
+        if self.frames.at(cur).syms.get(k) == sym {
+          return Some(self.frames.at(cur).vals.get(k))
+        }
+      }
+      cur = self.frames.at(cur).parent
+    }
+    return None
+  }
+
+  // Changes an existing binding. False when `sym` is not bound anywhere.
+  fn assign(mut self, f: Int, sym: Int, v: Value) -> Bool {
+    var cur = f
+    while cur >= 0 {
+      for k in 0..self.frames.at(cur).syms.len() {
+        if self.frames.at(cur).syms.get(k) == sym {
+          self.frames.at(cur).vals.set(k, v)
+          return true
+        }
+      }
+      cur = self.frames.at(cur).parent
+    }
+    return false
+  }
+
+  fn cons(mut self, a: Value, d: Value) -> Value {
+    self.cells.push(Cell { car: a, cdr: d })
+    return Value.Pair(self.cells.len() - 1)
+  }
+
+  // Text of a value as display and the REPL-style result show it.
+  fn show(view self, v: Value) -> String {
+    var s = String.new()
+    match v {
+      Num(n) => { s.push_int(n) }
+      Bool(b) => {
+        if b { s.push_str("#t") } else { s.push_str("#f") }
+      }
+      Nil => { s.push_str("()") }
+      Sym(id) => { s.push_str(self.syms.at(id)) }
+      Str(i) => { s.push_str(self.strs.at(i)) }
+      Prim(k) => {
+        s.push_str("#<primitive ")
+        let names = prim_names()
+        s.push_str(names.at(k))
+        s.push_str(">")
+      }
+      Clo(_) => { s.push_str("#<procedure>") }
+      Pair(_) => {
+        s.push_str("(")
+        var cur = v
+        var first = true
+        while true {
+          match cur {
+            Pair(c) => {
+              if !first { s.push_str(" ") }
+              first = false
+              s.push_str(self.show(self.cells.at(c).car))
+              cur = self.cells.at(c).cdr
+            }
+            Nil => { break }
+            _ => {
+              s.push_str(" . ")
+              s.push_str(self.show(cur))
+              break
+            }
+          }
+        }
+        s.push_str(")")
+      }
+    }
+    return s
+  }
+}

@@ -1,0 +1,125 @@
+// Generated round-trip checks: for many pairs of line lists, the diff must be minimal, its unified text must parse,
+// and applying the parsed patch to the old side must give the new side exactly.
+import diff
+import patch
+
+// Linear congruential generator; `state` is updated, the result is in 0..bound-1.
+pub fn next(state: mut Int, bound: Int) -> Int {
+  state = (state * 1103515245 + 12345) % 2147483648
+  return (state / 65536) % bound
+}
+
+// A random line from a small vocabulary, so that the two sides share many lines.
+fn word(state: mut Int) -> String {
+  var s = String.from("line ")
+  s.push_int(next(state, 5))
+  return s
+}
+
+// `n` random lines.
+fn random_lines(state: mut Int, n: Int) -> List<String> {
+  var out = List<String>.new()
+  for k in 0..n {
+    out.push(word(state))
+  }
+  return out
+}
+
+// `base` with `edits` random inserts, deletes and replacements applied.
+fn mutate(state: mut Int, base: view List<String>, edits: Int) -> List<String> {
+  var out = List<String>.new()
+  for k in 0..base.len() {
+    out.push(base.at(k).clone())
+  }
+  for e in 0..edits {
+    let kind = next(state, 3)
+    let at = if out.len() == 0 { 0 } else { next(state, out.len()) }
+    if kind == 0 || out.len() == 0 {
+      out.insert(at, word(state))
+    } else if kind == 1 {
+      out.remove(at)
+    } else {
+      out.set(at, word(state))
+    }
+  }
+  return out
+}
+
+// Two generated line lists: a random pair, or a base and an edited copy of it.
+pub fn make_pair(state: mut Int) -> (List<String>, List<String>) {
+  let a = random_lines(state, next(state, 30))
+  if next(state, 4) == 0 {
+    return (move a, random_lines(state, next(state, 30)))
+  }
+  let b = mutate(state, a, next(state, 8))
+  return (move a, move b)
+}
+
+pub fn same(a: view List<String>, b: view List<String>) -> Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for k in 0..a.len() {
+    if !a.at(k).eq(b.at(k)) {
+      return false
+    }
+  }
+  return true
+}
+
+// Checks one pair. Returns an empty string when every property holds, else a description of the first failure.
+pub fn check_pair(a: view List<String>, b: view List<String>, context: Int) -> String {
+  let ops = diff.script(a, b)
+  var keep = 0
+  var dels = 0
+  var adds = 0
+  for k in 0..ops.len() {
+    match ops.at(k) {
+      Keep(_) => { keep = keep + 1 }
+      Del(_) => { dels = dels + 1 }
+      Add(_) => { adds = adds + 1 }
+    }
+  }
+  let lcs = diff.lcs_table(a, b).get(0)
+  if keep != lcs || dels != a.len() - lcs || adds != b.len() - lcs {
+    return "script is not minimal"
+  }
+  let text = diff.unified(a, b, "a", "b", context)
+  if text.len() == 0 {
+    if same(a, b) {
+      return ""
+    }
+    return "empty diff for different inputs"
+  }
+  let parsed = patch.parse(text)
+  if parsed.is_err() {
+    return "unified output does not parse"
+  }
+  let applied = patch.apply(a, parsed.unwrap())
+  if applied.is_err() {
+    return "patch does not apply"
+  }
+  let result = applied.unwrap()
+  if !same(result, b) {
+    return "patched text differs from the target"
+  }
+  return ""
+}
+
+// Runs `cases` generated pairs from `seed`. Returns the number checked, or the failure with its case number.
+pub fn run(cases: Int, seed: Int) -> Result<Int, String> {
+  var state = seed
+  for c in 0..cases {
+    let pair = make_pair(state)
+    let context = next(state, 4)
+    let failure = check_pair(pair.0, pair.1, context)
+    if failure.len() > 0 {
+      var m = String.from("case ")
+      m.push_int(c)
+      m.push_str(": ")
+      m.push_str(failure)
+      return Err(move m)
+    }
+  }
+  return Ok(cases)
+}

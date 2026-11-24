@@ -1,0 +1,23 @@
+// PPM (P3, ASCII) output. Colors are gamma-corrected (sqrt), clamped to [0, 1] and quantized to 0..255.
+import render
+import std.math
+import vec
+
+// One channel as an integer 0..255.
+pub fn channel(x: Float) -> Int {
+  var c = x
+  if c.is_nan() { c = 0.0 }
+  if c < 0.0 { c = 0.0 }
+  if c > 1.0 { c = 1.0 }
+  return (c.sqrt() * 255.0 + 0.5).floor_int()
+}
+
+// The whole image as PPM text: header, then one "r g b" line per pixel, rows top to bottom.
+pub fn encode(img: view render.Image) -> String {
+  var out = String.from("P3\n")
+  out.push_str("{img.width} {img.height}\n255\n")
+  for p in img.pixels {
+    out.push_str("{channel(p.x)} {channel(p.y)} {channel(p.z)}\n")
+  }
+  return out
+}
