@@ -1,0 +1,30 @@
+import std.env
+import std.fs
+import std.io
+
+fn main() {
+  let root = "yerux_pe_directory {env.pid()}"
+  assert(fs.create_dir(root).is_ok())
+  assert(fs.read_dir_entries_utf8(root).unwrap().len() == 0)
+  assert(fs.create_dir("{root}/child dir").is_ok())
+  // Enough entries to cross the Win32 enumeration buffer boundary.
+  for i in 100..280 {
+    assert(fs.write("{root}/entry{i}", "").is_ok())
+  }
+  let entries = fs.read_dir_entries_utf8(root).unwrap()
+  assert(entries.len() == 181)
+  let child = entries.at(0)
+  assert(child.name.eq("child dir") && child.kind == fs.FileKind.Dir)
+  for i in 100..280 {
+    let entry = entries.at(i - 99)
+    assert(entry.name.eq("entry{i}") && entry.kind == fs.FileKind.File)
+  }
+  match fs.read_dir_entries("{root}/entry100") {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e.kind == io.IoErrorKind.NotDirectory) }
+  }
+  for i in 100..280 { assert(fs.remove_file("{root}/entry{i}").is_ok()) }
+  assert(fs.remove_dir("{root}/child dir").is_ok())
+  assert(fs.remove_dir(root).is_ok())
+  print("directory enumeration ok")
+}

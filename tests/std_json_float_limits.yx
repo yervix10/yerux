@@ -1,0 +1,46 @@
+import std.json
+
+fn parsed(s: view String) -> json.Value {
+  match json.parse(s) {
+    Ok(value) => { return move value }
+    Err(e) => { panic("could not parse {s}: {e.message}") }
+  }
+}
+
+fn bits(s: view String) -> UInt64 {
+  match parsed(s) {
+    Float(f) => { return f.to_bits() }
+    _ => { panic("expected a JSON Float") }
+  }
+}
+
+fn round_trip(s: view String, expected: UInt64) {
+  assert(bits(s) == expected)
+  let value = parsed(s)
+  let encoded = json.to_string(value)
+  assert(bits(encoded) == expected)
+}
+
+fn main() {
+  round_trip("1e300", 0x7e37e43c8800759cu64)
+  round_trip("1.7976931348623157e308", 0x7fefffffffffffffu64)
+  round_trip("1.7976931348623158e308", 0x7fefffffffffffffu64)
+  assert(json.parse("1.7976931348623159e308").is_err())
+  round_trip("2.2250738585072014e-308", 0x0010000000000000u64)
+  round_trip("2.2250738585072011e-308", 0x000fffffffffffffu64)
+  round_trip("9.9e-309", 0x00071e6deca902a7u64)
+  round_trip("2.4703282292062327e-324", 0u64)
+  round_trip("2.4703282292062328e-324", 1u64)
+  round_trip("-1e-400", 9223372036854775808u64)
+
+  // Exactly halfway between the first two floats at 1.0, then just above it.
+  let halfway = String.from("1.00000000000000011102230246251565404236316680908203125")
+  assert(bits(halfway) == 0x3ff0000000000000u64)
+  let zeros = String.from("0").repeat(850)
+  assert(bits("{halfway}{zeros}1") == 0x3ff0000000000001u64)
+  assert(bits("1.00000000000000033306690738754696212708950042724609375") == 0x3ff0000000000002u64)
+
+  let places = String.from("0").repeat(100001)
+  assert(bits("0.{places}1e100002") == 0x3ff0000000000000u64)
+  print("JSON binary64 rounding ok")
+}

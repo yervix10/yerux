@@ -1,0 +1,29 @@
+import std.env
+import std.fs
+
+fn main() {
+  let path = "yerux_pe_file_position_{env.pid()}.tmp"
+  assert(fs.write(path, "abcde").is_ok())
+  var opts = fs.options()
+  opts.read = true
+  opts.write = true
+  var f = fs.open_with(path, opts).unwrap()
+  assert(f.seek(2).unwrap() == 2)
+  assert(f.set_len(4).is_ok())
+  assert(f.position().unwrap() == 2)
+  assert(f.set_len(6).is_ok())
+  assert(f.position().unwrap() == 2)
+  assert(f.seek_from_end(-2).unwrap() == 4)
+  let zeros = f.read_bytes(2).unwrap()
+  assert(zeros.len() == 2 && zeros.at(0) == 0u8 && zeros.at(1) == 0u8)
+  assert(f.seek(-1).is_err())
+  assert(f.seek_relative(-4).unwrap() == 2)
+  assert(f.write_str("!").unwrap() == 1)
+  assert(f.sync().is_ok())
+  assert(f.seek(0).unwrap() == 0)
+  let data = f.read_bytes(4).unwrap()
+  assert(data.len() == 4 && data.at(2) == 33u8 && data.at(3) == 100u8)
+  assert(fs.close(move f).is_ok())
+  assert(fs.remove_file(path).is_ok())
+  print("file position and size ok")
+}
