@@ -1,0 +1,13 @@
+struct Token { value: Int }
+impl Equal for Token {
+  fn eq(view self, other: view Token) -> Bool {
+    return self.value == other.value
+  }
+}
+
+fn keep<T: Equal + Ordered>(x: T) -> T { return move x }
+
+fn main() {
+  let token = keep<Token>(Token { value: 1 })
+  print(token.value)
+}

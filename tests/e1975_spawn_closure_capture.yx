@@ -1,0 +1,7 @@
+fn main() {
+  let callback = move || 7
+  scope {
+    let worker = spawn move || callback()
+    print(worker.join().is_ok())
+  }
+}

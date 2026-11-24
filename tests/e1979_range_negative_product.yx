@@ -1,0 +1,4 @@
+fn doubled(n: Int<-4..4>) -> Int<-7..8> {
+  return n * 2
+}
+fn main() { print(doubled(-4)) }

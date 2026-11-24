@@ -1,0 +1,8 @@
+error: 'Secret' is private in module 'extra_modules.private_type'
+ --> tests/e1977_private_imported_type.yx:4:15
+  |
+4 |   let value = lib.Secret { n: 1 }
+  |               ^^^^^^^^^^
+  = help: add `pub` before the type in extra_modules/private_type.yx to share it: `pub struct Secret`
+
+1 error(s). Nothing was generated.

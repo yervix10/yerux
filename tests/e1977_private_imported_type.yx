@@ -1,0 +1,6 @@
+import extra_modules.private_type as lib
+
+fn main() {
+  let value = lib.Secret { n: 1 }
+  print(value.n)
+}

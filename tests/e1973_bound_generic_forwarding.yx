@@ -1,0 +1,9 @@
+struct Token { value: Int }
+
+fn needs_order<T: Ordered>(x: T) -> T { return move x }
+fn forward<T>(x: T) -> T { return needs_order(move x) }
+
+fn main() {
+  let token = forward(Token { value: 1 })
+  print(token.value)
+}

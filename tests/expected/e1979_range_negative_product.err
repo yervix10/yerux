@@ -1,0 +1,11 @@
+error: this value may be outside Int<-7..8>
+ --> tests/e1979_range_negative_product.yx:2:10
+  |
+2 |   return n * 2
+  |          ^^^^^
+  = the compiler can only prove that it has type Int<-8..8>
+  = Int<-7..8> holds the values from -7 to 8 (both ends included)
+  = help: test it first: `if n >= -7 && n <= 8 { ... }`; inside, the compiler knows the narrower range
+  = help: or convert it explicitly: `Int<-7..8>.try_from(n)` gives a Result, `Int<-7..8>.from(n)` panics when it does not fit
+
+1 error(s). Nothing was generated.

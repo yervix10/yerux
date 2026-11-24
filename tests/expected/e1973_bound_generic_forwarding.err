@@ -1,0 +1,9 @@
+error: T does not implement Ordered, which 'needs_order' needs for T
+ --> tests/e1973_bound_generic_forwarding.yx:4:35
+  |
+4 | fn forward<T>(x: T) -> T { return needs_order(move x) }
+  |                                   ^^^^^^^^^^^^^^^^^^^
+  = 'needs_order' is declared `fn needs_order<T: Ordered>`
+  = help: add `impl Ordered for T { fn cmp(view self, other: view T) -> Int { .. } }`
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,10 @@
+@thread_bound
+struct LocalToken { n: Int }
+
+fn main() {
+  let batch = [LocalToken { n: 7 }]
+  scope {
+    let worker = spawn move || batch[0].n
+    print(worker.join().is_ok())
+  }
+}

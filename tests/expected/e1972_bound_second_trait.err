@@ -1,0 +1,9 @@
+error: Token does not implement Ordered, which 'keep' needs for T
+  --> tests/e1972_bound_second_trait.yx:11:15
+   |
+11 |   let token = keep<Token>(Token { value: 1 })
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = 'keep' is declared `fn keep<T: Equal + Ordered>`
+   = help: add `impl Ordered for Token { fn cmp(view self, other: view Token) -> Int { .. } }`
+
+1 error(s). Nothing was generated.

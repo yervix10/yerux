@@ -1,0 +1,5 @@
+fn narrowed(n: Int<-8..8>) -> Int<0..4> {
+  if n > 4 { return 4 }
+  return n
+}
+fn main() { print(narrowed(-1)) }
