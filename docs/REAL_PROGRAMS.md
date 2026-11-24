@@ -253,3 +253,60 @@ backend. The suite runs them as `mdconv`, `raytrace` and `httpjson` in `tests/ru
    the text, so a caller that wants `bad size "4x"` must add it.
 9. **`text.parse_float("1e400")` is `Ok(inf)`.** This matches Rust's `f64::from_str`, but the `std.text` reference does
    not say so. The JSON parser rejects infinite results itself. (Documentation only.)
+
+# Round 4: an interpreter, a line editor, a diff tool
+
+Three programs with unit tests (`yerux test`) and golden runs on the C and the native backend. The suite runs them as
+`difftool`, `edlite` and `lisp` in `tests/run_all.sh`.
+
+- [difftool](../examples/real/difftool/): LCS line diff (`diff.yx`), unified output with hunks, a patch parser and
+  applier (`patch.yx`), and generated round-trip checks (`fuzz.yx`: 3000 pairs with seed 42 in `tests/difftool.sh`).
+  The round trip checks that the script is minimal (Keep count = LCS length), that the unified text parses, and that
+  applying it to the old side gives the new side. Golden: `tests/expected/difftool_sample.diff`.
+- [edlite](../examples/real/edlite/): an ed-style editor: buffer with 1-based lines, ranges (`N`, `.`, `$`, `+N`, `-N`,
+  `A,B`, `%`), `a i c d p n j m t s=/PAT/REP/[g] = w e f q`, undo and redo (`u`, `r`) by whole-buffer snapshots.
+  Script mode (`-f`), stdin mode, file load and write. Golden session `tests/expected/edlite_session.*` (its stderr
+  and exit status 1 are checked). The pattern in `s` is literal text, not a regular expression.
+- [lisp](../examples/real/lisp/): a mini Lisp: reader with positions, special forms (`quote if define set! lambda begin
+  let and or`), closures in an arena of frames, pairs, strings, 21 primitives, errors as `file:line:col: error:`.
+  Golden programs: `queens` (N-queens counts 2, 10, 4, 40, 92), `accounts` (closures as objects), `error` (fails on
+  purpose; stderr golden). Checked by `tests/lisp.sh`.
+
+Sizes: difftool 724 lines in all (its tests included), edlite 776, lisp 1013 (about 890 for the interpreter and 125 for
+its tests).
+
+## Fixed in round 4
+
+- **`pub fn` inside an `impl` gave "expected 'fn' inside `impl`".** Methods take no `pub`: they are visible wherever
+  their type is. The diagnostic now says so (`src/syntax.rs`). Test: `tests/e1964_impl_pub_method.yx`.
+- **A Text literal receiver of a std.text function gave a method error with the wrong hint** (it suggested an `impl`
+  block). The `std.text` hint now also applies to a Text receiver (`src/check.rs`). Test:
+  `tests/e1965_text_method_std_text.yx`.
+- **difftool reported two files that differ only in the final newline as identical** (exit 0). The line model cannot
+  keep that difference, so difftool now refuses such inputs with status 2. Repro:
+  `printf 'a\nb' > x; printf 'a\nb\n' > y; difftool diff x y` (was exit 0, no output). Test: `tests/difftool.sh`.
+
+## Open (not changed; minimal repros)
+
+1. **`Result` has no `unwrap_err`.** `let e = r.unwrap_err()` on a `Result<Int, String>` gives "type Result<Int,
+   String> has no method 'unwrap_err'". Use `match` (`lisp` and `difftool` do).
+2. **An integer has no `to_text()`.** `let n = 5; print(n.to_text())` gives "type Int has no method 'to_text'". Build the
+   text with `var s = String.new(); s.push_int(n)` (a helper in each program).
+3. **A method on a Text literal needs the module function, and `parse_int` exists in two forms.** `"4".parse_int(n)`
+   (a `String` method taking an out parameter) does not apply to a literal (Text), and `text.parse_int(s)` returns a
+   `Result`. Both are correct; the names are easy to mix up.
+4. **A payload moved out of a match arm needs `move`.** `match io.read_file(p) { Ok(d) => d, .. }` gives "'d' is a
+   String and is not copied"; `Ok(d) => move d` works. The diagnostic is clear; this is listed for the next reader.
+5. **A call that returns an owned value must be used or discarded.** `run(ed, script)` returning a `List<String>` as a
+   statement gives "must be used or explicitly discarded". `let _ = run(..)` works.
+6. **Types of an imported module need the module prefix, but variants do not.** In a file that does `import types`,
+   `Value` and `Fault` are "not defined in this file" and must be written `types.Value` and `types.Fault`, while
+   `Num(n)` in a `match` arm needs no prefix. Repro: `import types` then `fn f(v: Value) -> Bool { .. }`.
+7. **`text.lines` drops a `\r` before each `\n`.** `text.lines("a\r\nb\r\n").at(0).len()` is 1. A CRLF file therefore
+   cannot be diffed and patched back byte for byte (difftool works on the lines and writes LF).
+8. **difftool cannot diff files whose last line has no newline.** It refuses them (see Fixed). The unified format's
+   `\ No newline at end of file` marker is not implemented; that would be the real fix.
+9. **Lisp: no tail calls, and closure frames are never freed.** A non-tail recursion deeper than about 650 Lisp calls
+   gives "recursion too deep" (the limit is 2000 nested `eval` calls). Every call allocates a frame in an arena that is
+   not reclaimed, so a long loop written as recursion grows memory. This is a design limit of the 900-line program, not
+   a compiler bug.
