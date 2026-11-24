@@ -1,0 +1,8 @@
+error: cannot move 'xs.at(..).name' out of its struct
+ --> tests/e1523_list_elem_field_move.yx:7:11
+  |
+7 |   let n = xs.at(0).name
+  |           ^^^^^^^^^^^^^
+  = help: borrow it instead (call a method on it, or pass it to a `view`/`mut` parameter), or replace the field with a fresh value (`s.f = new`); to take ownership, move the whole struct
+
+1 error(s). Nothing was generated.

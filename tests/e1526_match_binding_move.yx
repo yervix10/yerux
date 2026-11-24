@@ -1,0 +1,12 @@
+// The name bound by a `match` arm borrows the owned payload: it cannot be copied out.
+enum Msg { Text(String) }
+
+fn main() {
+  let m = Msg.Text(String.from("a"))
+  match m {
+    Text(s) => {
+      let mine = s
+      print(mine)
+    }
+  }
+}

@@ -1,0 +1,8 @@
+// Returning a field of a `view` parameter would move it out of a borrowed struct.
+struct P { name: String }
+
+fn steal(p: view P) -> String {
+  return p.name
+}
+
+fn main() { }

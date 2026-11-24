@@ -1,0 +1,9 @@
+error: 's' is a String and is not copied
+ --> tests/e1526_match_binding_move.yx:8:18
+  |
+8 |       let mine = s
+  |                  ^
+  = 's' only borrows its value (a `view`/`mut` parameter or a `for` loop variable), so it cannot be copied or moved out
+  = help: make an independent copy with `String.from(s)`
+
+1 error(s). Nothing was generated.

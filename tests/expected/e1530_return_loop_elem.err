@@ -1,0 +1,8 @@
+error: cannot return 'x': it is only borrowed
+ --> tests/e1530_return_loop_elem.yx:4:12
+  |
+4 |     return x
+  |            ^
+  = help: borrows cannot leave the function; take the value by ownership (without `view`/`mut`)
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,8 @@
+error: cannot move 's': it is only borrowed
+ --> tests/e1525_move_view_param.yx:3:10
+  |
+3 |   return move s
+  |          ^^^^^^
+  = help: whoever lent it is still the owner; only move what you own
+
+1 error(s). Nothing was generated.
