@@ -724,6 +724,8 @@ section lists only what the tests fix. Anything not listed is **no especificado*
   (tests/e739_locked_wait.yx, tests/e743_locked_reentry.yx).
 - Poisoning: if a task panics inside a `with` callback, a later access from another task fails
   (`join()` returns an error) instead of reading the content (tests/conc_sharing.yx).
+- `with_view(f)` / `mutex_with_view(m, f)` give `f` a read-only view but take the same exclusive lock as `with`
+  (final; use `RwLock` for concurrent readers; tests/conc_freeze_api.yx).
 - `Mutex<T>` facade with `mutex_update` (tests/concurrency_mutex.yx). `RwLock<T>` with
   `rwlock_read` and `rwlock_write` (tests/concurrency_rwlock.yx). Fairness between readers and
   writers is **no especificado**.

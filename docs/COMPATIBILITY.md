@@ -152,14 +152,15 @@ alias with deprecation, or document as intended) before the item it touches beco
 2. **Two sort APIs.** `List.sort()` is in-place and not stable (STDLIB.md). `std.sort` has `stable`,
    `stable_by`, `unstable` and `unstable_by`. The prelude name `sort` means "unstable" but the word
    "unstable" appears only in the module. Decide the names before freezing either.
-3. **Two lock APIs.** `Locked<T>` uses methods (`with`, `with_view`, `take`); `Mutex<T>` uses free
-   functions (`mutex_update`, `mutex_with`, `mutex_with_view`). `with_view` takes the exclusive lock
-   although its name suggests a shared read (CONCURRENCY.md). Pick one style and fix the lock mode
-   of `with_view`.
-4. **Channel and thread constructors.** `Sender<T>.bounded(n)` and `thread_pool_new(n)` use different
-   constructor styles. The design documents use `Channel<T>.new(capacity:)`, `Task<T>` and `spawn { }`
-   without `move`; the implementation uses `JoinHandle<T>` and `spawn move`. Choose one set before
-   concurrency becomes Stable.
+3. **Two lock APIs.** *Resolved (documented as final).* `Locked<T>` is the primitive and uses methods
+   (`with`, `with_view`, `take`); `Mutex<T>` is its named facade and uses free functions (`mutex_update`,
+   `mutex_with`, `mutex_with_view`), because generic methods with their own type parameters are not available
+   yet. `with_view`/`mutex_with_view` give a read-only view under the same exclusive lock as `with`
+   (final, no rename); shared reads are `RwLock` (`rwlock_read`). Test: tests/conc_freeze_api.yx.
+4. **Channel and thread constructors.** *Resolved (documented as final).* The frozen forms are the implemented
+   ones: `Sender<T>.bounded(n)` / `.unbounded()`, `thread_pool_new(n)`, `JoinHandle<T>`, `spawn move`.
+   `Channel<T>.new(capacity:)`, `Task<T>` and `spawn { }` without `move` are design-only and not part of
+   the surface (banner in CONCURRENCY.md).
 5. **`ok_or` is a free function** (`ok_or(opt, e)`), while `context` and `ok` are methods on the same
    types. Either add the method form or document the difference as final.
 6. **Module-level free functions vs methods.** `rand.new` / `rand.next`, `hash.fnv1a32`, `path.join`
@@ -174,11 +175,11 @@ alias with deprecation, or document as intended) before the item it touches beco
    internal module or mark them as Internal in the docs.
 9. **`Text` and `String` in FFI.** Extern arguments use `Text`; owned strings are `String`. The
    conversion rule (NUL-terminated copy) is documented in SPEC 7.1 only. Document it in STDLIB.md too.
-10. **`ThreadPanic` is not tested by name.** `JoinHandle::join` returns `Result<T, ThreadPanic>` in the
-    design, and tests only use `is_ok()` and `is_err()` (tests/conc_spawn.yx). Name and payload must
-    be fixed and tested before 1.0.
-11. **Two spec sources for concurrency.** CONCURRENCY.md describes a larger API than the one in the
-    implementation status section. Keep only implemented forms in the frozen surface.
+10. **`ThreadPanic` is not tested by name.** *Resolved.* `JoinHandle<T>.join() -> Result<T, ThreadPanic>`;
+    `ThreadPanic` is an empty struct whose `show()` is `worker panicked`. Tested by name, type and message in
+    tests/conc_freeze_api.yx (plus `is_ok`/`is_err` in tests/conc_spawn.yx).
+11. **Two spec sources for concurrency.** *Resolved.* CONCURRENCY.md now states at the top of the design
+    sections that only the implemented forms are the frozen surface; the rest is marked not implemented.
 12. **Compile-time budget.** COMPTIME.md proposes 10^8 steps; the diagnostic in
     `examples/e53_comptime_budget.yx` uses 20 000 000. Pick one number and test it.
 

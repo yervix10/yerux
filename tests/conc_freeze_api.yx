@@ -1,0 +1,57 @@
+// Frozen concurrency surface: JoinHandle<T>.join() -> Result<T, ThreadPanic> (named, with its message);
+// mutex_with_view reads under the exclusive lock, so it never sees a half-done update.
+fn boom() -> Int {
+  panic("worker failed")
+}
+
+fn joined(fail: Bool) -> Result<Int, ThreadPanic> {
+  var out: Result<Int, ThreadPanic> = Ok(0)
+  scope {
+    let h = spawn move || {
+      if fail { return boom() }
+      return 7
+    }
+    out = h.join()
+  }
+  return out
+}
+
+fn report(r: Result<Int, ThreadPanic>) {
+  match r {
+    Ok(v) => { print(v) }
+    Err(e) => { print(e.show()) }
+  }
+}
+
+fn main() {
+  report(joined(false))
+  report(joined(true))
+  let m = Shared.new(Mutex<(Int, Int)>.new((0, 0)))
+  let torn = Shared.new(Atomic<Int>.new(0))
+  scope {
+    let m1 = m.clone()
+    let w = spawn move || {
+      var i = 0
+      while i < 2000 {
+        mutex_update(m1.get(), |p| {
+          p.0 = p.0 + 1
+          p.1 = p.1 + 1
+        })
+        i = i + 1
+      }
+      return 0
+    }
+    let m2 = m.clone()
+    let t2 = torn.clone()
+    let r = spawn move || {
+      var i = 0
+      while i < 2000 {
+        let same = mutex_with_view(m2.get(), |p| p.0 == p.1)
+        if !same { t2.add(1) }
+        i = i + 1
+      }
+      return 0
+    }
+  }
+  print(torn.load())
+}
