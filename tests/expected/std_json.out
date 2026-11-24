@@ -35,7 +35,6 @@ error at byte 9 (line 3, column 3): unexpected character
 }
 object
 members 3, last k at 1, missing -1
-{"k":1,"k":2,"z":[null]}
 array
 [7,0.5,"a\"b\n",true,null,null]
 "é\u0001"

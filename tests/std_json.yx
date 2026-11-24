@@ -44,7 +44,7 @@ fn main() {
     Err(e) => { print(e.message) }
   }
 
-  // members, type names, clone
+  // members and type names
   match json.parse("{{\"k\": 1, \"k\": 2, \"z\": [null]}}") {
     Err(e) => { print(e.message) }
     Ok(v) => {
@@ -52,8 +52,6 @@ fn main() {
       match v {
         Obj(members) => {
           print("members {members.len()}, last k at {json.find(members, "k")}, missing {json.find(members, "q")}")
-          let copy = v.clone()
-          print(json.to_string(copy))
           print(json.type_name(members.at(2).value))
         }
         _ => { print("not an object") }

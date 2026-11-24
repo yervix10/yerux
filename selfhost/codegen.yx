@@ -1952,7 +1952,7 @@ fn array_literal(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
 fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Value) -> Value {
   let ty = String.from(source.ty)
   if ty == "String" { return temp(gen, tree, ty, "nx_str_from({text_view(source)})") }
-  if integer_c(ty).len() != 0 || ty == "Bool" || ty == "Text" {
+  if integer_c(ty).len() != 0 || ty == "Bool" || ty == "Text" || ty == "Float" || ty == "Float32" || ty == "Char" {
     return temp(gen, tree, ty, source.code)
   }
   let base = type_terms.base(ty)
