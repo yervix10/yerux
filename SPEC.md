@@ -255,7 +255,7 @@ enum Maybe<T> { Some(T), None }
 - **Errors.** `?` converts a Show-able error into a `String` error automatically; `r.context("msg")` / `opt.context("msg")` / `with_context(f)` / `wrap(msg)` chain causes (`msg: cause`). See docs/ERRORS.md.
 - **Iterators.** Any type with `fn next(mut self) -> Option<T>` works in `for x in it`; `Iter<T>` offers lazy adapters and consumers (`Iter<Int>.range(0, n).map(|x| x * 2).filter(..).to_list()`). See docs/ITERATORS.md.
 - **Generic `impl` blocks** (`impl<T: Bound> Stack<T> { .. }`, `impl<T: Show> Show for Pair<T, T>`) work for user types, and `derive` works on generic types (docs/GENERICS.md).
-- Not yet: explicit type arguments on calls, bounds on struct/enum parameters, generic methods, default type arguments.
+- Explicit type arguments on calls are accepted: `first<Int>(l)`, `conv<Int, Bool>(x, f)` (all parameters, in order; a wrong count or a non-generic function is an error). Not yet: bounds on struct/enum parameters, generic methods, default type arguments.
 
 ## Function values and closures
 Function types use `fn(Param, ...) -> Result`; parameter modes (`view`, `mut`, or owned) are part of the signature. A top-level function with a concrete signature can be passed by name, including a public function qualified by its module. A generic call can infer a type parameter from the function value. Calls use the same `f(args)` syntax for named functions and function values:
@@ -301,7 +301,7 @@ panics, so partial updates cannot be observed through the lock.
 consistent `load`, `store`, `swap` and `compare_swap`. An integer
 atomic also supports checked `add` and `add_wrapping`, which return the
 previous value. The constructors accept explicit type arguments (`Shared<Int>.new(5)`,
-`Locked<Int>.new(2)`, `Atomic<Int>.new(1)`); calls to generic functions do not yet (`id<Int>(3)` is an error).
+`Locked<Int>.new(2)`, `Atomic<Int>.new(1)`); calls to generic functions take them too (`id<Int>(3)`, `conv<Int, Bool>(x, f)`: all of the function's type parameters, in order; tests/generic_explicit_args.yx).
 
 `parallel for` runs the iterations of an integer range or a borrowed list
 on up to four workers and waits for completion. Captures and list elements

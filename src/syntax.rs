@@ -4403,6 +4403,23 @@ impl Parser {
             let (args, end) = self.args()?;
             return self.postfix(mk(EK::Call(x, args), span(pos, end)));
         }
+        if self.is_sym("<") && x.chars().next().map_or(false, |c| c.is_lowercase() || c == '_') {
+            // `id<Int>(5)`: explicit type arguments of a generic function. `a < b` is a comparison, so this is
+            // only taken when a type list follows and is closed by `>` and a `(`
+            let save = self.i;
+            if let Ok(targs) = self.type_args() {
+                if self.is_sym("(") {
+                    let (args, end) = self.args()?;
+                    // encoded as a generic-variant literal with an empty variant name: the checker turns it
+                    // into a call that carries the type arguments
+                    return self.postfix(mk(
+                        EK::GenVariant { name: x, targs: Some(targs), vname: String::new(), args },
+                        span(pos, end),
+                    ));
+                }
+            }
+            self.i = save;
+        }
         if (x == "List" && (self.is_sym(".") || self.is_sym("<")))
             || ((x == "String" || x == "Char") && self.is_sym("."))
         {

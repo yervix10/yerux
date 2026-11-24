@@ -958,7 +958,18 @@ impl<'a> Checker<'a> {
             }
         }
         self.closure_depth += 1;
+        let saved_pending = std::mem::take(&mut self.pending_bare);
         self.block(&mut body);
+        if self.pending_bare > 0 {
+            let hint = if self.ret_free { None } else { Some(self.ret) };
+            self.fix_bare_returns(&mut body, hint);
+            if self.ret_free {
+                // every return was a bare `None`: the inference error above says it; keep the closure quiet
+                self.ret = Ty::Err;
+                self.ret_free = false;
+            }
+        }
+        self.pending_bare = saved_pending;
         self.closure_depth -= 1;
         let mut ret_ty = if self.ret_free { Ty::Unit } else { self.ret };
         if (spawning || locking) && ret_ty == Ty::Unit {

@@ -238,6 +238,15 @@ fn is_place(e: &Expr) -> bool {
     matches!(e.k, EK::Var(..) | EK::Field(..)) || is_at(e)
 }
 // ── constructors for the synthetic code that `for` loops are rewritten into ──
+/// `None`, `Maybe.None`: a generic enum variant without payload whose type arguments are not written
+fn is_bare_variant(e: &Expr) -> bool {
+    match &e.k {
+        EK::Var(n, _) => n == "None",
+        EK::GenVariant { targs: None, args, .. } => args.is_empty(),
+        _ => false,
+    }
+}
+
 fn sx(k: EK, pos: Pos) -> Expr {
     Expr {
         k,
@@ -561,6 +570,8 @@ struct Checker<'a> {
     capture_ids: HashSet<usize>, // variables that are captures inside a closure body
     closure_borrow_pos: HashSet<(usize, usize)>, // positions of closure literals that borrow variables
     ret_free: bool,        // checking a closure whose result type is not known yet
+    explicit_targs: Option<Vec<Ty>>, // type arguments written at the call being checked (`f<Int>(x)`)
+    pending_bare: usize,   // `return None`-like returns of a closure whose result type was still unknown
     free_pids: Vec<usize>, // type parameters of the generic callee that are still unknown
     closure_loans: HashMap<usize, Vec<(usize, u8, Pos)>>, // hidden closure variable -> what it borrows
 }
@@ -745,11 +756,11 @@ impl<'a> Checker<'a> {
                             );
                             return None;
                         }
-                        // a Copy field (Int, Bool, ..) of an owning temporary (`parse(x).status`): the temporary
+                        // a field of an owning temporary (`parse(x).status`, `f().name.len()`): the temporary
                         // moves into a hidden variable that lives as long as the enclosing expression, so the
                         // rest of the value is freed at its end instead of leaking
                         let copy_field = match t {
-                            Ty::Struct(s) => self.types.structs[s].fields.iter().find(|(fname, _)| fname == f).map(|x| x.1).filter(|ft| !self.types.owned(*ft)),
+                            Ty::Struct(s) => self.types.structs[s].fields.iter().find(|(fname, _)| fname == f).map(|x| x.1),
                             _ => None,
                         };
                         if copy_field.is_some() {
@@ -997,6 +1008,48 @@ impl<'a> Checker<'a> {
             );
         }
         t
+    }
+
+    /// `a + b + c` where the leftmost sum starts a String concatenation (`s + "x"`, `"(" + s`): the left operand
+    /// is itself a concatenation, so the whole chain builds Strings step by step.
+    fn concat_chain(&self, e: &Expr) -> bool {
+        match &e.k {
+            EK::Bin("+", a, b) => {
+                (self.isp(a) && self.peek_ty(a) == Some(Ty::String))
+                    || (matches!(a.k, EK::Text(_)) && self.isp(b) && self.peek_ty(b) == Some(Ty::String))
+                    || self.concat_chain(a)
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns left unchecked by `return None` while the closure's result type was unknown: check them now, with
+    /// the result type that a later return fixed (or without one, which reports the usual inference error).
+    pub(super) fn fix_bare_returns(&mut self, body: &mut [Stmt], hint: Option<Ty>) {
+        for st in body {
+            match &mut st.k {
+                SK::Return(Some(e)) if is_bare_variant(e) => {
+                    self.hint = hint;
+                    let t = self.expr(e);
+                    if let Some(r) = hint {
+                        self.expect(t, r, e.pos);
+                    }
+                }
+                SK::Block(b, _) | SK::While(_, b, _) => self.fix_bare_returns(b, hint),
+                SK::If(_, yes, no) => {
+                    self.fix_bare_returns(yes, hint);
+                    if let Some(no) = no {
+                        self.fix_bare_returns(no, hint);
+                    }
+                }
+                SK::Match(_, arms) => {
+                    for arm in arms {
+                        self.fix_bare_returns(&mut arm.body, hint);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     fn expr_checked(&mut self, e: &mut Expr) -> Ty {
@@ -1321,9 +1374,11 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        // `a + b` on a String variable: a new String (`std__concat`); b is a String variable or a Text
-        if let EK::Bin("+", a, _) = &e.k {
-            if self.isp(a) && self.peek_ty(a) == Some(Ty::String) {
+        // `a + b` on a String variable: a new String (`std__concat`); b is a String variable or a Text.
+        // A Text literal on the left (`"(" + s`) concatenates the same way: the literal is lent as a hidden String.
+        if let EK::Bin("+", a, b) = &e.k {
+            let lit_left = matches!(a.k, EK::Text(_)) && self.isp(b) && self.peek_ty(b) == Some(Ty::String);
+            if lit_left || (self.isp(a) && self.peek_ty(a) == Some(Ty::String)) || self.concat_chain(a) {
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
                 if let EK::Bin(_, a, b) = k {
                     e.k = EK::Call("std__concat".into(), vec![*a, *b]);
@@ -1733,6 +1788,31 @@ impl<'a> Checker<'a> {
                 t
             }
             EK::Sequence(..) => e.ty,
+            EK::GenVariant { targs: Some(_), vname, .. } if vname.is_empty() => {
+                // `f<A, B>(x)`: a call with explicit type arguments
+                let EK::GenVariant { name, targs, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else { unreachable!() };
+                let explicit = targs.unwrap_or_default();
+                let mut args = args;
+                let t = match self.ps.gfns.iter().position(|g| g.name == name) {
+                    Some(gi) => {
+                        self.explicit_targs = Some(explicit);
+                        self.generic_call(gi, &mut args, pos)
+                    }
+                    None => {
+                        let mut d = diag(format!("'{}' takes no type arguments", name), pos);
+                        if self.sigs.contains_key(&name) || self.lookup(&name).is_some() {
+                            d = d.note("it is not a generic function: remove the `<..>`");
+                        } else {
+                            d = d.note("no generic function has this name");
+                        }
+                        self.err(d);
+                        Ty::Err
+                    }
+                };
+                let name = self.rename.take().unwrap_or(name);
+                e.k = EK::Call(name, args);
+                t
+            }
             EK::GenStruct { .. } | EK::GenVariant { .. } => {
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
                 let (t, nk) = self.generic_lit(k, pos, hint);
@@ -4625,6 +4705,13 @@ impl<'a> Checker<'a> {
                             return;
                         }
                         e.k = EK::Move(n, 0);
+                    }
+                    if self.ret_free && is_bare_variant(e) {
+                        // `return None` before any return that says what the closure produces: check it again
+                        // once a later return has fixed the result type (see `fix_bare_returns`)
+                        self.pending_bare += 1;
+                        self.st.dead = true;
+                        return;
                     }
                     self.hint = if self.ret_free { None } else { Some(self.ret) };
                     let t = self.expr(e);
@@ -7684,6 +7771,24 @@ impl<'a> Checker<'a> {
             }
         }
         let mut bind: Vec<Option<Ty>> = vec![None; g.pids.len()];
+        if let Some(explicit) = self.explicit_targs.take() {
+            if explicit.len() != g.pids.len() {
+                self.err(diag(
+                    format!(
+                        "'{}' has {} type parameter(s) ({}) but {} type argument(s) were given",
+                        g.name,
+                        g.pids.len(),
+                        g.tparams.iter().map(|t| t.name.clone()).collect::<Vec<_>>().join(", "),
+                        explicit.len()
+                    ),
+                    pos,
+                ));
+                return Ty::Err;
+            }
+            for (k, t) in explicit.into_iter().enumerate() {
+                bind[k] = Some(t);
+            }
+        }
         let mut bad = false;
         // closure literals are checked after the other arguments: those fix the type parameters that the
         // closure's parameters need, and the closure's body then fixes the ones in its result type
@@ -8146,6 +8251,8 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         capture_ids: HashSet::new(),
         closure_borrow_pos: HashSet::new(),
         ret_free: false,
+        pending_bare: 0,
+        explicit_targs: None,
         free_pids: vec![],
         closure_loans: HashMap::new(),
     };

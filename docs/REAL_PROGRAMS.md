@@ -67,7 +67,7 @@ backend, both compared with `tests/expected/webkv_selftest.out` (122 connections
   (`mutex_with(m, |d: mut Data| -> Int { .. })`).
 - The result type of a block closure with several `return`s is not inferred ("cannot infer the type parameter R"):
   write `-> R` on the closure.
-- A field of an owning temporary cannot be read when the *field* owns memory (`f().body.len()`): bind it first. A Copy field (`f().status`) is fine since the minidb round (below).
+- A field of an owning temporary can be borrowed or read (`f().status`, `f().body.len()`) since the minidb round (below); moving it out or using it in an interpolation still needs a binding.
 - `Map<String, String>.get` needs `Copy` values: use `find` + `vals.at(i).clone()`.
 - `Text` and `String` are different types ("expected Text but this is String"): pick one per API.
 
@@ -186,7 +186,7 @@ Fixed (regression test fails before the fix):
 1. **A Copy field of an owning temporary could not be read** (`record.decode(b, 0).status`: "cannot take a field of a
    temporary ... that owns memory"), the friction hit by webkv and minidb alike. The temporary now moves into a hidden
    variable that lives to the end of the enclosing expression, and the rest of it is freed there (Drop runs, no leak).
-   A field that owns memory still has to be bound first. Test: `tests/field_of_temporary.yx`.
+   The same holds for fields that own memory when they are only borrowed (`make(1).name.len()`, `show(make(4).name)`, `tests/field_of_temporary_owned.yx`). Still bound first: moving such a field out (`let k = make(7).name`, an error) and `"{make(5).name}"` inside an interpolation. Test: `tests/field_of_temporary.yx`.
 2. **`std.hash.crc32` / `crc32_bytes` were 2.3x slower than needed**: the bitwise loop did eight 32-step XORs per byte
    (the language has no bitwise operators). A 256-entry table now does one 8-step and one 32-step XOR per byte; results
    are unchanged (`tests/std_hash.yx`). Opening a 653 KB log (20,000 records): 0.42 s before, 0.19 s after.
