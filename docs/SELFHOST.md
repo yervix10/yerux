@@ -261,11 +261,17 @@ the seed and checks that rebuilt codegen emits the same C and diagnostics
 as the seed on its corpus. It compares the resulting programs' stdout,
 stderr, and exit statuses against runs from the Rust C backend.
 The bootstrap rebuilt 7 of 7 executables with byte-identical C. The
-latest run matched **494 of 495 candidates**, including 103 runtime
-panics. It reported zero candidates outside the supported subset, one
-expected type rejection (`rejected_types.yx`, the 495th) and zero mismatches.
-The previous run matched 458 of 459 candidates with 101 matching runtime
-panics.
+latest run matched **503 of 512 candidates**, including 105 runtime
+panics, with zero mismatches. Eight candidates are outside the supported
+subset, one expected type rejection (`rejected_types.yx`) is the 512th. The
+eight are programs for features the Rust compiler gained after these stages
+were written: closure return typing (`closure_return_none_first`), explicit
+generic arguments (`generic_explicit_args`), `std.http.server`
+(`http_server_fuzz`, `http_server_loopback`), `Option.map` and friends
+(`option_result_methods`), raw `Ptr` reads and writes (`ptr_null_read`,
+`ptr_rw`) and `"literal" + string` (`string_concat_literal_left`). The gate
+fails if that number grows. The previous run, before those programs existed,
+matched 494 of 495 with none outside the subset.
 
 Diagnostics with spans: a type error found by the self-hosted stages is drawn
 like the Rust compiler's (`--> file:line:col`, the source line and `^^^^` under
@@ -277,11 +283,11 @@ draws it. Limits: the span is the token of that expression, not the whole
 expression; errors in imported modules and in the prelude are printed without a
 span. `tests/selfhost/spans/bad_*.yx` with `.err` files fix three drawings.
 
-Error corpus (`tests/e*.yx`, 228 programs the Rust compiler rejects): the
-self-hosted driver gives the **same first error as the Rust compiler for 95**,
-rejects 32 with different wording, fails another way on 49 (parser errors that
+Error corpus (`tests/e*.yx`, 236 programs the Rust compiler rejects): the
+self-hosted driver gives the **same first error as the Rust compiler for 100 of the 236**
+programs now in the corpus, rejects 36 with different wording, fails another way on 52 (parser errors that
 print `SyntaxError:N`, C compiler errors, bootstrap `codegen:` limits) and
-**accepts 52**. Newly implemented in the type stage: provable `Int<a..b>`
+**accepts 48**. Newly implemented in the type stage: provable `Int<a..b>`
 range violations (literals, immutable `let`s, `for` variables over literal
 bounds and `+ - *` of those, at returns, arguments, fields, `push` and
 annotated `let`s; a variable that is assigned or appears in a condition or
@@ -289,7 +295,9 @@ annotated `let`s; a variable that is assigned or appears in a condition or
 evaluation (calls rejected, forward use, checked overflow and division by
 zero), moving a field out of an owned struct, calling `drop` directly,
 negative `for` steps, `for mut` over `chars()`, and or-patterns that bind
-different names. Round 3 added `dyn` rules (unknown trait, `self` by value,
+different names. Round 4 added `unsafe` for calls to extern functions,
+`Ptr<T>.alloc` and `unchecked(x)`, and the Drop rule that `self` cannot be
+replaced or lent as `mut` inside `drop`. Round 3 added `dyn` rules (unknown trait, `self` by value,
 `Self` outside the receiver, a bare `dyn Trait` parameter) and
 `@thread_bound` types in `spawn` captures (the resolver now keeps item
 attributes). Still accepted: flow-sensitive range facts (`if n > 5`
@@ -300,7 +308,7 @@ needs to tell the root file from the library), `unsafe` for FFI. Limit:
 (the clone is inlined, so it would not terminate); the corpus test of
 `std.json` avoids `clone`.
 `tests/selfhost_codegen.sh` prints these counts and fails if the matching
-number falls below 95 (the program floor is now 494).
+number falls below 100 (the program floor is now 503, with at most 8 outside the subset).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for
@@ -483,3 +491,28 @@ and closure-type spacing cases.
 
 Current formatter status (2026-11-21): 308/308 files of the Rust dirty set are byte-identical (100%) and 308/308 are idempotent;
 `tests/selfhost_fmt.sh` passes.
+
+## Native x86-64 backend in Yerux (`selfhost/native.yx`)
+
+A first self-hosted native backend: `native FILE.ast -o OUT` reads the same linked AST as `codegen` and writes a
+static Linux ELF (one RWX `PT_LOAD`, no libc, entry `_start` calling `main` then `exit(0)`). The AST comes from
+`yerux-self --emit-ast`. Design: a stack machine. Each expression leaves its value in `rax`; a binary operator
+pushes the left operand, evaluates the right into `rcx` and pops the left back. Arguments are pushed left to right and
+read at `rbp+16+8*k`; locals live at `rbp-8*n` (one slot per binding id from `locals.resolve`; the frame size is
+patched into the prologue). Forward jumps are patched when their target is known; calls to functions and to the two
+runtime routines (`print_int`, `panic_exit`) are patched after all code is placed; string data follows the code.
+Only functions reachable from `main` are emitted.
+
+Subset: `Int` and `Bool` values; functions with such parameters and results; `let`/`var`, assignment; `if`/`else`,
+`while`, `for i in a..b` and `a..=b`; `break`/`continue`; calls; `return`; `+ - * / %`, comparisons, `&& || !`,
+unary minus; `print` of an Int, a Bool or a string literal. Arithmetic is checked like the Rust backends: overflow
+(addition, subtraction, multiplication, negation, `MIN / -1`) and division or modulo by zero print the same
+`panic: ...` line on stderr and exit 101 (`MIN % -1` is 0). Panic locations (`at file:line:col`) are not printed.
+Everything else stops with `native: unsupported: <construct>` and exit code 3.
+
+`tests/selfhost_native.sh` builds the stages and `native`, compiles `tests/selfhost/native/*.yx` (4 programs: Fibonacci
+and gcd, loops and primes, an overflow panic, a division by zero) and every `examples/*.yx` and `tests/*.yx` program with
+both native backends, and requires identical stdout, exit status and first panic line. Measured: **46 of the 459
+corpus programs** fall inside the subset and match the Rust native backend; the other 413 are reported as outside it.
+The script fails if that number drops below 46. `native.yx` is built by the Rust compiler; it is not one of the seven
+bootstrap stages yet.
