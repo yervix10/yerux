@@ -1,0 +1,91 @@
+// datatool: CSV checks and TOML-configured queries built on std.csv, std.toml,
+// std.regex, std.sort and std.collections (Map).
+//
+//   datatool check FILE.csv      parse FILE.csv and report its shape
+//   datatool run CONFIG.toml     run the job described by CONFIG.toml (see config.yx)
+//   datatool --help              this text
+// Exit status: 0 ok, 1 a bad input, config or query, 2 a usage error.
+import std.env
+import std.io
+import config
+import query
+import report
+import table
+
+fn usage() -> String {
+  return String.from("usage: datatool check FILE.csv | datatool run CONFIG.toml | datatool --help")
+}
+
+fn read_text(path: view String) -> Result<String, String> {
+  match io.read_file(path) {
+    Ok(s) => { return Ok(move s) },
+    Err(e) => { return Err(String.from("{path}: {e.message}")) }
+  }
+}
+
+// Loads the CSV named by the config, then applies the configured steps in
+// order: filter, select, sort, group. Output is text or CSV.
+fn run_job(path: view String) -> Result<String, String> {
+  let cfg = config.load(read_text(path)?)?
+  var t = table.from_csv(read_text(cfg.input)?)?
+  if !cfg.filter_column.is_empty() {
+    t = query.filter(t, cfg.filter_column, cfg.filter_pattern)?
+  }
+  if cfg.select.len() > 0 {
+    t = query.project(t, cfg.select)?
+  }
+  if !cfg.sort_column.is_empty() {
+    let _ = query.sort_by(t, cfg.sort_column, cfg.sort_numeric, cfg.sort_desc)?
+  }
+  if !cfg.group_by.is_empty() {
+    t = query.group_stats(t, cfg.group_by, cfg.group_value)?
+  }
+  if cfg.format.eq("csv") { return Ok(table.to_csv(t)) }
+  return Ok(report.render_text(t))
+}
+
+fn check_file(path: view String) -> Result<String, String> {
+  let t = table.from_csv(read_text(path)?)?
+  return Ok(String.from("{path}: {t.rows.len()} rows, {t.header.len()} columns\n"))
+}
+
+fn run() -> Int {
+  let argv = env.args()
+  if argv.len() == 2 && argv.at(1).eq("--help") {
+    let _ = io.write_stdout("{usage()}\n")
+    return 0
+  }
+  if argv.len() != 3 {
+    io.eprintln("datatool: {usage()}")
+    return 2
+  }
+  let cmd = argv.at(1)
+  let arg = argv.at(2)
+  var out: Result<String, String> = Err(String.from("unused"))
+  if cmd.eq("check") {
+    out = check_file(arg)
+  } else if cmd.eq("run") {
+    out = run_job(arg)
+  } else {
+    io.eprintln("datatool: unknown command '{cmd}'")
+    io.eprintln("{usage()}")
+    return 2
+  }
+  match out {
+    Ok(s) => {
+      let _ = io.write_stdout(s)
+      return 0
+    },
+    Err(e) => {
+      io.eprintln("datatool: {e}")
+      return 1
+    }
+  }
+}
+
+fn main() {
+  let code = run()
+  if code != 0 {
+    io.exit(code)
+  }
+}

@@ -114,6 +114,7 @@ AUX=(
   "stack_overflow|bash tests/stack_overflow.sh"
   "fmt|bash tests/fmt.sh"
   "sumtool|bash tests/sumtool.sh"
+  "datatool|bash tests/datatool.sh"
   "minimake_errors|bash tests/minimake_errors.sh"
   "yxscan|bash tests/yxscan.sh"
   "io_targets|bash tests/io_targets.sh"

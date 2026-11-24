@@ -1,0 +1,19 @@
+import std.toml
+
+// Comments after values and table headers are not part of the value; a '#'
+// inside a quoted string is data.
+fn main() {
+  let input = String.from("[input] # the source\nfile = \"a # b.csv\" # comment\nn = 7 # seven\nflag = true#no space\n[output]   # table comment\nformat = \"csv\"\ncols = [\"x\", \"y#z\"] # list\n")
+  print(toml.get_string(input, String.from("input.file")))
+  print("|")
+  print(toml.get_int(input, String.from("input.n")))
+  print("|")
+  print(toml.get_bool(input, String.from("input.flag")))
+  print("|")
+  print(toml.get_string(input, String.from("output.format")))
+  print("|")
+  let cols = toml.get_array(input, String.from("output.cols"))
+  print(cols.len())
+  print("|")
+  print(cols.at(1))
+}

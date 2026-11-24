@@ -120,3 +120,41 @@ API/ergonomics frictions (documented, not changed):
 6. There is no `io.println`; stdout printing is the builtin `print`.
 7. `{`/`}` in string literals must be doubled, including char literals
    (`'}}'`), which is easy to forget in JSON-heavy code.
+
+## datatool (examples/real/datatool, CSV and TOML data tool)
+
+Size: 5 modules, 435 lines (`table`, `query`, `config`, `report`, `main`). It
+reads RFC 4180 CSV (`std.csv`), runs a TOML job file (`std.toml`), filters rows
+with `std.regex`, sorts with `std.sort.stable_by`, and aggregates per key into a
+`Map<String, Acc>`. Golden outputs and oracles: `tests/datatool.sh` (C and native:
+fixture goldens, a python3 csv-writer oracle for filter+select+sort over a
+generated 3000-row file, python group statistics, and 14 error paths).
+
+Fixed (regression test fails before the fix):
+
+1. `std.toml` kept inline comments in values and table headers.
+   `file = "a.csv" # c` read as `a.csv" # c`, and `[input] # c` hid the whole
+   section, so every later key read as missing. Fixed in `src/std/toml.yx`
+   (`strip_comment`: a `#` outside a basic string starts a comment). Regression:
+   `tests/std_toml_comments.yx` (golden `tests/expected/std_toml_comments.out`).
+
+Open (no fix; minimal repros):
+
+2. Regex alternation is not supported, and it fails silently. `^(north|south)$`
+   matches nothing (exit 0, zero rows); `|` is a literal byte. Workaround for
+   single characters: `^[ns]`.
+3. An unbalanced group is accepted without an error: `^(nor` matches `north`.
+4. A string literal cannot start a `+` expression: `"(" + s` gives "expected
+   Int but this is Text", because literals are `Text`. `s + "x"` works, and so
+   does `"x{s}"` (interpolation, which datatool uses).
+5. A method call on a temporary cannot be indexed: `print(f().at(0))` gives
+   "expected a variable or a field here". Bind first: `let l = f()`.
+6. `io.write_stdout` returns `Result`, and an unused `Result` is a compile
+   error; the program writes `let _ = io.write_stdout(...)`.
+7. Config limits (`std.toml` reads one line per value): multi-line arrays are
+   not read, string escapes are kept raw (`"a\"b"` returns `a\"b`), and a missing
+   key and an empty value both read as `""`/`0`/`false`.
+
+Figures: 435 lines of datatool, 1 library defect fixed, 6 open findings (2 of
+them silent wrong results with regex), 4 golden cases, 2 oracles and 14 error
+checks, 3000-row oracle file, both backends identical.
