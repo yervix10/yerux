@@ -135,12 +135,12 @@ that C heap count does not measure native allocations.
   then pass the parse error's offset to `json.line_col`. Counting characters used to panic at byte `ff`.
   The helper now counts bytes for malformed input. Both JSON fixes are covered by `tests/std_json.yx`.
 
-### Open: JSON conversion near the limits of Float
+### Closed — JSON conversion near the limits of Float
 
-`json.parse("1e300")` followed by `json.to_string` produced `1.0000000000000006e300` in C and native.
-Parsing and serializing that result produced `1.000000000000001e300`. Parsing `9.9e-309` produces
-`0.0`, and `1.7976931348623157e308` is rejected by the new finite check. The shared `text.parse_float`
-uses approximate decimal scaling outside its short fast path (including division by a power of ten that
-can overflow). Exact behavior across the full domain requires a correctly rounded decimal-to-binary
-fallback and tests at the normal, subnormal and overflow boundaries. The randomized exact round-trip
-oracle in this round covers modest dyadic values. The explicit overflow regression checks rejection.
+The previous reader rounded `1e300` differently on successive parse and serialize passes,
+rounded `9.9e-309` to zero and rejected `1.7976931348623157e308`. The shared
+`text.parse_float` now rounds to the nearest binary64 value, with ties to even. JSON preserves
+subnormals and signed zero and reports an out-of-range error when rounding overflows to infinity.
+`tests/std_json_float_limits.yx` checks exact bits, halfway rounding, overflow, long decimals
+and round trips in both backends. A separate comparison against Python's binary64 conversion
+matched all 6,000 seeded decimal inputs in each backend (seed 27015).

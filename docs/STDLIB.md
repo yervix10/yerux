@@ -699,7 +699,7 @@ Rules that follow from the language and apply to the calls below:
 | `parse_int(s) -> Result<Int, String>` | `[+-]digits`, overflow is an `Err` (Int.min parses) |
 | `parse_int_radix(s, base) -> Result<Int, String>` | base 2..36 |
 | `parse_bool(s) -> Result<Bool, String>` | `true` / `false` |
-| `parse_float(s) -> Result<Float, String>` | `[+-]digits[.digits][e[+-]digits]`, `inf`, `-inf`, `nan`. Correctly rounded when the digits fit in 15 significant digits and the exponent is within +-22; otherwise it can be a few ulps off (no big-number slow path yet) |
+| `parse_float(s) -> Result<Float, String>` | `[+-]digits[.digits][e[+-]digits]`, `inf`, `-inf`, `nan`. Rounds to the nearest binary64 value, with ties to even, including subnormals and signed zero |
 
 ### `std.hex`, `std.base64`, and `std.hash`
 
