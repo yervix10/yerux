@@ -51,7 +51,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 16] = [
+const IMPORTS: [&str; 20] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -68,6 +68,10 @@ const IMPORTS: [&str; 16] = [
     "GetCommandLineW",
     "GetEnvironmentStringsA",
     "WideCharToMultiByte",
+    "CreateFileA",
+    "CloseHandle",
+    "DeleteFileA",
+    "MoveFileExA",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -85,6 +89,10 @@ const IMP_SLEEP: usize = 12;
 const IMP_GETCOMMANDLINE: usize = 13;
 const IMP_GETENVIRONMENT: usize = 14;
 const IMP_WIDETOMULTI: usize = 15;
+const IMP_CREATEFILE: usize = 16;
+const IMP_CLOSEHANDLE: usize = 17;
+const IMP_DELETEFILE: usize = 18;
+const IMP_MOVEFILE: usize = 19;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
@@ -93,7 +101,7 @@ pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
             let unsupported = match inst {
                 Inst::Thread(..) | Inst::Atomic(..) => "thread runtime intrinsics".into(),
                 Inst::Syscall(_, args) => match constants[args[0]] {
-                    Some(0 | 1 | 35 | 39 | 60 | 228 | 231) => continue,
+                    Some(0 | 1 | 2 | 3 | 35 | 39 | 60 | 82 | 87 | 228 | 231) => continue,
                     Some(n) => format!("raw system call {n}"),
                     None => "raw system call with a dynamic number".into(),
                 },
@@ -4436,24 +4444,27 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             let (bad_fd, error, broken_pipe, eof, done) =
                 (a.label(), a.label(), a.label(), a.label(), a.label());
             a.bind(label);
-            if read {
+            // fd 0 is the console input and 1, 2 the console outputs; a larger fd is a handle from `open`
+            if !read {
                 a.test_rr(RDI);
-                a.jcc(CC_NE, bad_fd);
-            } else {
-                a.cmp_imm(RDI, 1);
-                a.jcc(CC_B, bad_fd);
-                a.cmp_imm(RDI, 2);
-                a.jcc(CC_A, bad_fd);
+                a.jcc(CC_E, bad_fd);
             }
             a.win_prologue(48);
             a.st(RSP, 48, RDX); // save the original count
             // The panic reporter keeps the source column and file index across writes.
             a.st(RSP, 56, R8);
             a.st(RSP, 64, R9);
+            let (use_fd, have) = (a.label(), a.label());
+            a.cmp_imm(RDI, 2);
+            a.jcc(CC_A, use_fd);
             a.mov_imm(RCX, -10);
             a.alu(0x29, RCX, RDI); // STD_INPUT_HANDLE (-10) through STD_ERROR_HANDLE (-12)
             a.call_iat(IMP_GETSTDHANDLE);
             a.mov_rr(RCX, RAX);
+            a.jmp(have);
+            a.bind(use_fd);
+            a.mov_rr(RCX, RDI);
+            a.bind(have);
             a.ld(R8, RSP, 48);
             a.mov_imm(RAX, u32::MAX as i64);
             a.alu(0x39, R8, RAX);
@@ -4503,11 +4514,186 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         // Only calls accepted by validate_windows can reach this dispatch.
         a.bind(l_winsyscall);
         let (pid, clock, nap) = (a.label(), a.label(), a.label());
-        for (number, stub) in [(0, l_osread), (1, l_oswrite), (35, nap), (39, pid), (60, l_osexit), (228, clock), (231, l_osexit)] {
+        let (open, close, unlink, rename, winerr) = (a.label(), a.label(), a.label(), a.label(), a.label());
+        for (number, stub) in [
+            (0, l_osread),
+            (1, l_oswrite),
+            (2, open),
+            (3, close),
+            (35, nap),
+            (39, pid),
+            (60, l_osexit),
+            (82, rename),
+            (87, unlink),
+            (228, clock),
+            (231, l_osexit),
+        ] {
             a.cmp_imm(RAX, number);
             a.jcc(CC_E, stub);
         }
         a.raw(&[0x0F, 0x0B]); // ud2
+
+        // GetLastError mapped to a negative errno in rax (a callee with its own frame)
+        a.bind(winerr);
+        {
+            let (enoent, eexist, eacces, done) = (a.label(), a.label(), a.label(), a.label());
+            a.win_prologue(0);
+            a.call_iat(IMP_GETLASTERROR);
+            a.raw(&[0x89, 0xC0]); // zero-extend eax
+            for (code, target) in [(2, enoent), (3, enoent), (80, eexist), (183, eexist), (5, eacces)] {
+                a.cmp_imm(RAX, code);
+                a.jcc(CC_E, target);
+            }
+            a.mov_imm(RAX, -5); // EIO
+            a.jmp(done);
+            a.bind(enoent);
+            a.mov_imm(RAX, -2);
+            a.jmp(done);
+            a.bind(eexist);
+            a.mov_imm(RAX, -17);
+            a.jmp(done);
+            a.bind(eacces);
+            a.mov_imm(RAX, -13);
+            a.bind(done);
+            a.win_epilogue();
+        }
+
+        // open(path, flags, mode): CreateFileA with the O_* flags mapped; the handle is the descriptor
+        a.bind(open);
+        {
+            let (acc_done, acc_w, noapp, nocreat, c1, c2, disp_done, fail) =
+                (a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+            let ret = a.label();
+            a.win_prologue(80);
+            a.st(RSP, 64, RDX);
+            a.st(RSP, 72, R8);
+            a.st(RSP, 80, R9);
+            a.st(RSP, 88, R10);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 3);
+            a.mov_imm(RCX, 0x8000_0000); // GENERIC_READ
+            a.cmp_imm(RAX, 0);
+            a.jcc(CC_E, acc_done);
+            a.mov_imm(RCX, 0x4000_0000); // GENERIC_WRITE
+            a.cmp_imm(RAX, 1);
+            a.jcc(CC_E, acc_w);
+            a.mov_imm(RCX, 0xC000_0000);
+            a.bind(acc_w);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x400); // O_APPEND: FILE_APPEND_DATA instead of FILE_WRITE_DATA
+            a.test_rr(RAX);
+            a.jcc(CC_E, noapp);
+            a.alu_imm(4, RCX, 0xBFFF_FFFFu32 as i32);
+            a.alu_imm(1, RCX, 4);
+            a.bind(noapp);
+            a.bind(acc_done);
+            a.mov_imm(R8, 3); // OPEN_EXISTING
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x40);
+            a.test_rr(RAX);
+            a.jcc(CC_E, nocreat);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x80); // O_EXCL: CREATE_NEW
+            a.test_rr(RAX);
+            a.jcc(CC_E, c1);
+            a.mov_imm(R8, 1);
+            a.jmp(disp_done);
+            a.bind(c1);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x200); // O_TRUNC: CREATE_ALWAYS
+            a.test_rr(RAX);
+            a.jcc(CC_E, c2);
+            a.mov_imm(R8, 2);
+            a.jmp(disp_done);
+            a.bind(c2);
+            a.mov_imm(R8, 4); // OPEN_ALWAYS
+            a.jmp(disp_done);
+            a.bind(nocreat);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x200);
+            a.test_rr(RAX);
+            a.jcc(CC_E, disp_done);
+            a.mov_imm(R8, 5); // TRUNCATE_EXISTING
+            a.bind(disp_done);
+            a.st(RSP, 32, R8); // dwCreationDisposition
+            a.mov_imm(RAX, 0x0200_0080); // FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS (directories open too)
+            a.st(RSP, 40, RAX);
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 48, RAX); // no template
+            a.mov_rr(RDX, RCX); // dwDesiredAccess
+            a.mov_rr(RCX, RDI); // lpFileName
+            a.mov_imm(R8, 7); // share read, write and delete
+            a.mov_imm(R9, 0);
+            a.call_iat(IMP_CREATEFILE);
+            a.cmp_imm(RAX, -1);
+            a.jcc(CC_E, fail);
+            a.jmp(ret);
+            a.bind(fail);
+            a.call(winerr);
+            a.bind(ret);
+            a.ld(RDX, RSP, 64);
+            a.ld(R8, RSP, 72);
+            a.ld(R9, RSP, 80);
+            a.ld(R10, RSP, 88);
+            a.win_epilogue();
+        }
+
+        // close(fd): CloseHandle (the console descriptors 0..2 are left open)
+        a.bind(close);
+        {
+            let (skip, ok) = (a.label(), a.label());
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.mov_imm(RAX, 0);
+            a.cmp_imm(RDI, 2);
+            a.jcc(CC_BE, skip);
+            a.mov_rr(RCX, RDI);
+            a.call_iat(IMP_CLOSEHANDLE);
+            a.raw(&[0x85, 0xC0]); // test eax, eax
+            a.jcc(CC_NE, ok);
+            a.mov_imm(RAX, -9); // EBADF
+            a.jmp(skip);
+            a.bind(ok);
+            a.mov_imm(RAX, 0);
+            a.bind(skip);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // unlink(path) and rename(old, new)
+        for (label, import) in [(unlink, IMP_DELETEFILE), (rename, IMP_MOVEFILE)] {
+            let (fail, done) = (a.label(), a.label());
+            a.bind(label);
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.mov_rr(RCX, RDI);
+            if import == IMP_MOVEFILE {
+                a.mov_rr(RDX, RSI);
+                a.mov_imm(R8, 1); // MOVEFILE_REPLACE_EXISTING
+            }
+            a.call_iat(import);
+            a.raw(&[0x85, 0xC0]); // test eax, eax
+            a.jcc(CC_E, fail);
+            a.mov_imm(RAX, 0);
+            a.jmp(done);
+            a.bind(fail);
+            a.call(winerr);
+            a.bind(done);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
 
         // clock_gettime: rdi = clock (1 = monotonic, otherwise realtime), rsi = timespec* -> 0
         a.bind(clock);
