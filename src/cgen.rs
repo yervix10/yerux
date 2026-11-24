@@ -1824,6 +1824,17 @@ while (n) {{ {cname} c = w[--n]; {body} free(c); }} free(w); }}"
                     self.ex(&args[0]),
                     self.ex(&args[1])
                 ),
+                "__ptr_read" => format!("(*nx_ptr_chk({}))", self.ex(&args[0])),
+                "__ptr_write" => format!(
+                    "(*nx_ptr_chk({}) = {})",
+                    self.ex(&args[0]),
+                    self.ex(&args[1])
+                ),
+                "__ptr_add" => format!("({} + ({}))", self.ex(&args[0]), self.ex(&args[1])),
+                "__ptr_sub" => format!("({} - ({}))", self.ex(&args[0]), self.ex(&args[1])),
+                "__ptr_diff" => format!("((int64_t)({} - {}))", self.ex(&args[0]), self.ex(&args[1])),
+                "__ptr_addr" => format!("((int64_t)(intptr_t)({}))", self.ex(&args[0])),
+                "__ptr_from" => format!("(({})(intptr_t)({}))", self.types.cty(e.ty), self.ex(&args[0])),
                 "__ptr_free" => format!("free((void *)({}))", self.ex(&args[0])),
                 "__ptr_is_null" => format!("(({}) == 0)", self.ex(&args[0])),
                 "__load8" | "__load64" | "__store8" | "__store64" => {

@@ -1,0 +1,63 @@
+// Ptr<T> reads, writes and arithmetic (unsafe only); offsets are in elements.
+extern "C" {
+  fn snprintf(buf: Ptr<UInt8>, n: UInt64, fmt: Text, ...) -> Int32
+  fn memset(p: Ptr<UInt8>, c: Int32, n: UInt64) -> Ptr<UInt8>
+}
+
+fn fill(p: Ptr<Int>, n: Int) {
+  var i = 0
+  unsafe {
+    while i < n {
+      p.add(i).write(i * i)
+      i = i + 1
+    }
+  }
+}
+
+fn main() {
+  unsafe {
+    let a = Ptr<Int>.alloc(5)
+    fill(a, 5)
+    var s = 0
+    var i = 0
+    while i < 5 {
+      s = s + a.add(i).read()
+      i = i + 1
+    }
+    print(s)
+    let last = a.add(4)
+    print(last.read())
+    print(last.offset_from(a))
+    print(a.offset_from(last))
+    print(last.sub(2).read())
+    print(a.add(3).sub(3).addr() == a.addr())
+    // an address round trip
+    let b = Ptr<Int>.from_addr(a.addr())
+    print(b.read())
+    print(b.add(2).read())
+    a.free()
+
+    let buf = Ptr<UInt8>.alloc(16)
+    memset(buf, 0, 16)
+    snprintf(buf, 16, "hey")
+    print(buf.read())
+    print(buf.add(1).read())
+    print(buf.add(3).read())
+    buf.add(3).write(33u8)
+    buf.add(4).write(0u8)
+    print(buf.add(3).read())
+    let w = Ptr<UInt64>.alloc(2)
+    w.write(18446744073709551615u64)
+    w.add(1).write(7u64)
+    print(w.read())
+    print(w.add(1).read())
+    w.free()
+    // pointers to pointers
+    let pp = Ptr<Ptr<UInt8>>.alloc(1)
+    pp.write(buf)
+    print(pp.read().add(1).read())
+    pp.free()
+    buf.free()
+    print(Ptr<Int>.from_addr(0).is_null())
+  }
+}

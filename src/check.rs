@@ -12,7 +12,7 @@
 //  6. String arguments of `push_str`/`String.from`/... are borrowed (no `move`), and may not alias the
 //     string being modified.
 use crate::layout::GLOBAL_CELLS;
-use crate::numeric::{int_range, is_float, is_int, is_num};
+use crate::numeric::{int_range, is_float, is_int, is_num, Nk};
 use crate::syntax::*;
 use std::collections::{HashMap, HashSet};
 
@@ -1854,28 +1854,7 @@ impl<'a> Checker<'a> {
             | EK::Deref(_) => e.ty, // built by the checker itself
         };
         e.ty = ty;
-        if let Some((op, size)) = self.ptr_op.take() {
-            // `Ptr<T>` construction and management: an intrinsic call the backends know
-            let mut args = match std::mem::replace(&mut e.k, EK::Int(0)) {
-                EK::Method { recv, args, .. } => {
-                    let mut a = vec![*recv];
-                    a.extend(args);
-                    a
-                }
-                EK::Static { args, .. } => args,
-                k => {
-                    e.k = k;
-                    return ty;
-                }
-            };
-            if let Some(n) = size {
-                args.push(Expr {
-                    k: EK::Int(n),
-                    pos,
-                    ty: Ty::Int,
-                });
-            }
-            e.k = EK::Call(op.into(), args);
+        if self.apply_ptr_op(e, pos) {
             return ty;
         }
         if ty != Ty::Err {
@@ -1884,17 +1863,39 @@ impl<'a> Checker<'a> {
         ty
     }
 
+    /// Turn a checked `Ptr` method/static call into its intrinsic call (`ptr_op` was set by the check).
+    fn apply_ptr_op(&mut self, e: &mut Expr, pos: Pos) -> bool {
+        let Some((op, size)) = self.ptr_op.take() else { return false };
+        let mut args = match std::mem::replace(&mut e.k, EK::Int(0)) {
+            EK::Method { recv, args, .. } => {
+                let mut a = vec![*recv];
+                a.extend(args);
+                a
+            }
+            EK::Static { args, .. } => args,
+            k => {
+                e.k = k;
+                return true;
+            }
+        };
+        if let Some(n) = size {
+            args.push(Expr { k: EK::Int(n), pos, ty: Ty::Int });
+        }
+        e.k = EK::Call(op.into(), args);
+        true
+    }
+
     /// `Ptr<T>.null()`, `Ptr<T>.alloc(n)`: raw pointers made by the language (no `malloc` declaration needed).
     fn ptr_static(&mut self, ty: Ty, f: &str, args: &mut Vec<Expr>, pos: Pos) -> Ty {
         let Ty::Ptr(pi) = ty else { return Ty::Err };
         let tn = self.tn(ty);
         let nargs = match f {
             "null" => 0,
-            "alloc" => 1,
+            "alloc" | "from_addr" => 1,
             _ => {
                 self.err(
                     diag(format!("{} has no function '{}'", tn, f), pos)
-                        .note("functions: null(), alloc(n)"),
+                        .note("functions: null(), alloc(n), from_addr(a)"),
                 );
                 return Ty::Err;
             }
@@ -1908,6 +1909,16 @@ impl<'a> Checker<'a> {
         }
         if f == "null" {
             self.ptr_op = Some(("__ptr_null", None));
+            return ty;
+        }
+        if f == "from_addr" {
+            if self.unsafe_depth == 0 {
+                self.err(diag(format!("{}.from_addr(a) requires an unsafe block", tn), pos)
+                    .note("help: the compiler cannot check that the address is valid"));
+            }
+            let t = self.expr(&mut args[0]);
+            self.expect(t, Ty::Int, args[0].pos);
+            self.ptr_op = Some(("__ptr_from", None));
             return ty;
         }
         if self.unsafe_depth == 0 {
@@ -1940,26 +1951,70 @@ impl<'a> Checker<'a> {
         ty
     }
 
-    /// Methods of `Ptr<T>`: `p.is_null()` and `p.free()` (null is allowed; only for pointers made by `Ptr<T>.alloc`).
-    fn ptr_method(&mut self, m: &str, args: &mut Vec<Expr>, pos: Pos) -> Ty {
-        let (op, ret) = match m {
-            "is_null" => ("__ptr_is_null", Ty::Bool),
-            "free" => ("__ptr_free", Ty::Unit),
+    /// Element size in bytes of `Ptr<T>` for the typed operations (read/write/add/...): 1 or 8 byte
+    /// integers and pointers, the same on both backends. Reports a diagnostic for any other T.
+    fn ptr_elem_size(&mut self, pi: usize, m: &str, pos: Pos) -> i64 {
+        match self.types.ptrs[pi] {
+            Ty::Int | Ty::Ptr(_) | Ty::Num(Nk::U64) => 8,
+            Ty::Num(Nk::U8) => 1,
+            Ty::Err => 8,
+            other => {
+                let (tn, n) = (self.tn(Ty::Ptr(pi)), self.tn(other));
+                self.err(
+                    diag(format!("{}.{}() needs an element type of Int, UInt64, UInt8 or Ptr, not {}", tn, m, n), pos)
+                        .note("help: read other types through a Ptr<UInt8> byte by byte"),
+                );
+                8
+            }
+        }
+    }
+
+    /// Methods of `Ptr<T>`: `is_null()`, `free()`, and (unsafe only) `read()`, `write(v)`, `add(n)`, `sub(n)`,
+    /// `offset_from(q)`, `addr()`. Offsets are in elements; read/write of null panic.
+    fn ptr_method(&mut self, m: &str, recv_ty: Ty, args: &mut Vec<Expr>, pos: Pos) -> Ty {
+        let Ty::Ptr(pi) = recv_ty else { return Ty::Err };
+        let (op, ret, nargs) = match m {
+            "is_null" => ("__ptr_is_null", Ty::Bool, 0),
+            "free" => ("__ptr_free", Ty::Unit, 0),
+            "read" => ("__ptr_read", self.types.ptrs[pi], 0),
+            "write" => ("__ptr_write", Ty::Unit, 1),
+            "add" => ("__ptr_add", recv_ty, 1),
+            "sub" => ("__ptr_sub", recv_ty, 1),
+            "offset_from" => ("__ptr_diff", Ty::Int, 1),
+            "addr" => ("__ptr_addr", Ty::Int, 0),
             _ => {
                 self.err(diag(format!("Ptr has no method '{}'", m), pos).note(
-                    "methods: is_null(), free()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n))",
+                    "methods: is_null(), free(), read(), write(v), add(n), sub(n), offset_from(q), addr()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n), Ptr<T>.from_addr(a))",
                 ));
                 return Ty::Err;
             }
         };
-        if !args.is_empty() {
-            self.err(diag(format!("'{}' expects 0 argument(s)", m), pos));
+        if args.len() != nargs {
+            self.err(diag(format!("'{}' expects {} argument(s)", m, nargs), pos));
+            return ret;
         }
-        if m == "free" && self.unsafe_depth == 0 {
-            self.err(diag("p.free() requires an unsafe block", pos)
-                .note("help: free only pointers made by `Ptr<T>.alloc(n)`, once; a pointer from C's malloc is released with C's free"));
+        if m != "is_null" && self.unsafe_depth == 0 {
+            let help = match m {
+                "free" => "help: free only pointers made by `Ptr<T>.alloc(n)`, once; a pointer from C's malloc is released with C's free",
+                _ => "help: wrap it in `unsafe { ... }`; the compiler cannot check that the pointer is valid",
+            };
+            self.err(diag(format!("p.{}() requires an unsafe block", m), pos).note(help));
         }
-        self.ptr_op = Some((op, None));
+        let size = if matches!(m, "is_null" | "free" | "addr") {
+            None
+        } else {
+            Some(self.ptr_elem_size(pi, m, pos))
+        };
+        if nargs == 1 {
+            let t = self.expr(&mut args[0]);
+            let want = match m {
+                "write" => self.types.ptrs[pi],
+                "offset_from" => recv_ty,
+                _ => Ty::Int,
+            };
+            self.expect(t, want, args[0].pos);
+        }
+        self.ptr_op = Some((op, size));
         ret
     }
 
@@ -2009,6 +2064,7 @@ impl<'a> Checker<'a> {
         if !option_or_result && !self.types.owned(t) && !hoistable {
             let ty = match t {
                 Ty::Char => self.char_method(m, args, e.pos),
+                Ty::Ptr(_) => self.ptr_method(m, t, args, e.pos),
                 Ty::Err => Ty::Err,
                 _ => {
                     self.err(diag("expected a variable or a field here", recv.pos));
@@ -2018,6 +2074,8 @@ impl<'a> Checker<'a> {
             let pre = std::mem::replace(&mut self.pre, outer_pre);
             self.pre.extend(pre);
             e.ty = ty;
+            let ep = e.pos;
+            self.apply_ptr_op(e, ep);
             return ty;
         }
         self.scopes.push(HashMap::new());
@@ -2682,7 +2740,7 @@ impl<'a> Checker<'a> {
             let t = self.expr(recv);
             return match t {
                 Ty::Char => self.char_method(m, args, pos),
-                Ty::Ptr(_) => self.ptr_method(m, args, pos),
+                Ty::Ptr(_) => self.ptr_method(m, t, args, pos),
                 Ty::Err => Ty::Err,
                 _ => {
                     self.err(diag("expected a variable or a field here", recv.pos));
@@ -2710,7 +2768,7 @@ impl<'a> Checker<'a> {
                 self.array_method(p, recv, m, args, pos, elem, n)
             }
             Ty::String => self.string_method(p, recv, m, args, pos),
-            Ty::Ptr(_) => self.ptr_method(m, args, pos),
+            Ty::Ptr(_) => self.ptr_method(m, p.ty, args, pos),
             Ty::Char => self.char_method(m, args, pos),
             t => {
                 let n = self.tn(t);

@@ -1,0 +1,57 @@
+error: Ptr<Float>.read() needs an element type of Int, UInt64, UInt8 or Ptr, not Float
+ --> tests/e1565_ptr_misuse.yx:5:5
+  |
+5 |     f.read()
+  |     ^^^^^^^^
+  = help: read other types through a Ptr<UInt8> byte by byte
+
+error: Ptr<Bool>.write() needs an element type of Int, UInt64, UInt8 or Ptr, not Bool
+ --> tests/e1565_ptr_misuse.yx:6:5
+  |
+6 |     b.write(true)
+  |     ^^^^^^^^^^^^^
+  = help: read other types through a Ptr<UInt8> byte by byte
+
+error: expected Int but this is Text
+ --> tests/e1565_ptr_misuse.yx:8:13
+  |
+8 |     p.write("text")
+  |             ^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+error: 'add' expects 1 argument(s)
+ --> tests/e1565_ptr_misuse.yx:9:5
+  |
+9 |     p.add()
+  |     ^^^^^^^
+
+error: expected Int but this is Float
+  --> tests/e1565_ptr_misuse.yx:10:11
+   |
+10 |     p.add(1.5)
+   |           ^^^
+   = Float and Int are different types: numbers are never converted implicitly
+   = help: `1.5` is a Float literal; write an integer literal, or convert a value with `x.to_int()`
+   = `to_int()` and friends truncate toward zero and panic on NaN or an out-of-range value; `floor_int()`, `ceil_int()` and `round_int()` round the other ways
+
+error: expected Ptr<Int> but this is Ptr<Float>
+  --> tests/e1565_ptr_misuse.yx:11:19
+   |
+11 |     p.offset_from(f)
+   |                   ^
+   = help: check the value at this expression; convert it explicitly or change the expected type
+
+error: 'write' expects 1 argument(s)
+  --> tests/e1565_ptr_misuse.yx:12:5
+   |
+12 |     p.write(1, 2)
+   |     ^^^^^^^^^^^^^
+
+error: expected Int but this is Text
+  --> tests/e1565_ptr_misuse.yx:13:24
+   |
+13 |     Ptr<Int>.from_addr("x")
+   |                        ^^^
+   = help: check the value at this expression; convert it explicitly or change the expected type
+
+8 error(s). Nothing was generated.

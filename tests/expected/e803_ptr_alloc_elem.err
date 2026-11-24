@@ -5,12 +5,12 @@ error: Ptr<Bool>.alloc(n) needs a numeric or pointer element type, not Bool
   |             ^^^^^^^^^^^^^^^^^^
   = help: use Ptr<UInt8> for a byte buffer and pass its size in bytes
 
-error: Ptr has no method 'read'
+error: Ptr has no method 'nothing'
  --> tests/e803_ptr_alloc_elem.yx:6:5
   |
-6 |     q.read(0)
-  |     ^^^^^^^^^
-  = methods: is_null(), free()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n))
+6 |     q.nothing()
+  |     ^^^^^^^^^^^
+  = methods: is_null(), free(), read(), write(v), add(n), sub(n), offset_from(q), addr()   (functions: Ptr<T>.null(), Ptr<T>.alloc(n), Ptr<T>.from_addr(a))
   = help: check the receiver type and method name, or define the method in an `impl` block
 
 2 error(s). Nothing was generated.
