@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Emulate `yerux --target aarch64` output and compare it with the goldens / the x86-64 backend.
 
-usage: python3 tests/a64_emu.py [--network | --system | --process | --qemu] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
+usage: python3 tests/a64_emu.py [--network | --system | --process | --ffi | --qemu] [--debug-alloc] [-j N] [-k SUBSTR] [files.yx ...]
   default: every examples/*.yx and tests/*.yx that the native backend accepts (the e*.yx error programs are
   skipped). Per program the emulated aarch64 build must match tests/expected/<name>.out/.code (stdout, exit code)
   and the x86-64 native build's stderr. Unicorn fixtures also check instruction decoding in capstone.
   --network : run just the socket tests, using qemu-aarch64 for real Linux TCP.
   --system : run the console, filesystem, environment, and time fixtures under qemu-aarch64.
   --process : run the process fixtures under qemu-aarch64.
+  --ffi : run C ABI fixtures under QEMU with an AArch64 glibc sysroot.
   --qemu : use qemu-aarch64 for every selected source.
   --debug-alloc : build with --native-debug-alloc and compare stderr (allocs/frees/live) with the x86-64 build.
 Needs: `cargo build --release` first. The system and socket tests need qemu-aarch64 on PATH.
@@ -31,6 +32,8 @@ SYSTEM_TESTS = (
     "time_clock", "time_duration",
 )
 PROCESS = ("process_basic", "process_leaks", "process_pipes", "process_timeout")
+FFI = ("ffi_basic", "ffi_float32", "ffi_text_contract", "ffi_variadic", "ptr_construct")
+GUEST_LOADER = "lib/ld-linux-aarch64.so.1"
 SHRINK = {"02_fast": ("100000000", "20000"), "own_deep_box_drop": ("return 1000000", "return 2000"), "own_deep_scc_drop": ("return 1000000", "return 2000"), "own_deep_closure_drop": ("return 1000000", "return 2000")}  # loops too long for emulation
 
 
@@ -147,6 +150,8 @@ def run_binary(command, src, timeout):
         with open(fixture + ".args", encoding="utf-8", newline="\n") as args:
             av = [line.removesuffix("\n") for line in args]
     env = dict(os.environ, YX_IO_TEST="hello_env")
+    if "QEMU_LD_PREFIX" not in env and os.path.isfile("/usr/aarch64-linux-gnu/" + GUEST_LOADER):
+        env["QEMU_LD_PREFIX"] = "/usr/aarch64-linux-gnu"
     stdin = fixture + ".stdin"
     with open(stdin if os.path.isfile(stdin) else os.devnull, "rb") as stream:
         return subprocess.run(command + av, capture_output=True, cwd=ROOT, env=env,
@@ -186,10 +191,16 @@ def a64_run(src, tmp, extra, check_decode=True, qemu=None):
 def check_one(args):
     f, debug, force_qemu = args
     name = os.path.basename(f)[:-3]
-    needs_qemu = force_qemu or name in NETWORK + SYSTEM_EXAMPLES + SYSTEM_TESTS + PROCESS
+    needs_qemu = force_qemu or name in NETWORK + SYSTEM_EXAMPLES + SYSTEM_TESTS + PROCESS + FFI
     qemu = shutil.which("qemu-aarch64") if needs_qemu else None
     if needs_qemu and qemu is None:
         return f, "SKIP", "qemu-aarch64 unavailable"
+    if name in FFI:
+        prefixes = (os.environ["QEMU_LD_PREFIX"],) if "QEMU_LD_PREFIX" in os.environ else (
+            "/usr/aarch64-linux-gnu", "/etc/qemu-binfmt/aarch64", "/",
+        )
+        if not any(os.path.isfile(os.path.join(p, GUEST_LOADER)) for p in prefixes):
+            return f, "SKIP", "AArch64 glibc unavailable (set QEMU_LD_PREFIX)"
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(ROOT, f)
         if name in SHRINK:
@@ -197,6 +208,10 @@ def check_one(args):
             open(small, "w").write(open(src).read().replace(*SHRINK[name]))
             src = small
         extra = ["--native-debug-alloc"] if debug else []
+        if name == "ffi_text_contract":
+            # Keep the function-returned Text in a register, rather than
+            # relying on inlining to turn the argument into a literal.
+            extra.append("--no-opt")
         x = run_x64(src, tmp, extra)
         if x is None:
             if needs_qemu:
@@ -238,12 +253,13 @@ def main():
     group.add_argument("--network", action="store_true", help="run socket tests under QEMU")
     group.add_argument("--system", action="store_true", help="run system service tests under QEMU")
     group.add_argument("--process", action="store_true", help="run process fixtures under QEMU")
+    group.add_argument("--ffi", action="store_true", help="run C ABI fixtures under QEMU")
     group.add_argument("--qemu", action="store_true", help="run all selected programs under QEMU")
     ap.add_argument("--debug-alloc", action="store_true")
     ap.add_argument("-j", type=int, default=os.cpu_count() or 4)
     ap.add_argument("-k", default="")
     a = ap.parse_args()
-    selected = a.network or a.system or a.process or a.qemu
+    selected = a.network or a.system or a.process or a.ffi or a.qemu
     if a.network:
         files = [f"tests/{name}.yx" for name in NETWORK]
     elif a.system:
@@ -251,6 +267,8 @@ def main():
         files.extend(f"tests/{name}.yx" for name in SYSTEM_TESTS)
     elif a.process:
         files = [f"tests/{name}.yx" for name in PROCESS]
+    elif a.ffi:
+        files = [f"tests/{name}.yx" for name in FFI]
     else:
         files = a.files
     if not files:

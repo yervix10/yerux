@@ -524,7 +524,8 @@ const CHK_PANIC: [usize; 7] = [P_ADD, P_SUB, P_MUL, P_DIV, P_NEG, P_CONV, P_F2I]
 const FREED: i64 = 1 << 62; // debug builds tag the header of a block sitting on a free list
 
 // Runtime heap state: a second, writable PT_LOAD segment (zero-filled, no bytes in the file).
-const G: i64 = 0x600000;
+pub(crate) const GOT_REL: usize = 4096;
+pub(crate) const G: i64 = 0x600000;
 const G_BUMP: i32 = 0; // next free byte of the current arena
 const G_END: i32 = 8; // end of the current arena
 const G_NALLOC: i32 = 16; // debug counters
@@ -826,6 +827,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     for t in &ir.texts {
         let mut b = (t.len() as u64).to_le_bytes().to_vec();
         b.extend_from_slice(t);
+        b.push(0); // Text passed to C points here as a NUL-terminated string.
         data.push(b);
     }
 
@@ -1684,9 +1686,46 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         a.lea_label(X0, l_funcs[*fid]);
                         a.str(X0, SP, slot(*d));
                     }
-                    Inst::Call(dst, _, args)
-                    | Inst::CallInd(dst, _, args)
-                    | Inst::ExternCall(dst, _, args, ..) => {
+                    Inst::ExternCall(dst, id, args, floats, ret_float) => {
+                        // Linux AAPCS64: eight registers in each argument bank.
+                        // Arguments that overflow either bank spill in source order.
+                        let (mut gp, mut fp, mut spilled) = (0, 0, 0);
+                        let float_count = floats.iter().filter(|&&f| f).count();
+                        let stack_count = float_count.saturating_sub(8)
+                            + (args.len() - float_count).saturating_sub(8);
+                        let size = ((8 * stack_count + 15) & !15) as u32;
+                        if size != 0 {
+                            a.sub_sp_const(SP, SP, size, false);
+                        }
+                        for (&arg, &float) in args.iter().zip(floats) {
+                            let offset = slot(arg) + size;
+                            if float && fp < 8 {
+                                a.ldr(X9, SP, offset);
+                                a.fmov_dx(fp, X9);
+                                fp += 1;
+                            } else if !float && gp < 8 {
+                                a.ldr(gp, SP, offset);
+                                gp += 1;
+                            } else {
+                                a.ldr(X9, SP, offset);
+                                a.str(X9, SP, spilled);
+                                spilled += 8;
+                            }
+                        }
+                        a.mov_imm(X16, G + (GOT_REL + 8 * id) as i64);
+                        a.ldr_i(X16, X16, 0);
+                        a.blr(X16);
+                        if size != 0 {
+                            a.sub_sp_const(SP, SP, size, true);
+                        }
+                        if let Some(d) = dst {
+                            if *ret_float {
+                                a.fmov_xd(X0, 0);
+                            }
+                            a.str(X0, SP, slot(*d));
+                        }
+                    }
+                    Inst::Call(dst, _, args) | Inst::CallInd(dst, _, args) => {
                         let sz = ((8 * args.len() + 15) & !15) as u32;
                         if sz > 0 {
                             a.sub_sp_const(SP, SP, sz, false);
@@ -1703,9 +1742,6 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
                         }
                         a.bl(l_funcs[*fid])
                     }
-                            Inst::ExternCall(..) => {
-                                unreachable!("extern calls are unsupported on aarch64")
-                            }
                             Inst::CallInd(_, code, _) => {
                                 a.ldr(X16, SP, slot(*code) + sz);
                                 a.blr(X16);
@@ -1952,10 +1988,16 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
             blob.extend_from_slice(&d);
         }
     }
-    a.finalize(BASE + HDR, data_start, &offs);
     let entry = a.labels[l_start].unwrap();
-    a.code.extend_from_slice(&blob);
-    elf64(&a.code, entry)
+    if ir.externs.is_empty() {
+        a.finalize(BASE + HDR, data_start, &offs);
+        a.code.extend_from_slice(&blob);
+        elf64(&a.code, entry)
+    } else {
+        use crate::elfdyn::{write_image, Arch, HEADER_SIZE};
+        a.finalize(BASE + HEADER_SIZE as u64, data_start, &offs);
+        write_image(&a.code, &blob, entry, &ir.links, &ir.externs, Arch::A64)
+    }
 }
 
 // ───────────────────────── ELF64 writer ─────────────────────────
