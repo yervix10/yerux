@@ -37,7 +37,7 @@ A feature not mentioned in this document is **Experimental** by default.
 | Modules, `import`, `pub`, packages (SPEC 6, PACKAGES.md) | Stable-candidate | tests/mod_ok, tests/mod_err, tests/packages.sh |
 | Concurrency: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, channels, pools (SPEC 5) | Experimental | tests/conc_*.yx, tests/concurrency*.yx |
 | Raw runtime intrinsics `__thread_*`, `__atomic_*`, `__futex_*` | Internal | SPEC 5.6 |
-| FFI: `extern "C"`, `link`, variadic calls, `Ptr<T>` (SPEC 7) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx |
+| FFI: `extern "C"`, `link`, variadic calls, `Ptr<T>` (SPEC 7) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx |
 | `const` items and `comptime` expressions (SPEC 8.1-8.2) | Stable-candidate | tests/comptime_basic.yx, tests/const_item_basic.yx |
 | `comptime fn`, `comptime for/if`, reflection, comptime allocators | Not yet available | SPEC 10 |
 | Module objects `.yxo` (`yerux obj`) | Experimental | tests/modobj.sh |
@@ -79,6 +79,7 @@ risk of the area, not the amount of code.
 | `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable-candidate | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |
 | `std.process` | Experimental | docs/STDLIB_PROCESS.md; tests/process_*.yx |
 | `std.net`, `std.http` | Experimental | docs/NET.md, docs/HTTP.md; tests/net_loopback.yx, tests/std_http_client.yx |
+| `std.http.server` (HTTP/1.1 server, router, worker pool; Linux x86-64 native and C backend) | Experimental | docs/NET.md; tests/http_server/parse.yx, tests/http_server_loopback.yx, tests/http_server_fuzz.yx, examples/real/webkv |
 | `std.sync` | Experimental | spinning primitives, docs/STDLIB_SYNC.md; tests/std_sync.yx |
 | `std.log` | Stable-candidate | tests/std_log.yx |
 | `std.kv` | Experimental | single-writer store, docs/STDLIB_KV.md; tests/std_kv.yx |
@@ -242,7 +243,7 @@ Experimental.
 | Imports with `as`, `<root>` lookup (Modules) | Stable-candidate | tests/mod_ok/shadow_module, tests/modules.sh; the lookup root is in conflict (section 10) |
 | `std.io` and the system modules, `std.process`, `std.fs` (Standard I/O, Standard-library modules) | Stable-candidate for `std.io`/`std.fs`, Experimental for `std.process` | tests/io_*.yx (15 files), tests/std_fs_metadata.yx, tests/process_*.yx; the root list of modules is shorter than STDLIB.md (section 10) |
 | Thread API: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, `parallel for` (Threads) | Experimental | tests/conc_*.yx, tests/concurrency*.yx, tests/e729-e745 |
-| FFI, `link`, `extern "C"`, variadics, `Ptr<T>` (C declarations) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/e40-e53 |
+| FFI, `link`, `extern "C"`, variadics, `Ptr<T>` (C declarations) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx, tests/e40-e53 |
 | Panic exit code 101 and messages (Panic) | Stable | tests/panic_list_slice_past_end.yx and the `panic_*` series |
 
 ## 10. Contradictions between docs/SPEC.md, the root SPEC.md and the other design documents
@@ -276,7 +277,7 @@ corrected text now states).
    Evidence: `tests/e1960_comptime_fn_keyword.yx`, `tests/e1963_comptime_for_keyword.yx`.
 7. **Parallel and step.** *Resolved.* A sequential `for` accepts `step`. `parallel for` rejects it, and the
    Threads section now says so. Evidence: `tests/conf_for_step.yx` (0 3 6 9), `tests/e1961_parallel_for_step.yx`.
-8. **Std module list.** *Resolved.* `src/std/` has 28 modules, and docs/STDLIB.md indexes all 28 (the item
+8. **Std module list.** *Resolved.* `src/std/` has 29 modules, and docs/STDLIB.md indexes all 29 (the item
    text said 27, which was wrong). The root SPEC now says so instead of listing a subset. Evidence:
    `tests/spec_conformance.sh` (item 8 counts the files).
 9. **Generic `impl` for library and user code.** *Resolved.* User types can use generic `impl`, for example

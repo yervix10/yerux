@@ -831,6 +831,31 @@ pub struct Loc {
 }
 
 /// Where is the identifier at token `ti` of document `di` declared?
+/// The type named before the `{` of the struct literal or pattern that encloses token `ti` (`Stats {`, `types.Lambda {`).
+fn literal_type(doc: &Doc, ti: usize) -> Option<String> {
+    let t = &doc.toks;
+    let mut depth = 0i32;
+    let mut j = ti;
+    while j > 0 {
+        j -= 1;
+        if is_sym(&t[j], ")") || is_sym(&t[j], "]") || is_sym(&t[j], "}") {
+            depth += 1;
+        } else if is_sym(&t[j], "(") || is_sym(&t[j], "[") {
+            depth -= 1;
+            if depth < 0 {
+                return None;
+            }
+        } else if is_sym(&t[j], "{") {
+            if depth == 0 {
+                let name = id_name(t.get(j.checked_sub(1)?)?)?;
+                return name.chars().next().is_some_and(|c| c.is_uppercase()).then(|| name.to_string());
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
 pub fn resolve(ctx: &Ctx, di: usize, ti: usize) -> Option<Loc> {
     let doc = ctx.doc(di);
     let t = &doc.toks;
@@ -877,6 +902,13 @@ pub fn resolve(ctx: &Ctx, di: usize, ti: usize) -> Option<Loc> {
                     .find(|s| s.name == name && matches!(s.kind, SymKind::Method | SymKind::Field))
                     .map(|s| Loc { doc: di, tok: s.name_tok, exact: false });
             }
+        }
+    }
+    // `Type { field: value }` (literal or pattern): the name before `:` is a field of `Type`, not a local or a function
+    if ti > 0 && ti + 1 < t.len() && is_sym(&t[ti + 1], ":") && (is_sym(&t[ti - 1], "{") || is_sym(&t[ti - 1], ",")) {
+        if let Some(ty) = literal_type(doc, ti) {
+            let m = members_of(ctx, &ty).into_iter().find(|m| m.is_field && m.name == name)?;
+            return Some(Loc { doc: m.doc, tok: m.tok, exact: true });
         }
     }
     if let Some(j) = visible_locals(doc, ti).into_iter().find(|&j| id_name(&t[j]) == Some(name)) {

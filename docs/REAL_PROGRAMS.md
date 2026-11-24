@@ -42,10 +42,10 @@ create a name with `touch -- "$(printf '\377')"` and run `yxscan wc -r .`.
 
 ## webkv (`examples/real/webkv/`)
 
-A key-value HTTP server: `proto` (request parsing with head/body limits, replies), `store` (`Mutex<Data>`),
-`router`, `server` (acceptor + worker threads fed by bounded channels), `client` (`std.net` raw client),
-`main` (self test: server and clients as threads on a loopback port, or `webkv serve PORT [WORKERS [MAX]]`)
-and `tests.yx` (6 `yerux test` tests, including a raw-socket server test). 698 lines in 8 files.
+A key-value HTTP server on `std.http.server` (it used to carry its own parser, router and acceptor): `app` (the routes
+and handlers), `store` (`Mutex<Data>`), `client` (`std.http` client), `main` (self test: server and clients as threads
+on a loopback port, or `webkv serve PORT [WORKERS [MAX]]`) and `tests.yx` (4 `yerux test` tests, including a
+raw-socket server test).
 
 Checked by `tests/webkv.sh` (in `run_all.sh`): the unit tests, and the self test built with the C and the native
 backend, both compared with `tests/expected/webkv_selftest.out` (122 connections, 106 writes, identical output).

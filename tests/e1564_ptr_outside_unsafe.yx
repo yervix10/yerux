@@ -1,0 +1,10 @@
+fn main() {
+  let p = Ptr<Int>.null()
+  let q = p.add(1)
+  let a = p.addr()
+  let n = q.offset_from(p)
+  let r = Ptr<Int>.from_addr(a)
+  print(p.read())
+  p.write(n)
+  print(r.is_null())
+}

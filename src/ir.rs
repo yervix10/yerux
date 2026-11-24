@@ -2805,6 +2805,40 @@ impl<'a> L<'a> {
                     })?;
                     self.v()
                 }
+                "__ptr_read" | "__ptr_write" => {
+                    let p = self.expr(&args[0])?;
+                    let nonnull = self.bink(Op::Ne, p, 0);
+                    self.assert_message(nonnull, "null pointer dereference")?;
+                    let wr = name == "__ptr_write";
+                    let x = if wr { Some(self.expr(&args[1])?) } else { None };
+                    let size = match &args[args.len() - 1].k {
+                        EK::Int(n) => *n,
+                        _ => 8,
+                    };
+                    if let Some(x) = x {
+                        self.emit(if size == 1 { Inst::Store8(p, 0, x) } else { Inst::Store(p, 0, x) });
+                        self.v()
+                    } else {
+                        let d = self.v();
+                        self.emit(if size == 1 { Inst::Load8(d, p, 0) } else { Inst::Load(d, p, 0) });
+                        d
+                    }
+                }
+                "__ptr_add" | "__ptr_sub" => {
+                    let p = self.expr(&args[0])?;
+                    let n = self.expr(&args[1])?;
+                    let size = self.expr(&args[2])?;
+                    let bytes = self.bin(Op::Mul, n, size);
+                    self.bin(if name == "__ptr_add" { Op::Add } else { Op::Sub }, p, bytes)
+                }
+                "__ptr_diff" => {
+                    let p = self.expr(&args[0])?;
+                    let q = self.expr(&args[1])?;
+                    let size = self.expr(&args[2])?;
+                    let d = self.bin(Op::Sub, p, q);
+                    self.bin(Op::Div, d, size)
+                }
+                "__ptr_addr" | "__ptr_from" => self.expr(&args[0])?,
                 "__ptr_is_null" => {
                     let p = self.expr(&args[0])?;
                     let z = self.konst(0);

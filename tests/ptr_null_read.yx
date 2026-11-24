@@ -1,0 +1,9 @@
+// Reading or writing through a null Ptr<T> panics on both backends (instead of crashing with a signal).
+fn main() {
+  let p = Ptr<Int>.null()
+  print("before")
+  unsafe {
+    p.write(1)
+  }
+  print("not reached")
+}

@@ -1,0 +1,43 @@
+error: p.add() requires an unsafe block
+ --> tests/e1564_ptr_outside_unsafe.yx:3:11
+  |
+3 |   let q = p.add(1)
+  |           ^^^^^^^^
+  = help: wrap it in `unsafe { ... }`; the compiler cannot check that the pointer is valid
+
+error: p.addr() requires an unsafe block
+ --> tests/e1564_ptr_outside_unsafe.yx:4:11
+  |
+4 |   let a = p.addr()
+  |           ^^^^^^^^
+  = help: wrap it in `unsafe { ... }`; the compiler cannot check that the pointer is valid
+
+error: p.offset_from() requires an unsafe block
+ --> tests/e1564_ptr_outside_unsafe.yx:5:11
+  |
+5 |   let n = q.offset_from(p)
+  |           ^^^^^^^^^^^^^^^^
+  = help: wrap it in `unsafe { ... }`; the compiler cannot check that the pointer is valid
+
+error: Ptr<Int>.from_addr(a) requires an unsafe block
+ --> tests/e1564_ptr_outside_unsafe.yx:6:11
+  |
+6 |   let r = Ptr<Int>.from_addr(a)
+  |           ^^^^^^^^^^^^^^^^^^^^^
+  = help: the compiler cannot check that the address is valid
+
+error: p.read() requires an unsafe block
+ --> tests/e1564_ptr_outside_unsafe.yx:7:9
+  |
+7 |   print(p.read())
+  |         ^^^^^^^^
+  = help: wrap it in `unsafe { ... }`; the compiler cannot check that the pointer is valid
+
+error: p.write() requires an unsafe block
+ --> tests/e1564_ptr_outside_unsafe.yx:8:3
+  |
+8 |   p.write(n)
+  |   ^^^^^^^^^^
+  = help: wrap it in `unsafe { ... }`; the compiler cannot check that the pointer is valid
+
+6 error(s). Nothing was generated.

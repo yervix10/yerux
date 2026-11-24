@@ -321,9 +321,15 @@ impl Doc {
     /// Index of the identifier token under an LSP position.
     fn id_at(&self, line: usize, u16col: usize) -> Option<usize> {
         let (l, c) = self.from_lsp(line, u16col);
-        self.toks.iter().position(|t| {
-            matches!(t.t, Tok::Id(_)) && t.pos.line == l && t.pos.col <= c && c <= t.pos.col + t.pos.len.max(1) - 1
-        })
+        // string interpolation is desugared into calls whose tokens carry the position of the whole literal: the
+        // innermost (shortest) token under the cursor is the one the user wrote
+        let mut best: Option<(usize, usize)> = None;
+        for (k, t) in self.toks.iter().enumerate() {
+            if matches!(t.t, Tok::Id(_)) && t.pos.line == l && t.pos.col <= c && c <= t.pos.col + t.pos.len.max(1) - 1 && best.is_none_or(|(_, n)| t.pos.len < n) {
+                best = Some((k, t.pos.len));
+            }
+        }
+        best.map(|b| b.0)
     }
 }
 
@@ -448,7 +454,11 @@ fn decl_at(doc: &Doc, i: usize) -> Option<Decl> {
     if i > 0 && (is_id(&toks[i - 1], "let") || is_id(&toks[i - 1], "var")) {
         return Some(Decl::Let);
     }
-    if i > 0 && (is_id(&toks[i - 1], "for") || (is_id(&toks[i - 1], "mut") && i > 1 && is_id(&toks[i - 2], "for"))) {
+    // `for x in xs` (not `derive Show for T` / `impl Trait for T`: there the name is followed by no `in`)
+    if i > 0
+        && (is_id(&toks[i - 1], "for") || (is_id(&toks[i - 1], "mut") && i > 1 && is_id(&toks[i - 2], "for")))
+        && toks.get(i + 1).is_some_and(|t| is_id(t, "in"))
+    {
         return Some(Decl::For);
     }
     if i + 1 < toks.len() && is_sym(&toks[i + 1], ":") && i > 0 && (is_sym(&toks[i - 1], "(") || is_sym(&toks[i - 1], ",")) {
@@ -491,8 +501,23 @@ fn decl_at(doc: &Doc, i: usize) -> Option<Decl> {
         }
     }
     // closure parameter
-    if closure_bars(toks, i).is_some() {
-        return Some(Decl::Closure);
+    if let Some((open, _)) = closure_bars(toks, i) {
+        // a parameter *name*, not a name inside a type annotation (`|d: mut Data|`: `Data` is a use)
+        let (mut in_type, mut depth) = (false, 0i32);
+        for t in &toks[open + 1..i] {
+            if is_sym(t, "<") || is_sym(t, "(") || is_sym(t, "[") {
+                depth += 1;
+            } else if is_sym(t, ">") || is_sym(t, ")") || is_sym(t, "]") {
+                depth -= 1;
+            } else if depth == 0 && is_sym(t, ":") {
+                in_type = true;
+            } else if depth == 0 && is_sym(t, ",") {
+                in_type = false;
+            }
+        }
+        if !in_type {
+            return Some(Decl::Closure);
+        }
     }
     // match-arm binding: lowercase name inside a pattern that ends with `=>`
     let first = name.chars().next().unwrap_or('A');
@@ -582,9 +607,12 @@ fn visible_locals(doc: &Doc, i: usize) -> Vec<usize> {
                     skip_line = t.pos.line;
                 }
             }
-        } else if depth == 0 && t.pos.line != skip_line && id_name(t).is_some() {
+        } else if depth == 0 && id_name(t).is_some() && (t.pos.line != skip_line || decl_at(doc, j) == Some(Decl::Let)) {
+            // (a `let x = if c { a } else { b }` on the line of a closed block still declares `x`)
             match decl_at(doc, j) {
                 Some(Decl::Param) | None => {}
+                // `let keys = keys(db)`: the new name is not visible in its own initializer
+                Some(Decl::Let) if toks[j].pos.line == toks[i].pos.line => {}
                 Some(Decl::Closure) => {
                     if let Some((_, close)) = closure_bars(toks, j) {
                         if i <= closure_end(toks, close) {

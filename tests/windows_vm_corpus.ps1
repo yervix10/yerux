@@ -1,5 +1,6 @@
 # Runs inside the Server 2022 VM. The host prepends $Archive.
 $ErrorActionPreference = 'Stop'
+[void](New-Item -ItemType Directory -Force 'C:\tmp')
 $root = Join-Path $env:TEMP ([Guid]::NewGuid().ToString())
 [void](New-Item -ItemType Directory $root)
 try {

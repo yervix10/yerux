@@ -652,7 +652,7 @@ Rules that follow from the language and apply to the calls below:
 - Function arguments are `view fn(..)`: write the closure in place (`|x: view Int| -> Int { return x + 1 }`) or pass a variable holding a function; it may capture local variables.
 - Offsets are byte offsets and always on character boundaries.
 
-**Index** (all 28 modules of `src/std/`; each one is a file of Yerux):
+**Index** (all 29 modules of `src/std/`; each one is a file of Yerux):
 
 | Module | What | Detailed reference |
 |---|---|---|
@@ -665,6 +665,7 @@ Rules that follow from the language and apply to the calls below:
 | `std.fs`, `std.path`, `std.time` | files and directories, path strings, `Duration`/clocks/calendar | below, [STDLIB_IO.md](STDLIB_IO.md), [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md) |
 | `std.process` | run and control child processes, pipes, signals | [STDLIB_PROCESS.md](STDLIB_PROCESS.md) |
 | `std.net`, `std.http` | blocking TCP sockets; small HTTP/1.1 client over them | [NET.md](NET.md), [HTTP.md](HTTP.md) |
+| `std.http.server` | HTTP/1.1 server: bounded strict parser, `Request`/`Response`, router with path parameters, worker pool, timeouts, ordered stop | [NET.md](NET.md#stdhttpserver) |
 | `std.caps` | `Fs`/`Net`/`Process`/`Env` capability values: narrowed grants with runtime checks over fs/net/process/env | [CAPABILITIES.md](CAPABILITIES.md) |
 | `std.sync` | `once()`, `barrier(n)`, `semaphore(n)` (spinning coordination primitives) | [STDLIB_SYNC.md](STDLIB_SYNC.md) |
 | `std.log` | `debug`/`info`/`warn`/`error`: `[LEVEL] message` on stderr | [STDLIB_IO.md](STDLIB_IO.md) |

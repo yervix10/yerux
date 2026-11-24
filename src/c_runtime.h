@@ -292,8 +292,9 @@ static inline int64_t nx_syscall(int64_t n, int64_t a, int64_t b, int64_t c, int
   long r = syscall((long)n, (long)a, (long)b, (long)c, (long)d, (long)e, (long)f);
   return r == -1 ? -(int64_t)errno : (int64_t)r;
 }
-static inline int64_t nx_alloc(int64_t n) { void *p = malloc(n > 0 ? (size_t)n : 1); if (!p) nx_panic("out of memory"); return (int64_t)(intptr_t)p; }
+static inline int64_t nx_alloc(int64_t n) { if (n < 0) nx_panic("out of memory"); void *p = malloc(n > 0 ? (size_t)n : 1); if (!p) nx_panic("out of memory"); return (int64_t)(intptr_t)p; }
 static inline void nx_free(int64_t p) { free((void *)(intptr_t)p); }
+#define nx_ptr_chk(p) ({ __typeof__(p) nx_p_ = (p); if (!nx_p_) nx_panic("null pointer dereference"); nx_p_; })
 static inline int64_t nx_load8(int64_t p) { return *(uint8_t *)(intptr_t)p; }
 static inline int64_t nx_load64(int64_t p) { return *(int64_t *)(intptr_t)p; }
 static inline void nx_store8(int64_t p, int64_t v) { *(uint8_t *)(intptr_t)p = (uint8_t)v; }

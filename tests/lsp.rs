@@ -534,8 +534,11 @@ fn rename_is_safe() {
     let r = ren(&mut c, 3, 8, "Pt");
     assert_eq!(r.matches(r#""newText":"Pt""#).count(), 3, "{r}");
     // refused: clash with another local of the scope, a keyword, a bad name, std, builtin members
-    let r = ren(&mut c, 41, 8, "total");
+    let r = ren(&mut c, 41, 8, "ok");
     assert!(r.contains(r#""error""#) && r.contains("already exists"), "{r}");
+    // `let total = p.sum() ..` does not see its own `total` while it is initialised: renaming `p` to `total` is safe
+    let r = ren(&mut c, 41, 8, "total");
+    assert!(r.contains(r#""changes""#), "{r}");
     let r = ren(&mut c, 41, 8, "match");
     assert!(r.contains(r#""error""#), "{r}");
     let r = ren(&mut c, 41, 8, "9lives");

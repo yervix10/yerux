@@ -13,6 +13,7 @@ for f in index.md doc_sample.md; do [ -f "$T/md/$f" ] || note "FAIL missing $f";
 grep -q '^# Module `doc_sample`' "$T/md/doc_sample.md" || note "FAIL module heading"
 grep -q 'Geometry helpers for the doc test.' "$T/md/doc_sample.md" || note "FAIL module doc (//!)"
 grep -q '^### `Point`' "$T/md/doc_sample.md" || note "FAIL struct entry"
+grep -q '^  x: Int,$' "$T/md/doc_sample.md" || note "FAIL struct fields are not shown in the signature"
 grep -q '^#### `Point.total`' "$T/md/doc_sample.md" || note "FAIL method entry"
 grep -q 'Sum of both coordinates.' "$T/md/doc_sample.md" || note "FAIL method doc"
 grep -q '^fn add(a: Int, b: Int) -> Int$' "$T/md/doc_sample.md" || note "FAIL signature of add"
@@ -29,7 +30,7 @@ grep -q 'a &lt; b &amp; c' "$T/html/doc_sample.html" || note "FAIL html escaping
 grep -q '<a href="doc_sample.html">' "$T/html/index.html" || note "FAIL html index link"
 
 # a directory: one page per module (the std library has 27)
-"$Y" doc src/std -o "$T/std" | grep -q 'in 28 modules' || note "FAIL src/std should give 28 modules"
+"$Y" doc src/std -o "$T/std" | grep -q 'in 29 modules' || note "FAIL src/std should give 29 modules"
 grep -q '^| \[`path`\](path.md) | std.path' "$T/std/index.md" || note "FAIL std.path row"
 
 # project mode: no arguments documents src/

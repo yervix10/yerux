@@ -51,7 +51,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 9] = [
+const IMPORTS: [&str; 20] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -61,6 +61,17 @@ const IMPORTS: [&str; 9] = [
     "ReadFile",
     "GetLastError",
     "GetCurrentProcessId",
+    "QueryPerformanceCounter",
+    "QueryPerformanceFrequency",
+    "GetSystemTimePreciseAsFileTime",
+    "Sleep",
+    "GetCommandLineW",
+    "GetEnvironmentStringsA",
+    "WideCharToMultiByte",
+    "CreateFileA",
+    "CloseHandle",
+    "DeleteFileA",
+    "MoveFileExA",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -71,6 +82,17 @@ const IMP_SETCONSOLEOUTPUTCP: usize = 5;
 const IMP_READFILE: usize = 6;
 const IMP_GETLASTERROR: usize = 7;
 const IMP_GETCURRENTPROCESSID: usize = 8;
+const IMP_QPC: usize = 9;
+const IMP_QPF: usize = 10;
+const IMP_SYSTIME: usize = 11;
+const IMP_SLEEP: usize = 12;
+const IMP_GETCOMMANDLINE: usize = 13;
+const IMP_GETENVIRONMENT: usize = 14;
+const IMP_WIDETOMULTI: usize = 15;
+const IMP_CREATEFILE: usize = 16;
+const IMP_CLOSEHANDLE: usize = 17;
+const IMP_DELETEFILE: usize = 18;
+const IMP_MOVEFILE: usize = 19;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
@@ -78,9 +100,8 @@ pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
         for inst in f.blocks.iter().flat_map(|b| &b.insts) {
             let unsupported = match inst {
                 Inst::Thread(..) | Inst::Atomic(..) => "thread runtime intrinsics".into(),
-                Inst::Global(_, 0) => "process arguments and environment".into(),
                 Inst::Syscall(_, args) => match constants[args[0]] {
-                    Some(0 | 1 | 39 | 60 | 231) => continue,
+                    Some(0 | 1 | 2 | 3 | 35 | 39 | 60 | 82 | 87 | 228 | 231) => continue,
                     Some(n) => format!("raw system call {n}"),
                     None => "raw system call with a dynamic number".into(),
                 },
@@ -3272,6 +3293,115 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.raw(&[0xB9]); // mov ecx, 65001
         a.imm32(65001);
         a.call_iat(IMP_SETCONSOLEOUTPUTCP);
+        if ir.funcs.iter().any(|f| f.blocks.iter().any(|b| b.insts.iter().any(|i| matches!(i, Inst::Global(..))))) {
+            // global cell 0: the process arguments and environment laid out like the Linux initial stack
+            // (argc, argv.., 0, envp.., 0) in one VirtualAlloc'd block; the command line is split on blanks
+            // outside double quotes (the quotes are dropped; backslash escapes are not interpreted)
+            let (skip, skip_adv, tok, chr, inq, lit, end_ws, end_nul, done_args) = (
+                a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(),
+            );
+            let (eloop, scan, edone) = (a.label(), a.label(), a.label());
+            a.mov_imm(RCX, 0);
+            a.mov_imm(RDX, 2 << 20);
+            a.mov_imm(R8, 0x3000);
+            a.mov_imm(R9, 4);
+            a.call_iat(IMP_VIRTUALALLOC);
+            a.mov_rr(RBX, RAX);
+            a.call_iat(IMP_GETCOMMANDLINE);
+            // UTF-16 -> UTF-8 into the last quarter of the block (the ANSI command line would lose characters)
+            a.mov_rr(RSI, RAX);
+            a.mov_rr(RDI, RBX);
+            a.alu_imm(0, RDI, 3 << 19);
+            a.alu_imm(5, RSP, 32);
+            a.mov_imm(RCX, 65001);
+            a.mov_imm(RDX, 0);
+            a.mov_rr(R8, RSI);
+            a.mov_imm(R9, -1);
+            a.st(RSP, 32, RDI);
+            a.mov_imm(RAX, 1 << 19);
+            a.st(RSP, 40, RAX);
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 48, RAX);
+            a.st(RSP, 56, RAX);
+            a.call_iat(IMP_WIDETOMULTI);
+            a.alu_imm(0, RSP, 32);
+            a.mov_rr(RSI, RBX);
+            a.alu_imm(0, RSI, 3 << 19);
+            a.mov_rr(RDI, RBX);
+            a.alu_imm(0, RDI, 1 << 20); // characters go to the second half of the block
+            a.lea(R8, RBX, 8);
+            a.mov_imm(R9, 0);
+            a.bind(skip);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.cmp_imm(RAX, 32);
+            a.jcc(CC_E, skip_adv);
+            a.cmp_imm(RAX, 9);
+            a.jcc(CC_E, skip_adv);
+            a.test_rr(RAX);
+            a.jcc(CC_E, done_args);
+            a.jmp(tok);
+            a.bind(skip_adv);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(skip);
+            a.bind(tok);
+            a.st(R8, 0, RDI);
+            a.alu_imm(0, R8, 8);
+            a.alu_imm(0, R9, 1);
+            a.mov_imm(R10, 0);
+            a.bind(chr);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.test_rr(RAX);
+            a.jcc(CC_E, end_nul);
+            a.cmp_imm(R10, 0);
+            a.jcc(CC_NE, inq);
+            a.cmp_imm(RAX, 32);
+            a.jcc(CC_E, end_ws);
+            a.cmp_imm(RAX, 9);
+            a.jcc(CC_E, end_ws);
+            a.bind(inq);
+            a.cmp_imm(RAX, 34);
+            a.jcc(CC_NE, lit);
+            a.alu_imm(6, R10, 1);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(chr);
+            a.bind(lit);
+            a.mov8_mem(RDI, 0, RAX);
+            a.alu_imm(0, RDI, 1);
+            a.alu_imm(0, RSI, 1);
+            a.jmp(chr);
+            a.bind(end_ws);
+            a.alu_imm(0, RSI, 1);
+            a.bind(end_nul);
+            a.mov_imm(RAX, 0);
+            a.mov8_mem(RDI, 0, RAX);
+            a.alu_imm(0, RDI, 1);
+            a.jmp(skip);
+            a.bind(done_args);
+            a.mov_imm(RAX, 0);
+            a.st(R8, 0, RAX);
+            a.alu_imm(0, R8, 8);
+            a.st(RBX, 0, R9);
+            a.mov_rr(RDI, R8); // the environment pointers follow argv
+            a.call_iat(IMP_GETENVIRONMENT);
+            a.mov_rr(RSI, RAX);
+            a.bind(eloop);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.test_rr(RAX);
+            a.jcc(CC_E, edone);
+            a.st(RDI, 0, RSI);
+            a.alu_imm(0, RDI, 8);
+            a.bind(scan);
+            a.movzx8_mem(RAX, RSI, 0);
+            a.alu_imm(0, RSI, 1);
+            a.test_rr(RAX);
+            a.jcc(CC_NE, scan);
+            a.jmp(eloop);
+            a.bind(edone);
+            a.mov_imm(RAX, 0);
+            a.st(RDI, 0, RAX);
+            a.gaddr(RAX, 0);
+            a.st(RAX, G_USER as i32, RBX);
+        }
         a.mov_imm(RBP, 0); // the panic reporter walks Yerux frames up to this sentinel
     }
     if os == Os::Linux {
@@ -3844,6 +3974,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         let (l_large, l_bump, l_newarena, l_release, l_done, l_shared) =
             (a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
         a.bind(l_alloc);
+        // a negative size is a bug in the caller: the C backend and this runtime must agree on failing
+        a.raw(&[0x48, 0x85, 0xFF]); // test rdi, rdi
+        a.jcc(CC_S, l_panic[P_OOM]);
         a.add_imm(RDI, 8);
         a.cmp_imm(RDI, SMALL_MAX);
         a.jcc(CC_A, l_large);
@@ -4311,24 +4444,27 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             let (bad_fd, error, broken_pipe, eof, done) =
                 (a.label(), a.label(), a.label(), a.label(), a.label());
             a.bind(label);
-            if read {
+            // fd 0 is the console input and 1, 2 the console outputs; a larger fd is a handle from `open`
+            if !read {
                 a.test_rr(RDI);
-                a.jcc(CC_NE, bad_fd);
-            } else {
-                a.cmp_imm(RDI, 1);
-                a.jcc(CC_B, bad_fd);
-                a.cmp_imm(RDI, 2);
-                a.jcc(CC_A, bad_fd);
+                a.jcc(CC_E, bad_fd);
             }
             a.win_prologue(48);
             a.st(RSP, 48, RDX); // save the original count
             // The panic reporter keeps the source column and file index across writes.
             a.st(RSP, 56, R8);
             a.st(RSP, 64, R9);
+            let (use_fd, have) = (a.label(), a.label());
+            a.cmp_imm(RDI, 2);
+            a.jcc(CC_A, use_fd);
             a.mov_imm(RCX, -10);
             a.alu(0x29, RCX, RDI); // STD_INPUT_HANDLE (-10) through STD_ERROR_HANDLE (-12)
             a.call_iat(IMP_GETSTDHANDLE);
             a.mov_rr(RCX, RAX);
+            a.jmp(have);
+            a.bind(use_fd);
+            a.mov_rr(RCX, RDI);
+            a.bind(have);
             a.ld(R8, RSP, 48);
             a.mov_imm(RAX, u32::MAX as i64);
             a.alu(0x39, R8, RAX);
@@ -4377,12 +4513,266 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
 
         // Only calls accepted by validate_windows can reach this dispatch.
         a.bind(l_winsyscall);
-        let pid = a.label();
-        for (number, stub) in [(0, l_osread), (1, l_oswrite), (39, pid), (60, l_osexit), (231, l_osexit)] {
+        let (pid, clock, nap) = (a.label(), a.label(), a.label());
+        let (open, close, unlink, rename, winerr) = (a.label(), a.label(), a.label(), a.label(), a.label());
+        for (number, stub) in [
+            (0, l_osread),
+            (1, l_oswrite),
+            (2, open),
+            (3, close),
+            (35, nap),
+            (39, pid),
+            (60, l_osexit),
+            (82, rename),
+            (87, unlink),
+            (228, clock),
+            (231, l_osexit),
+        ] {
             a.cmp_imm(RAX, number);
             a.jcc(CC_E, stub);
         }
         a.raw(&[0x0F, 0x0B]); // ud2
+
+        // GetLastError mapped to a negative errno in rax (a callee with its own frame)
+        a.bind(winerr);
+        {
+            let (enoent, eexist, eacces, done) = (a.label(), a.label(), a.label(), a.label());
+            a.win_prologue(0);
+            a.call_iat(IMP_GETLASTERROR);
+            a.raw(&[0x89, 0xC0]); // zero-extend eax
+            for (code, target) in [(2, enoent), (3, enoent), (80, eexist), (183, eexist), (5, eacces)] {
+                a.cmp_imm(RAX, code);
+                a.jcc(CC_E, target);
+            }
+            a.mov_imm(RAX, -5); // EIO
+            a.jmp(done);
+            a.bind(enoent);
+            a.mov_imm(RAX, -2);
+            a.jmp(done);
+            a.bind(eexist);
+            a.mov_imm(RAX, -17);
+            a.jmp(done);
+            a.bind(eacces);
+            a.mov_imm(RAX, -13);
+            a.bind(done);
+            a.win_epilogue();
+        }
+
+        // open(path, flags, mode): CreateFileA with the O_* flags mapped; the handle is the descriptor
+        a.bind(open);
+        {
+            let (acc_done, acc_w, noapp, nocreat, c1, c2, disp_done, fail) =
+                (a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label(), a.label());
+            let ret = a.label();
+            a.win_prologue(80);
+            a.st(RSP, 64, RDX);
+            a.st(RSP, 72, R8);
+            a.st(RSP, 80, R9);
+            a.st(RSP, 88, R10);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 3);
+            a.mov_imm(RCX, 0x8000_0000); // GENERIC_READ
+            a.cmp_imm(RAX, 0);
+            a.jcc(CC_E, acc_done);
+            a.mov_imm(RCX, 0x4000_0000); // GENERIC_WRITE
+            a.cmp_imm(RAX, 1);
+            a.jcc(CC_E, acc_w);
+            a.mov_imm(RCX, 0xC000_0000);
+            a.bind(acc_w);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x400); // O_APPEND: FILE_APPEND_DATA instead of FILE_WRITE_DATA
+            a.test_rr(RAX);
+            a.jcc(CC_E, noapp);
+            a.alu_imm(4, RCX, 0xBFFF_FFFFu32 as i32);
+            a.alu_imm(1, RCX, 4);
+            a.bind(noapp);
+            a.bind(acc_done);
+            a.mov_imm(R8, 3); // OPEN_EXISTING
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x40);
+            a.test_rr(RAX);
+            a.jcc(CC_E, nocreat);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x80); // O_EXCL: CREATE_NEW
+            a.test_rr(RAX);
+            a.jcc(CC_E, c1);
+            a.mov_imm(R8, 1);
+            a.jmp(disp_done);
+            a.bind(c1);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x200); // O_TRUNC: CREATE_ALWAYS
+            a.test_rr(RAX);
+            a.jcc(CC_E, c2);
+            a.mov_imm(R8, 2);
+            a.jmp(disp_done);
+            a.bind(c2);
+            a.mov_imm(R8, 4); // OPEN_ALWAYS
+            a.jmp(disp_done);
+            a.bind(nocreat);
+            a.mov_rr(RAX, RSI);
+            a.alu_imm(4, RAX, 0x200);
+            a.test_rr(RAX);
+            a.jcc(CC_E, disp_done);
+            a.mov_imm(R8, 5); // TRUNCATE_EXISTING
+            a.bind(disp_done);
+            a.st(RSP, 32, R8); // dwCreationDisposition
+            a.mov_imm(RAX, 0x0200_0080); // FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS (directories open too)
+            a.st(RSP, 40, RAX);
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 48, RAX); // no template
+            a.mov_rr(RDX, RCX); // dwDesiredAccess
+            a.mov_rr(RCX, RDI); // lpFileName
+            a.mov_imm(R8, 7); // share read, write and delete
+            a.mov_imm(R9, 0);
+            a.call_iat(IMP_CREATEFILE);
+            a.cmp_imm(RAX, -1);
+            a.jcc(CC_E, fail);
+            a.jmp(ret);
+            a.bind(fail);
+            a.call(winerr);
+            a.bind(ret);
+            a.ld(RDX, RSP, 64);
+            a.ld(R8, RSP, 72);
+            a.ld(R9, RSP, 80);
+            a.ld(R10, RSP, 88);
+            a.win_epilogue();
+        }
+
+        // close(fd): CloseHandle (the console descriptors 0..2 are left open)
+        a.bind(close);
+        {
+            let (skip, ok) = (a.label(), a.label());
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.mov_imm(RAX, 0);
+            a.cmp_imm(RDI, 2);
+            a.jcc(CC_BE, skip);
+            a.mov_rr(RCX, RDI);
+            a.call_iat(IMP_CLOSEHANDLE);
+            a.raw(&[0x85, 0xC0]); // test eax, eax
+            a.jcc(CC_NE, ok);
+            a.mov_imm(RAX, -9); // EBADF
+            a.jmp(skip);
+            a.bind(ok);
+            a.mov_imm(RAX, 0);
+            a.bind(skip);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // unlink(path) and rename(old, new)
+        for (label, import) in [(unlink, IMP_DELETEFILE), (rename, IMP_MOVEFILE)] {
+            let (fail, done) = (a.label(), a.label());
+            a.bind(label);
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.mov_rr(RCX, RDI);
+            if import == IMP_MOVEFILE {
+                a.mov_rr(RDX, RSI);
+                a.mov_imm(R8, 1); // MOVEFILE_REPLACE_EXISTING
+            }
+            a.call_iat(import);
+            a.raw(&[0x85, 0xC0]); // test eax, eax
+            a.jcc(CC_E, fail);
+            a.mov_imm(RAX, 0);
+            a.jmp(done);
+            a.bind(fail);
+            a.call(winerr);
+            a.bind(done);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // clock_gettime: rdi = clock (1 = monotonic, otherwise realtime), rsi = timespec* -> 0
+        a.bind(clock);
+        {
+            let (mono, done) = (a.label(), a.label());
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.cmp_imm(RDI, 1);
+            a.jcc(CC_E, mono);
+            a.lea(RCX, RSP, 32);
+            a.call_iat(IMP_SYSTIME); // 100 ns ticks since 1601
+            a.ld(RAX, RSP, 32);
+            a.mov_imm(RCX, 116444736000000000);
+            a.alu(0x29, RAX, RCX); // sub rax, rcx: ticks since 1970
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.mov_imm(RCX, 10_000_000);
+            a.raw(&[0x48, 0xF7, 0xF1]); // div rcx
+            a.st(RSI, 0, RAX);
+            a.raw(&[0x48, 0x69, 0xD2]); // imul rdx, rdx, 100
+            a.imm32(100);
+            a.st(RSI, 8, RDX);
+            a.jmp(done);
+            a.bind(mono);
+            a.lea(RCX, RSP, 32);
+            a.call_iat(IMP_QPC);
+            a.lea(RCX, RSP, 40);
+            a.call_iat(IMP_QPF);
+            a.ld(RAX, RSP, 32);
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.raw(&[0x48, 0xF7, 0x74, 0x24, 0x28]); // div qword [rsp+40]: rax = seconds, rdx = remainder
+            a.st(RSI, 0, RAX);
+            a.raw(&[0x48, 0x69, 0xD2]); // imul rdx, rdx, 1000000000
+            a.imm32(1_000_000_000);
+            a.mov_rr(RAX, RDX);
+            a.raw(&[0x31, 0xD2]);
+            a.raw(&[0x48, 0xF7, 0x74, 0x24, 0x28]); // div qword [rsp+40]: nanoseconds
+            a.st(RSI, 8, RAX);
+            a.bind(done);
+            a.mov_imm(RAX, 0);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
+        // nanosleep: rdi = timespec* {seconds, nanoseconds}: Sleep for the milliseconds rounded up -> 0
+        a.bind(nap);
+        {
+            a.win_prologue(48);
+            a.st(RSP, 48, RDX);
+            a.st(RSP, 56, R8);
+            a.st(RSP, 64, R9);
+            a.st(RSP, 72, R10);
+            a.ld(RAX, RDI, 8);
+            a.alu_imm(0, RAX, 999_999);
+            a.raw(&[0x31, 0xD2]); // xor edx, edx
+            a.mov_imm(RCX, 1_000_000);
+            a.raw(&[0x48, 0xF7, 0xF1]); // div rcx
+            a.ld(RCX, RDI, 0);
+            a.raw(&[0x48, 0x69, 0xC9]); // imul rcx, rcx, 1000
+            a.imm32(1000);
+            a.alu(0x01, RAX, RCX); // add rax, rcx
+            a.mov_rr(RCX, RAX);
+            a.mov_imm(RDX, u32::MAX as i64);
+            a.alu(0x39, RCX, RDX);
+            a.cmov_rr(CC_A, RCX, RDX); // Sleep takes a DWORD
+            a.call_iat(IMP_SLEEP);
+            a.mov_imm(RAX, 0);
+            a.ld(RDX, RSP, 48);
+            a.ld(R8, RSP, 56);
+            a.ld(R9, RSP, 64);
+            a.ld(R10, RSP, 72);
+            a.win_epilogue();
+        }
+
         a.bind(pid);
         a.win_prologue(0);
         a.call_iat(IMP_GETCURRENTPROCESSID);

@@ -24,6 +24,7 @@ mod numeric;
 mod opt;
 mod project;
 mod selfhost;
+mod cli_help;
 mod regalloc;
 mod sepc;
 mod sroa;
@@ -328,20 +329,6 @@ fn compile_native_ir(
     })
 }
 
-const USAGE: &str = "usage: yerux <check|c|ir|build|run|tokens|tokens-positioned|ast-file|resolve-file|locals-file|types-file|ast-expr|ast-stmt> file.yx [-o output] [--native] [--target linux|aarch64|windows] [--debug|--release] [--dwarf] [--obj mod.yxo] [--separate] [--no-opt] [--native-debug-alloc]
-       yerux --selfhost <check|c|build|run|--stage2> ...
-       yerux --version | version | doctor       (version; check cc, backends and paths)
-       yerux lsp                      (language server on stdin/stdout)
-       yerux fmt [--check|--stdout] file.yx|dir ...
-       yerux test [file.yx|dir ...] [--native] [--no-opt] [--filter text]
-       (run: `yerux run file.yx [flags] -- ARGS...` passes ARGS to the program)
-       yerux add NAME --path DIR | --git URL [--tag T | --version REQ]   (dependency in yerux.toml; updates yerux.lock)
-       yerux remove NAME
-       yerux lock [--locked | --update]
-       yerux build|run|test [--locked]   (current project)
-       yerux doc [--html] [-o DIR] [dir|file.yx ...]
-       yerux bench [file.yx|dir ...] [--native] [--no-opt] [--filter text] [--runs N]";
-
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::new();
     for byte in bytes {
@@ -537,6 +524,9 @@ fn real_main() {
     if let Some(code) = selfhost::dispatch(&args[1..]) {
         exit(code);
     }
+    if let Some(code) = cli_help::dispatch(&args[1..]) {
+        exit(code);
+    }
     if args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V" | "version") {
         println!("yerux {}", VERSION.trim());
         return;
@@ -651,7 +641,15 @@ fn real_main() {
 
 fn compile_file(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("{}", USAGE);
+        match args.get(1).and_then(|c| cli_help::usage_of(c)) {
+            Some(u) => eprintln!("{}", u),
+            None if args.len() == 2 => eprintln!("yerux: unknown command '{}'\n{}", args[1], cli_help::usage()),
+            None => eprintln!("{}", cli_help::usage()),
+        }
+        exit(2);
+    }
+    if cli_help::usage_of(&args[1]).is_none() {
+        eprintln!("yerux: unknown command '{}'\n{}", args[1], cli_help::usage());
         exit(2);
     }
     let (cmd, file) = (args[1].as_str(), &args[2]);
@@ -944,7 +942,7 @@ fn run_tests(args: &[String]) -> i32 {
                 filter = args.get(i).cloned();
             }
             a if a.starts_with("--") => {
-                eprintln!("unknown option {}\n{}", a, USAGE);
+                eprintln!("unknown option {}\n{}", a, cli_help::usage_of("test").unwrap_or_default());
                 return 2;
             }
             a => paths.push(a.to_string()),

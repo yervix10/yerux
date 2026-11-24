@@ -112,6 +112,29 @@ fn signature(lines: &[&str], i: usize) -> String {
     sig
 }
 
+/// The declaration of a struct or enum with its fields or variants (the braced body, as written, comments dropped).
+fn type_body(lines: &[&str], at: usize) -> String {
+    let mut out: Vec<String> = vec![];
+    let mut depth = 0i32;
+    let mut opened = false;
+    for raw in &lines[at..] {
+        let code = code_of(raw);
+        let code = code.trim_end();
+        depth += depth_delta(code);
+        opened |= code.contains('{');
+        if !code.trim().is_empty() {
+            out.push(code.to_string());
+        }
+        if opened && depth <= 0 {
+            break;
+        }
+        if !opened && !code.ends_with(',') && !code.trim().is_empty() {
+            break; // `struct Unit` without a body
+        }
+    }
+    out.join("\n")
+}
+
 pub fn extract(name: &str, src: &str) -> Module {
     let lines: Vec<&str> = src.lines().collect();
     let mut m = Module { name: name.to_string(), ..Default::default() };
@@ -148,7 +171,7 @@ pub fn extract(name: &str, src: &str) -> Module {
                         if kind == "struct" || kind == "enum" || kind == "trait" {
                             pub_types.push(iname.clone());
                         }
-                        let sig = signature(&lines, i);
+                        let sig = if kind == "struct" || kind == "enum" { type_body(&lines, i) } else { signature(&lines, i) };
                         let sig = sig.strip_prefix("pub ").unwrap_or(&sig).to_string();
                         items.push((Item { kind: kind.into(), name: iname.clone(), signature: sig, doc }, None));
                     }

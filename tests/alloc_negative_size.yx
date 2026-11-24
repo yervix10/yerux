@@ -1,0 +1,11 @@
+// Ptr<T>.alloc with a negative size fails the same way on the C and the native backend (it used to succeed on
+// the C backend and map a huge block natively).
+fn main() {
+  var n = 0 - 16
+  print("before")
+  unsafe {
+    let p = Ptr<UInt8>.alloc(n)
+    p.free()
+  }
+  print("not reached")
+}
