@@ -1,0 +1,81 @@
+// httpjson: fetches JSON from a local server and prints a summary of it.
+//
+//   httpjson PORT     talks to 127.0.0.1:PORT (see httpjson-server, server.yx)
+//
+// Exit status: 0 when every request in the script succeeds (the 404 check is expected to fail), 1 otherwise,
+// 2 usage error.
+import client
+import json
+import std.env
+import std.io
+import std.text
+
+fn run(port: Int) -> Int {
+  var status = 0
+  match client.exchange(port, "GET", "/users", "") {
+    Ok(v) => {
+      match client.users_of(v) {
+        Ok(users) => {
+          print("users: {users.len()}")
+          for u in users {
+            let flag = if u.active { "active" } else { "inactive" }
+            print("  {u.id} {u.name} {flag}")
+          }
+        }
+        Err(msg) => {
+          io.eprintln("httpjson: users: {msg}")
+          status = 1
+        }
+      }
+    }
+    Err(msg) => {
+      io.eprintln("httpjson: GET /users: {msg}")
+      status = 1
+    }
+  }
+  match client.exchange(port, "GET", "/users/2", "") {
+    Ok(v) => {
+      match client.user_of(v) {
+        Ok(u) => { print("user 2: {u.name} active={u.active}") }
+        Err(msg) => {
+          io.eprintln("httpjson: user 2: {msg}")
+          status = 1
+        }
+      }
+    }
+    Err(msg) => {
+      io.eprintln("httpjson: GET /users/2: {msg}")
+      status = 1
+    }
+  }
+  match client.exchange(port, "POST", "/echo", "{{\"ping\": [1, 2.5, \"x\"], \"ok\": null}}") {
+    Ok(v) => { print("echo: {json.to_text(v)}") }
+    Err(msg) => {
+      io.eprintln("httpjson: POST /echo: {msg}")
+      status = 1
+    }
+  }
+  match client.exchange(port, "GET", "/users/9", "") {
+    Ok(_) => {
+      io.eprintln("httpjson: GET /users/9 unexpectedly succeeded")
+      status = 1
+    }
+    Err(msg) => { print("missing: {msg}") }
+  }
+  return status
+}
+
+fn main() {
+  let argv = env.args()
+  if argv.len() != 2 {
+    io.eprintln("usage: httpjson PORT")
+    io.exit(2)
+  }
+  let port = text.parse_int(argv.at(1)).unwrap_or(-1)
+  if port < 1 || port > 65535 {
+    io.eprintln("httpjson: PORT must be 1..65535")
+    io.exit(2)
+  }
+  let status = run(port)
+  if status != 0 { io.exit(status) }
+}
