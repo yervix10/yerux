@@ -1,0 +1,397 @@
+// btre pattern language: a parser that builds an arena of nodes, and a compiler from that arena to instructions for
+// the backtracking machine in vm.yx. Matching works on bytes.
+//
+//   .            any byte except newline          ^  start of text      $  end of text
+//   [abc] [^a-z] byte classes, with ranges; \d \w \s and their negations work inside too
+//   \d \D \w \W \s \S  \n \t \r \f \v \\ and \<punctuation> escape themselves
+//   x* x+ x? x{m} x{m,} x{m,n}   greedy repeats; add ? after one for a lazy repeat (x*? x+? x??)
+//   (x)          capturing group, numbered by the position of its open parenthesis
+//   \1 .. \9     back-reference to a completed group
+//   x|y          alternation, lower priority than concatenation
+//
+// Limits: a repeat count is at most MAX_REPEAT; a starred or plussed expression must not be able to match the empty
+// string (its loop would never end), so `(a|)*` is rejected.
+import std.text
+
+pub const MAX_REPEAT: Int = 1000
+
+pub enum Node {
+  Lit(Int),
+  Any,
+  Class(Int),
+  Cat(List<Int>),
+  Alt(Int, Int),
+  Group(Int, Int),
+  Rep(Int, Int, Int, Bool),
+  Bol,
+  Eol,
+  Back(Int),
+  Empty,
+}
+
+// A parsed pattern: nodes and byte sets are referenced by index. The parser works on the same struct (src and pos
+// are used only while parsing; closed[g] tells whether group g is complete).
+pub struct Pattern {
+  nodes: List<Node>,
+  sets: List<List<Bool>>,
+  root: Int,
+  groups: Int,
+  src: String,
+  pos: Int,
+  closed: List<Bool>,
+}
+
+fn peek(p: view Pattern) -> Int {
+  if p.pos >= p.src.len() {
+    return -1
+  }
+  return p.src.byte(p.pos)
+}
+
+// The byte at index i of the pattern, or -1 past its end.
+fn src_at(p: view Pattern, i: Int) -> Int {
+  if i >= p.src.len() {
+    return -1
+  }
+  return p.src.byte(i)
+}
+
+fn add(p: mut Pattern, n: Node) -> Int {
+  p.nodes.push(move n)
+  return p.nodes.len() - 1
+}
+
+fn fail(p: view Pattern, at: Int, msg: view String) -> String {
+  return "column {at + 1}: {msg}"
+}
+
+fn is_digit(b: Int) -> Bool {
+  return b >= '0'.to_int() && b <= '9'.to_int()
+}
+
+fn empty_set() -> List<Bool> {
+  var s = List<Bool>.new()
+  for _ in 0..256 {
+    s.push(false)
+  }
+  return s
+}
+
+fn add_range(s: mut List<Bool>, lo: Int, hi: Int) {
+  for b in lo..hi + 1 {
+    s.set(b, true)
+  }
+}
+
+// The byte set of \d \w \s (and of their upper-case negations, when neg is true).
+fn class_escape(letter: Int) -> Result<List<Bool>, String> {
+  var s = empty_set()
+  let c = Char.from_int(letter)
+  if c == 'd' || c == 'D' {
+    add_range(s, '0'.to_int(), '9'.to_int())
+  } else if c == 'w' || c == 'W' {
+    add_range(s, 'a'.to_int(), 'z'.to_int())
+    add_range(s, 'A'.to_int(), 'Z'.to_int())
+    add_range(s, '0'.to_int(), '9'.to_int())
+    s.set('_'.to_int(), true)
+  } else if c == 's' || c == 'S' {
+    add_range(s, 9, 13)
+    s.set(32, true)
+  } else {
+    return Err(String.from("not a class escape"))
+  }
+  if c == 'D' || c == 'W' || c == 'S' {
+    var inv = empty_set()
+    for b in 0..256 {
+      inv.set(b, !s.at(b))
+    }
+    return Ok(move inv)
+  }
+  return Ok(move s)
+}
+
+fn is_class_escape(b: Int) -> Bool {
+  let c = Char.from_int(b)
+  return c == 'd' || c == 'D' || c == 'w' || c == 'W' || c == 's' || c == 'S'
+}
+
+// The byte named by an escape letter (\n, \t, ... or the byte itself for punctuation).
+fn escape_byte(b: Int) -> Int {
+  if b == 'n'.to_int() {
+    return 10
+  } else if b == 't'.to_int() {
+    return 9
+  } else if b == 'r'.to_int() {
+    return 13
+  } else if b == 'f'.to_int() {
+    return 12
+  } else if b == 'v'.to_int() {
+    return 11
+  }
+  return b
+}
+
+fn parse_alt(p: mut Pattern) -> Result<Int, String> {
+  let left = parse_cat(p)?
+  if peek(p) == '|'.to_int() {
+    p.pos = p.pos + 1
+    let right = parse_alt(p)?
+    return Ok(add(p, Node.Alt(left, right)))
+  }
+  return Ok(left)
+}
+
+fn at_cat_end(b: Int) -> Bool {
+  return b < 0 || b == '|'.to_int() || b == ')'.to_int()
+}
+
+fn parse_cat(p: mut Pattern) -> Result<Int, String> {
+  var items = List<Int>.new()
+  while !at_cat_end(peek(p)) {
+    let atom = parse_atom(p)?
+    let item = parse_quant(p, atom)?
+    items.push(item)
+  }
+  if items.len() == 1 {
+    return Ok(items.at(0))
+  }
+  return Ok(add(p, Node.Cat(move items)))
+}
+
+// Reads an optional quantifier after an atom and wraps the atom in a Rep node.
+fn parse_quant(p: mut Pattern, atom: Int) -> Result<Int, String> {
+  let start = p.pos
+  let b = peek(p)
+  if b < 0 {
+    return Ok(atom)
+  }
+  var min = 0
+  var max = -1
+  let c = Char.from_int(b)
+  if c == '*' {
+    p.pos = p.pos + 1
+  } else if c == '+' {
+    min = 1
+    p.pos = p.pos + 1
+  } else if c == '?' {
+    max = 1
+    p.pos = p.pos + 1
+  } else if c == '{' && is_digit(src_at(p, p.pos + 1)) {
+    p.pos = p.pos + 1
+    min = read_count(p)?
+    max = min
+    if peek(p) == ','.to_int() {
+      p.pos = p.pos + 1
+      max = -1
+      if is_digit(peek(p)) {
+        max = read_count(p)?
+      }
+    }
+    if peek(p) != '}'.to_int() {
+      return Err(fail(p, p.pos, "expected a closing brace in the repeat count"))
+    }
+    p.pos = p.pos + 1
+    if max >= 0 && max < min {
+      return Err(fail(p, start, "repeat count is backwards"))
+    }
+  } else {
+    return Ok(atom)
+  }
+  var greedy = true
+  if peek(p) == '?'.to_int() {
+    greedy = false
+    p.pos = p.pos + 1
+  }
+  if peek(p) == '*'.to_int() || peek(p) == '+'.to_int() || peek(p) == '?'.to_int() || peek(p) == '{'.to_int() && is_digit(src_at(p, p.pos + 1)) {
+    return Err(fail(p, p.pos, "nested repeat"))
+  }
+  if (max < 0 || min > 0) && nullable(p.nodes, atom) {
+    return Err(fail(p, start, "repeat of an expression that can match the empty string"))
+  }
+  return Ok(add(p, Node.Rep(atom, min, max, greedy)))
+}
+
+fn read_count(p: mut Pattern) -> Result<Int, String> {
+  var n = 0
+  let start = p.pos
+  while is_digit(peek(p)) {
+    n = n * 10 + peek(p) - '0'.to_int()
+    p.pos = p.pos + 1
+    if n > MAX_REPEAT {
+      return Err(fail(p, start, "repeat count above {MAX_REPEAT}"))
+    }
+  }
+  return Ok(n)
+}
+
+// True when the node can match the empty string.
+fn nullable(nodes: view List<Node>, id: Int) -> Bool {
+  match nodes.at(id) {
+    Node.Lit(_) => { return false }
+    Node.Any => { return false }
+    Node.Class(_) => { return false }
+    Node.Cat(items) => {
+      for i in 0..items.len() {
+        if !nullable(nodes, items.at(i)) {
+          return false
+        }
+      }
+      return true
+    }
+    Node.Alt(a, b) => { return nullable(nodes, a) || nullable(nodes, b) }
+    Node.Group(_, c) => { return nullable(nodes, c) }
+    Node.Rep(c, min, _, _) => { return min == 0 || nullable(nodes, c) }
+    _ => { return true }
+  }
+}
+
+fn parse_atom(p: mut Pattern) -> Result<Int, String> {
+  let at = p.pos
+  let b = peek(p)
+  let c = Char.from_int(b)
+  if c == '(' {
+    p.pos = p.pos + 1
+    p.groups = p.groups + 1
+    let g = p.groups
+    p.closed.push(false)
+    let inner = parse_alt(p)?
+    if peek(p) != ')'.to_int() {
+      return Err(fail(p, at, "unclosed group"))
+    }
+    p.pos = p.pos + 1
+    p.closed.set(g, true)
+    return Ok(add(p, Node.Group(g, inner)))
+  }
+  if c == '[' {
+    p.pos = p.pos + 1
+    let set = parse_class(p, at)?
+    p.sets.push(move set)
+    return Ok(add(p, Node.Class(p.sets.len() - 1)))
+  }
+  if c == '.' {
+    p.pos = p.pos + 1
+    return Ok(add(p, Node.Any))
+  }
+  if c == '^' {
+    p.pos = p.pos + 1
+    return Ok(add(p, Node.Bol))
+  }
+  if c == '$' {
+    p.pos = p.pos + 1
+    return Ok(add(p, Node.Eol))
+  }
+  if c == '*' || c == '+' || c == '?' {
+    return Err(fail(p, at, "nothing to repeat"))
+  }
+  if c == '\\' {
+    p.pos = p.pos + 1
+    let e = peek(p)
+    if e < 0 {
+      return Err(fail(p, at, "trailing backslash"))
+    }
+    p.pos = p.pos + 1
+    if is_digit(e) && e != '0'.to_int() {
+      let g = e - '0'.to_int()
+      if g > p.groups || !p.closed.at(g) {
+        return Err(fail(p, at, "back-reference to a group that is not complete"))
+      }
+      return Ok(add(p, Node.Back(g)))
+    }
+    if is_class_escape(e) {
+      let part = class_escape(e)?
+      p.sets.push(move part)
+      return Ok(add(p, Node.Class(p.sets.len() - 1)))
+    }
+    return Ok(add(p, Node.Lit(escape_byte(e))))
+  }
+  p.pos = p.pos + 1
+  return Ok(add(p, Node.Lit(b)))
+}
+
+// The body of a bracket class, after the '['. A ']' right after the optional '^' is a literal.
+fn parse_class(p: mut Pattern, at: Int) -> Result<List<Bool>, String> {
+  var set = empty_set()
+  var negated = false
+  if peek(p) == '^'.to_int() {
+    negated = true
+    p.pos = p.pos + 1
+  }
+  var first = true
+  while true {
+    let b = peek(p)
+    if b < 0 {
+      return Err(fail(p, at, "unclosed class"))
+    }
+    if b == ']'.to_int() && !first {
+      p.pos = p.pos + 1
+      break
+    }
+    first = false
+    p.pos = p.pos + 1
+    var lo = b
+    if b == '\\'.to_int() {
+      let e = peek(p)
+      if e < 0 {
+        return Err(fail(p, at, "unclosed class"))
+      }
+      p.pos = p.pos + 1
+      if is_class_escape(e) {
+        if peek(p) == '-'.to_int() && src_at(p, p.pos + 1) != ']'.to_int() {
+          return Err(fail(p, p.pos, "a class escape cannot start a range"))
+        }
+        let part = class_escape(e)?
+        for x in 0..256 {
+          if part.at(x) {
+            set.set(x, true)
+          }
+        }
+        continue
+      }
+      lo = escape_byte(e)
+    }
+    var hi = lo
+    if peek(p) == '-'.to_int() && src_at(p, p.pos + 1) != ']'.to_int() && p.pos + 1 < p.src.len() {
+      p.pos = p.pos + 1
+      hi = peek(p)
+      p.pos = p.pos + 1
+      if hi == '\\'.to_int() {
+        hi = escape_byte(peek(p))
+        p.pos = p.pos + 1
+      }
+      if hi < 0 {
+        return Err(fail(p, at, "unclosed class"))
+      }
+      if hi < lo {
+        return Err(fail(p, p.pos - 1, "range is backwards"))
+      }
+    }
+    add_range(set, lo, hi)
+  }
+  if negated {
+    var inv = empty_set()
+    for x in 0..256 {
+      inv.set(x, !set.at(x))
+    }
+    return Ok(move inv)
+  }
+  return Ok(move set)
+}
+
+// Parses a whole pattern. The error names the 1-based column of the problem.
+pub fn parse(src: view String) -> Result<Pattern, String> {
+  var p = Pattern {
+    nodes: List<Node>.new(),
+    sets: List<List<Bool>>.new(),
+    root: 0,
+    groups: 0,
+    src: String.from(src),
+    pos: 0,
+    closed: List<Bool>.new(),
+  }
+  p.closed.push(true)
+  p.root = parse_alt(p)?
+  if p.pos < p.src.len() {
+    return Err(fail(p, p.pos, "unmatched ')'"))
+  }
+  return Ok(move p)
+}

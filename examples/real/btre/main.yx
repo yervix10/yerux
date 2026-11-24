@@ -1,0 +1,252 @@
+// btre: a backtracking regular-expression tool with captures (see pattern.yx for the syntax, vm.yx for the matcher).
+//
+//   btre [-c] [--limit N] PATTERN [FILE]           report every line with a match
+//   btre --replace TEXT [--limit N] PATTERN [FILE] print every line with its matches replaced (sed s///g rules)
+//
+// Report format, one line per matching line: LINE:COL, a tab, the first match on the line, then a tab and "G:TEXT"
+// for each group of that match (TEXT is "-" when the group did not take part). With -c only the number of matching lines is printed.
+// In --replace mode, TEXT may use \0 .. \9 for the matched text and the groups, and \\ for a backslash.
+// The input is read line by line from FILE, or from standard input when FILE is omitted or "-".
+// Exit status: 0 some line matched, 1 no line matched, 2 a usage or pattern error, 3 the backtrack limit was reached
+// (the lines before it are still printed).
+import pattern
+import vm
+import std.env
+import std.fs
+import std.io
+import std.text
+
+fn fail(msg: view String, code: Int) {
+  io.eprintln("btre: {msg}")
+  io.exit(code)
+}
+
+fn is_digit(b: Int) -> Bool {
+  return b >= '0'.to_int() && b <= '9'.to_int()
+}
+
+// Every \N in the replacement must name a group the pattern has.
+fn check_replacement(repl: view String, groups: Int) -> Result<Bool, String> {
+  var i = 0
+  while i < repl.len() {
+    if repl.byte(i) == '\\'.to_int() && i + 1 < repl.len() {
+      let d = repl.byte(i + 1)
+      if is_digit(d) && d - '0'.to_int() > groups {
+        return Err("replacement uses \\{d - '0'.to_int()}, but the pattern has {groups} groups")
+      }
+      i = i + 2
+    } else {
+      i = i + 1
+    }
+  }
+  return Ok(true)
+}
+
+// Appends the replacement text for one match.
+fn expand(out: mut String, repl: view String, line: view String, caps: view List<Int>) {
+  var i = 0
+  while i < repl.len() {
+    let b = repl.byte(i)
+    if b == '\\'.to_int() && i + 1 < repl.len() {
+      let d = repl.byte(i + 1)
+      if is_digit(d) {
+        let g = d - '0'.to_int()
+        let s0 = caps.at(2 * g)
+        let e0 = caps.at(2 * g + 1)
+        if s0 >= 0 && e0 >= 0 {
+          out.push_str(line.slice(s0, e0))
+        }
+      } else {
+        out.push_byte(d)
+      }
+      i = i + 2
+    } else {
+      out.push_byte(b)
+      i = i + 1
+    }
+  }
+}
+
+// The line with every match replaced, scanning left to right; an empty match advances by one byte.
+// hits counts the matches replaced.
+fn substitute(pat: view pattern.Pattern, prog: view List<vm.Inst>, line: view String, repl: view String, limit: Int, hits: mut Int) -> Result<String, String> {
+  let n = line.len()
+  var out = String.new()
+  var pos = 0
+  while pos <= n {
+    var steps = 0
+    let caps = vm.find(pat, prog, line, pos, steps, limit)?
+    if caps.len() == 0 {
+      break
+    }
+    hits = hits + 1
+    let s = caps.at(0)
+    let e = caps.at(1)
+    out.push_str(line.slice(pos, s))
+    expand(out, repl, line, caps)
+    if e == s {
+      if s < n {
+        out.push_byte(line.byte(s))
+      }
+      pos = s + 1
+    } else {
+      pos = e
+    }
+  }
+  if pos < n {
+    out.push_str(line.slice(pos, n))
+  }
+  return Ok(move out)
+}
+
+// The report line for one match: position, text and groups.
+fn describe(out: mut String, line: view String, ln: Int, caps: view List<Int>, groups: Int) {
+  out.push_str("{ln}:{caps.at(0) + 1}\t")
+  out.push_str(line.slice(caps.at(0), caps.at(1)))
+  for g in 1..groups + 1 {
+    let s = caps.at(2 * g)
+    let e = caps.at(2 * g + 1)
+    if s >= 0 && e >= 0 {
+      out.push_str("\t{g}:{line.slice(s, e)}")
+    } else {
+      out.push_str("\t{g}:-")
+    }
+  }
+  out.push_str("\n")
+}
+
+fn main() {
+  var count_only = false
+  var replacing = false
+  var repl = String.new()
+  var limit = vm.DEFAULT_LIMIT
+  var positional = List<String>.new()
+  var options = true
+  let args = env.args()
+  var i = 1
+  while i < args.len() {
+    let a = args.at(i)
+    if options && a.eq("--") {
+      options = false
+    } else if options && a.eq("-c") {
+      count_only = true
+    } else if options && (a.eq("--replace") || a.eq("--limit")) {
+      if i + 1 >= args.len() {
+        fail("usage: btre [-c] [--replace TEXT] [--limit N] PATTERN [FILE]", 2)
+        return
+      }
+      i = i + 1
+      if a.eq("--replace") {
+        replacing = true
+        repl = String.from(args.at(i))
+      } else {
+        limit = match text.parse_int(args.at(i)) {
+          Ok(v) => v
+          Err(e) => {
+            fail("bad --limit: {e}", 2)
+            return
+          }
+        }
+      }
+    } else if options && a.starts_with("-") && !a.eq("-") {
+      fail("usage: btre [-c] [--replace TEXT] [--limit N] PATTERN [FILE]", 2)
+      return
+    } else {
+      positional.push(String.from(a))
+    }
+    i = i + 1
+  }
+  if positional.len() < 1 || positional.len() > 2 {
+    fail("usage: btre [-c] [--replace TEXT] [--limit N] PATTERN [FILE]", 2)
+    return
+  }
+  let pat = match pattern.parse(positional.at(0)) {
+    Ok(p) => move p
+    Err(e) => {
+      fail("bad pattern: {e}", 2)
+      return
+    }
+  }
+  if replacing {
+    match check_replacement(repl, pat.groups) {
+      Ok(_) => {}
+      Err(e) => {
+        fail(e, 2)
+        return
+      }
+    }
+  }
+  var input = String.new()
+  let path = if positional.len() == 2 { String.from(positional.at(1)) } else { String.from("-") }
+  if path.eq("-") {
+    match io.read_all() {
+      Ok(s) => { input = move s }
+      Err(e) => {
+        fail("cannot read standard input: {e}", 1)
+        return
+      }
+    }
+  } else {
+    match fs.read_to_string(path) {
+      Ok(s) => { input = move s }
+      Err(e) => {
+        fail("cannot read {path}: {e}", 1)
+        return
+      }
+    }
+  }
+  let prog = vm.compile(pat)
+  let lines = input.lines()
+  var out = String.new()
+  var matched = 0
+  var status = 0
+  for n in 0..lines.len() {
+    let line = lines.at(n)
+    let ln = n + 1
+    if replacing {
+      var hits = 0
+      match substitute(pat, prog, line, repl, limit, hits) {
+        Ok(s) => {
+          out.push_str(s)
+          out.push_str("\n")
+          if hits > 0 {
+            matched = matched + 1
+          }
+        }
+        Err(e) => {
+          status = 3
+          io.eprintln("btre: line {ln}: {e}")
+          break
+        }
+      }
+    } else {
+      var steps = 0
+      match vm.find(pat, prog, line, 0, steps, limit) {
+        Ok(caps) => {
+          if caps.len() > 0 {
+            matched = matched + 1
+            if !count_only {
+              describe(out, line, ln, caps, pat.groups)
+            }
+          }
+        }
+        Err(e) => {
+          status = 3
+          io.eprintln("btre: line {ln}: {e}")
+          break
+        }
+      }
+    }
+  }
+  let _ = io.write_stdout(out)
+  if count_only {
+    print("{matched}")
+  }
+  if status != 0 {
+    io.exit(status)
+  }
+  if matched == 0 {
+    io.exit(1)
+  }
+  io.exit(0)
+}

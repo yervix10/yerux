@@ -123,6 +123,7 @@ AUX=(
   "lzh|bash tests/lzh.sh"
   "schedsim|bash tests/schedsim.sh"
   "jsonl|bash tests/jsonl.sh"
+  "btre|bash tests/btre.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"
