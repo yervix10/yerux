@@ -1,0 +1,190 @@
+// The database: an append-only log on disk plus an in-memory index (key -> where its value sits in the log).
+// put and delete append a record; get seeks and reads one value; compact rewrites only the live records into a new
+// file and renames it over the log. Opening scans the log, rebuilds the index and cuts a damaged tail off.
+import std.fs
+import std.io
+import record
+
+/// index maps a key to `value offset * 16777216 + value length` (values are below 16 MiB)
+pub struct Db {
+  path: String,
+  file: fs.File,
+  index: Map<String, Int>,
+  end: Int,
+  dead: Int,
+  repaired: Int,
+  records: Int,
+}
+
+pub struct Stats { keys: Int, file_bytes: Int, dead_bytes: Int, records: Int, repaired: Int }
+
+fn pack(off: Int, len: Int) -> Int { return off * 16777216 + len }
+fn off_of(p: Int) -> Int { return p / 16777216 }
+fn len_of(p: Int) -> Int { return p % 16777216 }
+
+fn fail(what: view String, e: view io.IoError) -> String { return "{what}: {e}" }
+
+fn open_file(path: view String) -> Result<fs.File, String> {
+  var o = fs.options()
+  o.write = true
+  o.create = true
+  match fs.open_with(path, o) {
+    Ok(f) => { return Ok(move f) }
+    Err(e) => { return Err(fail("cannot open {path}", e)) }
+  }
+}
+
+/// Apply one record to the index; `dead` grows by the bytes that stopped being live.
+fn apply(index: mut Map<String, Int>, dead: mut Int, r: view record.Rec) {
+  let e = index.find(r.key)
+  if e >= 0 {
+    dead = dead + record.size_of(r.key.len(), len_of(index.vals.get(e)))
+  }
+  if r.op == record.put_op() {
+    index.insert(String.from(r.key), pack(r.value_off, r.value_len))
+  } else {
+    if e >= 0 { index.remove(r.key) }
+    dead = dead + record.size_of(r.key.len(), 0)
+  }
+}
+
+pub fn open(path: view String) -> Result<Db, String> {
+  var data = List<UInt8>.new()
+  if fs.exists(path) {
+    match fs.read_bytes(path) {
+      Ok(b) => { data = move b }
+      Err(e) => { return Err(fail("cannot read {path}", e)) }
+    }
+  }
+  var index = Map<String, Int>.new()
+  var dead = 0
+  var records = 0
+  var at = 0
+  while at < data.len() {
+    let r = record.decode(data, at)
+    if r.status != 0 { break }
+    apply(index, dead, r)
+    records = records + 1
+    at = r.next
+  }
+  let repaired = data.len() - at
+  var file = open_file(path)?
+  if repaired > 0 {
+    match file.set_len(at) {
+      Ok(_) => { }
+      Err(e) => { return Err(fail("cannot cut the damaged tail of {path}", e)) }
+    }
+  }
+  return Ok(Db { path: String.from(path), file: move file, index: move index, end: at, dead: dead, repaired: repaired, records: records })
+}
+
+fn append(db: mut Db, bytes: view List<UInt8>) -> Result<Int, String> {
+  match db.file.seek(db.end) {
+    Ok(_) => { }
+    Err(e) => { return Err(fail("seek", e)) }
+  }
+  match db.file.write(bytes) {
+    Ok(n) => {
+      if n != bytes.len() { return Err("short write") }
+    }
+    Err(e) => { return Err(fail("write", e)) }
+  }
+  let at = db.end
+  db.end = db.end + bytes.len()
+  db.records = db.records + 1
+  return Ok(at)
+}
+
+pub fn put(db: mut Db, key: view String, value: view String) -> Result<Int, String> {
+  if key.len() == 0 || key.len() > record.max_key() { return Err("a key must have 1 to {record.max_key()} bytes") }
+  if value.len() > record.max_value() { return Err("a value has at most {record.max_value()} bytes") }
+  let bytes = record.encode(record.put_op(), key, value)
+  let at = append(db, bytes)?
+  let e = db.index.find(key)
+  if e >= 0 { db.dead = db.dead + record.size_of(key.len(), len_of(db.index.vals.get(e))) }
+  db.index.insert(String.from(key), pack(at + record.header_size() + key.len(), value.len()))
+  return Ok(0)
+}
+
+pub fn delete(db: mut Db, key: view String) -> Result<Bool, String> {
+  let e = db.index.find(key)
+  if e < 0 { return Ok(false) }
+  let old = len_of(db.index.vals.get(e))
+  let bytes = record.encode(record.del_op(), key, "")
+  append(db, bytes)?
+  db.dead = db.dead + record.size_of(key.len(), old) + record.size_of(key.len(), 0)
+  db.index.remove(key)
+  return Ok(true)
+}
+
+pub fn has(db: view Db, key: view String) -> Bool { return db.index.contains(key) }
+
+/// The value of `key`, `None` when it is not there. An error means the file could not be read back.
+pub fn get(db: mut Db, key: view String) -> Result<Option<String>, String> {
+  let e = db.index.find(key)
+  if e < 0 { return Ok(None) }
+  let p = db.index.vals.get(e)
+  match db.file.seek(off_of(p)) {
+    Ok(_) => { }
+    Err(x) => { return Err(fail("seek", x)) }
+  }
+  let want = len_of(p)
+  var out = String.new()
+  var left = want
+  while left > 0 {
+    match db.file.read_bytes(left) {
+      Ok(chunk) => {
+        if chunk.len() == 0 { return Err("the log is shorter than its index says (damaged while open)") }
+        for i in 0..chunk.len() { out.push_byte(chunk[i].to_int()) }
+        left = left - chunk.len()
+      }
+      Err(x) => { return Err(fail("read", x)) }
+    }
+  }
+  return Ok(Some(move out))
+}
+
+pub fn keys(db: view Db) -> List<String> {
+  var out = List<String>.new()
+  for i in 0..db.index.keys.len() { out.push(String.from(db.index.keys.at(i))) }
+  return out
+}
+
+pub fn stats(db: view Db) -> Stats {
+  return Stats { keys: db.index.len(), file_bytes: db.end, dead_bytes: db.dead, records: db.records, repaired: db.repaired }
+}
+
+/// Rewrite the log with only the live records (in key order of the index) and swap it in. Returns the bytes freed.
+pub fn compact(db: mut Db) -> Result<Int, String> {
+  let tmp = "{db.path}.compact"
+  var out = List<UInt8>.new()
+  var fresh = Map<String, Int>.new()
+  let keys = keys(db)
+  for k in keys {
+    let v = get(db, k)?
+    match v {
+      Some(text) => {
+        let at = out.len()
+        let bytes = record.encode(record.put_op(), k, text)
+        for i in 0..bytes.len() { out.push(bytes[i]) }
+        fresh.insert(String.from(k), pack(at + record.header_size() + k.len(), text.len()))
+      }
+      None => { }
+    }
+  }
+  match fs.write_bytes(tmp, out) {
+    Ok(_) => { }
+    Err(e) => { return Err(fail("cannot write {tmp}", e)) }
+  }
+  match fs.rename(tmp, db.path) {
+    Ok(_) => { }
+    Err(e) => { return Err(fail("cannot replace {db.path}", e)) }
+  }
+  let freed = db.end - out.len()
+  db.file = open_file(db.path)?
+  db.index = move fresh
+  db.end = out.len()
+  db.dead = 0
+  db.records = keys.len()
+  return Ok(freed)
+}

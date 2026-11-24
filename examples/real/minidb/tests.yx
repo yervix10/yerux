@@ -1,0 +1,167 @@
+// yerux test examples/real/minidb/tests.yx
+import std.env
+import std.fs
+import db
+import record
+
+fn tmp(name: view String) -> String {
+  let p = "{env.temp_dir()}/minidb-test-{env.pid()}-{name}"
+  let r = fs.remove_file(p)
+  return p
+}
+
+fn must_open(path: view String) -> db.Db {
+  let r = db.open(path)
+  match move r {
+    Ok(d) => { return d }
+    Err(e) => { panic("open failed: {e}") }
+  }
+}
+
+fn put(d: mut db.Db, k: view String, v: view String) {
+  match db.put(d, k, v) {
+    Ok(_) => { }
+    Err(e) => { panic("put failed: {e}") }
+  }
+}
+
+fn value(d: mut db.Db, k: view String) -> String {
+  match db.get(d, k) {
+    Ok(v) => {
+      match move v {
+        Some(t) => { return t }
+        None => { return "<none>" }
+      }
+    }
+    Err(e) => { return "<error {e}>" }
+  }
+}
+
+fn expect(d: mut db.Db, k: view String, want: view String) {
+  let got = value(d, k)
+  assert(got.eq(want))
+}
+
+test "record round trip" {
+  let bytes = record.encode(1, "name", "yerux")
+  assert_eq(bytes.len(), record.size_of(4, 5))
+  let r = record.decode(bytes, 0)
+  assert_eq(r.status, 0)
+  assert_eq(r.key.len(), 4)
+  assert_eq(r.value_len, 5)
+  assert_eq(r.next, bytes.len())
+}
+
+test "a record cut short or altered is not valid" {
+  let bytes = record.encode(1, "k", "value")
+  for cut in 0..bytes.len() {
+    let r = record.decode(bytes[0..cut], 0)
+    assert(r.status == 1)
+  }
+  var flipped = List<UInt8>.new()
+  for i in 0..bytes.len() { flipped.push(bytes[i]) }
+  flipped.set(bytes.len() - 1, (bytes[bytes.len() - 1].to_int() + 1).to_uint8())
+  assert_eq(record.decode(flipped, 0).status, 2)
+}
+
+test "absurd lengths are corrupt, not an allocation" {
+  var b = record.encode(1, "k", "v")
+  b.set(5, 255.to_uint8())
+  b.set(6, 255.to_uint8())
+  b.set(7, 255.to_uint8())
+  b.set(8, 255.to_uint8())
+  assert_eq(record.decode(b, 0).status, 2)
+}
+
+test "put get delete and reopen" {
+  let path = tmp("basic")
+  var d = must_open(path)
+  put(d, "a", "1")
+  put(d, "b", "two")
+  put(d, "a", "uno")
+  expect(d, "a", "uno")
+  expect(d, "b", "two")
+  expect(d, "zzz", "<none>")
+  match db.delete(d, "b") {
+    Ok(found) => { assert(found) }
+    Err(_) => { assert(false) }
+  }
+  expect(d, "b", "<none>")
+  var e = must_open(path)
+  assert_eq(db.stats(e).keys, 1)
+  expect(e, "a", "uno")
+  expect(e, "b", "<none>")
+}
+
+test "empty value and key limits" {
+  let path = tmp("limits")
+  var d = must_open(path)
+  put(d, "empty", "")
+  expect(d, "empty", "")
+  assert(db.put(d, "", "x").is_err())
+}
+
+test "truncated log keeps the valid prefix at every cut point" {
+  let path = tmp("trunc")
+  var d = must_open(path)
+  put(d, "one", "1")
+  put(d, "two", "22")
+  put(d, "three", "333")
+  let total = db.stats(d).file_bytes
+  let first = record.size_of(3, 1)
+  let second = first + record.size_of(3, 2)
+  let bytes = fs.read_bytes(path).unwrap()
+  assert_eq(bytes.len(), total)
+  for cut in 0..total {
+    let p = tmp("trunc-cut")
+    fs.write_bytes(p, bytes[0..cut]).unwrap()
+    var e = must_open(p)
+    var want = 0
+    if cut >= second { want = 2 } else if cut >= first { want = 1 }
+    assert_eq(db.stats(e).keys, want)
+    // the damaged tail is cut off: the file is now exactly the valid prefix
+    let size = fs.file_size(p).unwrap()
+    assert(size == 0 || size == first || size == second)
+    assert_eq(db.stats(e).repaired, cut - size)
+  }
+}
+
+test "a corrupt byte ends the valid log there" {
+  let path = tmp("corrupt")
+  var d = must_open(path)
+  put(d, "one", "1")
+  put(d, "two", "22")
+  put(d, "three", "333")
+  var bytes = fs.read_bytes(path).unwrap()
+  let at = record.size_of(3, 1) + record.size_of(3, 2) + 1
+  bytes.set(at, (bytes[at].to_int() + 1).to_uint8())
+  let p = tmp("corrupt-copy")
+  fs.write_bytes(p, bytes).unwrap()
+  var e = must_open(p)
+  assert_eq(db.stats(e).keys, 2)
+  expect(e, "three", "<none>")
+  expect(e, "two", "22")
+  put(e, "three", "again")
+  var f = must_open(p)
+  expect(f, "three", "again")
+}
+
+test "compaction keeps live data and frees the dead" {
+  let path = tmp("compact")
+  var d = must_open(path)
+  for i in 0..50 { put(d, "k{i % 5}", "value-{i}") }
+  let before = db.stats(d).file_bytes
+  assert(db.stats(d).dead_bytes > 0)
+  let freed = db.compact(d).unwrap()
+  let after = db.stats(d)
+  assert(freed > 0)
+  assert_eq(after.file_bytes, before - freed)
+  assert_eq(after.dead_bytes, 0)
+  assert_eq(after.keys, 5)
+  expect(d, "k3", "value-48")
+  put(d, "k3", "new")
+  var e = must_open(path)
+  expect(e, "k3", "new")
+  expect(e, "k0", "value-45")
+  assert_eq(db.stats(e).file_bytes, fs.file_size(path).unwrap())
+}

@@ -1,0 +1,24 @@
+// A Copy field of an owning temporary (`make(1).n`): the temporary is freed at the end of the expression.
+struct Rec { name: String, n: Int, ok: Bool }
+
+struct Noisy { id: Int }
+impl Drop for Noisy {
+  fn drop(mut self) { print("drop {self.id}") }
+}
+struct Holder { guard: Noisy, n: Int }
+
+fn make(n: Int) -> Rec { return Rec { name: String.from("rec"), n: n, ok: n > 1 } }
+fn held(n: Int) -> Holder { return Holder { guard: Noisy { id: n }, n: n * 10 } }
+
+fn main() {
+  print(make(5).n)
+  let a = make(7).n + make(8).n
+  print(a)
+  if make(2).ok { print("ok") }
+  var total = 0
+  for i in 0..3 { total = total + make(i).n }
+  print(total)
+  let h = held(1).n
+  print("after {h}")
+  print(held(2).n + held(3).n)
+}

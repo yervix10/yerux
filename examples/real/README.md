@@ -162,3 +162,9 @@ target/release/yerux test examples/real/jql        # 12 unit tests
 sort, group statistics, text or CSV output) across five modules. Commands:
 `datatool check FILE.csv` and `datatool run CONFIG.toml`. Findings and open
 limits are in `docs/REAL_PROGRAMS.md`; the tests are in `tests/datatool.sh`.
+
+## minidb (log-structured store)
+
+`minidb/` is a persistent key-value store over one append-only log (binary records with CRC, in-memory index,
+compaction, recovery of a truncated or corrupted file) with a CLI and tests; see `docs/REAL_PROGRAMS.md` and
+`tests/minidb.sh`.
