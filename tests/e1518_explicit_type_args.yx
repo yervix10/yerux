@@ -1,0 +1,7 @@
+fn id<T: Copy>(x: T) -> T { return x }
+fn plain(x: Int) -> Int { return x }
+fn main() {
+  print(id<Int, Int>(1))
+  print(plain<Int>(1))
+  print(id<Bool>(1))
+}

@@ -570,6 +570,7 @@ struct Checker<'a> {
     capture_ids: HashSet<usize>, // variables that are captures inside a closure body
     closure_borrow_pos: HashSet<(usize, usize)>, // positions of closure literals that borrow variables
     ret_free: bool,        // checking a closure whose result type is not known yet
+    explicit_targs: Option<Vec<Ty>>, // type arguments written at the call being checked (`f<Int>(x)`)
     pending_bare: usize,   // `return None`-like returns of a closure whose result type was still unknown
     free_pids: Vec<usize>, // type parameters of the generic callee that are still unknown
     closure_loans: HashMap<usize, Vec<(usize, u8, Pos)>>, // hidden closure variable -> what it borrows
@@ -1787,6 +1788,31 @@ impl<'a> Checker<'a> {
                 t
             }
             EK::Sequence(..) => e.ty,
+            EK::GenVariant { targs: Some(_), vname, .. } if vname.is_empty() => {
+                // `f<A, B>(x)`: a call with explicit type arguments
+                let EK::GenVariant { name, targs, args, .. } = std::mem::replace(&mut e.k, EK::Int(0)) else { unreachable!() };
+                let explicit = targs.unwrap_or_default();
+                let mut args = args;
+                let t = match self.ps.gfns.iter().position(|g| g.name == name) {
+                    Some(gi) => {
+                        self.explicit_targs = Some(explicit);
+                        self.generic_call(gi, &mut args, pos)
+                    }
+                    None => {
+                        let mut d = diag(format!("'{}' takes no type arguments", name), pos);
+                        if self.sigs.contains_key(&name) || self.lookup(&name).is_some() {
+                            d = d.note("it is not a generic function: remove the `<..>`");
+                        } else {
+                            d = d.note("no generic function has this name");
+                        }
+                        self.err(d);
+                        Ty::Err
+                    }
+                };
+                let name = self.rename.take().unwrap_or(name);
+                e.k = EK::Call(name, args);
+                t
+            }
             EK::GenStruct { .. } | EK::GenVariant { .. } => {
                 let k = std::mem::replace(&mut e.k, EK::Int(0));
                 let (t, nk) = self.generic_lit(k, pos, hint);
@@ -7745,6 +7771,24 @@ impl<'a> Checker<'a> {
             }
         }
         let mut bind: Vec<Option<Ty>> = vec![None; g.pids.len()];
+        if let Some(explicit) = self.explicit_targs.take() {
+            if explicit.len() != g.pids.len() {
+                self.err(diag(
+                    format!(
+                        "'{}' has {} type parameter(s) ({}) but {} type argument(s) were given",
+                        g.name,
+                        g.pids.len(),
+                        g.tparams.iter().map(|t| t.name.clone()).collect::<Vec<_>>().join(", "),
+                        explicit.len()
+                    ),
+                    pos,
+                ));
+                return Ty::Err;
+            }
+            for (k, t) in explicit.into_iter().enumerate() {
+                bind[k] = Some(t);
+            }
+        }
         let mut bad = false;
         // closure literals are checked after the other arguments: those fix the type parameters that the
         // closure's parameters need, and the closure's body then fixes the ones in its result type
@@ -7810,7 +7854,7 @@ impl<'a> Checker<'a> {
                 let (got, want) = (self.tn(t), self.tn(pat));
                 let d = match (pat, prior) {
                     (Ty::Param(_), Some(b)) => diag(
-                        format!("argument {} of '{}' is {}, but {} was already fixed to {} by an earlier argument", k + 1, g.name, got, want, self.tn(b)),
+                        format!("argument {} of '{}' is {}, but {} was already fixed to {} (by the type arguments or an earlier argument)", k + 1, g.name, got, want, self.tn(b)),
                         arg.pos,
                     )
                     .note(format!("every parameter declared as `{}` must receive the same type", want)),
@@ -8208,6 +8252,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         closure_borrow_pos: HashSet::new(),
         ret_free: false,
         pending_bare: 0,
+        explicit_targs: None,
         free_pids: vec![],
         closure_loans: HashMap::new(),
     };
