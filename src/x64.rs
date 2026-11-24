@@ -1312,6 +1312,28 @@ impl<'a> G<'a> {
         let unchecked = op.is_unchecked(); // divisor proven non-zero and not (MIN / -1)
         let op = op.checked();
         let is_div = op == Op::Div;
+        if is_div {
+            if let Loc::Const(c) = self.loc(y) {
+                if c >= 2 && (c as u64).is_power_of_two() {
+                    let shift = c.trailing_zeros() as u8;
+                    self.mov_to(RAX, x);
+                    self.a.mov_rr(RCX, RAX);
+                    if shift == 1 {
+                        self.a.shift_imm(5, RCX, 63); // shr: one for a negative numerator
+                    } else {
+                        self.a.shift_imm(7, RCX, 63); // sar: all ones or all zeros
+                        self.a.shift_imm(5, RCX, 64 - shift); // shr: reduce to c - 1 or zero
+                    }
+                    // Adding the bias makes the arithmetic shift truncate toward zero.
+                    self.a.alu(0x01, RAX, RCX);
+                    self.a.shift_imm(7, RAX, shift);
+                    let dr = self.dreg(d, RAX);
+                    self.a.mov_rr(dr, RAX);
+                    self.fin(d, dr);
+                    return;
+                }
+            }
+        }
         // A signed remainder by a positive power of two can use a mask while
         // preserving Rust/C truncation-toward-zero semantics for negative x.
         // This also handles constants outside the sign-extended i32 immediate
