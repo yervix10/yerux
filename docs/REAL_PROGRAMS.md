@@ -335,5 +335,61 @@ Compiler frictions, not changed (minimal repros):
     rxdfa parser accepts them (empty alternatives match the empty text). The differential run avoids them, so the
     oracle is only consulted on the common subset.
 
-Not done in round 5: the LZ77+Huffman compressor, the event-queue scheduler, and the JSON formatter. `std.json` is
-not in main yet (checked), so the JSON item needs claude-3's merge first.
+### lzh (`examples/real/lzh/`): LZ77 with canonical Huffman coding
+
+`compress` and `decompress` of files, `stat FILE...` (round trip and ratio per file) and `selftest N SEED` (generated
+inputs, four kinds of content). The format is documented at the top of `codec.yx`: a 4096-byte window, matches of
+3 to 258 bytes found through hash chains, one Huffman code over 513 symbols, and a 521-byte header.
+
+Measured (native and C output identical): selftest 400 cases (seed 7), 1,198,840 bytes in, 735,945 packed. Repo files:
+`src/prelude_list.yx` 6037 to 2214 bytes, `docs/SPEC.md` 60404 to 26088, `Cargo.lock` 4057 to 1730. The test script
+[tests/lzh.sh](../tests/lzh.sh) runs the unit tests on both backends, the self test and file round trips with byte-for-byte
+equal compressed output across backends, and a corruption sweep (every 9th byte, three values) that must never exit with
+status above 1; it takes about 33 s.
+
+Fixed in the program: a corrupt code length made the canonical code overflow. Repro: the stream of `docs/SPEC.md`
+with byte 40 set to `0x5a` gave `panic: integer overflow in multiplication` (status 101). Code lengths above 48 are now
+rejected (a tree over fewer than 2^32 bytes is at most 46 deep). The sweep in `tests/lzh.sh` covers this position.
+
+Known limits, not changed: the 513-byte length table makes small inputs expand (a 24-byte file becomes 529 bytes); the
+stream has no checksum, so a corruption that keeps the length structure can decode to different bytes of the same
+length.
+
+### schedsim (`examples/real/schedsim/`): event-queue scheduler with a worker pool
+
+A discrete-event FIFO simulation with K servers. The per-job service times come from a pool of worker threads (one
+bounded channel per worker, an unbounded results channel, `Shared<Locked<Stats>>` for the totals), and the report is
+checked against a run with one worker. Events are ordered by a binary heap on (time, creation number). Output depends
+only on JOBS, SERVERS and SEED: [tests/schedsim.sh](../tests/schedsim.sh) compares reports for 1, 2, 4 and 8 workers on
+both backends, checks a golden digest, and runs 20,000 jobs five times on the native backend (one digest). Unit tests
+include hand-computed schedules (one server, two servers, a late job). Takes about 14 s.
+
+Limit measured: with 8 workers the pool slows down. `schedsim run 20000 3 W 7`, native, wall time: W=1 1.26 s, W=4 1.19 s,
+W=8 3.92 s (user 17.1 s). C backend, W=4: 3.46 s. See friction 15.
+
+### jsonl (`examples/real/jsonl/`): NDJSON validator and canonical formatter
+
+Each line is one JSON document. Output has no insignificant whitespace, object keys in byte order, and duplicate keys
+are errors (the lenient reader in examples/real/json keeps them). Errors are reported per line as
+`FILE:LINE:COL: MESSAGE` with a byte column. `std.json` is not in main (checked), so the reader is this program's own.
+[tests/jsonl.sh](../tests/jsonl.sh) checks a fixed input (exact stdout, stderr and status), the invalid-UTF-8 report,
+and a seeded corpus of 300 lines (227 valid) whose verdict must match `examples/real/json --check` line by line on
+both backends; canonical output is a fixed point. Takes about 30 s.
+
+Fixed in the program: an input that is not UTF-8 was reported as a bare `cannot read`; the reason is now printed
+(`tests/jsonl.sh` checks it, and fails on the previous version).
+
+### Round 5 frictions (not changed; minimal repros)
+
+13. **Ternary expressions do not exist.** `let x = 3 > 2 ? 1 : 2` gives "expected an expression" at `?`. Use `if`.
+14. **Braces in string literals must be doubled; the diagnostic points at the first brace.**
+    `assert(f("{ \"a\": 1 }"))` gives "this `{` in a string is never closed" at the first brace; `{{` and `}}` are
+    literal braces. Only the diagnostic is affected; the program is valid once the braces are doubled.
+15. **Blocking channel receive spins, and contention grows with the worker count.** Repro: `schedsim run 20000 3 8 7`
+    (native): 3.92 s wall, 17.1 s user, against 1.19 s with 4 workers. The workers spin on `recv` while the queue is
+    empty and all of them take the one queue lock. The C backend with 4 workers takes 3.46 s for the same run.
+16. **An invalid UTF-8 byte rejects the whole file.** `jsonl` reads a file as a `String`, so a single bad byte stops
+    every line (exit 1, reason printed). Line-wise reading would keep the valid lines; it needs the byte-level reader.
+
+Round 5 status: rxdfa, lzh, schedsim and jsonl are done with tests on both backends. The full suite is run after the
+last commit (see the commit log).
