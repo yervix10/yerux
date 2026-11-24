@@ -1,0 +1,58 @@
+== config ==
+(root) 4 entries
+  name (str) = "yerux-service"
+  version (int) = 3
+  debug (bool) = false
+  banner (str) = "# not a comment; quoted"
+[server] 4 entries
+  host (str) = "0.0.0.0"
+  port (int) = 8080
+  workers (int) = 4
+  timeout (int) = -1
+[server.tls] 4 entries
+  enabled (bool) = true
+  cert (str) = "/etc/ssl/app.pem"
+  quote (str) = "say \"hi\" \\ bye\n"
+  ciphers (str) = "HIGH:!aNULL"
+[database] 4 entries
+  url (str) = "postgres://db.internal/app"
+  pool (int) = 16
+  retry_wait (int) = 250
+  readonly (bool) = false
+[logging] 2 entries
+  level (str) = "info"
+  file (str) = ""
+[limits.upload] 1 entries
+  max_mb (int) = 512
+types: str=9 int=7 bool=3
+6 sections, 19 entries, 0 errors
+== lookups ==
+  server.port = 8080 (int)
+  server.tls.cert = "/etc/ssl/app.pem" (str)
+  server.timeout = -1 (int)
+  server.missing: missing
+  nowhere.key: missing
+  .name = "yerux-service" (str)
+  database.readonly = false (bool)
+  logging.file = "" (str)
+port=8080 fallback=443
+server.host is not an integer
+== errors ==
+headers: 2 sections, 9 errors
+  line 3: malformed section header
+  line 5: expected key = value
+  line 6: missing value
+  line 7: unterminated string
+  line 8: invalid value 'bare'
+  line 9: duplicate section [good]
+  line 10: unexpected text after string
+  line 12: duplicate key 'h'
+  line 13: invalid key 'bad-key!'
+values: 2 sections, 7 errors
+  line 1: malformed section header
+  line 2: malformed section header
+  line 3: invalid key ''
+  line 4: invalid escape sequence
+  line 5: invalid value '99999999999999999999'
+  line 6: invalid value 'yes'
+  line 10: unterminated string

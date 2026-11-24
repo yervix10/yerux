@@ -134,6 +134,7 @@ AUX=(
   "sudoku|bash tests/sudoku.sh"
   "bcvm|bash tests/bcvm.sh"
   "chat|bash tests/chat.sh"
+  "programs|bash tests/programs.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"

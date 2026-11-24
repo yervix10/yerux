@@ -1,0 +1,334 @@
+// tcpecho: a TCP line-echo server and its client in one program, on 127.0.0.1 with a kernel-assigned port.
+//
+// The server runs on a worker thread and serves one connection at a time. It echoes each LF-terminated line
+// (the LF is removed, then added back). "QUIT" gets "BYE" and stops the server. A line longer than MAX_LINE bytes
+// gets "ERR line too long" and the connection is closed. A client silent for IDLE_MS gets "ERR idle timeout" and
+// is closed. The server stops after `max` connections or on QUIT, whichever comes first.
+//
+// The client runs scripted sessions against two servers. Every wait is bounded: each socket has a timeout, and
+// the server outcome arrives over a channel read with recv_timeout, so the program always terminates.
+import std.env
+import std.io
+import std.net
+
+const MAX_LINE = 64
+const IDLE_MS = 1000
+const ACCEPT_MS = 3000
+const CLIENT_MS = 4000
+const QUIET_MS = 150
+const RESULT_MS = 8000
+
+// A finished server: whether QUIT stopped it, and one log line per connection.
+pub struct Outcome {
+  quit: Bool,
+  log: List<String>,
+}
+
+// What a read loop collected, and why it stopped: "full", "eof", "timeout" or "error".
+pub struct Got {
+  data: String,
+  stop: String,
+}
+
+fn is_timeout(e: view io.IoError) -> Bool {
+  return "{e}".contains("timed out")
+}
+
+// Prints one check line; returns 1 when it failed and 0 when it passed.
+fn check(ok: Bool, label: view String) -> Int {
+  if ok {
+    print("ok {label}")
+    return 0
+  }
+  print("FAIL {label}")
+  return 1
+}
+
+fn filled(n: Int) -> String {
+  var s = String.new()
+  for i in 0..n {
+    s.push_str("y")
+  }
+  return s
+}
+
+// Writes text; false when the peer is gone.
+fn send_text(s: view net.TcpStream, text: view String) -> Bool {
+  var sent = false
+  match net.write(s, text) {
+    Ok(_) => { sent = true }
+    Err(_) => {}
+  }
+  return sent
+}
+
+// Serves one connection and appends one log line. True when the client sent QUIT.
+fn serve_conn(s: view net.TcpStream, n: Int, log: mut List<String>) -> Bool {
+  var pending = String.new()
+  while true {
+    var at = pending.find("\n")
+    while at >= 0 {
+      let line = pending.slice(0, at)
+      pending = pending.slice(at + 1, pending.len())
+      if line.len() > MAX_LINE {
+        let _ = send_text(s, "ERR line too long\n")
+        log.push("conn {n}: line too long")
+        return false
+      }
+      if line.eq("QUIT") {
+        let _ = send_text(s, "BYE\n")
+        log.push("conn {n}: QUIT")
+        return true
+      }
+      var reply = line.clone()
+      reply.push_str("\n")
+      let _ = send_text(s, reply)
+      at = pending.find("\n")
+    }
+    if pending.len() > MAX_LINE {
+      let _ = send_text(s, "ERR line too long\n")
+      log.push("conn {n}: line too long")
+      return false
+    }
+    match net.read(s, 4096) {
+      Ok(chunk) => {
+        if chunk.is_empty() {
+          log.push("conn {n}: closed by client")
+          return false
+        }
+        pending.push_str(chunk)
+      }
+      Err(e) => {
+        if is_timeout(e) {
+          let _ = send_text(s, "ERR idle timeout\n")
+          log.push("conn {n}: idle timeout")
+        } else {
+          log.push("conn {n}: read error")
+        }
+        return false
+      }
+    }
+  }
+  return false
+}
+
+// Accepts connections one at a time until `max` have been served or a client sends QUIT. True on QUIT.
+fn serve(listener: view net.TcpListener, max: Int, log: mut List<String>) -> Bool {
+  let _ = net.set_accept_timeout(listener, ACCEPT_MS)
+  var n = 0
+  while n < max {
+    n = n + 1
+    let stream = match net.accept(listener) {
+      Ok(x) => move x
+      Err(e) => {
+        if is_timeout(e) {
+          log.push("accept timed out")
+        } else {
+          log.push("accept failed")
+        }
+        return false
+      }
+    }
+    let _ = net.set_read_timeout(stream, IDLE_MS)
+    if serve_conn(stream, n, log) { return true }
+  }
+  return false
+}
+
+// Thread body: serves, closes the listener, then reports the outcome.
+fn run_server(listener: net.TcpListener, max: Int, out: Sender<Outcome>) -> Int {
+  var log = List<String>.new()
+  let quit = serve(listener, max, log)
+  let _ = net.close_listener(move listener)
+  let _ = out.send(Outcome { quit: quit, log: move log })
+  return 0
+}
+
+fn listen_local() -> net.TcpListener {
+  let a = net.address("127.0.0.1", 0).unwrap()
+  return net.listen(a).unwrap()
+}
+
+fn port_of(l: view net.TcpListener) -> Int {
+  let a = net.listener_local_addr(l).unwrap()
+  return a.port
+}
+
+// Connects to the loopback server on `port`; None when the connection fails.
+fn dial(port: Int) -> Option<net.TcpStream> {
+  let a = net.SocketAddr { ip: String.from("127.0.0.1"), port: port }
+  let s = match net.connect_timeout(a, CLIENT_MS) {
+    Ok(x) => move x
+    Err(_) => { return None }
+  }
+  let _ = net.set_read_timeout(s, CLIENT_MS)
+  return Some(move s)
+}
+
+// Reads until `want` bytes arrived, or EOF, a timeout or another error came first.
+fn read_upto(s: view net.TcpStream, want: Int) -> Got {
+  var data = String.new()
+  while data.len() < want {
+    match net.read(s, want - data.len()) {
+      Ok(chunk) => {
+        if chunk.is_empty() {
+          return Got { data: move data, stop: String.from("eof") }
+        }
+        data.push_str(chunk)
+      }
+      Err(e) => {
+        if is_timeout(e) {
+          return Got { data: move data, stop: String.from("timeout") }
+        }
+        return Got { data: move data, stop: String.from("error") }
+      }
+    }
+  }
+  return Got { data: move data, stop: String.from("full") }
+}
+
+// Client session 1 on server A: echo, including a line split across writes, CRLF, tab, UTF-8 and a 64-byte line.
+fn session_echo(port: Int) -> Int {
+  let s = match dial(port) {
+    Some(x) => move x
+    None => { return check(false, "echo: connect") }
+  }
+  var long = filled(64)
+  long.push_str("\n")
+  var want = String.from("one\ntwo\nthree\r\nfour\na\tb\n")
+  want.push_str(long)
+  want.push_str("héllo\n")
+  let _ = send_text(s, "one\ntw")
+  let _ = send_text(s, "o\nthree\r\nfour\na\tb\n")
+  let _ = send_text(s, long)
+  let _ = send_text(s, "héllo\n")
+  let got = read_upto(s, want.len())
+  return check(got.stop.eq("full") && got.data.eq(want), "echo: lines come back byte-for-byte")
+}
+
+// Client session 2 on server A: a line without its newline gets no reply until the newline arrives.
+fn session_partial(port: Int) -> Int {
+  let s = match dial(port) {
+    Some(x) => move x
+    None => { return check(false, "partial: connect") }
+  }
+  var failures = 0
+  let _ = send_text(s, "par")
+  let _ = net.set_read_timeout(s, QUIET_MS)
+  let quiet = read_upto(s, 1)
+  let _ = net.set_read_timeout(s, CLIENT_MS)
+  failures = failures + check(quiet.stop.eq("timeout") && quiet.data.is_empty(), "partial: no reply while the line is open")
+  let _ = send_text(s, "tial\n")
+  let got = read_upto(s, 8)
+  failures = failures + check(got.stop.eq("full") && got.data.eq("partial\n"), "partial: reply once the line completes")
+  return failures
+}
+
+// Client session 3 on server A: sends nothing; the server times out, reports it and closes.
+fn session_idle(port: Int) -> Int {
+  let s = match dial(port) {
+    Some(x) => move x
+    None => { return check(false, "idle: connect") }
+  }
+  let got = read_upto(s, 4096)
+  return check(got.stop.eq("eof") && got.data.eq("ERR idle timeout\n"), "idle: ERR idle timeout, then the server closes")
+}
+
+// Client session 4 on server A: a 100-byte line is refused with an error and the connection is closed.
+fn session_long(port: Int) -> Int {
+  let s = match dial(port) {
+    Some(x) => move x
+    None => { return check(false, "long line: connect") }
+  }
+  var big = filled(100)
+  big.push_str("\n")
+  let _ = send_text(s, big)
+  let got = read_upto(s, 4096)
+  return check(got.stop.eq("eof") && got.data.eq("ERR line too long\n"), "long line: 100 bytes get ERR line too long, then a close")
+}
+
+// Client session 1 on server B: one echo.
+fn session_again(port: Int) -> Int {
+  let s = match dial(port) {
+    Some(x) => move x
+    None => { return check(false, "again: connect") }
+  }
+  let _ = send_text(s, "again\n")
+  let got = read_upto(s, 6)
+  return check(got.stop.eq("full") && got.data.eq("again\n"), "again: echo")
+}
+
+// Client session 2 on server B: QUIT gets BYE and the connection closes.
+fn session_quit(port: Int) -> Int {
+  let s = match dial(port) {
+    Some(x) => move x
+    None => { return check(false, "QUIT: connect") }
+  }
+  let _ = send_text(s, "QUIT\n")
+  let got = read_upto(s, 4096)
+  return check(got.stop.eq("eof") && got.data.eq("BYE\n"), "QUIT: BYE, then the server closes")
+}
+
+// Prints a server's log and checks how it stopped.
+fn report(out: view Outcome, who: view String, label: view String, want_quit: Bool, want_conns: Int) -> Int {
+  print("{who} log:")
+  for i in 0..out.log.len() {
+    print("  {out.log.at(i)}")
+  }
+  return check(out.quit == want_quit && out.log.len() == want_conns, label)
+}
+
+// Server A: stops by itself after 4 connections.
+fn scenario_a() -> Int {
+  print("server A: stops after 4 connections")
+  let listener = listen_local()
+  let port = port_of(listener)
+  let (tx, rx) = Sender<Outcome>.bounded(1)
+  var failures = 0
+  scope {
+    spawn move || run_server(move listener, 4, move tx)
+    failures = failures + session_echo(port)
+    failures = failures + session_partial(port)
+    failures = failures + session_idle(port)
+    failures = failures + session_long(port)
+    match rx.recv_timeout(RESULT_MS) {
+      Some(out) => { failures = failures + report(out, "server A", "server A stopped after 4 connections", false, 4) }
+      None => { failures = failures + check(false, "server A: outcome in time") }
+    }
+  }
+  return failures
+}
+
+// Server B: stops on QUIT, then its port refuses connections.
+fn scenario_b() -> Int {
+  print("server B: stops on QUIT")
+  let listener = listen_local()
+  let port = port_of(listener)
+  let (tx, rx) = Sender<Outcome>.bounded(1)
+  var failures = 0
+  scope {
+    spawn move || run_server(move listener, 10, move tx)
+    failures = failures + session_again(port)
+    failures = failures + session_quit(port)
+    match rx.recv_timeout(RESULT_MS) {
+      Some(out) => { failures = failures + report(out, "server B", "server B stopped on QUIT", true, 2) }
+      None => { failures = failures + check(false, "server B: outcome in time") }
+    }
+  }
+  var refused = false
+  match dial(port) {
+    Some(_) => {}
+    None => { refused = true }
+  }
+  failures = failures + check(refused, "after QUIT: a new connection is refused")
+  return failures
+}
+
+fn main() {
+  print("tcpecho: line echo over 127.0.0.1, port 0")
+  var failures = 0
+  failures = failures + scenario_a()
+  failures = failures + scenario_b()
+  print("failures: {failures}")
+  if failures > 0 { env.exit(1) }
+}

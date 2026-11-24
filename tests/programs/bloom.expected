@@ -1,0 +1,12 @@
+sizing: n=1000 p=0.01 m=9586 k=7 bytes=1199
+inserted: 1000 distinct: 1000 bits set: 4961
+member queries of inserted words: 1000/1000 true (false negatives: 0)
+queries=20000 true_positive=3 false_positive=183 true_negative=19814 false_negative=0
+false positive rate: observed 9 per mille, theory 10 per mille
+fill: 4961 of 9586 bits set = 517 per mille (theory 518)
+serialized: 1235 bytes, checksum 6672445208435777630
+round trip: count=1000 m=9586 k=7 identical=true members=1000/1000
+corrupt input: rejected (checksum mismatch)
+truncated input: rejected (too short: 10 bytes)
+union: count=2000 bits set=7367 equals_joint_insert=true members=2000/2000
+union with mismatched size: rejected (parameters differ)

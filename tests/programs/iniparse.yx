@@ -1,0 +1,376 @@
+// iniparse: a parser for an INI/TOML subset, run over embedded documents and printed as a report.
+//
+// Syntax, one item per line (lines are numbered from 1):
+//   a blank line, or a line whose first non-blank character is '#' or ';', is skipped;
+//   [name]       a section header; name is segments of [A-Za-z0-9_-] separated by '.' (e.g. server.tls);
+//                a repeated header reuses the section and is reported as a duplicate;
+//   key = value  a key of [A-Za-z0-9_-]+; keys before any header belong to the root section "".
+// Values: "text" with the escapes \" \\ \n \t (only a comment may follow the closing quote); true; false; an integer
+// [+-]?digits that fits Int; or a bare word cut at the first '#' or ';'. Bare words must be a boolean or an integer.
+// A malformed line is recorded as "line N: ..." and skipped; a malformed header leaves the current section unchanged.
+
+enum Value {
+  Str(String),
+  Num(Int),
+  Flag(Bool),
+}
+
+struct Entry {
+  key: String,
+  value: Value,
+}
+
+struct Section {
+  name: String,
+  entries: List<Entry>,
+}
+
+struct Document {
+  sections: List<Section>,
+  index: Map<String, Int>,
+  errors: List<String>,
+}
+
+// Bytes allowed in keys and section segments: letters, digits, '_' and '-'.
+fn is_name_byte(b: Int) -> Bool {
+  return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95 || b == 45
+}
+
+fn is_name(s: view String) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for i in 0..s.len() {
+    if !is_name_byte(s.byte(i)) {
+      return false
+    }
+  }
+  return true
+}
+
+// A dotted section name: every segment is a name ("" and "a..b" are not).
+fn is_section_name(s: view String) -> Bool {
+  for seg in s.split(".") {
+    if !is_name(seg) {
+      return false
+    }
+  }
+  return true
+}
+
+// The name inside a "[name]" line, or None when the line is not a well-formed header.
+fn header_name(line: view String) -> Option<String> {
+  if !line.ends_with("]") {
+    return None
+  }
+  let name = line.slice(1, line.len() - 1).trim()
+  if is_section_name(name) {
+    return Some(move name)
+  }
+  return None
+}
+
+// The index of the section called `name`, created at the end when it is new.
+fn section_index(doc: mut Document, name: view String) -> Int {
+  let known = doc.index.get_or(name, -1)
+  if known >= 0 {
+    return known
+  }
+  let idx = doc.sections.len()
+  doc.sections.push(Section { name: String.from(name), entries: List<Entry>.new() })
+  doc.index.insert(String.from(name), idx)
+  return idx
+}
+
+fn has_key(sec: view Section, key: view String) -> Bool {
+  for e in sec.entries {
+    if e.key == key {
+      return true
+    }
+  }
+  return false
+}
+
+// A quoted value; raw starts with the opening quote.
+fn quoted(raw: view String) -> Result<Value, String> {
+  var out = String.new()
+  var i = 1
+  while i < raw.len() {
+    let b = raw.byte(i)
+    if b == 34 {
+      let rest = raw.slice(i + 1, raw.len()).trim()
+      if rest.is_empty() || rest.starts_with("#") || rest.starts_with(";") {
+        return Ok(Value.Str(move out))
+      }
+      return Err(String.from("unexpected text after string"))
+    }
+    if b == 92 {
+      if i + 1 >= raw.len() {
+        return Err(String.from("unterminated string"))
+      }
+      let e = raw.byte(i + 1)
+      if e == 34 || e == 92 { out.push_byte(e) } else if e == 110 { out.push_byte(10) } else if e == 116 { out.push_byte(9) } else { return Err(String.from("invalid escape sequence")) }
+      i = i + 2
+    } else {
+      out.push_byte(b)
+      i = i + 1
+    }
+  }
+  return Err(String.from("unterminated string"))
+}
+
+// The value of a right-hand side (already trimmed).
+fn value_of(raw: view String) -> Result<Value, String> {
+  if raw.is_empty() {
+    return Err(String.from("missing value"))
+  }
+  if raw.starts_with("\"") {
+    return quoted(raw)
+  }
+  var end = 0
+  while end < raw.len() && raw.byte(end) != 35 && raw.byte(end) != 59 {
+    end = end + 1
+  }
+  let word = raw.slice(0, end).trim()
+  if word.is_empty() {
+    return Err(String.from("missing value"))
+  }
+  if word.eq("true") {
+    return Ok(Value.Flag(true))
+  }
+  if word.eq("false") {
+    return Ok(Value.Flag(false))
+  }
+  var n = 0
+  if word.parse_int(n) {
+    return Ok(Value.Num(n))
+  }
+  return Err("invalid value '{word}'")
+}
+
+// Parses a document. It never fails: each bad line is recorded in `errors` and the parser goes on.
+fn parse(src: view String) -> Document {
+  var doc = Document { sections: List<Section>.new(), index: Map<String, Int>.new(), errors: List<String>.new() }
+  var cur = section_index(doc, "")
+  var lineno = 0
+  for raw in src.lines() {
+    lineno = lineno + 1
+    let line = raw.trim()
+    if line.is_empty() || line.starts_with("#") || line.starts_with(";") {
+      continue
+    }
+    if line.starts_with("[") {
+      match header_name(line) {
+        Some(name) => { if doc.index.contains(name) { doc.errors.push("line {lineno}: duplicate section [{name}]") } cur = section_index(doc, name) }
+        None => { doc.errors.push("line {lineno}: malformed section header") }
+      }
+    } else {
+      let eq = line.find("=")
+      if eq < 0 {
+        doc.errors.push("line {lineno}: expected key = value")
+      } else {
+        let key = line.slice(0, eq).trim()
+        if !is_name(key) {
+          doc.errors.push("line {lineno}: invalid key '{key}'")
+        } else if has_key(doc.sections.at(cur), key) {
+          doc.errors.push("line {lineno}: duplicate key '{key}'")
+        } else {
+          match value_of(line.slice(eq + 1, line.len()).trim()) {
+            Ok(v) => { doc.sections.at(cur).entries.push(Entry { key: move key, value: move v }) }
+            Err(msg) => { doc.errors.push("line {lineno}: {msg}") }
+          }
+        }
+      }
+    }
+  }
+  return move doc
+}
+
+fn clone_value(v: view Value) -> Value {
+  let out = match v {
+    Str(s) => { Value.Str(String.from(s)) }
+    Num(n) => { Value.Num(n) }
+    Flag(b) => { Value.Flag(b) }
+  }
+  return out
+}
+
+// The value of `key` in section `section` (copied), or None.
+fn get(doc: view Document, section: view String, key: view String) -> Option<Value> {
+  let si = doc.index.get_or(section, -1)
+  if si < 0 {
+    return None
+  }
+  for e in doc.sections.at(si).entries {
+    if e.key == key {
+      return Some(clone_value(e.value))
+    }
+  }
+  return None
+}
+
+fn get_int(doc: view Document, section: view String, key: view String) -> Option<Int> {
+  let found = get(doc, section, key)
+  match found {
+    Some(v) => { match v { Num(n) => { return Some(n) } _ => { return None } } }
+    None => { return None }
+  }
+}
+
+fn type_name(v: view Value) -> Text {
+  let t = match v {
+    Str(_) => { "str" }
+    Num(_) => { "int" }
+    Flag(_) => { "bool" }
+  }
+  return t
+}
+
+// Escapes the way the parser reads them back: \" \\ \n \t.
+fn escape(s: view String) -> String {
+  var out = String.new()
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b == 34 { out.push_str("\\\"") } else if b == 92 { out.push_str("\\\\") } else if b == 10 { out.push_str("\\n") } else if b == 9 { out.push_str("\\t") } else { out.push_byte(b) }
+  }
+  return out
+}
+
+fn show(v: view Value) -> String {
+  match v {
+    Str(s) => { return "\"{escape(s)}\"" }
+    Num(n) => { return "{n}" }
+    Flag(b) => { return "{b}" }
+  }
+}
+
+// Prints every section in order, its typed entries, and totals by type.
+fn print_doc(doc: view Document) {
+  var entries = 0
+  var strs = 0
+  var nums = 0
+  var flags = 0
+  for sec in doc.sections {
+    if sec.name.is_empty() {
+      print("(root) {sec.entries.len()} entries")
+    } else {
+      print("[{sec.name}] {sec.entries.len()} entries")
+    }
+    for e in sec.entries {
+      print("  {e.key} ({type_name(e.value)}) = {show(e.value)}")
+      entries = entries + 1
+      match e.value {
+        Str(_) => { strs = strs + 1 }
+        Num(_) => { nums = nums + 1 }
+        Flag(_) => { flags = flags + 1 }
+      }
+    }
+  }
+  print("types: str={strs} int={nums} bool={flags}")
+  print("{doc.sections.len()} sections, {entries} entries, {doc.errors.len()} errors")
+}
+
+fn query(doc: view Document, section: view String, key: view String) {
+  match get(doc, section, key) {
+    Some(v) => { print("  {section}.{key} = {show(v)} ({type_name(v)})") }
+    None => { print("  {section}.{key}: missing") }
+  }
+}
+
+fn join_lines(lines: view [Text]) -> String {
+  var out = String.new()
+  for line in lines {
+    out.push_str(line)
+    out.push_byte(10)
+  }
+  return out
+}
+
+// Parses a small document and prints its error list, with line numbers.
+fn report_bad(label: view String, lines: view [Text]) {
+  let doc = parse(join_lines(lines))
+  print("{label}: {doc.sections.len()} sections, {doc.errors.len()} errors")
+  for msg in doc.errors {
+    print("  {msg}")
+  }
+}
+
+fn main() {
+  let config = [
+    "# iniparse demo configuration",
+    "name = \"yerux-service\"",
+    "version = 3",
+    "debug = false",
+    "banner = \"# not a comment; quoted\"",
+    "   ",
+    "[server]",
+    "host = \"0.0.0.0\"   # bind address",
+    "port = 8080",
+    "workers = +4",
+    "timeout = -1 ; seconds, -1 disables",
+    "[server.tls]",
+    "enabled = true",
+    "cert = \"/etc/ssl/app.pem\"",
+    "quote = \"say \\\"hi\\\" \\\\ bye\\n\"",
+    "ciphers = \"HIGH:!aNULL\"",
+    "[database]",
+    "url = \"postgres://db.internal/app\"",
+    "pool = 16",
+    "retry_wait = 250 # ms",
+    "readonly = false",
+    "[logging]",
+    "level = \"info\"",
+    "file = \"\"",
+    "[limits.upload]",
+    "max_mb = 512",
+  ]
+  let doc = parse(join_lines(config))
+  print("== config ==")
+  print_doc(doc)
+
+  print("== lookups ==")
+  query(doc, "server", "port")
+  query(doc, "server.tls", "cert")
+  query(doc, "server", "timeout")
+  query(doc, "server", "missing")
+  query(doc, "nowhere", "key")
+  query(doc, "", "name")
+  query(doc, "database", "readonly")
+  query(doc, "logging", "file")
+  let port = get_int(doc, "server", "port").unwrap_or(0)
+  let fallback = get_int(doc, "server", "missing").unwrap_or(443)
+  print("port={port} fallback={fallback}")
+  match get_int(doc, "server", "host") {
+    Some(n) => { print("host as int: {n}") }
+    None => { print("server.host is not an integer") }
+  }
+
+  print("== errors ==")
+  report_bad("headers", [
+    "[good]",
+    "a = 1",
+    "[broken",
+    "b = 2",
+    "c 3",
+    "d =",
+    "e = \"open",
+    "f = bare",
+    "[good]",
+    "g = \"x\" trailing",
+    "h = 1",
+    "h = 2",
+    "bad-key! = 1",
+  ])
+  report_bad("values", [
+    "[]",
+    "[a..b]",
+    "= 5",
+    "k = \"a\\q\"",
+    "big = 99999999999999999999",
+    "flag = yes",
+    "[ok.sec]",
+    "p = -0 # zero",
+    "q = \"x\" ; note",
+    "name = \"a\\",
+  ])
+}

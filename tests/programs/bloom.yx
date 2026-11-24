@@ -1,0 +1,319 @@
+// bloom: a Bloom filter sized from (n, p), with FNV-1a 64-bit double hashing over a
+// byte-array bit set, compared against an exact set, a serialize/deserialize round trip
+// with a checksum, and a union of two filters. Its stdout is checked against bloom.expected.
+
+const ITEMS = 1000
+const QUERIES = 20000
+const HEADER = 28
+
+// 2^n for n >= 0.
+fn pow2(n: Int) -> Int {
+  var r = 1
+  for _ in 0..n { r = r * 2 }
+  return r
+}
+
+// Bit j (0 = least significant) of a byte value. The language has no bit operators.
+fn bit_set(b: Int, j: Int) -> Bool {
+  return (b / pow2(j)) % 2 == 1
+}
+
+fn xor_byte(a: Int, b: Int) -> Int {
+  var r = 0
+  for j in 0..8 {
+    if bit_set(a, j) != bit_set(b, j) { r = r + pow2(j) }
+  }
+  return r
+}
+
+fn or_byte(a: Int, b: Int) -> Int {
+  var r = 0
+  for j in 0..8 {
+    if bit_set(a, j) || bit_set(b, j) { r = r + pow2(j) }
+  }
+  return r
+}
+
+// One FNV-1a step on a 64-bit state: xor the byte into the low 8 bits, then multiply (wrapping).
+fn fnv_step(h: UInt64, b: Int) -> UInt64 {
+  let lo = (h % 256).to_int()
+  let mixed = (h - h % 256) + xor_byte(lo, b).to_uint64()
+  return mixed.wrapping_mul(1099511628211)
+}
+
+fn fnv_text(s: view String, basis: UInt64) -> UInt64 {
+  var h = basis
+  for i in 0..s.len() { h = fnv_step(h, s.byte(i)) }
+  return h
+}
+
+// FNV-1a over the first `upto` bytes of a byte list.
+fn fnv_bytes(src: view List<UInt8>, upto: Int) -> UInt64 {
+  var h: UInt64 = 14695981039346656037
+  for i in 0..upto { h = fnv_step(h, src.get(i).to_int()) }
+  return h
+}
+
+// Sizing: m = ceil(-n ln p / (ln 2)^2) bits, k = round(m / n ln 2) hash functions.
+fn bits_for(n: Int, p: Float) -> Int {
+  let nf = n.to_float()
+  return (-nf * ln(p) / (ln(2.0) * ln(2.0))).ceil_int()
+}
+
+fn hashes_for(m: Int, n: Int) -> Int {
+  return (m.to_float() / n.to_float() * ln(2.0)).round_int()
+}
+
+// Theoretical fill ratio 1 - e^(-kn/m) and false-positive rate (fill)^k.
+fn fill_theory(m: Int, k: Int, n: Int) -> Float {
+  let e = (-(k.to_float() * n.to_float() / m.to_float())).exp()
+  return 1.0 - e
+}
+
+struct Bloom {
+  m: Int,
+  k: Int,
+  count: Int,
+  bits: List<UInt8>,
+}
+
+// The k bit positions of a word: (h1 + i * h2) mod m, where h1 is the low 32 bits and h2 the high
+// 32 bits of one FNV-1a 64-bit hash (two FNV seeds differing only in the basis are too correlated).
+fn positions(w: view String, m: Int, k: Int) -> List<Int> {
+  let mu = m.to_uint64()
+  let h = fnv_text(w, 14695981039346656037)
+  let a = h % mu
+  let b = (h / 4294967296) % mu
+  var out = List<Int>.new()
+  for i in 0..k {
+    out.push(((a + i.to_uint64() * b) % mu).to_int())
+  }
+  return out
+}
+
+fn bloom_new(m: Int, k: Int) -> Bloom {
+  var bits = List<UInt8>.new()
+  for _ in 0..(m + 7) / 8 { bits.push(0) }
+  return Bloom { m: m, k: k, count: 0, bits: move bits }
+}
+
+fn bit_get(bits: view List<UInt8>, i: Int) -> Bool {
+  return bit_set(bits.at(i / 8).to_int(), i % 8)
+}
+
+fn bit_put(bits: mut List<UInt8>, i: Int) {
+  let cur = bits.at(i / 8).to_int()
+  if !bit_set(cur, i % 8) {
+    bits.set(i / 8, (cur + pow2(i % 8)).to_uint8())
+  }
+}
+
+fn add(f: mut Bloom, w: view String) {
+  for p in positions(w, f.m, f.k) { bit_put(f.bits, p) }
+  f.count = f.count + 1
+}
+
+fn has(f: view Bloom, w: view String) -> Bool {
+  for p in positions(w, f.m, f.k) {
+    if !bit_get(f.bits, p) { return false }
+  }
+  return true
+}
+
+fn popcount(bits: view List<UInt8>) -> Int {
+  var n = 0
+  for i in 0..bits.len() {
+    let b = bits.at(i).to_int()
+    for j in 0..8 {
+      if bit_set(b, j) { n = n + 1 }
+    }
+  }
+  return n
+}
+
+// Deterministic word source: a 64-bit LCG (Knuth's MMIX multiplier and increment).
+struct Lcg { state: UInt64 }
+
+fn draw(g: mut Lcg) -> UInt64 {
+  g.state = g.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+  return g.state / 65536
+}
+
+// A lowercase word of 4 to 10 letters.
+fn next_word(g: mut Lcg) -> String {
+  let len = 4 + (draw(g) % 7).to_int()
+  var w = String.new()
+  for _ in 0..len {
+    w.push_byte(97 + (draw(g) % 26).to_int())
+  }
+  return w
+}
+
+fn magic() -> [Int; 4] {
+  return [66, 76, 77, 49]
+}
+
+// Little-endian integer of n bytes.
+fn put_le(out: mut List<UInt8>, v: UInt64, n: Int) {
+  var x = v
+  for _ in 0..n {
+    out.push((x % 256).to_uint8())
+    x = x / 256
+  }
+}
+
+fn get_le(src: view List<UInt8>, at: Int, n: Int) -> UInt64 {
+  var v: UInt64 = 0
+  var scale: UInt64 = 1
+  for i in 0..n {
+    v = v + src.get(at + i).to_uint64() * scale
+    if i + 1 < n { scale = scale * 256 }
+  }
+  return v
+}
+
+// Layout: "BLM1", m (8), k (8), count (8), bit bytes, FNV-1a checksum of everything before it (8).
+fn serialize(f: view Bloom) -> List<UInt8> {
+  var out = List<UInt8>.new()
+  for b in magic() { out.push(b.to_uint8()) }
+  put_le(out, f.m.to_uint64(), 8)
+  put_le(out, f.k.to_uint64(), 8)
+  put_le(out, f.count.to_uint64(), 8)
+  for i in 0..f.bits.len() { out.push(f.bits.get(i)) }
+  let sum = fnv_bytes(out, out.len())
+  put_le(out, sum, 8)
+  return out
+}
+
+fn deserialize(src: view List<UInt8>) -> Result<Bloom, String> {
+  if src.len() < HEADER + 8 { return Err("too short: {src.len()} bytes") }
+  let mg = magic()
+  for i in 0..4 {
+    if src.get(i).to_int() != mg[i] { return Err("bad magic") }
+  }
+  let body = src.len() - 8
+  let stored = get_le(src, body, 8)
+  if fnv_bytes(src, body) != stored { return Err("checksum mismatch") }
+  let m = get_le(src, 4, 8).to_int()
+  let k = get_le(src, 12, 8).to_int()
+  let count = get_le(src, 20, 8).to_int()
+  let nbytes = (m + 7) / 8
+  if HEADER + nbytes != body { return Err("length mismatch for m={m}") }
+  var bits = List<UInt8>.new()
+  for i in 0..nbytes { bits.push(src.get(HEADER + i)) }
+  return Ok(Bloom { m: m, k: k, count: count, bits: move bits })
+}
+
+// Bitwise OR of two filters with the same parameters.
+fn union(a: view Bloom, b: view Bloom) -> Result<Bloom, String> {
+  if a.m != b.m || a.k != b.k { return Err("parameters differ") }
+  var bits = List<UInt8>.new()
+  for i in 0..a.bits.len() {
+    bits.push(or_byte(a.bits.get(i).to_int(), b.bits.get(i).to_int()).to_uint8())
+  }
+  return Ok(Bloom { m: a.m, k: a.k, count: a.count + b.count, bits: move bits })
+}
+
+fn main() {
+  let p = 0.01
+  let m = bits_for(ITEMS, p)
+  let k = hashes_for(m, ITEMS)
+  print("sizing: n={ITEMS} p={p} m={m} k={k} bytes={(m + 7) / 8}")
+
+  // Insert ITEMS generated words; keep an exact set and the insertion order.
+  var filter = bloom_new(m, k)
+  var exact = Set<String>.new()
+  var inserted = List<String>.new()
+  var gen = Lcg { state: 20240601 }
+  for _ in 0..ITEMS {
+    let w = next_word(gen)
+    add(filter, w)
+    exact.insert(String.from(w))
+    inserted.push(move w)
+  }
+  print("inserted: {inserted.len()} distinct: {exact.len()} bits set: {popcount(filter.bits)}")
+
+  var hits = 0
+  for i in 0..inserted.len() {
+    if has(filter, inserted.at(i)) { hits = hits + 1 }
+  }
+  print("member queries of inserted words: {hits}/{inserted.len()} true (false negatives: {inserted.len() - hits})")
+
+  // Never-inserted words: classify each answer against the exact set.
+  var tp = 0
+  var fp = 0
+  var tn = 0
+  var fneg = 0
+  var gen2 = Lcg { state: 987654321 }
+  for _ in 0..QUERIES {
+    let w = next_word(gen2)
+    let truth = exact.contains(w)
+    let guess = has(filter, w)
+    if truth && guess { tp = tp + 1 } else if truth { fneg = fneg + 1 } else if guess { fp = fp + 1 } else { tn = tn + 1 }
+  }
+  print("queries={QUERIES} true_positive={tp} false_positive={fp} true_negative={tn} false_negative={fneg}")
+  let observed = fp * 1000 / (fp + tn)
+  let theory = pow(fill_theory(m, k, ITEMS), k.to_float())
+  print("false positive rate: observed {observed} per mille, theory {(theory * 1000.0).round_int()} per mille")
+
+  let ones = popcount(filter.bits)
+  print("fill: {ones} of {m} bits set = {ones * 1000 / m} per mille (theory {(fill_theory(m, k, ITEMS) * 1000.0).round_int()})")
+
+  // Serialize, deserialize and compare; a flipped byte must be rejected.
+  let bytes = serialize(filter)
+  print("serialized: {bytes.len()} bytes, checksum {get_le(bytes, bytes.len() - 8, 8)}")
+  match deserialize(bytes) {
+    Ok(g) => {
+      let again = serialize(g)
+      let same = again == bytes
+      var back = 0
+      for i in 0..inserted.len() {
+        if has(g, inserted.at(i)) { back = back + 1 }
+      }
+      print("round trip: count={g.count} m={g.m} k={g.k} identical={same} members={back}/{inserted.len()}")
+    }
+    Err(e) => { print("round trip failed: {e}") }
+  }
+  var bad = List<UInt8>.new()
+  for i in 0..bytes.len() { bad.push(bytes.get(i)) }
+  bad.set(40, ((bad.get(40).to_int() + 1) % 256).to_uint8())
+  match deserialize(bad) {
+    Ok(_) => { print("corrupt input: accepted") }
+    Err(e) => { print("corrupt input: rejected ({e})") }
+  }
+  match deserialize(bytes.slice(0, 10)) {
+    Ok(_) => { print("truncated input: accepted") }
+    Err(e) => { print("truncated input: rejected ({e})") }
+  }
+
+  // Union of two filters with the same parameters equals one filter holding both sets.
+  var other_filter = bloom_new(m, k)
+  var other = List<String>.new()
+  var gen3 = Lcg { state: 4242 }
+  for _ in 0..ITEMS {
+    let w = next_word(gen3)
+    add(other_filter, w)
+    other.push(move w)
+  }
+  match union(filter, other_filter) {
+    Ok(u) => {
+      var both = bloom_new(m, k)
+      for i in 0..inserted.len() { add(both, inserted.at(i)) }
+      for i in 0..other.len() { add(both, other.at(i)) }
+      let same = both.bits == u.bits
+      var all = 0
+      for i in 0..inserted.len() {
+        if has(u, inserted.at(i)) { all = all + 1 }
+      }
+      for i in 0..other.len() {
+        if has(u, other.at(i)) { all = all + 1 }
+      }
+      print("union: count={u.count} bits set={popcount(u.bits)} equals_joint_insert={same} members={all}/{inserted.len() + other.len()}")
+    }
+    Err(e) => { print("union failed: {e}") }
+  }
+  match union(filter, bloom_new(m + 8, k)) {
+    Ok(_) => { print("union with mismatched size: accepted") }
+    Err(e) => { print("union with mismatched size: rejected ({e})") }
+  }
+}

@@ -549,3 +549,39 @@ transcripts identical. The server exits by itself after MAXCLIENTS connections; 
     payload in `match move`".
 36. **`IoError` has no timeout kind.** The chat server recognises a timeout by matching the message text.
 37. **A `JoinHandle` bound with `let _ =` joins immediately** instead of detaching.
+
+## Round 9: iniparse, tcpecho, bloom
+
+Single-file programs in `tests/programs/`, each with a golden `.expected` (stdout, exit 0). `tests/programs.sh` builds each on
+both backends and compares; it runs once inside `tests/run_all.sh`.
+
+### iniparse (`tests/programs/iniparse.yx`)
+
+INI/TOML subset: `[section]` and dotted `[server.tls]` headers, `key = value` with quoted strings, integers, booleans,
+`#`/`;` comments, error recovery with line numbers. The golden comes from an independent Python model.
+
+### tcpecho (`tests/programs/tcpecho.yx`)
+
+Echo server and clients on 127.0.0.1 with `bind(0)` (no fixed port). Covers byte-exact echo, partial lines, idle read
+timeout, max line length, and clean stop on QUIT or after N connections. Every wait is bounded (`recv_timeout`). About 1.2 s.
+Known limit: the over-long-line path closes the socket, so a peer whose bytes arrive split across reads may lose the error
+reply to a reset. The test relies on one loopback segment.
+
+### bloom (`tests/programs/bloom.yx`)
+
+Bloom filter sized from n=1000, p=0.01 (m=9586, k=7), FNV-1a 64 with wrapping multiply, bitset over `List<UInt8>`, exact
+comparison over 20000 queries, serialize/deserialize with checksum, corruption and truncation rejection, union checked
+against a joint insert. The golden comes from an independent Python model using native bit operators.
+
+### Round 9 frictions (not changed; minimal repros)
+
+38. **Bare expression arm in a statement `match` is rejected.** `match o { Some(n) => { return n } None => 0, }` gives
+    "expected '{'" at `0`. The SPEC allows bare arms for value matches; the message does not say so. Braces are the workaround.
+39. **Nested pattern on an owned temporary.** `match make() { Some(Num(n)) => ... }` with `make() -> Option<V>` gives
+    "cannot look inside an owned payload in 'match move'", then a cascade "variable 'n' does not exist". The same pattern on a
+    borrowed parameter compiles. Workaround: `let` the value first. Same family as friction 35.
+40. **No bitwise operators** (`^`, `<<`). Repeat of friction 25; bloom uses `/` and `%`.
+41. **`print(x)` on a `Set` is rejected** ("print only accepts numbers, Char, Bool, Text or String"). Workaround: `print("{s}")`.
+    Reported by the bloom author; the minimal repro was not re-run.
+42. **`JoinHandle.join()` has no timeout.** tcpecho reports server results through a channel read with `recv_timeout`.
+43. **`IoError` fields are not `pub`.** A timeout is detected by matching `"timed out"` in the message. Repeat of friction 36.

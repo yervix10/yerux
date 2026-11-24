@@ -1,0 +1,22 @@
+tcpecho: line echo over 127.0.0.1, port 0
+server A: stops after 4 connections
+ok echo: lines come back byte-for-byte
+ok partial: no reply while the line is open
+ok partial: reply once the line completes
+ok idle: ERR idle timeout, then the server closes
+ok long line: 100 bytes get ERR line too long, then a close
+server A log:
+  conn 1: closed by client
+  conn 2: closed by client
+  conn 3: idle timeout
+  conn 4: line too long
+ok server A stopped after 4 connections
+server B: stops on QUIT
+ok again: echo
+ok QUIT: BYE, then the server closes
+server B log:
+  conn 1: closed by client
+  conn 2: QUIT
+ok server B stopped on QUIT
+ok after QUIT: a new connection is refused
+failures: 0
