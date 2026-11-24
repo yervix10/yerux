@@ -4339,6 +4339,35 @@ pub fn discard_unused_functions(ir: &mut IrProgram) {
             }];
         }
     }
+    // literals only unreachable code mentioned are dropped too; the rest keep their relative order
+    let mut used = vec![false; ir.texts.len()];
+    for inst in ir.funcs.iter().flat_map(|f| &f.blocks).flat_map(|b| &b.insts) {
+        if let Inst::Text(_, n) = inst {
+            used[*n] = true;
+        }
+    }
+    let mut remap = vec![usize::MAX; ir.texts.len()];
+    let mut kept = 0;
+    for (n, u) in used.iter().enumerate() {
+        if *u {
+            remap[n] = kept;
+            kept += 1;
+        }
+    }
+    if kept < ir.texts.len() {
+        let old = std::mem::take(&mut ir.texts);
+        ir.texts = old
+            .into_iter()
+            .zip(&used)
+            .filter(|(_, u)| **u)
+            .map(|(t, _)| t)
+            .collect();
+        for inst in ir.funcs.iter_mut().flat_map(|f| &mut f.blocks).flat_map(|b| &mut b.insts) {
+            if let Inst::Text(_, n) = inst {
+                *n = remap[*n];
+            }
+        }
+    }
 }
 
 pub fn syscall_constants(f: &IrFunc) -> Vec<Option<i64>> {

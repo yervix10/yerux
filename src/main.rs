@@ -315,7 +315,13 @@ fn compile_native_ir(
             ir::discard_unused_functions(ir);
             x64::validate_windows(ir)
         }
-        _ => Ok(()),
+        _ => {
+            // --debug/--dwarf describe every function's frame: keep them all there
+            if ir.debug.is_none() {
+                ir::discard_unused_functions(ir);
+            }
+            Ok(())
+        }
     };
     if let Err(what) = validated {
         return Err(format!(
