@@ -1,0 +1,214 @@
+// btre machine: compiles a parsed pattern to instructions and runs them with an explicit backtrack stack. Each
+// capture write pushes an undo record, so failing back over it restores the old offset. Leftmost match wins; among
+// the matches at that position, the first one the priority order reaches is taken (greedy repeats try more first).
+import pattern
+
+pub const DEFAULT_LIMIT: Int = 20000000
+
+pub enum Inst {
+  Ch(Int),
+  AnyByte,
+  Class(Int),
+  Split(Int, Int),
+  Jmp(Int),
+  Save(Int),
+  Bol,
+  Eol,
+  Back(Int),
+  Match,
+}
+
+struct Frame {
+  pc: Int,
+  sp: Int,
+  slot: Int,
+  old: Int,
+}
+
+fn choice(body: Int, out: Int, greedy: Bool) -> Inst {
+  if greedy {
+    return Inst.Split(body, out)
+  }
+  return Inst.Split(out, body)
+}
+
+fn emit(pat: view pattern.Pattern, id: Int, out: mut List<Inst>) {
+  match pat.nodes.at(id) {
+    pattern.Node.Lit(b) => { out.push(Inst.Ch(b)) }
+    pattern.Node.Any => { out.push(Inst.AnyByte) }
+    pattern.Node.Class(k) => { out.push(Inst.Class(k)) }
+    pattern.Node.Cat(items) => {
+      for i in 0..items.len() {
+        emit(pat, items.at(i), out)
+      }
+    }
+    pattern.Node.Alt(a, b) => {
+      let s = out.len()
+      out.push(Inst.Split(0, 0))
+      emit(pat, a, out)
+      let j = out.len()
+      out.push(Inst.Jmp(0))
+      out.set(s, Inst.Split(s + 1, out.len()))
+      emit(pat, b, out)
+      out.set(j, Inst.Jmp(out.len()))
+    }
+    pattern.Node.Group(g, c) => {
+      out.push(Inst.Save(2 * g))
+      emit(pat, c, out)
+      out.push(Inst.Save(2 * g + 1))
+    }
+    pattern.Node.Rep(c, min, max, greedy) => {
+      for _ in 0..min {
+        emit(pat, c, out)
+      }
+      if max < 0 {
+        let top = out.len()
+        out.push(Inst.Split(0, 0))
+        emit(pat, c, out)
+        out.push(Inst.Jmp(top))
+        let end = out.len()
+        out.set(top, choice(top + 1, end, greedy))
+      } else {
+        var holes = List<Int>.new()
+        for _ in min..max {
+          holes.push(out.len())
+          out.push(Inst.Split(0, 0))
+          emit(pat, c, out)
+        }
+        let end = out.len()
+        for k in 0..holes.len() {
+          let h = holes.at(k)
+          out.set(h, choice(h + 1, end, greedy))
+        }
+      }
+    }
+    pattern.Node.Bol => { out.push(Inst.Bol) }
+    pattern.Node.Eol => { out.push(Inst.Eol) }
+    pattern.Node.Back(g) => { out.push(Inst.Back(g)) }
+    pattern.Node.Empty => { }
+  }
+}
+
+// The program for a whole pattern: group 0 is the overall match, so slots 0 and 1 bracket it.
+pub fn compile(pat: view pattern.Pattern) -> List<Inst> {
+  var out = List<Inst>.new()
+  out.push(Inst.Save(0))
+  emit(pat, pat.root, out)
+  out.push(Inst.Save(1))
+  out.push(Inst.Match)
+  return out
+}
+
+// Runs the program at one start offset. caps is filled on success; on failure every undo has been applied.
+fn attempt(pat: view pattern.Pattern, prog: view List<Inst>, text: view String, start: Int, caps: mut List<Int>, steps: mut Int, limit: Int) -> Result<Bool, String> {
+  let n = text.len()
+  var stack = List<Frame>.new()
+  stack.push(Frame { pc: 0, sp: start, slot: -1, old: 0 })
+  while !stack.is_empty() {
+    let f = stack.pop()
+    if f.slot >= 0 {
+      caps.set(f.slot, f.old)
+      continue
+    }
+    var pc = f.pc
+    var sp = f.sp
+    var alive = true
+    while alive {
+      steps = steps + 1
+      if steps > limit {
+        return Err("backtrack limit of {limit} steps exceeded")
+      }
+      match prog.at(pc) {
+        Inst.Ch(b) => {
+          if sp < n && text.byte(sp) == b {
+            pc = pc + 1
+            sp = sp + 1
+          } else {
+            alive = false
+          }
+        }
+        Inst.AnyByte => {
+          if sp < n && text.byte(sp) != 10 {
+            pc = pc + 1
+            sp = sp + 1
+          } else {
+            alive = false
+          }
+        }
+        Inst.Class(k) => {
+          if sp < n && pat.sets.at(k).at(text.byte(sp)) {
+            pc = pc + 1
+            sp = sp + 1
+          } else {
+            alive = false
+          }
+        }
+        Inst.Split(x, y) => {
+          stack.push(Frame { pc: y, sp: sp, slot: -1, old: 0 })
+          pc = x
+        }
+        Inst.Jmp(x) => { pc = x }
+        Inst.Save(k) => {
+          stack.push(Frame { pc: 0, sp: 0, slot: k, old: caps.at(k) })
+          caps.set(k, sp)
+          pc = pc + 1
+        }
+        Inst.Bol => {
+          if sp == 0 {
+            pc = pc + 1
+          } else {
+            alive = false
+          }
+        }
+        Inst.Eol => {
+          if sp == n {
+            pc = pc + 1
+          } else {
+            alive = false
+          }
+        }
+        Inst.Back(g) => {
+          let s0 = caps.at(2 * g)
+          let e0 = caps.at(2 * g + 1)
+          if s0 < 0 || e0 < 0 || sp + (e0 - s0) > n {
+            alive = false
+          } else {
+            var same = true
+            for i in 0..e0 - s0 {
+              if text.byte(s0 + i) != text.byte(sp + i) {
+                same = false
+                break
+              }
+            }
+            if same {
+              sp = sp + (e0 - s0)
+              pc = pc + 1
+            } else {
+              alive = false
+            }
+          }
+        }
+        Inst.Match => { return Ok(true) }
+      }
+    }
+  }
+  return Ok(false)
+}
+
+// The leftmost match of prog in text, starting the search at offset from. The result holds the offsets of group 0 and
+// of every group (-1 for a group that did not take part), two entries per group; an empty list means no match.
+// steps counts the instructions run and is shared by all start offsets; a run past limit is an error.
+pub fn find(pat: view pattern.Pattern, prog: view List<Inst>, text: view String, from: Int, steps: mut Int, limit: Int) -> Result<List<Int>, String> {
+  var s = from
+  while s <= text.len() {
+    var caps = List<Int>.new()
+    for _ in 0..2 * pat.groups + 2 {
+      caps.push(-1)
+    }
+    if attempt(pat, prog, text, s, caps, steps, limit)? {
+      return Ok(move caps)
+    }
+    s = s + 1
+  }
+  return Ok(List<Int>.new())
+}

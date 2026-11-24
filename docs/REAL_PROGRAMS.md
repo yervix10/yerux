@@ -393,3 +393,59 @@ Fixed in the program: an input that is not UTF-8 was reported as a bare `cannot 
 
 Round 5 status: rxdfa, lzh, schedsim and jsonl are done with tests on both backends. The full suite is run after the
 last commit (see the commit log).
+
+## Round 6: btre, tmpl, forth
+
+### btre (`examples/real/btre/`): backtracking regex with captures
+
+A parser builds an arena of nodes (indices, no boxes); the compiler emits instructions for a backtracking machine with
+an explicit stack, and every capture write pushes an undo record. Supported: `.`, classes with ranges and negation,
+`\d \w \s` (and negations), greedy and lazy repeats including `{m,n}`, capturing groups, alternation, `^`, `$`,
+back-references `\1`-`\9`. A repeat of something that can match the empty string is rejected at parse time (its loop
+would never end). `--replace` follows sed's `s///g` rules for empty matches. A step limit (20 million instructions per
+line by default, `--limit N`) stops runaway backtracking with status 3.
+
+Checked by [tests/btre.sh](../tests/btre.sh): unit tests (both backends), exact report and replacement output for a
+fixed input, status codes, and 120 seeded patterns whose first match and groups must equal Python's `re` on every line
+(81 compared; 39 skipped because btre rejects them as possibly empty in a loop). About 16 s.
+
+Measured: `(a|aa)*c` on 42 `a`s with the default limit gives status 3 in 0.07 s.
+
+### tmpl (`examples/real/tmpl/`): mustache-style templates over std.json
+
+Values `{{x}}` (HTML-escaped), `{{{x}}}`, `{{.}}`, sections `{{#x}}..{{/x}}` (arrays repeat, truthy values render once),
+inverted sections, comments. Data comes from `std.json`. Lookups try the current item and then the root document; a
+missing name is an error in a value tag and falsy in a section. Errors carry the template line. No standalone-line
+rule: a comment or section tag on its own line leaves its newline. Arrays and objects in a value tag print as compact
+JSON (escaped), which is a choice, not a feature of the language.
+
+Checked by [tests/tmpl.sh](../tests/tmpl.sh): unit tests, a page template with exact output, the error messages
+(exact stderr, status 1; usage 2), and 150 seeded templates over random documents that both backends must render
+identically (105 rendered, 45 with a template or data error). About 27 s.
+
+### forth (`examples/real/forth/`): Forth interpreter
+
+Source is compiled to one flat list of operations: definitions sit behind a jump, so top-level code runs straight
+through; control structures are patched when their closing word is read. Words: arithmetic (wrapping, truncating
+division, division by zero is an error), the stack words, `. .s cr emit space ."`, cells with `variable`, `constant`
+(top level only), `if else then`, `begin until`, `begin while repeat`, `do loop` with `i`, `bye`, and both comment
+forms. Not supported: `j`, `leave`, `recurse`, `+loop`, `exit`, shifts. Bitwise `and or xor` are computed bit by bit,
+because Yerux has no bitwise operators (friction 17).
+
+Checked by [tests/forth.sh](../tests/forth.sh): unit tests, a FizzBuzz program with exact output, compile and runtime
+errors with exact messages (output printed before a runtime error is kept), and 120 random stack programs generated
+with a model of the stack, whose output is computed by an independent Python model (64-bit wrapping, truncating
+division, the most negative literal). Both backends must match. About 25 s.
+
+Measured: `1000000 0 do i 3 * . loop` (native) about 0.2 s.
+
+### Round 6 frictions (not changed; minimal repros)
+
+17. **No bitwise operators and no shifts on `Int`.** `let a = 6 & 3` gives "unexpected character '&'"; `|`, `^`, `~`
+    and `<<` are rejected the same way (`let a = 1 << 3` gives "expected an expression"). `truncate_uint64()` and
+    `truncate_int()` do convert between the two's complement forms, so a bit loop works (`bitwise` in forth/run.yx).
+18. **`pub` on a struct field is not accepted.** `struct S { pub x: Int }` gives "expected ':'" at `pub`, which points
+    at the wrong thing. Fields are visible to importing modules anyway, so the program simply drops `pub`.
+19. **`move` cannot apply to a call, and the message blames the function.** `let t = move f(s)` gives "variable 'f'
+    does not exist" with a "check the spelling" help line, though `f` exists. The call result needs no `move`
+    (`let t = f(s)`); the diagnostic should say that `move` takes a variable.

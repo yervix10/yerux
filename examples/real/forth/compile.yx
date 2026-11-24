@@ -1,0 +1,416 @@
+// forth: the compiler. Source text becomes one flat list of operations; a colon definition is compiled in place,
+// behind a jump, so that the top-level code runs straight through and skips the definitions. Control structures
+// are patched when their closing word is read, and a dictionary maps each (lower-case) name to its address.
+//
+// Compile errors are "LINE: message".
+// Words: numbers; + - * / mod negate abs min max; = <> < > 0= 0< 0> and or xor invert; dup drop swap over rot nip
+// tuck; . .s cr emit space ." text"; @ ! (cells); i (the innermost do-loop index); : name ... ; (definitions);
+// if else then; begin until; begin while repeat; do loop; variable name; constant name (a value taken from the stack
+// at top level); bye; ( comment ); \ comment to the end of the line.
+// Arithmetic is modular (it wraps, as in Forth). Division truncates toward zero and divides by zero is an error.
+pub enum Prim {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod,
+  Negate,
+  Abs,
+  Min,
+  Max,
+  Eq,
+  Ne,
+  Lt,
+  Gt,
+  ZeroEq,
+  ZeroLt,
+  ZeroGt,
+  And,
+  Or,
+  Xor,
+  Invert,
+  Dup,
+  Drop,
+  Swap,
+  Over,
+  Rot,
+  Nip,
+  Tuck,
+  Dot,
+  DotS,
+  Cr,
+  Emit,
+  Space,
+  Fetch,
+  Store,
+  LoopI,
+}
+
+pub enum Op {
+  Lit(Int),
+  Call(Int),
+  Run(Prim),
+  Jmp(Int),
+  Jz(Int),
+  Say(String),
+  DoSetup,
+  LoopBack(Int),
+  Ret,
+  Halt,
+}
+
+// Open control structures. at is the position of the operation to patch, or the start of the loop.
+struct Ctl {
+  kind: Int,
+  at: Int,
+}
+
+const K_IF: Int = 1
+const K_ELSE: Int = 2
+const K_BEGIN: Int = 3
+const K_WHILE: Int = 4
+const K_DO: Int = 5
+
+// A compiled program: the code and the variable cells, plus the compiler state (the source is kept for messages).
+pub struct Program {
+  src: String,
+  pos: Int,
+  code: List<Op>,
+  words: Map<String, Int>,
+  mem: List<Int>,
+  ctl: List<Ctl>,
+  defining: Bool,
+  def_at: Int,
+}
+
+fn is_space(b: Int) -> Bool {
+  return b == 32 || b == 9 || b == 10 || b == 13
+}
+
+fn err(c: view Program, msg: view String) -> String {
+  var line = 1
+  for i in 0..c.pos {
+    if c.src.byte(i) == 10 {
+      line = line + 1
+    }
+  }
+  return "{line}: {msg}"
+}
+
+// The next whitespace-delimited word, or None at the end of the source.
+fn next_word(c: mut Program) -> Option<String> {
+  while c.pos < c.src.len() && is_space(c.src.byte(c.pos)) {
+    c.pos = c.pos + 1
+  }
+  if c.pos >= c.src.len() {
+    return None
+  }
+  let start = c.pos
+  while c.pos < c.src.len() && !is_space(c.src.byte(c.pos)) {
+    c.pos = c.pos + 1
+  }
+  return Some(c.src.slice(start, c.pos).to_lower())
+}
+
+// Skips to just past the byte `stop`; false when the source ends first.
+fn skip_past(c: mut Program, stop: Int) -> Bool {
+  while c.pos < c.src.len() {
+    let b = c.src.byte(c.pos)
+    c.pos = c.pos + 1
+    if b == stop {
+      return true
+    }
+  }
+  return false
+}
+
+fn prim_of(w: view String) -> Option<Prim> {
+  if w.eq("+") { return Some(Prim.Add) }
+  if w.eq("-") { return Some(Prim.Sub) }
+  if w.eq("*") { return Some(Prim.Mul) }
+  if w.eq("/") { return Some(Prim.Div) }
+  if w.eq("mod") { return Some(Prim.Mod) }
+  if w.eq("negate") { return Some(Prim.Negate) }
+  if w.eq("abs") { return Some(Prim.Abs) }
+  if w.eq("min") { return Some(Prim.Min) }
+  if w.eq("max") { return Some(Prim.Max) }
+  if w.eq("=") { return Some(Prim.Eq) }
+  if w.eq("<>") { return Some(Prim.Ne) }
+  if w.eq("<") { return Some(Prim.Lt) }
+  if w.eq(">") { return Some(Prim.Gt) }
+  if w.eq("0=") { return Some(Prim.ZeroEq) }
+  if w.eq("0<") { return Some(Prim.ZeroLt) }
+  if w.eq("0>") { return Some(Prim.ZeroGt) }
+  if w.eq("and") { return Some(Prim.And) }
+  if w.eq("or") { return Some(Prim.Or) }
+  if w.eq("xor") { return Some(Prim.Xor) }
+  if w.eq("invert") { return Some(Prim.Invert) }
+  if w.eq("dup") { return Some(Prim.Dup) }
+  if w.eq("drop") { return Some(Prim.Drop) }
+  if w.eq("swap") { return Some(Prim.Swap) }
+  if w.eq("over") { return Some(Prim.Over) }
+  if w.eq("rot") { return Some(Prim.Rot) }
+  if w.eq("nip") { return Some(Prim.Nip) }
+  if w.eq("tuck") { return Some(Prim.Tuck) }
+  if w.eq(".") { return Some(Prim.Dot) }
+  if w.eq(".s") { return Some(Prim.DotS) }
+  if w.eq("cr") { return Some(Prim.Cr) }
+  if w.eq("emit") { return Some(Prim.Emit) }
+  if w.eq("space") { return Some(Prim.Space) }
+  if w.eq("@") { return Some(Prim.Fetch) }
+  if w.eq("!") { return Some(Prim.Store) }
+  if w.eq("i") { return Some(Prim.LoopI) }
+  return None
+}
+
+// Defines a variable (or constant) word over memory cell `cell`: it pushes the cell address, or the cell's value.
+fn define_cell(c: mut Program, name: view String, cell: Int, fetch: Bool) {
+  let skip = c.code.len()
+  c.code.push(Op.Jmp(0))
+  c.words.insert(String.from(name), c.code.len())
+  c.code.push(Op.Lit(cell))
+  if fetch {
+    c.code.push(Op.Run(Prim.Fetch))
+  }
+  c.code.push(Op.Ret)
+  c.code.set(skip, Op.Jmp(c.code.len()))
+}
+
+// Patches the jump at `at` (a Jz or a Jmp) to go to `target`.
+fn patch(c: mut Program, at: Int, target: Int) {
+  match c.code.at(at) {
+    Op.Jz(_) => { c.code.set(at, Op.Jz(target)) }
+    Op.Jmp(_) => { c.code.set(at, Op.Jmp(target)) }
+    _ => { }
+  }
+}
+
+fn pop_ctl(c: mut Program, kind: Int) -> Result<Int, String> {
+  if c.ctl.is_empty() {
+    return Err(err(c, "no open structure for this word"))
+  }
+  let top = c.ctl.pop()
+  if top.kind != kind {
+    return Err(err(c, "this word does not close the structure that is open"))
+  }
+  return Ok(top.at)
+}
+
+// A decimal number; accumulated negative so that the most negative Int reads back.
+fn number_of(w: view String) -> Option<Int> {
+  if w.is_empty() {
+    return None
+  }
+  var n = 0
+  var i = 0
+  var neg = false
+  if w.byte(0) == '-'.to_int() {
+    neg = true
+    i = 1
+  }
+  if i >= w.len() {
+    return None
+  }
+  let lowest = 0 - 9223372036854775807 - 1
+  while i < w.len() {
+    let b = w.byte(i)
+    if b < '0'.to_int() || b > '9'.to_int() {
+      return None
+    }
+    let d = b - '0'.to_int()
+    if neg {
+      if n < (lowest + d) / 10 {
+        return None
+      }
+      n = n * 10 - d
+    } else {
+      if n > (9223372036854775807 - d) / 10 {
+        return None
+      }
+      n = n * 10 + d
+    }
+    i = i + 1
+  }
+  return Some(n)
+}
+
+fn word_step(c: mut Program, w: view String) -> Result<Bool, String> {
+  if w.eq("\\") {
+    while c.pos < c.src.len() && c.src.byte(c.pos) != 10 {
+      c.pos = c.pos + 1
+    }
+    return Ok(true)
+  }
+  if w.eq("(") {
+    if !skip_past(c, ')'.to_int()) {
+      return Err(err(c, "unclosed ( comment"))
+    }
+    return Ok(true)
+  }
+  if w.eq(".\"") {
+    // The text runs to the next quote; one space after the word is not part of it.
+    if c.pos < c.src.len() && c.src.byte(c.pos) == 32 {
+      c.pos = c.pos + 1
+    }
+    let start = c.pos
+    if !skip_past(c, '"'.to_int()) {
+      return Err(err(c, "unclosed .\" text"))
+    }
+    c.code.push(Op.Say(c.src.slice(start, c.pos - 1)))
+    return Ok(true)
+  }
+  if w.eq(":") {
+    if c.defining {
+      return Err(err(c, "a definition cannot contain another definition"))
+    }
+    let name = match next_word(c) {
+      Some(n) => move n
+      None => { return Err(err(c, "':' needs a name")) }
+    }
+    c.defining = true
+    c.def_at = c.code.len()
+    c.code.push(Op.Jmp(0))
+    c.words.insert(move name, c.code.len())
+    return Ok(true)
+  }
+  if w.eq(";") {
+    if !c.defining {
+      return Err(err(c, "';' without ':'"))
+    }
+    if !c.ctl.is_empty() {
+      return Err(err(c, "a control structure is still open at ';'"))
+    }
+    c.code.push(Op.Ret)
+    c.code.set(c.def_at, Op.Jmp(c.code.len()))
+    c.defining = false
+    return Ok(true)
+  }
+  if w.eq("if") {
+    c.ctl.push(Ctl { kind: K_IF, at: c.code.len() })
+    c.code.push(Op.Jz(0))
+    return Ok(true)
+  }
+  if w.eq("else") {
+    let at_if = pop_ctl(c, K_IF)?
+    c.ctl.push(Ctl { kind: K_ELSE, at: c.code.len() })
+    c.code.push(Op.Jmp(0))
+    patch(c, at_if, c.code.len())
+    return Ok(true)
+  }
+  if w.eq("then") {
+    if c.ctl.is_empty() {
+      return Err(err(c, "'then' without 'if'"))
+    }
+    let top = c.ctl.pop()
+    if top.kind != K_IF && top.kind != K_ELSE {
+      return Err(err(c, "'then' without 'if'"))
+    }
+    patch(c, top.at, c.code.len())
+    return Ok(true)
+  }
+  if w.eq("begin") {
+    c.ctl.push(Ctl { kind: K_BEGIN, at: c.code.len() })
+    return Ok(true)
+  }
+  if w.eq("until") {
+    let start = pop_ctl(c, K_BEGIN)?
+    c.code.push(Op.Jz(start))
+    return Ok(true)
+  }
+  if w.eq("while") {
+    if c.ctl.is_empty() || c.ctl.at(c.ctl.len() - 1).kind != K_BEGIN {
+      return Err(err(c, "'while' without 'begin'"))
+    }
+    c.ctl.push(Ctl { kind: K_WHILE, at: c.code.len() })
+    c.code.push(Op.Jz(0))
+    return Ok(true)
+  }
+  if w.eq("repeat") {
+    let at_while = pop_ctl(c, K_WHILE)?
+    let start = pop_ctl(c, K_BEGIN)?
+    c.code.push(Op.Jmp(start))
+    patch(c, at_while, c.code.len())
+    return Ok(true)
+  }
+  if w.eq("do") {
+    c.code.push(Op.DoSetup)
+    c.ctl.push(Ctl { kind: K_DO, at: c.code.len() })
+    return Ok(true)
+  }
+  if w.eq("loop") {
+    let start = pop_ctl(c, K_DO)?
+    c.code.push(Op.LoopBack(start))
+    return Ok(true)
+  }
+  if w.eq("bye") {
+    c.code.push(Op.Halt)
+    return Ok(true)
+  }
+  if w.eq("variable") || w.eq("constant") {
+    if c.defining {
+      return Err(err(c, "'{w}' is only allowed at top level"))
+    }
+    let name = match next_word(c) {
+      Some(n) => move n
+      None => { return Err(err(c, "'{w}' needs a name")) }
+    }
+    let cell = c.mem.len()
+    c.mem.push(0)
+    if w.eq("variable") {
+      define_cell(c, name, cell, false)
+    } else {
+      // The value is on the stack here: store it in the cell, then the name fetches it.
+      c.code.push(Op.Lit(cell))
+      c.code.push(Op.Run(Prim.Store))
+      define_cell(c, name, cell, true)
+    }
+    return Ok(true)
+  }
+  if c.words.contains(w) {
+    c.code.push(Op.Call(c.words.get(w)))
+    return Ok(true)
+  }
+  match prim_of(w) {
+    Some(p) => {
+      c.code.push(Op.Run(p))
+      return Ok(true)
+    }
+    None => { }
+  }
+  match number_of(w) {
+    Some(n) => {
+      c.code.push(Op.Lit(n))
+      return Ok(true)
+    }
+    None => { }
+  }
+  return Err(err(c, "unknown word '{w}'"))
+}
+
+// Compiles a whole source text.
+pub fn compile(src: view String) -> Result<Program, String> {
+  var c = Program {
+    src: String.from(src),
+    pos: 0,
+    code: List<Op>.new(),
+    words: Map<String, Int>.new(),
+    mem: List<Int>.new(),
+    ctl: List<Ctl>.new(),
+    defining: false,
+    def_at: 0,
+  }
+  while true {
+    match next_word(c) {
+      None => { break }
+      Some(w) => { word_step(c, w)? }
+    }
+  }
+  if c.defining {
+    return Err(err(c, "a definition is not closed by ';'"))
+  }
+  if !c.ctl.is_empty() {
+    return Err(err(c, "a control structure is not closed"))
+  }
+  c.code.push(Op.Halt)
+  return Ok(move c)
+}

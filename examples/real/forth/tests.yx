@@ -1,0 +1,79 @@
+// Unit tests: `yerux test examples/real/forth/tests.yx`
+import compile
+import run
+
+// The output of a program, or "ERR: " and the compile or runtime message.
+fn eval(src: view String) -> String {
+  let prog = match compile.compile(src) {
+    Ok(p) => move p
+    Err(e) => { return "ERR: {e}" }
+  }
+  var out = String.new()
+  match run.run(prog, out) {
+    Ok(_) => { return out }
+    Err(e) => { return "{out}ERR: {e}" }
+  }
+}
+
+test "arithmetic and printing" {
+  assert(eval("1 2 + . 7 3 - . 4 5 * . 9 4 / .").eq("3 4 20 2 "))
+  assert(eval("-7 2 / . -7 2 mod . 7 -2 mod .").eq("-3 -1 1 "))
+  assert(eval("5 negate . -5 abs . 3 9 min . 3 9 max .").eq("-5 5 3 9 "))
+  assert(eval("9223372036854775807 1 + .").eq("-9223372036854775808 "))
+  assert(eval("0 invert . 6 3 and . 6 3 or . 6 3 xor .").eq("-1 2 7 5 "))
+  assert(eval("1 2 = . 2 2 = . 1 2 <> . 1 2 < . 2 1 > . 0 0= . 3 0< . -3 0< . 3 0> .").eq("0 -1 -1 -1 -1 -1 0 -1 -1 "))
+}
+
+test "data stack words" {
+  assert(eval("1 2 swap . . ").eq("1 2 "))
+  assert(eval("1 2 over . . .").eq("1 2 1 "))
+  assert(eval("1 2 3 rot . . .").eq("1 3 2 "))
+  assert(eval("1 2 nip . ").eq("2 "))
+  assert(eval("1 2 tuck . . .").eq("2 1 2 "))
+  assert(eval("4 dup . . ").eq("4 4 "))
+  assert(eval("1 2 3 drop .s").eq("<2> 1 2 "))
+}
+
+test "definitions, nested calls and comments" {
+  assert(eval(": sq dup * ;\n5 sq . 3 sq sq .").eq("25 81 "))
+  assert(eval("( a comment ) 1 . \\ to the end\n2 .").eq("1 2 "))
+  assert(eval(": a 1 ; : b a a + ; b .").eq("2 "))
+  assert(eval("2 dup + .").eq("4 "))
+  assert(eval(": greet .\" hi there\" cr ; greet").eq("hi there\n"))
+}
+
+test "if, begin, do" {
+  assert(eval("1 if 7 . then 0 if 8 . then").eq("7 "))
+  assert(eval("0 if 7 . else 8 . then").eq("8 "))
+  assert(eval("3 0 do i . loop").eq("0 1 2 "))
+  assert(eval("0 begin 1 + dup . dup 3 = until drop").eq("1 2 3 "))
+  assert(eval("0 begin dup 3 < while dup . 1 + repeat drop").eq("0 1 2 "))
+  assert(eval("2 0 do 2 0 do i . loop loop").eq("0 1 0 1 "))
+}
+
+test "variables and constants" {
+  assert(eval("variable v 3 v ! v @ . v @ v @ + .").eq("3 6 "))
+  assert(eval("7 constant k k . k k + .").eq("7 14 "))
+  assert(eval("variable a variable b 1 a ! 2 b ! a @ b @ + .").eq("3 "))
+}
+
+test "compile errors name the line" {
+  assert(eval("1 +\nfoo").eq("ERR: 2: unknown word 'foo'"))
+  assert(eval(": x 1 ;\n: y 2").eq("ERR: 2: a definition is not closed by ';'"))
+  assert(eval(";").eq("ERR: 1: ';' without ':'"))
+  assert(eval("if 1").eq("ERR: 1: a control structure is not closed"))
+  assert(eval("1 then").eq("ERR: 1: 'then' without 'if'"))
+  assert(eval("begin 1").eq("ERR: 1: a control structure is not closed"))
+  assert(eval(": w 1 variable v ;").eq("ERR: 1: 'variable' is only allowed at top level"))
+  assert(eval("( unclosed").eq("ERR: 1: unclosed ( comment"))
+  assert(eval(".\" open").eq("ERR: 1: unclosed .\" text"))
+}
+
+test "runtime errors keep the output so far" {
+  assert(eval("1 . 0 0 /").eq("1 ERR: division by zero"))
+  assert(eval("1 +").eq("ERR: data stack underflow"))
+  assert(eval("300 emit").eq("ERR: emit: 300 is not a byte"))
+  assert(eval("5 @").eq("ERR: address 5 is not a cell"))
+  assert(eval("i").eq("ERR: 'i' outside a loop"))
+  assert(eval(": r r ; r").eq("ERR: return stack overflow"))
+}

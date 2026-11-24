@@ -1,0 +1,123 @@
+// Unit tests: `yerux test examples/real/btre/tests.yx`
+import pattern
+import vm
+
+// The capture offsets of the first match of pt in text, or an empty list when there is none (or the pattern is bad).
+fn first(pt: view String, text: view String) -> List<Int> {
+  match pattern.parse(pt) {
+    Ok(p) => {
+      let prog = vm.compile(p)
+      var steps = 0
+      match vm.find(p, prog, text, 0, steps, vm.DEFAULT_LIMIT) {
+        Ok(caps) => { return caps }
+        Err(_) => { return List<Int>.new() }
+      }
+    }
+    Err(_) => { return List<Int>.new() }
+  }
+}
+
+fn text_of(caps: view List<Int>, text: view String, g: Int) -> String {
+  if caps.at(2 * g) < 0 {
+    return String.from("-")
+  }
+  return String.from(text.slice(caps.at(2 * g), caps.at(2 * g + 1)))
+}
+
+fn bad(pt: view String) -> Bool {
+  match pattern.parse(pt) {
+    Ok(_) => { return false }
+    Err(_) => { return true }
+  }
+}
+
+test "literals, dot and anchors" {
+  assert(text_of(first("abc", "xxabcx"), "xxabcx", 0).eq("abc"))
+  assert(text_of(first("a.c", "zzabc"), "zzabc", 0).eq("abc"))
+  assert(first("a.c", "a\nc").len() == 0)
+  assert(first("^ab", "xab").len() == 0)
+  assert(first("ab$", "abx").len() == 0)
+  assert(first("^$", "").len() == 2)
+  let dot = first("\\.", "a.b")
+  assert(dot.at(0) == 1)
+}
+
+test "greedy repeats take the most, lazy ones the least" {
+  let t = "<a><b>"
+  assert(text_of(first("<.*>", t), t, 0).eq("<a><b>"))
+  assert(text_of(first("<.*?>", t), t, 0).eq("<a>"))
+  assert(text_of(first("a{{2,3}}", "aaaa"), "aaaa", 0).eq("aaa"))
+  assert(text_of(first("a{{2,3}}?", "aaaa"), "aaaa", 0).eq("aa"))
+  assert(text_of(first("a{{3}}", "aaaa"), "aaaa", 0).eq("aaa"))
+  assert(first("a{{3,}}", "aa").len() == 0)
+  assert(text_of(first("x?y", "y"), "y", 0).eq("y"))
+}
+
+test "alternation prefers the first branch that leads to a match" {
+  let t = "abcd"
+  assert(text_of(first("(a|ab)(c|bcd)(d*)", t), t, 0).eq("abcd"))
+  assert(text_of(first("(a|ab)(c|bcd)", t), t, 1).eq("a"))
+  assert(text_of(first("cat|dog", "hotdog"), "hotdog", 0).eq("dog"))
+}
+
+test "groups record their last iteration and unset groups are -1" {
+  let t = "k=v;k2=v2"
+  let caps = first("(\\w+)=(\\w+)", t)
+  assert(text_of(caps, t, 1).eq("k"))
+  assert(text_of(caps, t, 2).eq("v"))
+  let rep = first("(a)+", "aaa")
+  assert(text_of(rep, "aaa", 1).eq("a"))
+  assert(rep.at(2) == 2)
+  let opt = first("(x)?y", "y")
+  assert(opt.at(2) == -1)
+  assert(text_of(opt, "y", 1).eq("-"))
+}
+
+test "back-references repeat the text of a completed group" {
+  assert(text_of(first("(\\d+)-\\1", "a 12-12 b"), "a 12-12 b", 0).eq("12-12"))
+  assert(first("(\\d+)-\\1", "12-13").len() == 0)
+  assert(first("(a)\\1", "ab").len() == 0)
+  assert(bad("\\1(a)"))
+}
+
+test "classes, escapes and negations" {
+  let t = "ab 12_Z"
+  assert(text_of(first("\\w+", t), t, 0).eq("ab"))
+  assert(text_of(first("\\d+", t), t, 0).eq("12"))
+  assert(text_of(first("\\s\\S+", t), t, 0).eq(" 12_Z"))
+  assert(text_of(first("[^a-z ]+", t), t, 0).eq("12_Z"))
+  assert(text_of(first("[]x]+", "]x]"), "]x]", 0).eq("]x]"))
+  assert(text_of(first("[a\\-c]+", "-a"), "-a", 0).eq("-a"))
+  assert(text_of(first("[\\d.]+", "v1.5x"), "v1.5x", 0).eq("1.5"))
+  assert(text_of(first("[\\t]", "a\tb"), "a\tb", 0).eq("\t"))
+}
+
+test "a pattern error names the column" {
+  assert(bad("a("))
+  assert(bad("a)"))
+  assert(bad("[a"))
+  assert(bad("*a"))
+  assert(bad("a**"))
+  assert(bad("a{{3,1}}"))
+  assert(bad("a{{1001}}"))
+  assert(bad("(a|)*"))
+  assert(bad("a\\"))
+  match pattern.parse("ab(c") {
+    Ok(_) => { assert(false) }
+    Err(e) => { assert(e == "column 3: unclosed group") }
+  }
+}
+
+test "the step limit stops runaway backtracking" {
+  match pattern.parse("(a|aa)*c") {
+    Ok(p) => {
+      let prog = vm.compile(p)
+      var steps = 0
+      match vm.find(p, prog, "aaaaaaaaaaaaaaaaaaaaaaaa", 0, steps, 100000) {
+        Ok(_) => { assert(false) }
+        Err(_) => { assert(steps > 100000) }
+      }
+    }
+    Err(_) => { assert(false) }
+  }
+}
