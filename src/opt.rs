@@ -1411,6 +1411,14 @@ fn rstep(i: &Inst, st: &mut RState) -> Rew {
     Rew::Keep
 }
 
+/// `state_join(old, new) == *old`, decided without building the join.
+fn state_absorbs(old: &RState, new: &RState) -> bool {
+    old.r.iter().zip(&new.r).all(|(x, y)| y.0 >= x.0 && y.1 <= x.1)
+        && old.lt.iter().all(|k| new.lt.contains(k))
+        && old.conds.iter().all(|(k, v)| new.conds.get(k) == Some(v))
+        && old.loads.iter().all(|(k, v)| new.loads.get(k) == Some(v))
+}
+
 fn state_join(a: &RState, b: &RState) -> RState {
     RState {
         r: a.r
@@ -1439,47 +1447,64 @@ fn state_join(a: &RState, b: &RState) -> RState {
 /// `only` (assigned inside the loop; None = all): a vreg the loop never assigns changes only through the outer
 /// loops' own widening, and widening it here would throw away precision that narrowing cannot win back.
 const DELAY: u8 = 4;
-fn state_widen(
-    old: &RState,
+
+/// `state_join` that reuses the allocations of `a`.
+fn state_join_in_place(mut a: RState, b: &RState) -> RState {
+    for (x, y) in a.r.iter_mut().zip(&b.r) {
+        x.0 = x.0.min(y.0);
+        x.1 = x.1.max(y.1);
+    }
+    a.lt.retain(|k| b.lt.contains(k));
+    a.conds.retain(|k, v| b.conds.get(k) == Some(v));
+    a.loads.retain(|k, v| b.loads.get(k) == Some(v));
+    a
+}
+
+/// `state_widen` that reuses the allocations of `old` (same result).
+fn state_widen_in_place(
+    mut st: RState,
     new: &RState,
     only: Option<&Vec<bool>>,
-    cnt: &mut Vec<u8>,
+    cnt: &mut [u8],
     th: &[i64],
 ) -> RState {
-    let mut j = state_join(old, new);
-    for k in 0..j.r.len() {
-        if j.r[k] == old.r[k] {
+    st.lt.retain(|k| new.lt.contains(k));
+    st.conds.retain(|k, v| new.conds.get(k) == Some(v));
+    st.loads.retain(|k, v| new.loads.get(k) == Some(v));
+    for k in 0..st.r.len() {
+        let o = st.r[k];
+        let y = new.r[k];
+        let mut j = (o.0.min(y.0), o.1.max(y.1));
+        if j == o {
             continue;
         }
         cnt[k] = cnt[k].saturating_add(1);
-        if cnt[k] <= DELAY || only.is_some_and(|o| !o[k]) {
-            continue;
+        if !(cnt[k] <= DELAY || only.is_some_and(|f| !f[k])) {
+            if j.0 < o.0 {
+                let p = th.partition_point(|&t| t <= j.0);
+                j.0 = if p == 0 { i64::MIN } else { th[p - 1] };
+            }
+            if j.1 > o.1 {
+                let p = th.partition_point(|&t| t < j.1);
+                j.1 = if p == th.len() { i64::MAX } else { th[p] };
+            }
         }
-        // jump to the next program constant (or the type bound) instead of straight to infinity
-        if j.r[k].0 < old.r[k].0 {
-            let p = th.partition_point(|&t| t <= j.r[k].0);
-            j.r[k].0 = if p == 0 { i64::MIN } else { th[p - 1] };
-        }
-        if j.r[k].1 > old.r[k].1 {
-            let p = th.partition_point(|&t| t < j.r[k].1);
-            j.r[k].1 = if p == th.len() { i64::MAX } else { th[p] };
-        }
+        st.r[k] = j;
     }
-    j
+    st
 }
 
 /// Edge states leaving block `b` given the state after its instructions (None = infeasible edge).
-fn edge_states(t: &Term, st: &RState) -> Vec<(usize, Option<RState>)> {
+fn edge_states(t: &Term, st: RState) -> Vec<(usize, Option<RState>)> {
     match t {
-        Term::Jmp(x) => vec![(*x, Some(st.clone()))],
+        Term::Jmp(x) => vec![(*x, Some(st))],
         Term::Br(c, tt, e) => {
-            let mk = |truth: bool| -> Option<RState> {
-                let mut s = st.clone();
+            let mk = |mut s: RState, truth: bool| -> Option<RState> {
                 let r = s.r[*c];
                 if truth && r == (0, 0) || !truth && (r.0 > 0 || r.1 < 0) {
                     return None;
                 }
-                if let Some(&(op, a, b)) = st.conds.get(c) {
+                if let Some(&(op, a, b)) = s.conds.get(c) {
                     let op = if truth { op } else { cmp_negate(op) };
                     if !refine(&mut s, op, a, b) {
                         return None;
@@ -1492,7 +1517,9 @@ fn edge_states(t: &Term, st: &RState) -> Vec<(usize, Option<RState>)> {
                 }
                 Some(s)
             };
-            vec![(*tt, mk(true)), (*e, mk(false))]
+            let on_true = mk(st.clone(), true);
+            let on_false = mk(st, false);
+            vec![(*tt, on_true), (*e, on_false)]
         }
         _ => vec![],
     }
@@ -1626,6 +1653,10 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
     inn[0] = Some(entry.clone());
     let mut visits = vec![0usize; n];
     let mut cnt: Vec<Vec<u8>> = vec![vec![0u8; nv]; n];
+    // a block whose in-state has not changed since it was last processed would only re-send the same
+    // edge states, which the joins already absorbed (join is idempotent): skip it
+    let mut dirty = vec![false; n];
+    dirty[0] = true;
     let mut changed = true;
     let mut rounds = 0;
     while changed {
@@ -1635,30 +1666,35 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
             return; // give up (should not happen): leave the function untouched
         }
         for &b in &order {
+            if !dirty[b] {
+                continue;
+            }
+            dirty[b] = false;
             let Some(mut st) = inn[b].clone() else {
                 continue;
             };
             run_block(b, &mut st);
-            for (s, es) in edge_states(&f.blocks[b].term, &st) {
+            for (s, es) in edge_states(&f.blocks[b].term, st) {
                 let Some(es) = es else { continue };
-                let new = match &inn[s] {
+                let new = match inn[s].take() {
                     None => es,
                     Some(old) => {
-                        let j = state_join(old, &es);
-                        if j == *old {
+                        if state_absorbs(&old, &es) {
+                            inn[s] = Some(old);
                             continue;
                         }
                         visits[s] += 1;
                         if visits[s] > 60 {
-                            state_widen(old, &es, None, &mut cnt[s], &th)
+                            state_widen_in_place(old, &es, None, &mut cnt[s], &th)
                         } else if header[s] {
-                            state_widen(old, &es, loop_defs[s].as_ref(), &mut cnt[s], &th)
+                            state_widen_in_place(old, &es, loop_defs[s].as_ref(), &mut cnt[s], &th)
                         } else {
-                            j
+                            state_join_in_place(old, &es)
                         }
                     }
                 };
                 inn[s] = Some(new);
+                dirty[s] = true;
                 changed = true;
             }
         }
@@ -1672,7 +1708,7 @@ fn rangeopt_impl(f: &mut IrFunc, mut collect: Option<&mut Vec<CheckInfo>>) {
                 continue;
             };
             run_block(b, &mut st);
-            for (s, es) in edge_states(&f.blocks[b].term, &st) {
+            for (s, es) in edge_states(&f.blocks[b].term, st) {
                 let Some(es) = es else { continue };
                 new[s] = Some(match &new[s] {
                     None => es,

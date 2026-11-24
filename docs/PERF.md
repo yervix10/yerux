@@ -348,3 +348,62 @@ cmov equals the branching code (0.034 vs 0.034). Loop-invariant loads were neutr
 Not done: the spilled loop invariant `first` of `String.find_from` (the allocator keeps it in memory because the
 inner loop has higher weight) and the inner bounds check `i + j < n` (needs linear reasoning the range analysis
 does not have). Both remain open.
+
+## Compilation: time, memory and binary size (round 10)
+
+Measured on x86-64 Linux, release compiler, 12 CPUs shared with other sessions (load 9-11), so times are the minimum
+user+system CPU of three runs, not wall time; `apiserver.yx` etc. are `yerux build FILE --native`. Memory is peak RSS.
+There is no `perf` on the host: the profile is `YERUX_PROFILE=1` plus counters added temporarily to the pass.
+
+**Where the time goes.** For `examples/real/webkv`, native optimization is about 90% of `build --native` and
+`rangeopt` (interval analysis) about 55-65% of that, almost all on one function (`std.http.server.parse`, 1334 blocks and
+1399 vregs after inlining: 52000 block visits, 14 ms to re-send an in-state each time). Next: `coalesce`, `dce`, `constprop`
+(each 4-5%). `yerux build` without `--native` is dominated by the C compiler (0.7-11 s), not by Yerux (0.05-0.3 s up to C text).
+
+**What changed (output byte for byte unchanged).** The `rangeopt` fixpoint (1) skips blocks whose in-state did not
+change since they were last processed (their edge states are already absorbed by the joins), (2) tests "does this edge
+add anything" without building the join, and (3) joins and widens in place instead of allocating a fresh state per
+update. Checked on 26 programs (`examples/real/*`, `selfhost/yerux-self.yx`, `tests/http_server_*`, examples 11/13/15):
+the C text and the native ELF of every one are identical to those of the previous compiler (`cmp`, 26/26 each). gcc-built
+binaries are not compared: two builds of the same C file by gcc already differ.
+
+| Program (native build) | CPU before | CPU after | Peak RSS |
+|---|---:|---:|---:|
+| `examples/real/webkv/main.yx` | 4.65 s | 3.03 s | 75 -> 76 MB |
+| `examples/real/apiserver.yx` | 1.12 s | 0.74 s | 20 MB |
+| `selfhost/yerux-self.yx` | 3.21 s | 2.09 s | 33 MB |
+| `examples/real/httpjson/main.yx` | 1.22 s | 0.65 s | 17 MB |
+| `examples/real/minidb.yx` | 1.91 s | 0.90 s | 21 -> 22 MB |
+
+The remaining cost is the number of visits (widening changes a state about 38 times per block), not the cost of a visit; reducing
+it would change the analysis result, so it was left alone.
+
+**Binary size: tree-shaking.** The x86-64 native backend emitted every function of every imported module, reachable or not
+(AArch64 and Windows already dropped them). It now runs `discard_unused_functions` (calls, function addresses and vtables
+from `main`) and drops the literals only dead code used. `--debug` and `--dwarf` builds keep everything (their frame
+tables describe every function). Hello world is unchanged (3,357 B); `import std.io` without using it costs 1 KB (was 3 KB),
+a `List` program with an unused `std.io` import went 35,403 -> 11,082 B. Test: `tests/native_shake.sh`.
+
+| Program (native ELF) | before (B) | after (B) | saved |
+|---|---:|---:|---:|
+| `examples/real/apiserver.yx` | 292,776 | 228,238 | 22% |
+| `examples/real/calc.yx` | 42,306 | 22,398 | 47% |
+| `examples/real/kv.yx` | 48,168 | 28,228 | 41% |
+| `examples/real/md2html.yx` | 116,920 | 66,465 | 43% |
+| `examples/real/minidb.yx` | 265,288 | 148,632 | 44% |
+| `examples/real/minimake.yx` | 235,664 | 103,628 | 56% |
+| `examples/real/sumtool.yx` | 249,152 | 119,248 | 52% |
+| `examples/real/datatool/main.yx` | 181,664 | 127,608 | 30% |
+| `examples/real/difftool/main.yx` | 117,456 | 66,479 | 43% |
+| `examples/real/edlite/main.yx` | 118,632 | 68,623 | 42% |
+| `examples/real/httpjson/main.yx` | 165,528 | 112,288 | 32% |
+| `examples/real/lisp/main.yx` | 135,024 | 83,352 | 38% |
+| `examples/real/mdconv/main.yx` | 110,000 | 57,413 | 48% |
+| `examples/real/minidb/main.yx` | 222,048 | 94,349 | 58% |
+| `examples/real/minimake/main.yx` | 235,544 | 103,513 | 56% |
+| `examples/real/raytrace/main.yx` | 97,440 | 44,920 | 54% |
+| `examples/real/rxdfa/main.yx` | 154,904 | 94,804 | 39% |
+| `examples/real/webkv/main.yx` | 351,560 | 272,306 | 23% |
+| `examples/real/yxscan/main.yx` | 228,000 | 107,767 | 53% |
+| `selfhost/yerux-self.yx` | 340,584 | 199,846 | 41% |
+| total | 3,708,658 | 2,150,105 | 42% |
