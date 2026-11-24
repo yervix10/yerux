@@ -238,6 +238,15 @@ fn is_place(e: &Expr) -> bool {
     matches!(e.k, EK::Var(..) | EK::Field(..)) || is_at(e)
 }
 // ── constructors for the synthetic code that `for` loops are rewritten into ──
+/// `None`, `Maybe.None`: a generic enum variant without payload whose type arguments are not written
+fn is_bare_variant(e: &Expr) -> bool {
+    match &e.k {
+        EK::Var(n, _) => n == "None",
+        EK::GenVariant { targs: None, args, .. } => args.is_empty(),
+        _ => false,
+    }
+}
+
 fn sx(k: EK, pos: Pos) -> Expr {
     Expr {
         k,
@@ -561,6 +570,7 @@ struct Checker<'a> {
     capture_ids: HashSet<usize>, // variables that are captures inside a closure body
     closure_borrow_pos: HashSet<(usize, usize)>, // positions of closure literals that borrow variables
     ret_free: bool,        // checking a closure whose result type is not known yet
+    pending_bare: usize,   // `return None`-like returns of a closure whose result type was still unknown
     free_pids: Vec<usize>, // type parameters of the generic callee that are still unknown
     closure_loans: HashMap<usize, Vec<(usize, u8, Pos)>>, // hidden closure variable -> what it borrows
 }
@@ -1009,6 +1019,35 @@ impl<'a> Checker<'a> {
                     || self.concat_chain(a)
             }
             _ => false,
+        }
+    }
+
+    /// Returns left unchecked by `return None` while the closure's result type was unknown: check them now, with
+    /// the result type that a later return fixed (or without one, which reports the usual inference error).
+    pub(super) fn fix_bare_returns(&mut self, body: &mut [Stmt], hint: Option<Ty>) {
+        for st in body {
+            match &mut st.k {
+                SK::Return(Some(e)) if is_bare_variant(e) => {
+                    self.hint = hint;
+                    let t = self.expr(e);
+                    if let Some(r) = hint {
+                        self.expect(t, r, e.pos);
+                    }
+                }
+                SK::Block(b, _) | SK::While(_, b, _) => self.fix_bare_returns(b, hint),
+                SK::If(_, yes, no) => {
+                    self.fix_bare_returns(yes, hint);
+                    if let Some(no) = no {
+                        self.fix_bare_returns(no, hint);
+                    }
+                }
+                SK::Match(_, arms) => {
+                    for arm in arms {
+                        self.fix_bare_returns(&mut arm.body, hint);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -4641,6 +4680,13 @@ impl<'a> Checker<'a> {
                         }
                         e.k = EK::Move(n, 0);
                     }
+                    if self.ret_free && is_bare_variant(e) {
+                        // `return None` before any return that says what the closure produces: check it again
+                        // once a later return has fixed the result type (see `fix_bare_returns`)
+                        self.pending_bare += 1;
+                        self.st.dead = true;
+                        return;
+                    }
                     self.hint = if self.ret_free { None } else { Some(self.ret) };
                     let t = self.expr(e);
                     if pos.line < PRELUDE_LINE && self.types.contains_join_handle(t) {
@@ -8161,6 +8207,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         capture_ids: HashSet::new(),
         closure_borrow_pos: HashSet::new(),
         ret_free: false,
+        pending_bare: 0,
         free_pids: vec![],
         closure_loans: HashMap::new(),
     };
