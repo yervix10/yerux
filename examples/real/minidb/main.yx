@@ -1,0 +1,152 @@
+// minidb: a persistent key-value store in one append-only log file (std.fs, binary records with CRC, a Map index).
+//
+//   minidb FILE put KEY VALUE        minidb FILE get KEY            minidb FILE del KEY
+//   minidb FILE keys                 minidb FILE stats              minidb FILE compact
+//   minidb FILE verify               scan the log, report the damaged tail without changing anything
+//   minidb FILE load [N]             put N (default 1000) generated pairs, then print the read-back checksum
+// Exit codes: 0 ok, 1 key not found / verify found damage, 2 usage, 3 I/O error.
+import std.env
+import std.fs
+import std.io
+import std.text
+import db
+import record
+
+fn usage() {
+  io.eprintln("usage: minidb FILE put KEY VALUE | get KEY | del KEY | keys | stats | compact | verify | load [N]")
+  env.exit(2)
+}
+
+fn fatal(msg: view String) {
+  io.eprintln("minidb: {msg}")
+  env.exit(3)
+}
+
+fn show_stats(d: view db.Db) {
+  let s = db.stats(d)
+  print("keys {s.keys}  records {s.records}  file {s.file_bytes} bytes  dead {s.dead_bytes} bytes")
+  if s.repaired > 0 { print("repaired: cut {s.repaired} damaged bytes from the end of the log") }
+}
+
+// number of bytes of the log after its valid prefix (0 when the log is intact)
+fn damaged_tail(path: view String) -> Int {
+  var n = 0
+  match fs.read_bytes(path) {
+    Ok(b) => {
+      var at = 0
+      while at < b.len() {
+        let r = record.decode(b, at)
+        if r.status != 0 { break }
+        at = r.next
+      }
+      n = b.len() - at
+    }
+    Err(_) => { n = 0 }
+  }
+  return n
+}
+
+fn load(d: mut db.Db, count: Int) -> Int {
+  var sum = 0
+  for i in 0..count {
+    let k = "key-{i}"
+    let v = "value-{i * 7}"
+    match db.put(d, k, v) {
+      Ok(_) => { }
+      Err(e) => { fatal(e) }
+    }
+  }
+  for i in 0..count {
+    let k = "key-{i}"
+    match db.get(d, k) {
+      Ok(v) => {
+        match v {
+          Some(t) => { sum = sum + t.len() + i }
+          None => { fatal("key-{i} vanished") }
+        }
+      }
+      Err(e) => { fatal(e) }
+    }
+  }
+  return sum
+}
+
+fn open_or_die(path: view String) -> db.Db {
+  let r = db.open(path)
+  match move r {
+    Ok(x) => { return x }
+    Err(e) => {
+      fatal(e)
+      panic("unreachable")
+    }
+  }
+}
+
+fn main() {
+  let args = env.args()
+  if args.len() < 3 { usage() }
+  let path = args.at(1)
+  let cmd = args.at(2)
+  if cmd.eq("verify") {
+    let n = damaged_tail(path)
+    if n == 0 {
+      print("log is intact")
+      return
+    }
+    print("damaged tail: {n} bytes after the last valid record")
+    env.exit(1)
+  }
+  var d = open_or_die(path)
+  if d.repaired > 0 { io.eprintln("minidb: cut {d.repaired} damaged bytes from the end of the log") }
+  if cmd.eq("put") && args.len() == 5 {
+    match db.put(d, args.at(3), args.at(4)) {
+      Ok(_) => { print("ok") }
+      Err(e) => { fatal(e) }
+    }
+  } else if cmd.eq("get") && args.len() == 4 {
+    match db.get(d, args.at(3)) {
+      Ok(v) => {
+        match v {
+          Some(t) => { print(t) }
+          None => {
+            io.eprintln("minidb: not found")
+            env.exit(1)
+          }
+        }
+      }
+      Err(e) => { fatal(e) }
+    }
+  } else if cmd.eq("del") && args.len() == 4 {
+    match db.delete(d, args.at(3)) {
+      Ok(found) => {
+        if found { print("deleted") } else {
+          io.eprintln("minidb: not found")
+          env.exit(1)
+        }
+      }
+      Err(e) => { fatal(e) }
+    }
+  } else if cmd.eq("keys") {
+    var ks = db.keys(d)
+    ks.sort()
+    for k in ks { print(k) }
+  } else if cmd.eq("stats") {
+    show_stats(d)
+  } else if cmd.eq("compact") {
+    match db.compact(d) {
+      Ok(freed) => { print("compacted, {freed} bytes freed") }
+      Err(e) => { fatal(e) }
+    }
+  } else if cmd.eq("load") {
+    var n = 1000
+    if args.len() > 3 {
+      match text.parse_int(args.at(3)) {
+        Ok(x) => { n = x }
+        Err(_) => { usage() }
+      }
+    }
+    print("checksum {load(d, n)}")
+  } else {
+    usage()
+  }
+}

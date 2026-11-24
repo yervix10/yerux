@@ -1,0 +1,70 @@
+// On-disk record of the append-only log.
+//
+//   crc32 (4, little endian, over everything after it) | op (1: 1 = put, 2 = delete) | key length (4) | value length (4)
+//   | key bytes | value bytes
+//
+// A log is a sequence of records, nothing else (no file header), so an empty file is an empty database. A record
+// that is cut short, whose lengths are absurd or whose CRC does not match ends the valid part of the log.
+import std.fs
+import std.hash
+
+pub fn header_size() -> Int { return 13 }
+pub fn max_key() -> Int { return 65535 }
+pub fn max_value() -> Int { return 16777215 }
+
+pub fn put_u32(out: mut List<UInt8>, v: Int) {
+  out.push((v % 256).to_uint8())
+  out.push(((v / 256) % 256).to_uint8())
+  out.push(((v / 65536) % 256).to_uint8())
+  out.push(((v / 16777216) % 256).to_uint8())
+}
+
+pub fn get_u32(b: view [UInt8], at: Int) -> Int {
+  return b[at].to_int() + b[at + 1].to_int() * 256 + b[at + 2].to_int() * 65536 + b[at + 3].to_int() * 16777216
+}
+
+pub fn put_op() -> Int { return 1 }
+pub fn del_op() -> Int { return 2 }
+
+pub fn size_of(key_len: Int, value_len: Int) -> Int { return header_size() + key_len + value_len }
+
+pub fn encode(op: Int, key: view String, value: view String) -> List<UInt8> {
+  var body = List<UInt8>.new()
+  body.push(op.to_uint8())
+  put_u32(body, key.len())
+  put_u32(body, value.len())
+  for i in 0..key.len() { body.push(key.byte(i).to_uint8()) }
+  for i in 0..value.len() { body.push(value.byte(i).to_uint8()) }
+  var out = List<UInt8>.new()
+  put_u32(out, hash.crc32_bytes(body))
+  for i in 0..body.len() { out.push(body[i]) }
+  return out
+}
+
+/// status: 0 = a whole valid record, 1 = the bytes end inside it, 2 = corrupt (bad op, absurd length or CRC)
+pub struct Rec {
+  status: Int,
+  op: Int,
+  key: String,
+  value_off: Int,
+  value_len: Int,
+  next: Int,
+}
+
+fn bad(status: Int, at: Int) -> Rec {
+  return Rec { status: status, op: 0, key: String.new(), value_off: 0, value_len: 0, next: at }
+}
+
+pub fn decode(b: view [UInt8], at: Int) -> Rec {
+  if at + header_size() > b.len() { return bad(1, at) }
+  let op = b[at + 4].to_int()
+  let klen = get_u32(b, at + 5)
+  let vlen = get_u32(b, at + 9)
+  if (op != 1 && op != 2) || klen > max_key() || vlen > max_value() || (op == 2 && vlen != 0) { return bad(2, at) }
+  let end = at + size_of(klen, vlen)
+  if end > b.len() { return bad(1, at) }
+  if get_u32(b, at) != hash.crc32_bytes(b[at + 4..end]) { return bad(2, at) }
+  var key = String.new()
+  for i in 0..klen { key.push_byte(b[at + header_size() + i].to_int()) }
+  return Rec { status: 0, op: op, key: move key, value_off: at + header_size() + klen, value_len: vlen, next: end }
+}

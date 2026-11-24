@@ -745,6 +745,21 @@ impl<'a> Checker<'a> {
                             );
                             return None;
                         }
+                        // a Copy field (Int, Bool, ..) of an owning temporary (`parse(x).status`): the temporary
+                        // moves into a hidden variable that lives as long as the enclosing expression, so the
+                        // rest of the value is freed at its end instead of leaking
+                        let copy_field = match t {
+                            Ty::Struct(s) => self.types.structs[s].fields.iter().find(|(fname, _)| fname == f).map(|x| x.1).filter(|ft| !self.types.owned(*ft)),
+                            _ => None,
+                        };
+                        if copy_field.is_some() {
+                            let bpos = base.pos;
+                            let name = format!("tmp__{}", self.vars.len());
+                            let id = self.declare(&name, t, Mode::Own, false);
+                            let init = std::mem::replace(&mut **base, Expr { k: EK::Var(name.clone(), id), pos: bpos, ty: t });
+                            self.arg_temps.push(Stmt { k: SK::Let(name, false, init, id), pos: bpos });
+                            return self.place_inner(e, check_moved);
+                        }
                         self.err(
                             diag(format!("cannot take a field of a temporary {} that owns memory", n), pos)
                                 .note("the rest of the value would be thrown away without being freed")

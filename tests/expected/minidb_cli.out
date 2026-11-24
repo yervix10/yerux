@@ -1,0 +1,27 @@
+ok
+ok
+ok
+ok
+11
+deleted
+minidb: not found
+rc=1
+alpha
+gamma
+keys 2  records 5  file 105 bytes  dead 56 bytes
+log is intact
+compacted, 56 bytes freed
+keys 2  records 2  file 49 bytes  dead 0 bytes
+three words
+damaged tail: 24 bytes after the last valid record
+rc=1
+minidb: cut 24 damaged bytes from the end of the log
+alpha
+log is intact
+damaged tail: 7 bytes after the last valid record
+rc=1
+minidb: cut 7 damaged bytes from the end of the log
+keys 1  records 1  file 20 bytes  dead 0 bytes
+repaired: cut 7 damaged bytes from the end of the log
+checksum 47690
+keys 300  records 300  file 8730 bytes  dead 0 bytes
