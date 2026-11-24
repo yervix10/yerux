@@ -74,6 +74,7 @@ risk of the area, not the amount of code.
 | `std.collections`, `std.sort`, `std.iter` | Stable-candidate | tests/std_collections.yx, tests/std_sort.yx, tests/std_iter.yx; see 6.3 for `sort` naming |
 | `std.hash`, `std.hex`, `std.base64` | Stable | known-answer tests tests/std_hash.yx, tests/std_hash_hex_bytes.yx, tests/std_encoding.yx |
 | `std.regex`, `std.csv`, `std.toml` | Experimental | tests/std_regex.yx, tests/std_csv.yx, tests/std_toml.yx; grammar in REGEX_CSV_TOML.md still subject to change |
+| `std.json` | Stable-candidate | `parse` to the `Value` enum (`Int`/`Float` split, source-order members, 200-level depth limit, errors with byte offset), `to_string`, `to_pretty`, `quote`, `find`, `line_col`, `type_name`; tests/std_json.yx on both backends; used by examples/real/jql |
 | `std.args`, `std.env` | Stable-candidate | tests/std_args.yx, tests/std_env_typed.yx |
 | `std.io`, `std.fs`, `std.path`, `std.time` | Stable-candidate | docs/STDLIB_IO.md, docs/STDLIB_SYSTEM.md; tests/std_fs_metadata.yx, tests/time_duration.yx. Public helpers listed in 6.3 are Internal |
 | `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable-candidate | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |

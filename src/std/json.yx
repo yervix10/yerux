@@ -1,0 +1,396 @@
+// std.json: read and write JSON (RFC 8259).
+//
+//   import std.json
+//   match json.parse(text) {
+//     Ok(v) => { print(json.to_string(v)) }
+//     Err(e) => { print("{e.message} at byte {e.offset}") }
+//   }
+//
+// `parse` builds a `Value`: numbers without a fraction or exponent become `Int` (an integer too large for
+// `Int` is an error), the rest `Float`; objects keep their members in source order, duplicate keys included.
+// Nesting is limited to 200 levels. `to_string` writes one line, `to_pretty` indents by two spaces; a Float
+// that is NaN or infinite has no JSON spelling and is written as `null`.
+import std.text
+
+pub enum Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  Str(String),
+  Arr(List<Value>),
+  Obj(List<Member>),
+}
+
+pub struct Member { key: String, value: Value }
+
+derive Clone for Value
+derive Clone for Member
+
+// Where and why a text is not valid JSON: a byte offset into the text and a message.
+pub struct Error { offset: Int, message: String }
+
+fn fault(offset: Int, message: view String) -> Error {
+  return Error { offset: offset, message: String.from(message) }
+}
+
+// "null", "boolean", "number", "string", "array" or "object"
+pub fn type_name(v: view Value) -> Text {
+  match v {
+    Null => { return "null" }
+    Bool(_) => { return "boolean" }
+    Int(_) => { return "number" }
+    Float(_) => { return "number" }
+    Str(_) => { return "string" }
+    Arr(_) => { return "array" }
+    Obj(_) => { return "object" }
+  }
+}
+
+// The index of the last member called `key`, or -1 (JSON parsers conventionally keep the last duplicate).
+pub fn find(members: view List<Member>, key: view String) -> Int {
+  var found = -1
+  for i in 0..members.len() {
+    if members.at(i).key.eq(key) { found = i }
+  }
+  return found
+}
+
+// 1-based line and column (in characters) of a byte offset, for messages.
+pub fn line_col(src: view String, offset: Int) -> (Int, Int) {
+  var line = 1
+  var col = 1
+  var i = 0
+  while i < offset && i < src.len() {
+    let c = src.char_at(i)
+    if c == '\n' {
+      line = line + 1
+      col = 1
+    } else { col = col + 1 }
+    i = i + c.utf8_len()
+  }
+  return (line, col)
+}
+
+// ---------- reading ----------
+
+struct Reader { text: String, pos: Int, depth: Int }
+
+pub fn parse(text: view String) -> Result<Value, Error> {
+  var r = Reader { text: String.from(text), pos: 0, depth: 0 }
+  skip_space(r)
+  let v = parse_value(r)?
+  skip_space(r)
+  if r.pos != r.text.len() {
+    return Err(fault(r.pos, "unexpected text after the JSON value"))
+  }
+  return Ok(move v)
+}
+
+fn peek(r: view Reader) -> Int {
+  if r.pos >= r.text.len() { return -1 }
+  return r.text.byte(r.pos)
+}
+
+fn skip_space(r: mut Reader) {
+  while true {
+    let b = peek(r)
+    if b != 32 && b != 9 && b != 10 && b != 13 { return }
+    r.pos = r.pos + 1
+  }
+}
+
+fn is_digit(b: Int) -> Bool {
+  return b >= 48 && b <= 57
+}
+
+fn expect_word(r: mut Reader, word: Text) -> Result<Bool, Error> {
+  let w = String.from(word)
+  for i in 0..w.len() {
+    if peek(r) != w.byte(i) { return Err(fault(r.pos, "invalid literal")) }
+    r.pos = r.pos + 1
+  }
+  return Ok(true)
+}
+
+fn parse_value(r: mut Reader) -> Result<Value, Error> {
+  if r.depth > 200 { return Err(fault(r.pos, "JSON nested too deeply")) }
+  let b = peek(r)
+  if b == '{'.to_int() { return parse_object(r) }
+  if b == '['.to_int() { return parse_array(r) }
+  if b == '"'.to_int() {
+    let s = parse_string(r)?
+    return Ok(Value.Str(move s))
+  }
+  if b == 't'.to_int() {
+    let ok = expect_word(r, "true")?
+    return Ok(Value.Bool(true))
+  }
+  if b == 'f'.to_int() {
+    let ok = expect_word(r, "false")?
+    return Ok(Value.Bool(false))
+  }
+  if b == 'n'.to_int() {
+    let ok = expect_word(r, "null")?
+    return Ok(Value.Null)
+  }
+  if b == '-'.to_int() || is_digit(b) { return parse_number(r) }
+  if b < 0 { return Err(fault(r.pos, "unexpected end of JSON")) }
+  return Err(fault(r.pos, "unexpected character"))
+}
+
+fn parse_number(r: mut Reader) -> Result<Value, Error> {
+  let start = r.pos
+  var real = false
+  if peek(r) == '-'.to_int() { r.pos = r.pos + 1 }
+  if !is_digit(peek(r)) { return Err(fault(r.pos, "a number needs digits")) }
+  let first = r.pos
+  while is_digit(peek(r)) { r.pos = r.pos + 1 }
+  if r.pos - first > 1 && r.text.byte(first) == 48 { return Err(fault(first, "a number cannot start with a leading zero")) }
+  if peek(r) == '.'.to_int() {
+    real = true
+    r.pos = r.pos + 1
+    if !is_digit(peek(r)) { return Err(fault(r.pos, "a fraction needs digits")) }
+    while is_digit(peek(r)) { r.pos = r.pos + 1 }
+  }
+  if peek(r) == 'e'.to_int() || peek(r) == 'E'.to_int() {
+    real = true
+    r.pos = r.pos + 1
+    if peek(r) == '+'.to_int() || peek(r) == '-'.to_int() { r.pos = r.pos + 1 }
+    if !is_digit(peek(r)) { return Err(fault(r.pos, "an exponent needs digits")) }
+    while is_digit(peek(r)) { r.pos = r.pos + 1 }
+  }
+  let spelling = r.text.slice(start, r.pos)
+  if real {
+    match text.parse_float(spelling) {
+      Ok(f) => { return Ok(Value.Float(f)) }
+      Err(_) => { return Err(fault(start, "invalid number")) }
+    }
+  }
+  var n = 0
+  if !spelling.parse_int(n) { return Err(fault(start, "integer out of range")) }
+  return Ok(Value.Int(n))
+}
+
+fn hex_value(b: Int) -> Int {
+  if is_digit(b) { return b - 48 }
+  if b >= 97 && b <= 102 { return b - 97 + 10 }
+  if b >= 65 && b <= 70 { return b - 65 + 10 }
+  return -1
+}
+
+fn hex4(r: mut Reader) -> Result<Int, Error> {
+  var code = 0
+  for i in 0..4 {
+    let h = hex_value(peek(r))
+    if h < 0 { return Err(fault(r.pos, "bad \\u escape")) }
+    code = code * 16 + h
+    r.pos = r.pos + 1
+  }
+  return Ok(code)
+}
+
+fn parse_string(r: mut Reader) -> Result<String, Error> {
+  r.pos = r.pos + 1
+  var out = String.new()
+  while true {
+    let b = peek(r)
+    if b < 0 { return Err(fault(r.pos, "unterminated string")) }
+    if b == '"'.to_int() {
+      r.pos = r.pos + 1
+      return Ok(move out)
+    }
+    if b < 32 { return Err(fault(r.pos, "control character in string")) }
+    if b != '\\'.to_int() {
+      out.push_byte(b)
+      r.pos = r.pos + 1
+      continue
+    }
+    r.pos = r.pos + 1
+    let e = peek(r)
+    r.pos = r.pos + 1
+    if e == 'n'.to_int() { out.push_byte(10) }
+    else if e == 't'.to_int() { out.push_byte(9) }
+    else if e == 'r'.to_int() { out.push_byte(13) }
+    else if e == 'b'.to_int() { out.push_byte(8) }
+    else if e == 'f'.to_int() { out.push_byte(12) }
+    else if e == '/'.to_int() || e == '\\'.to_int() || e == '"'.to_int() { out.push_byte(e) }
+    else if e == 'u'.to_int() {
+      var code = hex4(r)?
+      if code >= 55296 && code <= 56319 {
+        // a high surrogate must be followed by `\u` and a low surrogate
+        if peek(r) != '\\'.to_int() { return Err(fault(r.pos, "a high surrogate needs a low surrogate")) }
+        r.pos = r.pos + 1
+        if peek(r) != 'u'.to_int() { return Err(fault(r.pos, "a high surrogate needs a low surrogate")) }
+        r.pos = r.pos + 1
+        let low = hex4(r)?
+        if low < 56320 || low > 57343 { return Err(fault(r.pos - 4, "a high surrogate needs a low surrogate")) }
+        code = 65536 + (code - 55296) * 1024 + (low - 56320)
+      } else if code >= 56320 && code <= 57343 {
+        return Err(fault(r.pos - 6, "a low surrogate without a high surrogate"))
+      }
+      out.push_char(Char.from_int(code))
+    } else { return Err(fault(r.pos - 1, "unknown escape")) }
+  }
+  return Ok(move out)
+}
+
+fn parse_array(r: mut Reader) -> Result<Value, Error> {
+  r.pos = r.pos + 1
+  r.depth = r.depth + 1
+  var items = List<Value>.new()
+  skip_space(r)
+  if peek(r) == ']'.to_int() {
+    r.pos = r.pos + 1
+    r.depth = r.depth - 1
+    return Ok(Value.Arr(move items))
+  }
+  while true {
+    skip_space(r)
+    let item = parse_value(r)?
+    items.push(move item)
+    skip_space(r)
+    let b = peek(r)
+    r.pos = r.pos + 1
+    if b == ','.to_int() { continue }
+    if b == ']'.to_int() { break }
+    return Err(fault(r.pos - 1, "expected ',' or ']'"))
+  }
+  r.depth = r.depth - 1
+  return Ok(Value.Arr(move items))
+}
+
+fn parse_object(r: mut Reader) -> Result<Value, Error> {
+  r.pos = r.pos + 1
+  r.depth = r.depth + 1
+  var entries = List<Member>.new()
+  skip_space(r)
+  if peek(r) == '}'.to_int() {
+    r.pos = r.pos + 1
+    r.depth = r.depth - 1
+    return Ok(Value.Obj(move entries))
+  }
+  while true {
+    skip_space(r)
+    if peek(r) != '"'.to_int() { return Err(fault(r.pos, "an object key must be a string")) }
+    let key = parse_string(r)?
+    skip_space(r)
+    if peek(r) != ':'.to_int() { return Err(fault(r.pos, "expected ':' after the key")) }
+    r.pos = r.pos + 1
+    skip_space(r)
+    let item = parse_value(r)?
+    entries.push(Member { key: move key, value: move item })
+    skip_space(r)
+    let b = peek(r)
+    r.pos = r.pos + 1
+    if b == ','.to_int() { continue }
+    if b == '}'.to_int() { break }
+    return Err(fault(r.pos - 1, "expected ',' or '}}'"))
+  }
+  r.depth = r.depth - 1
+  return Ok(Value.Obj(move entries))
+}
+
+// ---------- writing ----------
+
+pub fn to_string(v: view Value) -> String {
+  var out = String.new()
+  emit(out, v, false, 0)
+  return out
+}
+
+pub fn to_pretty(v: view Value) -> String {
+  var out = String.new()
+  emit(out, v, true, 0)
+  return out
+}
+
+fn indent(out: mut String, level: Int) {
+  for i in 0..level { out.push_str("  ") }
+}
+
+pub fn quote(s: view String) -> String {
+  var out = String.new()
+  out.push_byte(34)
+  for c in s.chars() {
+    let n = c.to_int()
+    if n == 34 { out.push_str("\\\"") }
+    else if n == 92 { out.push_str("\\\\") }
+    else if n == 10 { out.push_str("\\n") }
+    else if n == 9 { out.push_str("\\t") }
+    else if n == 13 { out.push_str("\\r") }
+    else if n < 32 {
+      out.push_str("\\u00")
+      out.push_byte(hex_digit(n / 16))
+      out.push_byte(hex_digit(n % 16))
+    } else { out.push_char(c) }
+  }
+  out.push_byte(34)
+  return out
+}
+
+fn hex_digit(n: Int) -> Int {
+  if n < 10 { return 48 + n }
+  return 97 + n - 10
+}
+
+// A Float keeps its fraction (3.0 prints `3.0`), so a round trip keeps its type; NaN and infinities have no
+// JSON spelling and become null.
+fn number(f: Float) -> String {
+  if f != f || f > 1.7976931348623157e308 || f < -1.7976931348623157e308 { return String.from("null") }
+  return "{f}"
+}
+
+fn emit(out: mut String, v: view Value, pretty: Bool, level: Int) {
+  match v {
+    Null => { out.push_str("null") }
+    Bool(b) => {
+      if b { out.push_str("true") } else { out.push_str("false") }
+    }
+    Int(n) => { out.push_int(n) }
+    Float(f) => { out.push_str(number(f)) }
+    Str(s) => { out.push_str(quote(s)) }
+    Arr(items) => {
+      if items.len() == 0 {
+        out.push_str("[]")
+        return
+      }
+      out.push_str("[")
+      for i in 0..items.len() {
+        if i > 0 { out.push_str(",") }
+        if pretty {
+          out.push_str("\n")
+          indent(out, level + 1)
+        }
+        emit(out, items.at(i), pretty, level + 1)
+      }
+      if pretty {
+        out.push_str("\n")
+        indent(out, level)
+      }
+      out.push_str("]")
+    }
+    Obj(entries) => {
+      if entries.len() == 0 {
+        out.push_str("{{}}")
+        return
+      }
+      out.push_str("{{")
+      for i in 0..entries.len() {
+        if i > 0 { out.push_str(",") }
+        if pretty {
+          out.push_str("\n")
+          indent(out, level + 1)
+        }
+        out.push_str(quote(entries.at(i).key))
+        if pretty { out.push_str(": ") } else { out.push_str(":") }
+        emit(out, entries.at(i).value, pretty, level + 1)
+      }
+      if pretty {
+        out.push_str("\n")
+        indent(out, level)
+      }
+      out.push_str("}}")
+    }
+  }
+}

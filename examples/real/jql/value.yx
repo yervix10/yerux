@@ -1,20 +1,5 @@
-// The JSON data model shared by the reader, the writer and the evaluator.
-// Objects keep their keys in source order (a list of entries, not a map).
-
-pub enum Json {
-  Null,
-  Bool(Bool),
-  Int(Int),
-  Float(Float),
-  Str(String),
-  Arr(List<Json>),
-  Obj(List<Entry>),
-}
-
-pub struct Entry { key: String, value: Json }
-
-derive Clone for Json
-derive Clone for Entry
+// What the query tool shares: the failure type and a few helpers over `std.json` values.
+import std.json
 
 // Every failure of the program: where it happened (a byte offset into the text that was being read, or -1) and why.
 pub struct Fault { offset: Int, message: String }
@@ -23,19 +8,15 @@ pub fn fault(offset: Int, message: view String) -> Fault {
   return Fault { offset: offset, message: String.from(message) }
 }
 
-pub fn type_name(v: view Json) -> Text {
-  match v {
-    Null => { return "null" }
-    Bool(_) => { return "boolean" }
-    Int(_) => { return "number" }
-    Float(_) => { return "number" }
-    Str(_) => { return "string" }
-    Arr(_) => { return "array" }
-    Obj(_) => { return "object" }
+// Parses the input document, keeping the offset of a syntax error.
+pub fn read(text: view String) -> Result<json.Value, Fault> {
+  match json.parse(text) {
+    Ok(v) => { return Ok(move v) }
+    Err(e) => { return Err(fault(e.offset, e.message)) }
   }
 }
 
-pub fn truthy(v: view Json) -> Bool {
+pub fn truthy(v: view json.Value) -> Bool {
   match v {
     Null => { return false }
     Bool(b) => { return b }

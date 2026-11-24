@@ -1,0 +1,42 @@
+null
+[1,-2,3.5,1000.0,0.02,0,-0.0]
+{"a":{"b":[true,false,null]},"s":"x"}
+"tab\t quote\" back\\ nl\n slash/ Aé😀"
+[]
+{}
+[{"k":1},{"k":2}]
+error at byte 0 (line 1, column 1): unexpected end of JSON
+error at byte 5 (line 1, column 6): expected ',' or ']'
+error at byte 3 (line 1, column 4): expected ',' or ']'
+error at byte 5 (line 1, column 6): expected ':' after the key
+error at byte 1 (line 1, column 2): an object key must be a string
+error at byte 1 (line 1, column 2): a number cannot start with a leading zero
+error at byte 3 (line 1, column 4): a fraction needs digits
+error at byte 3 (line 1, column 4): an exponent needs digits
+error at byte 2 (line 1, column 3): a number needs digits
+error at byte 4 (line 1, column 5): unterminated string
+error at byte 3 (line 1, column 4): unknown escape
+error at byte 7 (line 1, column 8): a high surrogate needs a low surrogate
+error at byte 1 (line 1, column 2): a low surrogate without a high surrogate
+error at byte 3 (line 1, column 4): invalid literal
+error at byte 4 (line 1, column 5): unexpected text after the JSON value
+error at byte 0 (line 1, column 1): integer out of range
+error at byte 9 (line 3, column 3): unexpected character
+{
+  "a": [
+    1,
+    {
+      "b": []
+    },
+    "é\u0001"
+  ],
+  "c": {},
+  "d": 2.0
+}
+object
+members 3, last k at 1, missing -1
+{"k":1,"k":2,"z":[null]}
+array
+[7,0.5,"a\"b\n",true,null,null]
+"é\u0001"
+error at byte 201 (line 1, column 202): JSON nested too deeply

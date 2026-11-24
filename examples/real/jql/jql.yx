@@ -1,14 +1,13 @@
 // jql: a small jq-like query tool.
 //   jql [-c] [-r] QUERY [FILE]     reads JSON from FILE or stdin, prints every output of QUERY
+import std.json
 import std.env
 import std.fs
 import std.io
 import eval
 import lexer
 import parser
-import reader
 import value
-import writer
 
 fn usage() {
   io.eprintln("usage: jql [-c] [-r] QUERY [FILE]")
@@ -61,7 +60,7 @@ fn main() {
     }
   }
 
-  let doc = match reader.read(text) {
+  let doc = match value.read(text) {
     Ok(d) => move d
     Err(f) => {
       report("input", text, f)
@@ -90,10 +89,10 @@ fn main() {
       for o in outputs {
         match o {
           Str(s) => {
-            if raw { print(s) } else { print(writer.quote(s)) }
+            if raw { print(s) } else { print(json.quote(s)) }
           }
           _ => {
-            if compact { print(writer.compact(o)) } else { print(writer.pretty(o)) }
+            if compact { print(json.to_string(o)) } else { print(json.to_pretty(o)) }
           }
         }
       }

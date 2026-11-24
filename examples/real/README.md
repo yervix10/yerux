@@ -145,8 +145,7 @@ See the [development findings](../../docs/REAL_PROGRAMS.md#yxscan).
 
 ## JSON query tool
 
-`jql/` is a multi-module (8 files, about 1,700 lines) jq-like tool: a JSON
-reader/writer, a query lexer, a recursive-descent parser into a `Box`ed enum
+`jql/` is a multi-module (6 files) jq-like tool built on `std.json`: a query lexer, a recursive-descent parser into a `Box`ed enum
 AST, and a generator-style evaluator with about 25 builtins. Errors are
 `Result<_, value.Fault>` values carrying an offset.
 

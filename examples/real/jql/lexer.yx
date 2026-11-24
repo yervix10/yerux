@@ -1,4 +1,5 @@
 // Query text -> tokens. Every token remembers the byte offset where it starts, for error messages.
+import std.json
 import std.text
 import value
 

@@ -1,0 +1,82 @@
+// std.json: parse, compact and pretty writing, escapes, numbers, errors with offsets.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => { print("{json.to_string(v)}") }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("error at byte {e.offset} (line {at.0}, column {at.1}): {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("null")
+  show("  [1, -2, 3.5, 1e3, 2E-2, 0, -0.0 ]  ")
+  show("{{\"a\": {{\"b\": [true, false, null]}}, \"s\": \"x\"}}")
+  show("\"tab\\t quote\\\" back\\\\ nl\\n slash\\/ \\u0041\\u00e9\\ud83d\\ude00\"")
+  show("[]")
+  show("{{}}")
+  show("[{{\"k\":1}},{{\"k\":2}}]")
+  // errors
+  show("")
+  show("[1, 2")
+  show("[1 2]")
+  show("{{\"a\" 1}}")
+  show("{{a: 1}}")
+  show("[01]")
+  show("[1.]")
+  show("[1e]")
+  show("[-]")
+  show("\"abc")
+  show("\"a\\qb\"")
+  show("\"\\ud800\"")
+  show("\"\\udc00\"")
+  show("tru")
+  show("[1] x")
+  show("9223372036854775808")
+  show("[\n  1,\n  oops\n]")
+
+  // pretty output
+  match json.parse("{{\"a\":[1,{{\"b\":[]}},\"é\\u0001\"],\"c\":{{}},\"d\":2.0}}") {
+    Ok(v) => { print(json.to_pretty(v)) }
+    Err(e) => { print(e.message) }
+  }
+
+  // members, type names, clone
+  match json.parse("{{\"k\": 1, \"k\": 2, \"z\": [null]}}") {
+    Err(e) => { print(e.message) }
+    Ok(v) => {
+      print(json.type_name(v))
+      match v {
+        Obj(members) => {
+          print("members {members.len()}, last k at {json.find(members, "k")}, missing {json.find(members, "q")}")
+          let copy = v.clone()
+          print(json.to_string(copy))
+          print(json.type_name(members.at(2).value))
+        }
+        _ => { print("not an object") }
+      }
+    }
+  }
+
+  // building a value and writing it
+  var items = List<json.Value>.new()
+  items.push(json.Value.Int(7))
+  items.push(json.Value.Float(0.5))
+  items.push(json.Value.Str(String.from("a\"b\n")))
+  items.push(json.Value.Bool(true))
+  items.push(json.Value.Null)
+  items.push(json.Value.Float(1.0 / 0.0))
+  print(json.to_string(json.Value.Arr(move items)))
+  var raw = String.from("é")
+  raw.push_byte(1)
+  raw.push_byte(127)
+  print(json.quote(raw))
+
+  // nesting limit
+  var deep = String.new()
+  for i in 0..300 { deep.push_char('[') }
+  show(deep)
+}

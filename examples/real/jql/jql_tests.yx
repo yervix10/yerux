@@ -1,14 +1,13 @@
 // Unit tests: `yerux test examples/real/jql`
+import std.json
 import eval
 import lexer
 import parser
-import reader
 import value
-import writer
 
 // runs QUERY over DOC and returns the outputs as compact JSON joined by ';', or "error: .." on failure
 fn query(doc: view String, q: view String) -> String {
-  match reader.read(doc) {
+  match value.read(doc) {
     Err(f) => { return "input error: {f.message}" }
     Ok(input) => {
       match lexer.tokenize(q) {
@@ -23,7 +22,7 @@ fn query(doc: view String, q: view String) -> String {
                   var s = String.new()
                   for i in 0..outs.len() {
                     if i > 0 { s.push_str(";") }
-                    s.push_str(writer.compact(outs.at(i)))
+                    s.push_str(json.to_string(outs.at(i)))
                   }
                   return s
                 }

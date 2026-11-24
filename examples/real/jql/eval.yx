@@ -1,34 +1,34 @@
 // Evaluation. A query is a generator: it can produce zero, one or many outputs for one input, so every
 // evaluation pushes its outputs on a list. Runtime problems (indexing a number, dividing by zero, ...) are
 // `value.Fault`s with offset -1: the tree has no source positions.
+import std.json
 import std.sort
 import std.text
 import ast
 import value
-import writer
 
-pub fn run(e: view ast.Expr, input: view value.Json) -> Result<List<value.Json>, value.Fault> {
-  var out = List<value.Json>.new()
+pub fn run(e: view ast.Expr, input: view json.Value) -> Result<List<json.Value>, value.Fault> {
+  var out = List<json.Value>.new()
   let done = eval(e, input, out, 0)?
   return Ok(move out)
 }
 
 fn fail(message: view String) -> value.Fault { return value.fault(-1, message) }
 
-fn collect(e: view ast.Expr, input: view value.Json, depth: Int) -> Result<List<value.Json>, value.Fault> {
-  var out = List<value.Json>.new()
+fn collect(e: view ast.Expr, input: view json.Value, depth: Int) -> Result<List<json.Value>, value.Fault> {
+  var out = List<json.Value>.new()
   let done = eval(e, input, out, depth)?
   return Ok(move out)
 }
 
 // exactly one output is required (an object key, an index, an argument)
-fn single(e: view ast.Expr, input: view value.Json, what: view String, depth: Int) -> Result<value.Json, value.Fault> {
+fn single(e: view ast.Expr, input: view json.Value, what: view String, depth: Int) -> Result<json.Value, value.Fault> {
   var all = collect(e, input, depth)?
   if all.len() != 1 { return Err(fail("{what} must produce exactly one value, got {all.len()}")) }
   return Ok(all.pop())
 }
 
-fn eval(e: view ast.Expr, input: view value.Json, out: mut List<value.Json>, depth: Int) -> Result<Bool, value.Fault> {
+fn eval(e: view ast.Expr, input: view json.Value, out: mut List<json.Value>, depth: Int) -> Result<Bool, value.Fault> {
   if depth > 500 { return Err(fail("evaluation nested too deeply")) }
   match e {
     Identity => { out.push(input.clone()) }
@@ -50,7 +50,7 @@ fn eval(e: view ast.Expr, input: view value.Json, out: mut List<value.Json>, dep
         match source {
           Arr(items) => { for item in items { out.push(item.clone()) } }
           Obj(entries) => { for entry in entries { out.push(entry.value.clone()) } }
-          _ => { return Err(fail("cannot iterate over {value.type_name(source)}")) }
+          _ => { return Err(fail("cannot iterate over {json.type_name(source)}")) }
         }
       }
     }
@@ -68,9 +68,9 @@ fn eval(e: view ast.Expr, input: view value.Json, out: mut List<value.Json>, dep
       let values = collect(inner.get(), input, depth + 1)?
       for item in values {
         match item {
-          Int(n) => { out.push(value.Json.Int(0 - n)) }
-          Float(f) => { out.push(value.Json.Float(0.0 - f)) }
-          _ => { return Err(fail("cannot negate {value.type_name(item)}")) }
+          Int(n) => { out.push(json.Value.Int(0 - n)) }
+          Float(f) => { out.push(json.Value.Float(0.0 - f)) }
+          _ => { return Err(fail("cannot negate {json.type_name(item)}")) }
         }
       }
     }
@@ -89,19 +89,19 @@ fn eval(e: view ast.Expr, input: view value.Json, out: mut List<value.Json>, dep
     }
     Collect(inner) => {
       let items = collect(inner.get(), input, depth + 1)?
-      out.push(value.Json.Arr(move items))
+      out.push(json.Value.Arr(move items))
     }
     Object(pairs) => {
-      var built = List<value.Entry>.new()
+      var built = List<json.Member>.new()
       for pair in pairs {
         let key = single(pair.key, input, "an object key", depth + 1)?
         let item = single(pair.value, input, "an object value", depth + 1)?
         match key {
           Str(text) => { set_entry(built, text, move item) }
-          _ => { return Err(fail("object keys must be strings, got {value.type_name(key)}")) }
+          _ => { return Err(fail("object keys must be strings, got {json.type_name(key)}")) }
         }
       }
-      out.push(value.Json.Obj(move built))
+      out.push(json.Value.Obj(move built))
     }
     Call(name, args) => {
       let done = call(name, args, input, out, depth + 1)?
@@ -110,30 +110,30 @@ fn eval(e: view ast.Expr, input: view value.Json, out: mut List<value.Json>, dep
   return Ok(true)
 }
 
-fn set_entry(entries: mut List<value.Entry>, key: view String, item: value.Json) {
+fn set_entry(entries: mut List<json.Member>, key: view String, item: json.Value) {
   for i in 0..entries.len() {
     if entries.at(i).key.eq(key) {
       entries.at(i).value = move item
       return
     }
   }
-  entries.push(value.Entry { key: String.from(key), value: move item })
+  entries.push(json.Member { key: String.from(key), value: move item })
 }
 
-fn field(source: view value.Json, name: view String) -> Result<value.Json, value.Fault> {
+fn field(source: view json.Value, name: view String) -> Result<json.Value, value.Fault> {
   match source {
     Obj(entries) => {
       for entry in entries {
         if entry.key.eq(name) { return Ok(entry.value.clone()) }
       }
-      return Ok(value.Json.Null)
+      return Ok(json.Value.Null)
     }
-    Null => { return Ok(value.Json.Null) }
-    _ => { return Err(fail("cannot index {value.type_name(source)} with \"{name}\"")) }
+    Null => { return Ok(json.Value.Null) }
+    _ => { return Err(fail("cannot index {json.type_name(source)} with \"{name}\"")) }
   }
 }
 
-fn at_index(source: view value.Json, key: view value.Json) -> Result<value.Json, value.Fault> {
+fn at_index(source: view json.Value, key: view json.Value) -> Result<json.Value, value.Fault> {
   match key {
     Str(name) => { return field(source, name) }
     Int(n) => {
@@ -141,20 +141,20 @@ fn at_index(source: view value.Json, key: view value.Json) -> Result<value.Json,
         Arr(items) => {
           var i = n
           if i < 0 { i = items.len() + i }
-          if i < 0 || i >= items.len() { return Ok(value.Json.Null) }
+          if i < 0 || i >= items.len() { return Ok(json.Value.Null) }
           return Ok(items.at(i).clone())
         }
-        Null => { return Ok(value.Json.Null) }
-        _ => { return Err(fail("cannot index {value.type_name(source)} with a number")) }
+        Null => { return Ok(json.Value.Null) }
+        _ => { return Err(fail("cannot index {json.type_name(source)} with a number")) }
       }
     }
-    _ => { return Err(fail("cannot index {value.type_name(source)} with {value.type_name(key)}")) }
+    _ => { return Err(fail("cannot index {json.type_name(source)} with {json.type_name(key)}")) }
   }
 }
 
 // ---------- arithmetic and comparison ----------
 
-fn rank(v: view value.Json) -> Int {
+fn rank(v: view json.Value) -> Int {
   match v {
     Null => { return 0 }
     Bool(b) => {
@@ -169,7 +169,7 @@ fn rank(v: view value.Json) -> Int {
   }
 }
 
-fn as_float(v: view value.Json) -> Float {
+fn as_float(v: view json.Value) -> Float {
   match v {
     Int(n) => { return n.to_float() }
     Float(f) => { return f }
@@ -184,7 +184,7 @@ fn sign_of(a: Float, b: Float) -> Int {
 }
 
 // A total order: null < false < true < numbers < strings < arrays < objects.
-pub fn compare(a: view value.Json, b: view value.Json) -> Int {
+pub fn compare(a: view json.Value, b: view json.Value) -> Int {
   let ra = rank(a)
   let rb = rank(b)
   if ra != rb { return sign_of(ra.to_float(), rb.to_float()) }
@@ -249,7 +249,7 @@ fn checked_mul(a: Int, b: Int) -> Option<Int> {
   return Some(a * b)
 }
 
-fn arithmetic(op: ast.Op, a: view value.Json, b: view value.Json) -> Result<value.Json, value.Fault> {
+fn arithmetic(op: ast.Op, a: view json.Value, b: view json.Value) -> Result<json.Value, value.Fault> {
   match a {
     Int(x) => {
       match b {
@@ -268,13 +268,13 @@ fn arithmetic(op: ast.Op, a: view value.Json, b: view value.Json) -> Result<valu
     Str(x) => {
       match b {
         Str(y) => {
-          if op == ast.Op.Add { return Ok(value.Json.Str("{x}{y}")) }
+          if op == ast.Op.Add { return Ok(json.Value.Str("{x}{y}")) }
         }
         Int(n) => {
           if op == ast.Op.Mul {
             var repeated = String.new()
             for i in 0..n { repeated.push_str(x) }
-            return Ok(value.Json.Str(move repeated))
+            return Ok(json.Value.Str(move repeated))
           }
         }
         _ => {}
@@ -284,10 +284,10 @@ fn arithmetic(op: ast.Op, a: view value.Json, b: view value.Json) -> Result<valu
       match b {
         Arr(y) => {
           if op == ast.Op.Add {
-            var joined = List<value.Json>.new()
+            var joined = List<json.Value>.new()
             for item in x { joined.push(item.clone()) }
             for item in y { joined.push(item.clone()) }
-            return Ok(value.Json.Arr(move joined))
+            return Ok(json.Value.Arr(move joined))
           }
         }
         _ => {}
@@ -297,10 +297,10 @@ fn arithmetic(op: ast.Op, a: view value.Json, b: view value.Json) -> Result<valu
       match b {
         Obj(y) => {
           if op == ast.Op.Add {
-            var merged = List<value.Entry>.new()
+            var merged = List<json.Member>.new()
             for entry in x { merged.push(entry.clone()) }
             for entry in y { set_entry(merged, entry.key, entry.value.clone()) }
-            return Ok(value.Json.Obj(move merged))
+            return Ok(json.Value.Obj(move merged))
           }
         }
         _ => {}
@@ -317,71 +317,71 @@ fn arithmetic(op: ast.Op, a: view value.Json, b: view value.Json) -> Result<valu
       _ => {}
     }
   }
-  return Err(fail("{value.type_name(a)} and {value.type_name(b)} cannot be combined with '{ast.op_text(op)}'"))
+  return Err(fail("{json.type_name(a)} and {json.type_name(b)} cannot be combined with '{ast.op_text(op)}'"))
 }
 
-fn int_arithmetic(op: ast.Op, x: Int, y: Int) -> Result<value.Json, value.Fault> {
+fn int_arithmetic(op: ast.Op, x: Int, y: Int) -> Result<json.Value, value.Fault> {
   match op {
     Add => {
       match checked_add(x, y) {
-        Some(n) => { return Ok(value.Json.Int(n)) }
-        None => { return Ok(value.Json.Float(x.to_float() + y.to_float())) }
+        Some(n) => { return Ok(json.Value.Int(n)) }
+        None => { return Ok(json.Value.Float(x.to_float() + y.to_float())) }
       }
     }
     Sub => {
-      if y == -9223372036854775807 - 1 { return Ok(value.Json.Float(x.to_float() - y.to_float())) }
+      if y == -9223372036854775807 - 1 { return Ok(json.Value.Float(x.to_float() - y.to_float())) }
       match checked_add(x, 0 - y) {
-        Some(n) => { return Ok(value.Json.Int(n)) }
-        None => { return Ok(value.Json.Float(x.to_float() - y.to_float())) }
+        Some(n) => { return Ok(json.Value.Int(n)) }
+        None => { return Ok(json.Value.Float(x.to_float() - y.to_float())) }
       }
     }
     Mul => {
       match checked_mul(x, y) {
-        Some(n) => { return Ok(value.Json.Int(n)) }
-        None => { return Ok(value.Json.Float(x.to_float() * y.to_float())) }
+        Some(n) => { return Ok(json.Value.Int(n)) }
+        None => { return Ok(json.Value.Float(x.to_float() * y.to_float())) }
       }
     }
     Div => {
       if y == 0 { return Err(fail("division by zero")) }
-      if x % y == 0 { return Ok(value.Json.Int(x / y)) }
-      return Ok(value.Json.Float(x.to_float() / y.to_float()))
+      if x % y == 0 { return Ok(json.Value.Int(x / y)) }
+      return Ok(json.Value.Float(x.to_float() / y.to_float()))
     }
     Mod => {
       if y == 0 { return Err(fail("modulo by zero")) }
-      return Ok(value.Json.Int(x % y))
+      return Ok(json.Value.Int(x % y))
     }
     _ => { return Err(fail("not an arithmetic operator")) }
   }
 }
 
-fn float_arithmetic(op: ast.Op, x: Float, y: Float) -> Result<value.Json, value.Fault> {
+fn float_arithmetic(op: ast.Op, x: Float, y: Float) -> Result<json.Value, value.Fault> {
   match op {
-    Add => { return Ok(value.Json.Float(x + y)) }
-    Sub => { return Ok(value.Json.Float(x - y)) }
-    Mul => { return Ok(value.Json.Float(x * y)) }
+    Add => { return Ok(json.Value.Float(x + y)) }
+    Sub => { return Ok(json.Value.Float(x - y)) }
+    Mul => { return Ok(json.Value.Float(x * y)) }
     Div => {
       if y == 0.0 { return Err(fail("division by zero")) }
-      return Ok(value.Json.Float(x / y))
+      return Ok(json.Value.Float(x / y))
     }
     Mod => {
       if y == 0.0 { return Err(fail("modulo by zero")) }
-      return Ok(value.Json.Float(x - (x / y).trunc() * y))
+      return Ok(json.Value.Float(x - (x / y).trunc() * y))
     }
     _ => { return Err(fail("not an arithmetic operator")) }
   }
 }
 
-fn binary(op: ast.Op, left: view ast.Expr, right: view ast.Expr, input: view value.Json,
-    out: mut List<value.Json>, depth: Int) -> Result<Bool, value.Fault> {
+fn binary(op: ast.Op, left: view ast.Expr, right: view ast.Expr, input: view json.Value,
+    out: mut List<json.Value>, depth: Int) -> Result<Bool, value.Fault> {
   if op == ast.Op.And || op == ast.Op.Or {
     let tests = collect(left, input, depth)?
     for test in tests {
       let decided = value.truthy(test) == (op == ast.Op.Or)
       if decided {
-        out.push(value.Json.Bool(op == ast.Op.Or))
+        out.push(json.Value.Bool(op == ast.Op.Or))
       } else {
         let others = collect(right, input, depth)?
-        for other in others { out.push(value.Json.Bool(value.truthy(other))) }
+        for other in others { out.push(json.Value.Bool(value.truthy(other))) }
       }
     }
     return Ok(true)
@@ -392,12 +392,12 @@ fn binary(op: ast.Op, left: view ast.Expr, right: view ast.Expr, input: view val
   for r in rights {
     for l in lefts {
       match op {
-        Eq => { out.push(value.Json.Bool(compare(l, r) == 0)) }
-        Ne => { out.push(value.Json.Bool(compare(l, r) != 0)) }
-        Lt => { out.push(value.Json.Bool(compare(l, r) < 0)) }
-        Le => { out.push(value.Json.Bool(compare(l, r) <= 0)) }
-        Gt => { out.push(value.Json.Bool(compare(l, r) > 0)) }
-        Ge => { out.push(value.Json.Bool(compare(l, r) >= 0)) }
+        Eq => { out.push(json.Value.Bool(compare(l, r) == 0)) }
+        Ne => { out.push(json.Value.Bool(compare(l, r) != 0)) }
+        Lt => { out.push(json.Value.Bool(compare(l, r) < 0)) }
+        Le => { out.push(json.Value.Bool(compare(l, r) <= 0)) }
+        Gt => { out.push(json.Value.Bool(compare(l, r) > 0)) }
+        Ge => { out.push(json.Value.Bool(compare(l, r) >= 0)) }
         _ => { out.push(arithmetic(op, l, r)?) }
       }
     }
@@ -412,37 +412,37 @@ fn arity(name: view String, args: view List<ast.Expr>, wanted: Int) -> Result<Bo
   return Ok(true)
 }
 
-fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
-    out: mut List<value.Json>, depth: Int) -> Result<Bool, value.Fault> {
+fn call(name: view String, args: view List<ast.Expr>, input: view json.Value,
+    out: mut List<json.Value>, depth: Int) -> Result<Bool, value.Fault> {
   if name.eq("empty") {
     let ok = arity(name, args, 0)?
     return Ok(true)
   }
   if name.eq("not") {
     let ok = arity(name, args, 0)?
-    out.push(value.Json.Bool(!value.truthy(input)))
+    out.push(json.Value.Bool(!value.truthy(input)))
     return Ok(true)
   }
   if name.eq("length") {
     let ok = arity(name, args, 0)?
     match input {
-      Null => { out.push(value.Json.Int(0)) }
+      Null => { out.push(json.Value.Int(0)) }
       Str(s) => {
         var n = 0
         for c in s.chars() { n = n + 1 }
-        out.push(value.Json.Int(n))
+        out.push(json.Value.Int(n))
       }
-      Arr(items) => { out.push(value.Json.Int(items.len())) }
-      Obj(entries) => { out.push(value.Json.Int(entries.len())) }
-      Int(n) => { out.push(value.Json.Int(math_abs(n))) }
-      Float(f) => { out.push(value.Json.Float(f.abs())) }
+      Arr(items) => { out.push(json.Value.Int(items.len())) }
+      Obj(entries) => { out.push(json.Value.Int(entries.len())) }
+      Int(n) => { out.push(json.Value.Int(math_abs(n))) }
+      Float(f) => { out.push(json.Value.Float(f.abs())) }
       Bool(_) => { return Err(fail("boolean has no length")) }
     }
     return Ok(true)
   }
   if name.eq("type") {
     let ok = arity(name, args, 0)?
-    out.push(value.Json.Str(String.from(value.type_name(input))))
+    out.push(json.Value.Str(String.from(json.type_name(input))))
     return Ok(true)
   }
   if name.eq("keys") {
@@ -452,16 +452,16 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
         var names = List<String>.new()
         for entry in entries { names.push(String.from(entry.key)) }
         names.sort()
-        var keys = List<value.Json>.new()
-        for n in names { keys.push(value.Json.Str(String.from(n))) }
-        out.push(value.Json.Arr(move keys))
+        var keys = List<json.Value>.new()
+        for n in names { keys.push(json.Value.Str(String.from(n))) }
+        out.push(json.Value.Arr(move keys))
       }
       Arr(items) => {
-        var keys = List<value.Json>.new()
-        for i in 0..items.len() { keys.push(value.Json.Int(i)) }
-        out.push(value.Json.Arr(move keys))
+        var keys = List<json.Value>.new()
+        for i in 0..items.len() { keys.push(json.Value.Int(i)) }
+        out.push(json.Value.Arr(move keys))
       }
-      _ => { return Err(fail("{value.type_name(input)} has no keys")) }
+      _ => { return Err(fail("{json.type_name(input)} has no keys")) }
     }
     return Ok(true)
   }
@@ -476,18 +476,18 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
             for entry in entries {
               if entry.key.eq(k) { found = true }
             }
-            out.push(value.Json.Bool(found))
+            out.push(json.Value.Bool(found))
           }
           _ => { return Err(fail("an object is searched with a string")) }
         }
       }
       Arr(items) => {
         match key {
-          Int(n) => { out.push(value.Json.Bool(n >= 0 && n < items.len())) }
+          Int(n) => { out.push(json.Value.Bool(n >= 0 && n < items.len())) }
           _ => { return Err(fail("an array is searched with a number")) }
         }
       }
-      _ => { return Err(fail("{value.type_name(input)} cannot be searched")) }
+      _ => { return Err(fail("{json.type_name(input)} cannot be searched")) }
     }
     return Ok(true)
   }
@@ -495,13 +495,13 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
     let ok = arity(name, args, 1)?
     match input {
       Arr(items) => {
-        var mapped = List<value.Json>.new()
+        var mapped = List<json.Value>.new()
         for item in items {
           let done = eval(args.at(0), item, mapped, depth)?
         }
-        out.push(value.Json.Arr(move mapped))
+        out.push(json.Value.Arr(move mapped))
       }
-      _ => { return Err(fail("cannot map over {value.type_name(input)}")) }
+      _ => { return Err(fail("cannot map over {json.type_name(input)}")) }
     }
     return Ok(true)
   }
@@ -517,11 +517,11 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
     let ok = arity(name, args, 0)?
     match input {
       Arr(items) => {
-        var total = value.Json.Null
+        var total = json.Value.Null
         for item in items { total = arithmetic(ast.Op.Add, total, item)? }
         out.push(move total)
       }
-      _ => { return Err(fail("cannot add up {value.type_name(input)}")) }
+      _ => { return Err(fail("cannot add up {json.type_name(input)}")) }
     }
     return Ok(true)
   }
@@ -529,7 +529,7 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
     let ok = arity(name, args, 0)?
     match input {
       Arr(items) => {
-        var copy = List<value.Json>.new()
+        var copy = List<json.Value>.new()
         for item in items { copy.push(item.clone()) }
         if name.eq("reverse") {
           sort.reverse(copy)
@@ -539,9 +539,9 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
             sort.dedup_by(copy, |a, b| compare(a, b) == 0)
           }
         }
-        out.push(value.Json.Arr(move copy))
+        out.push(json.Value.Arr(move copy))
       }
-      _ => { return Err(fail("cannot {name} {value.type_name(input)}")) }
+      _ => { return Err(fail("cannot {name} {json.type_name(input)}")) }
     }
     return Ok(true)
   }
@@ -549,11 +549,11 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
     let ok = arity(name, args, 0)?
     match input {
       Arr(items) => {
-        if items.len() == 0 { out.push(value.Json.Null) }
+        if items.len() == 0 { out.push(json.Value.Null) }
         else if name.eq("first") { out.push(items.at(0).clone()) }
         else { out.push(items.at(items.len() - 1).clone()) }
       }
-      _ => { return Err(fail("cannot take the {name} of {value.type_name(input)}")) }
+      _ => { return Err(fail("cannot take the {name} of {json.type_name(input)}")) }
     }
     return Ok(true)
   }
@@ -562,7 +562,7 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
     match input {
       Arr(items) => {
         if items.len() == 0 {
-          out.push(value.Json.Null)
+          out.push(json.Value.Null)
         } else {
           var best = 0
           for i in 1..items.len() {
@@ -572,7 +572,7 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
           out.push(items.at(best).clone())
         }
       }
-      _ => { return Err(fail("cannot take the {name} of {value.type_name(input)}")) }
+      _ => { return Err(fail("cannot take the {name} of {json.type_name(input)}")) }
     }
     return Ok(true)
   }
@@ -582,7 +582,7 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
     match limit {
       Int(n) => {
         if n > 100000 { return Err(fail("range() is limited to 100000 values")) }
-        for i in 0..n { out.push(value.Json.Int(i)) }
+        for i in 0..n { out.push(json.Value.Int(i)) }
       }
       _ => { return Err(fail("range() needs an integer")) }
     }
@@ -604,15 +604,15 @@ fn call(name: view String, args: view List<ast.Expr>, input: view value.Json,
                 Int(n) => { joined.push_int(n) }
                 Float(f) => { joined.push_str("{f}") }
                 Bool(b) => { joined.push_str("{b}") }
-                _ => { return Err(fail("cannot join {value.type_name(items.at(i))}")) }
+                _ => { return Err(fail("cannot join {json.type_name(items.at(i))}")) }
               }
             }
-            out.push(value.Json.Str(move joined))
+            out.push(json.Value.Str(move joined))
           }
           _ => { return Err(fail("the separator of join() must be a string")) }
         }
       }
-      _ => { return Err(fail("cannot join {value.type_name(input)}")) }
+      _ => { return Err(fail("cannot join {json.type_name(input)}")) }
     }
     return Ok(true)
   }
@@ -629,21 +629,21 @@ fn math_abs(n: Int) -> Int {
   return n
 }
 
-fn convert(name: view String, input: view value.Json) -> Result<value.Json, value.Fault> {
+fn convert(name: view String, input: view json.Value) -> Result<json.Value, value.Fault> {
   if name.eq("tostring") {
     match input {
       Str(_) => { return Ok(input.clone()) }
-      _ => { return Ok(value.Json.Str(plain(input))) }
+      _ => { return Ok(json.Value.Str(plain(input))) }
     }
   }
   match input {
     Str(s) => {
-      if name.eq("ascii_downcase") { return Ok(value.Json.Str(text.to_lower(s))) }
-      if name.eq("ascii_upcase") { return Ok(value.Json.Str(text.to_upper(s))) }
+      if name.eq("ascii_downcase") { return Ok(json.Value.Str(text.to_lower(s))) }
+      if name.eq("ascii_upcase") { return Ok(json.Value.Str(text.to_upper(s))) }
       var n = 0
-      if s.parse_int(n) { return Ok(value.Json.Int(n)) }
+      if s.parse_int(n) { return Ok(json.Value.Int(n)) }
       match text.parse_float(s) {
-        Ok(f) => { return Ok(value.Json.Float(f)) }
+        Ok(f) => { return Ok(json.Value.Float(f)) }
         Err(_) => { return Err(fail("cannot convert \"{s}\" to a number")) }
       }
     }
@@ -655,17 +655,17 @@ fn convert(name: view String, input: view value.Json) -> Result<value.Json, valu
     }
     _ => {}
   }
-  return Err(fail("cannot {name} {value.type_name(input)}"))
+  return Err(fail("cannot {name} {json.type_name(input)}"))
 }
 
-// the text `tostring` gives: scalars as they print, arrays and objects as compact JSON (written by writer.compact)
-fn plain(v: view value.Json) -> String {
+// the text `tostring` gives: scalars as they print, arrays and objects as compact JSON (written by json.to_string)
+fn plain(v: view json.Value) -> String {
   match v {
     Null => { return String.from("null") }
     Bool(b) => { return "{b}" }
     Int(n) => { return "{n}" }
     Float(f) => { return "{f}" }
     Str(s) => { return String.from(s) }
-    _ => { return writer.compact(v) }
+    _ => { return json.to_string(v) }
   }
 }

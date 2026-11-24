@@ -35,6 +35,7 @@ pub fn source(key: &str) -> Option<&'static str> {
         "std.regex" => Some(include_str!("std/regex.yx")),
         "std.csv" => Some(include_str!("std/csv.yx")),
         "std.toml" => Some(include_str!("std/toml.yx")),
+        "std.json" => Some(include_str!("std/json.yx")),
         _ => None,
     }
 }

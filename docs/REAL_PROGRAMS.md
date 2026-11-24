@@ -78,7 +78,7 @@ Size: 8 modules, 1,677 lines; 12 `yerux test` blocks plus a golden run
 (values and exit codes) and are identical; `yerux test` passes on both.
 
 No compiler or stdlib defect was found; the program's own bug (a reader that
-accepted `01`) was caught by its unit test and fixed in `reader.yx`.
+accepted `01`) was caught by its unit test and fixed in `reader.yx`. The hand-written reader and writer were later replaced by `std.json` (`src/std/json.yx`, tests/std_json.yx).
 
 Frictions and their resolution (1.0 freeze round):
 

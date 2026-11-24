@@ -1,4 +1,5 @@
 // Tokens -> Expr. Precedence, loosest first:  |   ,   or   and   == != < <= > >=   + -   * / %   unary -   postfix.
+import std.json
 import lexer
 import ast
 import value
@@ -261,10 +262,10 @@ fn parse_primary(p: mut Parser) -> Result<ast.Expr, value.Fault> {
     return Ok(ast.Expr.Identity)
   }
   if which == NUMBER {
-    var literal = value.Json.Null
+    var literal = json.Value.Null
     match p.tokens.at(p.pos).kind {
-      Int(n) => { literal = value.Json.Int(n) }
-      Float(f) => { literal = value.Json.Float(f) }
+      Int(n) => { literal = json.Value.Int(n) }
+      Float(f) => { literal = json.Value.Float(f) }
       _ => {}
     }
     p.pos = p.pos + 1
@@ -272,7 +273,7 @@ fn parse_primary(p: mut Parser) -> Result<ast.Expr, value.Fault> {
   }
   if which == STRING {
     let s = take_text(p)?
-    return Ok(ast.Expr.Literal(value.Json.Str(move s)))
+    return Ok(ast.Expr.Literal(json.Value.Str(move s)))
   }
   if which == LPAREN {
     p.pos = p.pos + 1
@@ -282,7 +283,7 @@ fn parse_primary(p: mut Parser) -> Result<ast.Expr, value.Fault> {
   }
   if which == LBRACKET {
     p.pos = p.pos + 1
-    if accept(p, RBRACKET) { return Ok(ast.Expr.Literal(value.Json.Arr(List<value.Json>.new()))) }
+    if accept(p, RBRACKET) { return Ok(ast.Expr.Literal(json.Value.Arr(List<json.Value>.new()))) }
     let inner = parse_pipe(p)?
     let closed = expect(p, RBRACKET, "']'")?
     return Ok(ast.Expr.Collect(boxed(move inner)))
@@ -301,7 +302,7 @@ fn parse_object(p: mut Parser) -> Result<ast.Expr, value.Fault> {
     var shorthand = String.new()
     if here(p) == NAME || here(p) == STRING {
       shorthand = take_text(p)?
-      key = ast.Expr.Literal(value.Json.Str(String.from(shorthand)))
+      key = ast.Expr.Literal(json.Value.Str(String.from(shorthand)))
     } else if accept(p, LPAREN) {
       key = parse_pipe(p)?
       let closed = expect(p, RPAREN, "')'")?
@@ -323,9 +324,9 @@ fn parse_object(p: mut Parser) -> Result<ast.Expr, value.Fault> {
 
 fn parse_name(p: mut Parser) -> Result<ast.Expr, value.Fault> {
   let name = take_text(p)?
-  if name.eq("true") { return Ok(ast.Expr.Literal(value.Json.Bool(true))) }
-  if name.eq("false") { return Ok(ast.Expr.Literal(value.Json.Bool(false))) }
-  if name.eq("null") { return Ok(ast.Expr.Literal(value.Json.Null)) }
+  if name.eq("true") { return Ok(ast.Expr.Literal(json.Value.Bool(true))) }
+  if name.eq("false") { return Ok(ast.Expr.Literal(json.Value.Bool(false))) }
+  if name.eq("null") { return Ok(ast.Expr.Literal(json.Value.Null)) }
   if name.eq("if") { return parse_if(p) }
   var args = List<ast.Expr>.new()
   if accept(p, LPAREN) {

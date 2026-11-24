@@ -654,6 +654,7 @@ Rules that follow from the language and apply to the calls below:
 | `std.collections`, `std.sort`, `std.iter` | queues/heaps/ordered maps, sorting and searching, list helpers | below |
 | `std.hash`, `std.hex`, `std.base64` | FNV-1a/CRC-32/SHA-256, hex, base64 | below |
 | `std.regex`, `std.csv`, `std.toml` | bounded ASCII regex, RFC 4180 CSV, manifest-style TOML | below, [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md) |
+| `std.json` | JSON reader and writer over a `Value` enum | below |
 | `std.args`, `std.env`, `std.io` | command line, environment, raw I/O and `IoError` | below, [STDLIB_IO.md](STDLIB_IO.md) |
 | `std.fs`, `std.path`, `std.time` | files and directories, path strings, `Duration`/clocks/calendar | below, [STDLIB_IO.md](STDLIB_IO.md), [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md) |
 | `std.process` | run and control child processes, pipes, signals | [STDLIB_PROCESS.md](STDLIB_PROCESS.md) |
@@ -796,6 +797,21 @@ pattern is an error (`regex.check` returns it, the other functions panic). Synta
 [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md).
 `std.csv.parse/write` handle quoted RFC 4180 records. `std.toml` reads the
 manifest subset via dotted-key accessors.
+
+### `std.json`
+`import std.json`. The data model is `enum Value { Null, Bool(Bool), Int(Int), Float(Float), Str(String), Arr(List<Value>), Obj(List<Member>) }` with `struct Member { key: String, value: Value }`; `Value` and `Member` implement `Clone`. Objects keep their members in source order, duplicate keys included (`find(members, key)` gives the index of the last one, or -1).
+
+| Function | Notes |
+|----------|-------|
+| `parse(text: view String) -> Result<Value, Error>` | RFC 8259: any whitespace around the value, `\uXXXX` escapes with surrogate pairs, UTF-8 passed through. A number without fraction or exponent is `Int` (outside the `Int` range it is an error), otherwise `Float`; leading zeros, a bare `-`, `1.`, `1e`, control characters in strings, trailing text and nesting deeper than 200 levels are errors |
+| `Error { offset: Int, message: String }` | `offset` is a byte offset into the text |
+| `to_string(v) -> String` | compact, one line |
+| `to_pretty(v) -> String` | two-space indent, one element per line; empty arrays and objects stay `[]` and `{}` |
+| `quote(s) -> String` | a JSON string literal with escapes (`\"`, `\\`, `\n`, `\t`, `\r`, other control characters as `\u00XX`) |
+| `type_name(v) -> Text` | `"null"`, `"boolean"`, `"number"`, `"string"`, `"array"`, `"object"` |
+| `line_col(text, offset) -> (Int, Int)` | 1-based line and column in characters, for messages |
+
+A `Float` that is NaN or infinite has no JSON spelling and is written as `null`. Tests: tests/std_json.yx (C and native); `examples/real/jql` is built on it.
 
 ### Language limits met while writing these modules
 - Methods cannot be added to `String` / `List` from a module, so the helpers are free functions (`text.split(s, ",")`, not `s.split(",")`).

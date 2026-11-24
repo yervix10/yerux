@@ -1,5 +1,6 @@
 // The syntax tree of a query. Every child that is another expression sits behind a Box or inside a List,
 // so the enum has a known size even though it contains itself.
+import std.json
 import value
 
 pub enum Op {
@@ -12,7 +13,7 @@ pub struct Pair { key: Expr, value: Expr }
 
 pub enum Expr {
   Identity,
-  Literal(value.Json),
+  Literal(json.Value),
   Field(Box<Expr>, String),
   Index(Box<Expr>, Box<Expr>),
   Iterate(Box<Expr>),
