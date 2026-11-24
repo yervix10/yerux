@@ -1,0 +1,228 @@
+// The lzh format: LZ77 with a 4096-byte window, then canonical Huffman coding of the tokens.
+//
+// Container: the magic "LZH1", the original length (4 bytes, big endian), the code length of each symbol of the
+// literal/length alphabet (513 bytes, one per symbol), then the bit stream (least significant bit first).
+// Alphabet: symbols 0..255 are literal bytes, 256 ends the stream, 257 + (length - 3) is a match of length 3..258;
+// a match symbol is followed by its distance - 1 in 12 raw bits. Huffman codes are written most significant bit first.
+//
+// The tokenizer keeps, for every 3-byte hash, a chain of earlier positions (up to 64 candidates, distance up to 4096)
+// and takes the longest match; a match of at least 3 bytes is emitted, otherwise a literal.
+import bits
+import huff
+
+pub const HEADER: Int = 521
+pub const EOB: Int = 256
+pub const SYMBOLS: Int = 513
+const WINDOW: Int = 4096
+const MIN_MATCH: Int = 3
+const MAX_MATCH: Int = 258
+const CHAIN: Int = 64
+// The longest code. A Huffman tree over fewer than 2^32 bytes is at most 46 deep, and the canonical code values
+// stay far below the 64-bit limit at this depth; a longer code in a stream is rejected instead of overflowing.
+pub const MAX_CODE: Int = 48
+
+// Token: a literal byte 0..255, or 256 + (length - 3) * 4096 + (distance - 1) for a match.
+fn match_token(length: Int, dist: Int) -> Int {
+  return 256 + (length - 3) * 4096 + (dist - 1)
+}
+
+fn symbol_of(tok: Int) -> Int {
+  if tok < 256 {
+    return tok
+  }
+  return 257 + (tok - 256) / 4096
+}
+
+fn hash3(data: view List<Int>, i: Int) -> Int {
+  let x = (data.at(i) * 256 + data.at(i + 1)) * 256 + data.at(i + 2)
+  return ((x * 2654435761) % 4294967296) / 1048576
+}
+
+// Records position k in its hash chain when three bytes start there.
+fn insert(data: view List<Int>, head: mut List<Int>, prev: mut List<Int>, k: Int) {
+  if k + 2 < data.len() {
+    let h = hash3(data, k)
+    prev[k] = head.at(h)
+    head[h] = k
+  }
+}
+
+// Length of the common prefix of data[j..] and data[i..], at most MAX_MATCH and the rest of the input.
+fn match_len(data: view List<Int>, j: Int, i: Int) -> Int {
+  let limit = min_int(MAX_MATCH, data.len() - i)
+  var l = 0
+  while l < limit && data.at(j + l) == data.at(i + l) {
+    l = l + 1
+  }
+  return l
+}
+
+fn min_int(a: Int, b: Int) -> Int {
+  if a < b {
+    return a
+  }
+  return b
+}
+
+pub fn tokenize(data: view List<Int>) -> List<Int> {
+  let n = data.len()
+  var head = List<Int>.new()
+  var prev = List<Int>.new()
+  for _ in 0..4096 {
+    head.push(-1)
+  }
+  for _ in 0..n {
+    prev.push(-1)
+  }
+  var toks = List<Int>.new()
+  var i = 0
+  while i < n {
+    var best = 0
+    var best_dist = 0
+    if i + 2 < n {
+      var j = head.at(hash3(data, i))
+      var depth = 0
+      while j >= 0 && i - j <= WINDOW && depth < CHAIN {
+        let l = match_len(data, j, i)
+        if l > best {
+          best = l
+          best_dist = i - j
+        }
+        j = prev.at(j)
+        depth = depth + 1
+      }
+    }
+    if best >= MIN_MATCH {
+      toks.push(match_token(best, best_dist))
+      for k in i..i + best {
+        insert(data, head, prev, k)
+      }
+      i = i + best
+    } else {
+      toks.push(data.at(i))
+      insert(data, head, prev, i)
+      i = i + 1
+    }
+  }
+  return toks
+}
+
+// Writes a Huffman code of `len` bits, most significant bit first.
+fn put_code(w: mut bits.BitWriter, code: Int, len: Int) {
+  for k in 0..len {
+    bits.put(w, (code / bits.pow2(len - 1 - k)) % 2, 1)
+  }
+}
+
+// Four bytes of `v`, most significant first.
+fn be32(v: Int) -> List<Int> {
+  var out = List<Int>.new()
+  out.push((v / 16777216) % 256)
+  out.push((v / 65536) % 256)
+  out.push((v / 256) % 256)
+  out.push(v % 256)
+  return out
+}
+
+// The compressed bytes of `data` (values 0..255).
+pub fn compress(data: view List<Int>) -> Result<List<Int>, String> {
+  let toks = tokenize(data)
+  var freq = List<Int>.new()
+  for _ in 0..SYMBOLS {
+    freq.push(0)
+  }
+  for t in toks {
+    freq[symbol_of(t)] = freq.at(symbol_of(t)) + 1
+  }
+  freq[EOB] = freq.at(EOB) + 1
+  let codelen = huff.lengths(freq)
+  for s in 0..SYMBOLS {
+    if codelen.at(s) > MAX_CODE {
+      return Err("code length above 48")
+    }
+  }
+  let code = huff.codes(codelen)
+  var w = bits.writer()
+  for t in toks {
+    let s = symbol_of(t)
+    put_code(w, code.at(s), codelen.at(s))
+    if s > EOB {
+      bits.put(w, (t - 256) % 4096, 12)
+    }
+  }
+  put_code(w, code.at(EOB), codelen.at(EOB))
+  var out = List<Int>.new()
+  out.push(76)
+  out.push(90)
+  out.push(72)
+  out.push(49)
+  for b in be32(data.len()) {
+    out.push(b)
+  }
+  for s in 0..SYMBOLS {
+    out.push(codelen.at(s))
+  }
+  for b in bits.finish(w) {
+    out.push(b)
+  }
+  return Ok(move out)
+}
+
+// The original bytes, or an error describing why `data` is not a valid lzh stream.
+pub fn decompress(data: view List<Int>) -> Result<List<Int>, String> {
+  if data.len() < HEADER {
+    return Err("truncated header")
+  }
+  if data.at(0) != 76 || data.at(1) != 90 || data.at(2) != 72 || data.at(3) != 49 {
+    return Err("bad magic")
+  }
+  let n = ((data.at(4) * 256 + data.at(5)) * 256 + data.at(6)) * 256 + data.at(7)
+  var codelen = List<Int>.new()
+  for s in 0..SYMBOLS {
+    codelen.push(data.at(8 + s))
+  }
+  for s in 0..SYMBOLS {
+    if codelen.at(s) > MAX_CODE {
+      return Err("code length above 48")
+    }
+  }
+  let t = huff.table(codelen)
+  var r = bits.reader(data.copy(), HEADER)
+  var out = List<Int>.new()
+  while true {
+    let s = huff.decode(t, r)
+    if r.overrun {
+      return Err("truncated data")
+    }
+    if s < 0 {
+      return Err("invalid code")
+    }
+    if s < EOB {
+      if out.len() >= n {
+        return Err("more data than the header declares")
+      }
+      out.push(s)
+    } else if s == EOB {
+      break
+    } else {
+      let length = s - 254
+      let dist = bits.take(r, 12) + 1
+      if r.overrun {
+        return Err("truncated data")
+      }
+      if dist > out.len() {
+        return Err("match before the start of the output")
+      }
+      if out.len() + length > n {
+        return Err("more data than the header declares")
+      }
+      for _ in 0..length {
+        out.push(out.at(out.len() - dist))
+      }
+    }
+  }
+  if out.len() != n {
+    return Err("length mismatch")
+  }
+  return Ok(move out)
+}

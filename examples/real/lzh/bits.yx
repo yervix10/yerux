@@ -1,0 +1,90 @@
+// Bit I/O for lzh, least significant bit first within each byte (the DEFLATE convention). Bytes are Ints 0..255.
+//
+// BitWriter collects bytes in `out`; `acc` holds the `n` bits not yet full. BitReader reads from `data` starting at
+// byte `pos`, bit `bit`; a read past the end sets `overrun` and returns 0 for the missing bits.
+
+pub struct BitWriter {
+  out: List<Int>,
+  acc: Int,
+  n: Int,
+}
+
+pub struct BitReader {
+  data: List<Int>,
+  pos: Int,
+  bit: Int,
+  overrun: Bool,
+}
+
+// 2^k for 0 <= k <= 62.
+pub fn pow2(k: Int) -> Int {
+  var p = 1
+  for _ in 0..k {
+    p = p * 2
+  }
+  return p
+}
+
+pub fn writer() -> BitWriter {
+  return BitWriter { out: List<Int>.new(), acc: 0, n: 0 }
+}
+
+// Appends the low `bits` bits of `value`, least significant first.
+pub fn put(w: mut BitWriter, value: Int, bits: Int) {
+  var v = value
+  for _ in 0..bits {
+    if v % 2 == 1 {
+      w.acc = w.acc + pow2(w.n)
+    }
+    v = v / 2
+    w.n = w.n + 1
+    if w.n == 8 {
+      w.out.push(w.acc)
+      w.acc = 0
+      w.n = 0
+    }
+  }
+}
+
+// Flushes the partial byte (its unused bits are zero) and returns the bytes.
+pub fn finish(w: mut BitWriter) -> List<Int> {
+  if w.n > 0 {
+    w.out.push(w.acc)
+    w.acc = 0
+    w.n = 0
+  }
+  return w.out.copy()
+}
+
+pub fn reader(data: List<Int>, start: Int) -> BitReader {
+  return BitReader { data: move data, pos: start, bit: 0, overrun: false }
+}
+
+// The next single bit, 0 or 1.
+pub fn bit(r: mut BitReader) -> Int {
+  if r.pos >= r.data.len() {
+    r.overrun = true
+    return 0
+  }
+  let b = (r.data.at(r.pos) / pow2(r.bit)) % 2
+  r.bit = r.bit + 1
+  if r.bit == 8 {
+    r.bit = 0
+    r.pos = r.pos + 1
+  }
+  return b
+}
+
+// The next `bits` bits as an unsigned value, least significant first.
+pub fn take(r: mut BitReader, bits: Int) -> Int {
+  var v = 0
+  for i in 0..bits {
+    v = v + bit(r) * pow2(i)
+  }
+  return v
+}
+
+// Whether the reader has consumed every bit of its data (partial byte included).
+pub fn at_end(r: view BitReader) -> Bool {
+  return r.pos >= r.data.len()
+}

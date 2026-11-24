@@ -1,0 +1,163 @@
+// Canonical Huffman codes for lzh: code lengths from symbol frequencies, codes assigned in (length, symbol) order,
+// and a bit-by-bit decoder that needs only the lengths (the table layout of RFC 1951, section 3.2.2).
+import bits
+
+// Code lengths for `freq`: a symbol with frequency 0 gets length 0. A single used symbol gets length 1.
+// Built by repeatedly merging the two lightest subtrees; the lengths are the depths of the leaves.
+pub fn lengths(freq: view List<Int>) -> List<Int> {
+  let n = freq.len()
+  var weight = List<Int>.new()
+  var parent = List<Int>.new()
+  var alive = List<Bool>.new()
+  var len = List<Int>.new()
+  var leaves = 0
+  for s in 0..n {
+    weight.push(freq.at(s))
+    parent.push(-1)
+    alive.push(freq.at(s) > 0)
+    len.push(0)
+    if freq.at(s) > 0 {
+      leaves = leaves + 1
+    }
+  }
+  if leaves == 0 {
+    return move len
+  }
+  if leaves == 1 {
+    for s in 0..n {
+      if freq.at(s) > 0 {
+        len[s] = 1
+      }
+    }
+    return move len
+  }
+  // Subtree nodes are appended after the n symbols; `alive` marks the roots not yet merged.
+  while true {
+    var a = -1
+    var b = -1
+    for i in 0..weight.len() {
+      if alive.at(i) {
+        if a < 0 || weight.at(i) < weight.at(a) {
+          b = a
+          a = i
+        } else if b < 0 || weight.at(i) < weight.at(b) {
+          b = i
+        }
+      }
+    }
+    if b < 0 {
+      break
+    }
+    weight.push(weight.at(a) + weight.at(b))
+    parent.push(-1)
+    alive.push(true)
+    alive[a] = false
+    alive[b] = false
+    let top = weight.len() - 1
+    parent[a] = top
+    parent[b] = top
+  }
+  for s in 0..n {
+    if freq.at(s) > 0 {
+      var d = 0
+      var node = s
+      while parent.at(node) >= 0 {
+        node = parent.at(node)
+        d = d + 1
+      }
+      len[s] = d
+    }
+  }
+  return move len
+}
+
+// Canonical codes for the lengths: code[s] is the code of symbol s, read most significant bit first.
+pub fn codes(len: view List<Int>) -> List<Int> {
+  let n = len.len()
+  var max = 0
+  for s in 0..n {
+    if len.at(s) > max {
+      max = len.at(s)
+    }
+  }
+  var count = List<Int>.new()
+  var next = List<Int>.new()
+  for _ in 0..max + 1 {
+    count.push(0)
+    next.push(0)
+  }
+  for s in 0..n {
+    count[len.at(s)] = count.at(len.at(s)) + 1
+  }
+  count[0] = 0
+  var code = 0
+  for l in 1..max + 1 {
+    code = (code + count.at(l - 1)) * 2
+    next[l] = code
+  }
+  var out = List<Int>.new()
+  for _ in 0..n {
+    out.push(0)
+  }
+  for s in 0..n {
+    let l = len.at(s)
+    if l > 0 {
+      out[s] = next.at(l)
+      next[l] = next.at(l) + 1
+    }
+  }
+  return move out
+}
+
+// Decoding table: the number of symbols of each length, and the symbols sorted by (length, symbol).
+pub struct Table {
+  count: List<Int>,
+  symbol: List<Int>,
+  max: Int,
+}
+
+pub fn table(len: view List<Int>) -> Table {
+  let n = len.len()
+  var max = 0
+  for s in 0..n {
+    if len.at(s) > max {
+      max = len.at(s)
+    }
+  }
+  var count = List<Int>.new()
+  for _ in 0..max + 1 {
+    count.push(0)
+  }
+  for s in 0..n {
+    count[len.at(s)] = count.at(len.at(s)) + 1
+  }
+  count[0] = 0
+  var symbol = List<Int>.new()
+  for l in 1..max + 1 {
+    for s in 0..n {
+      if len.at(s) == l {
+        symbol.push(s)
+      }
+    }
+  }
+  return Table { count: move count, symbol: move symbol, max: max }
+}
+
+// Reads one symbol. Returns -1 when the bits do not match any code (an incomplete or corrupt table, or the end of
+// the input, which the caller checks with `bits.overrun`).
+pub fn decode(t: view Table, r: mut bits.BitReader) -> Int {
+  var code = 0
+  var first = 0
+  var index = 0
+  for l in 1..t.max + 1 {
+    code = code + bits.bit(r)
+    let count = t.count.at(l)
+    if code - first < count {
+      return t.symbol.at(index + code - first)
+    }
+    index = index + count
+    first = (first + count) * 2
+    code = code * 2
+  }
+  return -1
+}
