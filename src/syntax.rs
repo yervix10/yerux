@@ -1040,20 +1040,25 @@ impl Types {
         }
         None
     }
-    /// A type is "owned" when it holds heap memory: it has a single owner and is moved, not copied.
+    /// An owned value has a single owner and can only be transferred by moving it.
     pub fn owned(&self, t: Ty) -> bool {
+        self.owned_with_drop(t, &mut |i| self.user_drop.contains_key(&i))
+    }
+
+    pub fn owned_with_drop(&self, t: Ty, has_drop: &mut dyn FnMut(usize) -> bool) -> bool {
         match t {
             Ty::List(_) | Ty::String | Ty::Box(_) | Ty::Fn(_) | Ty::Dyn(_) => true,
             Ty::Struct(i) => {
                 self.is_lock_guard(i)
-                    || self.user_drop.contains_key(&i)
+                    || has_drop(i)
                     || self.join_payload(i).is_some()
-                    || self.structs[i].fields.iter().any(|(_, f)| self.owned(*f))
+                    || self.structs[i].fields.iter()
+                        .any(|(_, f)| self.owned_with_drop(*f, has_drop))
             }
             Ty::Enum(i) => self.enums[i]
                 .variants
                 .iter()
-                .any(|(_, ps)| ps.iter().any(|p| self.owned(*p))),
+                .any(|(_, ps)| ps.iter().any(|p| self.owned_with_drop(*p, has_drop))),
             // inside a generic body a `T` may be anything, so it is owned (moved) unless declared `T: Copy`
             Ty::Param(i) => !self.params[i].bounds.iter().any(|b| b == "Copy"),
             _ => false,
@@ -4715,6 +4720,7 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
     }
     let mut out: Vec<Token> = vec![];
     let mut gen = String::new();
+    let mut copy_derives = Vec::new();
     let mut at = user.first().map(|t| t.pos).unwrap_or_default();
     gen.push_str(&auto);
     for n in &auto_eq {
@@ -4736,7 +4742,7 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
                 if t == "for" {
                     break;
                 }
-                traits.push(t.clone());
+                traits.push((t.clone(), user[j].pos));
                 j += 1;
                 if user.get(j).map(|t| &t.t) == Some(&Tok::Sym(",")) {
                     j += 1;
@@ -4748,8 +4754,13 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
             ) {
                 if f == "for" && !traits.is_empty() {
                     at = user[i].pos;
-                    for tr in &traits {
-                        gen.push_str(&derive_impl(tr, name, defs.get(name), gens.get(name), &parts));
+                    for (tr, pos) in &traits {
+                        let derived = derive_impl(tr, name, defs.get(name), gens.get(name), &parts);
+                        if tr == "Copy" {
+                            copy_derives.push((derived, *pos));
+                        } else {
+                            gen.push_str(&derived);
+                        }
                     }
                     i = j + 2;
                     continue;
@@ -4759,16 +4770,18 @@ pub fn expand_derives(user: Vec<Token>) -> Vec<Token> {
         out.push(user[i].clone());
         i += 1;
     }
-    if gen.is_empty() {
+    if gen.is_empty() && copy_derives.is_empty() {
         return out;
     }
     let eof = out.pop();
-    if let Ok(mut g) = lex(&gen) {
-        g.pop();
-        for t in g.iter_mut() {
-            t.pos = at;
+    for (source, pos) in std::iter::once((gen, at)).chain(copy_derives) {
+        if let Ok(mut g) = lex(&source) {
+            g.pop();
+            for t in g.iter_mut() {
+                t.pos = pos;
+            }
+            out.extend(g);
         }
-        out.extend(g);
     }
     out.extend(eof);
     out
@@ -4863,6 +4876,9 @@ fn derive_impl(
         let bs: Vec<String> = gp.iter().map(|g| format!("{g}: {tr}")).collect();
         (format!("impl<{}> {tr}", bs.join(", ")), format!("{name}<{}>", gp.join(", ")))
     };
+    if tr == "Copy" {
+        return format!("{ih} for {ty} {{ }}\n");
+    }
     if *is_struct {
         // field names: `name: Type`
         let fields: Vec<String> = parts(body)

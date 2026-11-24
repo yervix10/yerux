@@ -1,0 +1,16 @@
+struct Tag<T> { value: T }
+impl<T: Copy> Drop for Tag<T> {
+  fn drop(mut self) {}
+}
+
+fn consume(value: Tag<Int>) {}
+
+fn borrowed_return(value: view Tag<Int>) -> Tag<Int> { return value }
+
+fn main() {
+  let original = Tag<Int> { value: 1 }
+  let copy = original
+  var target = Tag<Int> { value: 2 }
+  target = original
+  consume(original)
+}

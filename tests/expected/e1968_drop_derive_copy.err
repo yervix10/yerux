@@ -1,0 +1,8 @@
+error: Tag<T> implements `Drop` and cannot derive or implement `Copy`
+ --> tests/e1968_drop_derive_copy.yx:2:8
+  |
+2 | derive Copy for Tag
+  |        ^^^^
+  = a value with a destructor has a single owner
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,5 @@
+impl<T> Drop for T {
+  fn drop(mut self) {}
+}
+
+fn main() {}

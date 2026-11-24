@@ -1,0 +1,10 @@
+struct Tag<T> { value: T }
+impl<T> Drop for Tag<T> {
+  fn drop(mut self) {}
+}
+
+fn duplicate<T: Copy>(value: T) -> T { return value }
+
+fn main() {
+  let copy = duplicate(Tag<Int> { value: 1 })
+}

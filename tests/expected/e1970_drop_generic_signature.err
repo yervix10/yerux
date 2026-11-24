@@ -1,0 +1,10 @@
+error: method 'drop' does not match the signature in trait Drop
+ --> tests/e1970_drop_generic_signature.yx:3:6
+  |
+3 |   fn drop(mut self) -> T { return self.value }
+  |      ^^^^
+  = trait Drop requires: fn drop(mut self)
+  = this impl declares: fn drop(mut self) -> T
+  = help: parameter modes (`view`/`mut`), types and the return type must be identical
+
+1 error(s). Nothing was generated.

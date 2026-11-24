@@ -1,0 +1,8 @@
+struct Tag<T> { value: T }
+derive Copy for Tag
+
+impl<T> Drop for Tag<T> {
+  fn drop(mut self) {}
+}
+
+fn main() {}

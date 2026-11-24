@@ -524,6 +524,7 @@ struct Checker<'a> {
     scopes: Vec<HashMap<String, usize>>,
     st: State,
     errs: Vec<Diag>,
+    drop_cycles: Vec<usize>,
     /// `for i in a..b`: the interval of the loop variable, keyed by the hidden counter's name
     loop_ivl: HashMap<String, (i128, i128)>,
     /// the interval of each variable's initialiser as typed (before the variable's own declared type applies)
@@ -1521,6 +1522,9 @@ impl<'a> Checker<'a> {
                             format!("'{}' is a {} and is not copied", n, self.tn(p.ty)),
                             pos,
                         );
+                        if matches!(p.ty, Ty::Struct(id) if self.types.user_drop.contains_key(&id)) {
+                            d = d.note("its type implements `Drop`, so it has a single owner");
+                        }
                         if let Ty::Param(i) = p.ty {
                             d = d.note(format!(
                                 "{} could be any type, including an owned one (String, List), so it is moved, not copied",
@@ -6561,11 +6565,13 @@ fn unify(
 impl<'a> Checker<'a> {
     /// Run `f` on the parser (which owns instantiation) with the type table lent to it.
     fn with_ps<R>(&mut self, f: impl FnOnce(&mut Parser) -> R) -> R {
+        let first_new_struct = self.types.structs.len();
         self.ps.types = std::mem::take(&mut self.types);
         let r = f(&mut *self.ps);
         self.types = std::mem::take(&mut self.ps.types);
         let errs = std::mem::take(&mut self.ps.inst_errs);
         self.errs.extend(errs);
+        self.register_drop_types(first_new_struct);
         r
     }
 
@@ -6599,11 +6605,23 @@ impl<'a> Checker<'a> {
     }
 
     fn implements(&self, ty: Ty, tr: &str) -> bool {
+        self.implements_with_drop(ty, tr, &mut |id| self.types.user_drop.contains_key(&id))
+    }
+
+    fn implements_with_drop(
+        &self,
+        ty: Ty,
+        tr: &str,
+        has_drop: &mut dyn FnMut(usize) -> bool,
+    ) -> bool {
         if tr == "Copy" {
-            return !self.types.owned(ty) && ty != Ty::Unit;
+            return !self.types.owned_with_drop(ty, has_drop) && ty != Ty::Unit;
         }
         if let Ty::Param(i) = ty {
             return self.types.params[i].bounds.iter().any(|b| b == tr);
+        }
+        if tr == "Drop" {
+            return matches!(ty, Ty::Struct(id) if has_drop(id));
         }
         // arrays and slices compare and show element-wise (see `seq_rewrite`)
         if let Some(e) = self
@@ -6613,18 +6631,27 @@ impl<'a> Checker<'a> {
             .or_else(|| self.types.slice_elem(ty))
         {
             if matches!(tr, "Show" | "Equal" | "Ordered" | "Clone") {
-                return self.implements(e, tr);
+                return self.implements_with_drop(e, tr, has_drop);
             }
         }
-        self.ps
-            .impls
-            .iter()
-            .any(|im| im.trait_name.as_deref() == Some(tr) && self.impl_binds(im, ty).is_some())
+        self.ps.impls.iter().any(|im| {
+            im.trait_name.as_deref() == Some(tr)
+                && self.impl_binds_with_drop(im, ty, has_drop).is_some()
+        })
     }
 
     /// Does impl `im` apply to type `ty`? For a generic impl (`impl<T: Show> Show for List<T>`): the type
     /// arguments it binds, provided every bound holds. For a plain impl: no arguments.
     fn impl_binds(&self, im: &ImplDef, ty: Ty) -> Option<Vec<Ty>> {
+        self.impl_binds_with_drop(im, ty, &mut |id| self.types.user_drop.contains_key(&id))
+    }
+
+    fn impl_binds_with_drop(
+        &self,
+        im: &ImplDef,
+        ty: Ty,
+        has_drop: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<Vec<Ty>> {
         if im.generics.is_empty() {
             return if im.self_ty == ty { Some(vec![]) } else { None };
         }
@@ -6636,12 +6663,69 @@ impl<'a> Checker<'a> {
         let args: Vec<Ty> = bind.into_iter().collect::<Option<Vec<Ty>>>()?;
         for (g, a) in im.generics.iter().zip(&args) {
             for (b, _) in &g.bounds {
-                if !self.implements(*a, b) {
+                if !self.implements_with_drop(*a, b, has_drop) {
                     return None;
                 }
             }
         }
         Some(args)
+    }
+
+    /// Record ownership before checking uses of a type. Impl selection can itself depend on
+    /// the ownership of a bound's type arguments, so resolve those on demand within this batch.
+    fn register_drop_types(&mut self, start: usize) {
+        let end = self.types.structs.len();
+        if start == end {
+            return;
+        }
+        let candidates: Vec<_> = self.ps.impls.iter()
+            .filter(|im| {
+                matches!(im.self_ty, Ty::Struct(_))
+                    && im.trait_name.as_deref() == Some("Drop")
+                    && im.methods.iter().any(|m| m.name == "drop")
+            })
+            .collect();
+        // None marks a type whose bounds are still being resolved.
+        let mut found = HashMap::new();
+        let mut cycle = None;
+        fn resolve(
+            ck: &Checker<'_>,
+            id: usize,
+            start: usize,
+            candidates: &[&ImplDef],
+            found: &mut HashMap<usize, Option<bool>>,
+            cycle: &mut Option<usize>,
+        ) -> bool {
+            if id < start {
+                return ck.types.user_drop.contains_key(&id);
+            }
+            if let Some(&result) = found.get(&id) {
+                return result.unwrap_or_else(|| {
+                    *cycle = Some(id);
+                    false
+                });
+            }
+            found.insert(id, None);
+            let ty = Ty::Struct(id);
+            let result = candidates.iter().any(|im| {
+                let mut has_drop = |arg| resolve(ck, arg, start, candidates, found, cycle);
+                ck.impl_binds_with_drop(im, ty, &mut has_drop).is_some()
+            });
+            found.insert(id, Some(result));
+            result
+        }
+        for id in start..end {
+            resolve(self, id, start, &candidates, &mut found, &mut cycle);
+        }
+        for (id, has_drop) in found {
+            if has_drop == Some(true) {
+                let name = impl_fn_name(&self.types, Some("Drop"), Ty::Struct(id), "drop");
+                self.types.user_drop.insert(id, name);
+            }
+        }
+        if let Some(id) = cycle {
+            self.drop_cycles.push(id);
+        }
     }
 
     /// Why a method of a generic built-in impl is not available for `ty` (an unmet bound), for error notes.
@@ -8334,6 +8418,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         scopes: vec![],
         st: State::default(),
         errs,
+        drop_cycles: vec![],
         loop_ivl: HashMap::new(),
         init_ivl: HashMap::new(),
         explicit_range: HashSet::new(),
@@ -8388,6 +8473,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         free_pids: vec![],
         closure_loans: HashMap::new(),
     };
+    ck.register_drop_types(0);
     ck.check_decls();
     // generic bodies: checked once with abstract type parameters, against their bounds only
     ck.in_generic = true;
@@ -8403,36 +8489,19 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         ck.func(f);
     }
     let mut done: Vec<Func> = vec![];
-    // Instantiate generic Drop impls for each concrete generic struct. Drop glue
-    // calls these functions implicitly, so ordinary call-driven monomorphization
-    // would otherwise never enqueue them.
-    let mut drop_checked = HashSet::new();
+    let mut next_drop = 0;
     loop {
-        let concrete: Vec<usize> = (0..ck.types.structs.len())
-            .filter(|i| !ck.types.structs[*i].generic && ck.types.structs[*i].origin.is_some())
-            .filter(|i| drop_checked.insert(*i))
-            .collect();
-        if concrete.is_empty() { break; }
-        for sid in concrete {
-            let ty = Ty::Struct(sid);
-            if let Some((name, _)) = ck.method_target(ty, Some("Drop"), "drop") {
-                ck.types.user_drop.insert(sid, name);
+        // Drop glue calls these functions implicitly, so enqueue them separately from calls.
+        while next_drop < ck.types.structs.len() {
+            let id = next_drop;
+            next_drop += 1;
+            if !ck.types.structs[id].generic && ck.types.user_drop.contains_key(&id) {
+                ck.method_target(Ty::Struct(id), Some("Drop"), "drop");
             }
         }
-        while let Some((mut f, why, origin)) = ck.queue.pop() {
-            let previous_origin = ck.inst_origin;
-            ck.inst_origin = origin;
-            let before = ck.errs.len();
-            ck.func(&mut f);
-            for d in ck.errs[before..].iter_mut() {
-                d.notes.push(format!("while checking {}", why));
-            }
-            done.push(f);
-            ck.inst_origin = previous_origin;
-        }
-    }
-    // instantiations (they were created while checking the code above, and may create more)
-    while let Some((mut f, why, origin)) = ck.queue.pop() {
+        let Some((mut f, why, origin)) = ck.queue.pop() else {
+            break;
+        };
         let previous_origin = ck.inst_origin;
         ck.inst_origin = origin;
         let before = ck.errs.len();
@@ -8463,6 +8532,13 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
     p.types = std::mem::take(&mut ck.types);
     let sigs = std::mem::take(&mut ck.sigs);
     let mut errs = std::mem::take(&mut ck.errs);
+    for id in ck.drop_cycles {
+        let def = &p.types.structs[id];
+        errs.push(diag(
+            format!("the `Drop` bounds for {} depend on its own destructor", def.name),
+            def.pos,
+        ));
+    }
     if errs.is_empty() {
         Ok(sigs)
     } else {
@@ -8569,7 +8645,7 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
-            if matches!(ty, Ty::Param(_) | Ty::Err) {
+            if ty == Ty::Err || matches!(ty, Ty::Param(_)) && tn.as_deref() != Some("Drop") {
                 continue;
             }
             let tn = match tn {
@@ -8577,10 +8653,14 @@ impl<'a> Checker<'a> {
                 None => continue,
             };
             if tn == "Copy" {
-                self.err(
-                    diag("`Copy` cannot be implemented by hand", tpos)
-                        .note("a type is Copy automatically when it holds no String or List"),
-                );
+                let d = if matches!(ty, Ty::Struct(id) if self.types.user_drop.contains_key(&id)) {
+                    diag(format!("{} implements `Drop` and cannot derive or implement `Copy`", tyn), tpos)
+                        .note("a value with a destructor has a single owner")
+                } else {
+                    diag("`Copy` cannot be derived or implemented by hand", tpos)
+                        .note("Copy is inferred for types without owned fields or a destructor")
+                };
+                self.err(d);
                 continue;
             }
             if tn == "Drop" {
@@ -8640,8 +8720,16 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let want = self.trait_header(&tn, mn, ty);
+                let subst = if tn == "Drop" {
+                    let im = &self.ps.impls[ii];
+                    im.generics.iter().zip(&im.pids)
+                        .map(|(param, id)| (param.name.clone(), Ty::Param(*id)))
+                        .collect()
+                } else {
+                    vec![]
+                };
                 let got = self
-                    .with_ps(|ps| ps.parse_fn_at(*tok, vec![], Some(ty), true))
+                    .with_ps(|ps| ps.parse_fn_at(*tok, subst, Some(ty), true))
                     .ok()
                     .map(|x| x.0);
                 if let (Some(w), Some(g)) = (want, got) {
@@ -8689,12 +8777,6 @@ impl<'a> Checker<'a> {
                     )
                     .note(format!("help: add {}", sigs.join(" and "))),
                 );
-            }
-            if tn == "Drop" && missing.is_empty() {
-                if let Ty::Struct(s) = ty {
-                    let name = impl_fn_name(&self.types, Some("Drop"), ty, "drop");
-                    self.types.user_drop.insert(s, name);
-                }
             }
         }
     }

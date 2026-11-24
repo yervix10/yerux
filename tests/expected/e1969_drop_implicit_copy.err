@@ -1,0 +1,32 @@
+error: cannot return 'value': it is only borrowed
+ --> tests/e1969_drop_implicit_copy.yx:8:63
+  |
+8 | fn borrowed_return(value: view Tag<Int>) -> Tag<Int> { return value }
+  |                                                               ^^^^^
+  = help: borrows cannot leave the function; take the value by ownership (without `view`/`mut`)
+
+error: 'original' is a Tag<Int> and is not copied
+  --> tests/e1969_drop_implicit_copy.yx:12:14
+   |
+12 |   let copy = original
+   |              ^^^^^^^^
+   = its type implements `Drop`, so it has a single owner
+   = help: use `move original` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: 'original' is a Tag<Int> and is not copied
+  --> tests/e1969_drop_implicit_copy.yx:14:12
+   |
+14 |   target = original
+   |            ^^^^^^^^
+   = its type implements `Drop`, so it has a single owner
+   = help: use `move original` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+error: 'original' is a Tag<Int> and is not copied
+  --> tests/e1969_drop_implicit_copy.yx:15:11
+   |
+15 |   consume(original)
+   |           ^^^^^^^^
+   = its type implements `Drop`, so it has a single owner
+   = help: use `move original` to hand it over, or pass it to a function that takes it as `view`/`mut`
+
+4 error(s). Nothing was generated.

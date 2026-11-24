@@ -1,0 +1,6 @@
+struct Tag<T> { value: T }
+impl<T: Copy> Drop for Tag<T> {
+  fn drop(mut self) -> T { return self.value }
+}
+
+fn main() { let tag = Tag<Int> { value: 1 } }

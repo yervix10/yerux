@@ -1,0 +1,8 @@
+error: `Drop` can only be implemented for a struct, not for T
+ --> tests/e1971_drop_non_struct_target.yx:1:9
+  |
+1 | impl<T> Drop for T {
+  |         ^^^^
+  = help: wrap the value in a struct and implement Drop for that struct
+
+1 error(s). Nothing was generated.

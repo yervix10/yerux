@@ -1,0 +1,9 @@
+error: Tag<Int> does not implement Copy, which 'duplicate' needs for T
+ --> tests/e1967_drop_generic_copy_bound.yx:9:14
+  |
+9 |   let copy = duplicate(Tag<Int> { value: 1 })
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = 'duplicate' is declared `fn duplicate<T: Copy>`
+  = Tag<Int> implements Drop, so it is moved when passed by value
+
+1 error(s). Nothing was generated.
