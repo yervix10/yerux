@@ -339,7 +339,14 @@ Ordinary generic enums: `Option<T>` is `Some(T)` or `None`; `Result<T, E>` is `O
 | `unwrap_or` | `fn unwrap_or(self, d: T) -> T` | consumes |
 | `or` | `fn or(self, other: Option<T>) -> Option<T>` | Option |
 | `ok` / `err` | `fn ok(self) -> Option<T>` / `fn err(self) -> Option<E>` | Result, consumes |
-| `ok_or` | `fn ok_or(self, msg: view String) -> Result<T, String>` | Option, consumes: `opt.ok_or("message")` (like `context`, the error is a `String`; methods cannot be generic yet) |
+| `map` | `fn map<U>(self, f: view fn(T) -> U) -> Option<U>` / `-> Result<U, E>` | Option, Result; consumes; `U` is inferred from the closure |
+| `and_then` | `fn and_then<U>(self, f: view fn(T) -> Option<U>) -> Option<U>` / `-> Result<U, E>` | Option, Result; consumes (write `-> R` on a closure that returns a bare `Ok(..)`/`Some(..)` whose other type is open, or call a named function) |
+| `unwrap_or_else` | `fn unwrap_or_else(self, f: view fn() -> T) -> T` / `f: view fn(E) -> T` | Option, Result; consumes |
+| `filter` | `fn filter(self, f: view fn(view T) -> Bool) -> Option<T>` | Option; consumes |
+| `is_some_and` / `is_ok_and` / `is_err_and` | `fn is_some_and(view self, f: view fn(view T) -> Bool) -> Bool` | Option / Result; borrows |
+| `map_err` | `fn map_err<F>(self, f: view fn(E) -> F) -> Result<T, F>` | Result; consumes |
+| `ok_or_else` | `fn ok_or_else<E>(self, f: view fn() -> E) -> Result<T, E>` | Option, consumes: any error type, built lazily |
+| `ok_or` | `fn ok_or(self, msg: view String) -> Result<T, String>` | Option, consumes: `opt.ok_or("message")`; the error is a `String` (kept so existing code keeps its type; see COMPATIBILITY.md section 7 item 5) |
 | `ok_or` (free) | `fn ok_or<T, E>(o: Option<T>, e: E) -> Result<T, E>` | any error type: `ok_or(opt, MyError.Missing)`; final, kept alongside the method |
 
 Also `Show` (`"{o}"` gives `Some(8)`, `None`, `Ok(42)`, `Err(text)`) when the payloads implement `Show`, and `Equal` for `Option<T: Equal>`.
@@ -610,7 +617,7 @@ fn main() {
 returns a `JoinHandle<T>` whose `join()` gives `Result<T, ThreadPanic>` (`ThreadPanic.show()` is `worker panicked`). Shared state: `Atomic<Int>` / `Atomic<Bool>`
 (`new`, `load`, `store`, `add`, `add_wrapping`, `swap`, `compare_swap`), `Locked<T>` (`new`, `with(|v| ..)`,
 `with_view(|v| ..)` = read-only view under the same exclusive lock as `with`, `take`), `Shared<T>` (`new`, `clone` = reference-count bump, `get`, and the methods of its
-content). `Mutex<T>` (facade over `Locked`: `mutex_update`, `mutex_with`, `mutex_with_view`) and `RwLock<T>` (`rwlock_read`,
+content). `Mutex<T>` (facade over `Locked`: methods `update`, `with`, `with_view`, and the free functions `mutex_update`, `mutex_with`, `mutex_with_view` as aliases) and `RwLock<T>` (`rwlock_read`,
 `rwlock_write`; spinning, no fairness). Channels: `Sender<T>.bounded(n)` / `.unbounded()` return `(Sender<T>, Receiver<T>)`;
 `send(v) -> Bool`, `recv() -> Option<T>` (None when closed and drained), `recv_timeout(ms)`, `close()`, `clone()` on the sender,
 `select2(a, b, timeout_ms)`. `thread_pool_new(n)` with `parallel_for(a, b, f)`, `thread_pool_map` and an explicit `close()`.

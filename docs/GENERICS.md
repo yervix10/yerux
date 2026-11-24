@@ -46,18 +46,19 @@ derive Clone, Equal, Show for Pair
 
 Owned type arguments work (`Stack<String>`), drops are generated per instantiation.
 
+## Generic methods (implemented)
+
+`impl<T> Option<T> { fn map<U>(self, f: view fn(T) -> U) -> Option<U> { .. } }` and `impl Plain { fn conv<R>(view self, f: view fn(Int) -> R) -> R { .. } }`.
+The method becomes a generic function `__gm__Type__method` over the impl's parameters plus its own, whose first
+parameter is `self`; `recv.m(args)` is rewritten to a call of it (a consuming `self` moves the receiver) and
+`generic_call` infers everything: the impl's parameters from the receiver, the method's from the other arguments
+(closures last). `Self` is re-read per instantiation from the impl's type tokens. Diagnostics name it `Type.method`.
+Tests: `tests/generic_methods.yx`, `tests/option_result_methods.yx`, `tests/mutex_methods.yx`,
+`tests/e1519_generic_method_in_trait_impl.yx`, `tests/e1520_generic_method_errors.yx`.
+
 ## Not yet
 
-- Generic *methods* (`fn map<U>(view self, ..)` inside an impl): still "methods cannot be generic yet". Design
-  (not implemented): a method's own type parameters are appended to the type parameters of its impl, so the
-  method becomes a generic function whose first parameter is `self` of the (abstract) impl type. `x.map(f)` is
-  resolved like any method call (by the receiver's type) and then handed to `generic_call` with the receiver
-  prepended: the receiver fixes the impl's parameters (`T` from `Stack<T>`), the other arguments (closures last)
-  fix the method's (`U`), bounds are checked as for free functions, and the instance is named
-  `Type.method<args>` like the existing impl instances. What is missing is the abstract header of a lazily
-  parsed impl method with both parameter lists (`parse_fn_at` takes one `subst`), and the instance's `self` type
-  after substitution. Until then, a free generic function does the job (`mutex_with(m, f)`, `ok_or(opt, e)`),
-  and `f<A, B>(..)` names the type arguments when they cannot be inferred.
+- Generic methods in a *trait* impl (`impl Show for P { fn show<R>(..) }`): rejected ("methods of a trait impl cannot be generic yet").
 - Adding methods/impls to library types (`impl<T> Describe for List<T>`): still rejected ("cannot add methods to
   the built-in type"); wrap them in your own struct.
 - `impl<T> Drop for Stack<T>` (generic Drop) is rejected; `Ordered`/`Hash` cannot be derived.
