@@ -1,0 +1,241 @@
+// Parsers: inline spans (one paragraph's text) and blocks (a whole document).
+import ast
+import std.text
+
+// Index of `mark` in `s` at or after `from`, skipping backslash-escaped bytes; -1 when absent.
+fn find_mark(s: view String, mark: view String, from: Int) -> Int {
+  var i = from
+  while i < s.len() {
+    if s.byte(i) == 92 {
+      i = i + 2
+    } else if s.slice(i, s.len()).starts_with(mark) {
+      return i
+    } else {
+      i = i + 1
+    }
+  }
+  return -1
+}
+
+// Flushes the pending plain text into `out` as a Text span.
+fn flush(out: mut List<ast.Inline>, pending: mut String) {
+  if pending.len() > 0 {
+    out.push(ast.Inline.Text(pending.clone()))
+    pending.clear()
+  }
+}
+
+// Parses `[label](dest)` or `![alt](src)` starting at `at` (the `[`). Returns the index after `)`, or -1.
+// A title after the destination is accepted and dropped.
+fn parse_link(s: view String, at: Int, image: Bool, out: mut List<ast.Inline>) -> Int {
+  let close = find_mark(s, "]", at + 1)
+  if close < 0 || close + 1 >= s.len() || s.byte(close + 1) != 40 {
+    return -1
+  }
+  let end = find_mark(s, ")", close + 2)
+  if end < 0 {
+    return -1
+  }
+  let label = s.slice(at + 1, close)
+  // `dest "title"`: the optional title is dropped, only the destination is kept
+  var dest = s.slice(close + 2, end).trim()
+  let sp = dest.find(" ")
+  if sp > 0 {
+    dest = dest.slice(0, sp)
+  }
+  if image {
+    out.push(ast.Inline.Image(move dest, move label))
+  } else {
+    out.push(ast.Inline.Link(move dest, parse_inline(label)))
+  }
+  return end + 1
+}
+
+// Spans of one paragraph. Supports `code`, **strong**, *emph* / _emph_, [link](dest), ![img](src),
+// backslash escapes and a hard break ("  " before a newline, given as "\n" by the caller).
+pub fn parse_inline(s: view String) -> List<ast.Inline> {
+  var out = List<ast.Inline>.new()
+  var pending = String.new()
+  var i = 0
+  while i < s.len() {
+    let b = s.byte(i)
+    if b == 92 && i + 1 < s.len() {
+      pending.push_byte(s.byte(i + 1))
+      i = i + 2
+      continue
+    }
+    if b == 96 {
+      let end = find_mark(s, "`", i + 1)
+      if end > i {
+        flush(out, pending)
+        out.push(ast.Inline.Code(s.slice(i + 1, end)))
+        i = end + 1
+        continue
+      }
+    }
+    if b == 42 && i + 1 < s.len() && s.byte(i + 1) == 42 {
+      let end = find_mark(s, "**", i + 2)
+      if end > i + 2 {
+        flush(out, pending)
+        out.push(ast.Inline.Strong(parse_inline(s.slice(i + 2, end))))
+        i = end + 2
+        continue
+      }
+    }
+    if b == 42 || b == 95 {
+      let mark = s.slice(i, i + 1)
+      let end = find_mark(s, mark, i + 1)
+      if end > i + 1 {
+        flush(out, pending)
+        out.push(ast.Inline.Emph(parse_inline(s.slice(i + 1, end))))
+        i = end + 1
+        continue
+      }
+    }
+    if b == 33 && i + 1 < s.len() && s.byte(i + 1) == 91 {
+      flush(out, pending)
+      let next = parse_link(s, i + 1, true, out)
+      if next > 0 {
+        i = next
+        continue
+      }
+    }
+    if b == 91 {
+      flush(out, pending)
+      let next = parse_link(s, i, false, out)
+      if next > 0 {
+        i = next
+        continue
+      }
+    }
+    pending.push_byte(b)
+    i = i + 1
+  }
+  flush(out, pending)
+  return out
+}
+
+// "### Title" -> 3; 0 when the line is not an ATX heading.
+fn heading_level(line: view String) -> Int {
+  var n = 0
+  while n < line.len() && line.byte(n) == 35 {
+    n = n + 1
+  }
+  if n == 0 || n > 6 || n >= line.len() || line.byte(n) != 32 {
+    return 0
+  }
+  return n
+}
+
+// Length of the list marker ("- ", "* ", "12. ") or 0; `ordered` tells which kind it is.
+fn marker(line: view String, ordered: mut Bool) -> Int {
+  if line.starts_with("- ") || line.starts_with("* ") {
+    ordered = false
+    return 2
+  }
+  var d = 0
+  while d < line.len() && line.byte(d) >= 48 && line.byte(d) <= 57 {
+    d = d + 1
+  }
+  if d > 0 && line.slice(d, line.len()).starts_with(". ") {
+    ordered = true
+    return d + 2
+  }
+  return 0
+}
+
+fn starts_block(line: view String) -> Bool {
+  var ordered = false
+  return line.trim().len() == 0 || heading_level(line) > 0 || line.starts_with("```")
+    || line.starts_with(">") || marker(line, ordered) > 0 || line.trim().eq("---")
+}
+
+// Parses the lines `lines[from..]` into blocks; `next` is set to the first line not consumed.
+// Lists nest by one level only: an indented marker stays inside the item as text.
+fn parse_lines(lines: view List<String>, from: Int, next: mut Int) -> List<ast.Block> {
+  var blocks = List<ast.Block>.new()
+  var i = from
+  while i < lines.len() {
+    let line = lines.at(i)
+    let t = line.trim()
+    if t.len() == 0 {
+      i = i + 1
+      continue
+    }
+    let level = heading_level(line)
+    if level > 0 {
+      blocks.push(ast.Block.Heading(level, parse_inline(line.slice(level + 1, line.len()).trim())))
+      i = i + 1
+      continue
+    }
+    if t == "---" {
+      blocks.push(ast.Block.Rule)
+      i = i + 1
+      continue
+    }
+    if line.starts_with("```") {
+      let lang = line.slice(3, line.len()).trim()
+      var body = List<String>.new()
+      i = i + 1
+      while i < lines.len() && !lines.at(i).trim().starts_with("```") {
+        body.push(lines.at(i).clone())
+        i = i + 1
+      }
+      i = i + 1
+      blocks.push(ast.Block.Fence(move lang, body.join("\n")))
+      continue
+    }
+    if line.starts_with(">") {
+      // the quote's lines, with one leading "> " or ">" removed, parsed as a document of their own
+      var inner = List<String>.new()
+      while i < lines.len() && lines.at(i).starts_with(">") {
+        var rest = lines.at(i).slice(1, lines.at(i).len())
+        if rest.starts_with(" ") {
+          rest = rest.slice(1, rest.len())
+        }
+        inner.push(move rest)
+        i = i + 1
+      }
+      var after = 0
+      blocks.push(ast.Block.Quote(parse_lines(inner, 0, after)))
+      continue
+    }
+    var ordered = false
+    let width = marker(line, ordered)
+    if width > 0 {
+      var items = List<List<ast.Inline>>.new()
+      while i < lines.len() {
+        var kind = false
+        let w = marker(lines.at(i), kind)
+        if w == 0 || kind != ordered {
+          break
+        }
+        var item = lines.at(i).slice(w, lines.at(i).len()).trim()
+        i = i + 1
+        // continuation lines are indented and belong to the item
+        while i < lines.len() && lines.at(i).starts_with("  ") && lines.at(i).trim().len() > 0 {
+          item = "{item} {lines.at(i).trim()}"
+          i = i + 1
+        }
+        items.push(parse_inline(item))
+      }
+      blocks.push(ast.Block.ListBlock(ordered, move items))
+      continue
+    }
+    // paragraph: consecutive lines up to a blank line or another block
+    var para = List<String>.new()
+    while i < lines.len() && !starts_block(lines.at(i)) {
+      para.push(lines.at(i).trim())
+      i = i + 1
+    }
+    blocks.push(ast.Block.Para(parse_inline(para.join(" "))))
+  }
+  next = i
+  return blocks
+}
+
+// Blocks of a whole Markdown document (lines separated by "\n", "\r\n" accepted).
+pub fn parse_document(source: view String) -> List<ast.Block> {
+  var next = 0
+  return parse_lines(text.lines(source), 0, next)
+}

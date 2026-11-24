@@ -1,0 +1,20 @@
+<h1 id="release-notes-2-0">Release notes: 2.0</h1>
+<p>Version <em>two</em> brings <strong>faster</strong> parsing, <code>strict</code> mode and a new <a href="docs/guide.md">guide</a>. Snake_case names stay put, and 5 &lt; 6 &amp; 7 &gt; 2.</p>
+<h2 id="changes-in-detail">Changes in detail</h2>
+<ol>
+<li>Parser rewritten around a block tree.</li>
+<li>Escapes: *not emphasis* and `not code`.</li>
+<li>Images: <img src="img/logo.png" alt="logo"> are kept.</li>
+</ol>
+<ul>
+<li>Output is HTML-escaped</li>
+<li>Lists may be <em>nested</em> only one level: - not supported yet</li>
+</ul>
+<blockquote>
+<p>Note: the old flag <code>--legacy</code> is gone. Use <code>--strict</code> instead.</p>
+</blockquote>
+<pre><code class="language-sh">mdconv --strict notes.md &gt; out.html</code></pre>
+<hr>
+<h3 id="next">Next</h3>
+<p>Unfinished fence follows:</p>
+<pre><code class="language-text">still code &lt;tag&gt;</code></pre>

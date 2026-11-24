@@ -110,6 +110,7 @@ AUX=(
   "modules|bash tests/modules.sh"
   "conv_panic_wording|bash tests/conv_panic_wording.sh"
   "webkv|bash tests/webkv.sh"
+  "mdconv|bash tests/mdconv.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"

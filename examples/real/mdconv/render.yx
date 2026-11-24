@@ -1,0 +1,139 @@
+// HTML output for the mdconv document model.
+import ast
+import parse
+import std.text
+
+// Appends `s` with the HTML special characters escaped.
+pub fn escape_into(out: mut String, s: view String) {
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b == 38 {
+      out.push_str("&amp;")
+    } else if b == 60 {
+      out.push_str("&lt;")
+    } else if b == 62 {
+      out.push_str("&gt;")
+    } else if b == 34 {
+      out.push_str("&quot;")
+    } else {
+      out.push_byte(b)
+    }
+  }
+}
+
+// "Hello, World 2!" -> "hello-world-2"
+pub fn slug(s: view String) -> String {
+  var out = String.new()
+  var dash = false
+  for i in 0..s.len() {
+    var b = s.byte(i)
+    if b >= 65 && b <= 90 {
+      b = b + 32
+    }
+    if (b >= 97 && b <= 122) || (b >= 48 && b <= 57) {
+      if dash && out.len() > 0 {
+        out.push_byte(45)
+      }
+      dash = false
+      out.push_byte(b)
+    } else {
+      dash = true
+    }
+  }
+  return out
+}
+
+fn render_spans(spans: view List<ast.Inline>, out: mut String) {
+  for span in spans {
+    match span {
+      Text(t) => { escape_into(out, t) }
+      Code(t) => {
+        out.push_str("<code>")
+        escape_into(out, t)
+        out.push_str("</code>")
+      }
+      Strong(inner) => {
+        out.push_str("<strong>")
+        render_spans(inner, out)
+        out.push_str("</strong>")
+      }
+      Emph(inner) => {
+        out.push_str("<em>")
+        render_spans(inner, out)
+        out.push_str("</em>")
+      }
+      Link(dest, label) => {
+        out.push_str("<a href=\"")
+        escape_into(out, dest)
+        out.push_str("\">")
+        render_spans(label, out)
+        out.push_str("</a>")
+      }
+      Image(src, alt) => {
+        out.push_str("<img src=\"")
+        escape_into(out, src)
+        out.push_str("\" alt=\"")
+        escape_into(out, alt)
+        out.push_str("\">")
+      }
+    }
+  }
+}
+
+fn render_block(block: view ast.Block, out: mut String) {
+  match block {
+    Heading(level, spans) => {
+      let tag = "h{level}"
+      out.push_str("<{tag} id=\"")
+      escape_into(out, slug(ast.plain(spans)))
+      out.push_str("\">")
+      render_spans(spans, out)
+      out.push_str("</{tag}>\n")
+    }
+    Para(spans) => {
+      out.push_str("<p>")
+      render_spans(spans, out)
+      out.push_str("</p>\n")
+    }
+    Fence(lang, body) => {
+      if lang.len() > 0 {
+        out.push_str("<pre><code class=\"language-")
+        escape_into(out, lang)
+        out.push_str("\">")
+      } else {
+        out.push_str("<pre><code>")
+      }
+      escape_into(out, body)
+      out.push_str("</code></pre>\n")
+    }
+    Quote(inner) => {
+      out.push_str("<blockquote>\n")
+      render_all(inner, out)
+      out.push_str("</blockquote>\n")
+    }
+    ListBlock(ordered, items) => {
+      let tag = if ordered { "ol" } else { "ul" }
+      out.push_str("<{tag}>\n")
+      for item in items {
+        out.push_str("<li>")
+        render_spans(item, out)
+        out.push_str("</li>\n")
+      }
+      out.push_str("</{tag}>\n")
+    }
+    Rule => { out.push_str("<hr>\n") }
+  }
+}
+
+pub fn render_all(blocks: view List<ast.Block>, out: mut String) {
+  for b in blocks {
+    render_block(b, out)
+  }
+}
+
+// The complete HTML fragment for a Markdown source.
+pub fn to_html(source: view String) -> String {
+  var out = String.new()
+  render_all(parse.parse_document(source), out)
+  return out
+}
