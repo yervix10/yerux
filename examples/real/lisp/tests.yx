@@ -1,0 +1,108 @@
+// Unit tests: `yerux test examples/real/lisp/tests.yx`
+import eval
+import types
+import std.text
+
+// Runs `src` and returns the shown value, or "ERROR <offset>: <message>" for a failure.
+fn ev(src: view String) -> String {
+  var it = types.new_interp(src)
+  match eval.run(it) {
+    Ok(v) => { return v }
+    Err(f) => {
+      var s = String.from("ERROR ")
+      s.push_int(f.at)
+      s.push_str(": ")
+      s.push_str(f.msg)
+      return s
+    }
+  }
+}
+
+// Text written by display for `src`.
+fn out(src: view String) -> String {
+  var it = types.new_interp(src)
+  let _ = eval.run(it)
+  return it.out.clone()
+}
+
+test "arithmetic and comparisons" {
+  assert(ev("(+ 1 2 3)").eq("6"))
+  assert(ev("(- 10 4 1)").eq("5"))
+  assert(ev("(- 7)").eq("-7"))
+  assert(ev("(* 2 3 4)").eq("24"))
+  assert(ev("(/ 17 5)").eq("3"))
+  assert(ev("(mod -7 3)").eq("-1"))
+  assert(ev("(< 1 2)").eq("#t"))
+  assert(ev("(>= 1 2)").eq("#f"))
+  assert(ev("(= 4 (* 2 2))").eq("#t"))
+}
+
+test "define, lambda and recursion" {
+  assert(ev("(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))) (fib 15)").eq("610"))
+  assert(ev("(define sq (lambda (x) (* x x))) (sq 9)").eq("81"))
+}
+
+test "closures keep their own frame" {
+  let src = "(define (make k) (lambda (x) (+ x k))) (define a (make 1)) (define b (make 10)) (+ (a 0) (b 0))"
+  assert(ev(src).eq("11"))
+  let counter = "(define c (let ((n 0)) (lambda () (set! n (+ n 1)) n))) (c) (c) (c)"
+  assert(ev(counter).eq("3"))
+}
+
+test "let shadows without changing the outer binding" {
+  assert(ev("(define x 1) (let ((x 2)) (set! x 5) x)").eq("5"))
+  assert(ev("(define x 1) (let ((x 2)) (set! x 5)) x").eq("1"))
+}
+
+test "quote, lists and pairs" {
+  assert(ev("'(1 (2 x) . 3)").eq("(1 (2 x) . 3)"))
+  assert(ev("(list 1 2 3)").eq("(1 2 3)"))
+  assert(ev("(cdr (cons 1 (quote (2 3))))").eq("(2 3)"))
+  assert(ev("(null? '())").eq("#t"))
+  assert(ev("(pair? 5)").eq("#f"))
+}
+
+test "and and or short-circuit" {
+  assert(ev("(and #f (car 1))").eq("#f"))
+  assert(ev("(or 7 (car 1))").eq("7"))
+  assert(ev("(and)").eq("#t"))
+  assert(ev("(or)").eq("#f"))
+}
+
+test "if without an else gives ()" {
+  assert(ev("(if #f 1)").eq("()"))
+}
+
+test "display writes its arguments with spaces" {
+  assert(out("(display 1 \"a\\nb\" 'c)(newline)").eq("1 a\nb c\n"))
+}
+
+test "a string is a value, not a symbol" {
+  assert(ev("\"hi\"").eq("hi"))
+  assert(ev("(symbol? 'hi)").eq("#t"))
+}
+
+test "errors report the offset of the form" {
+  assert(ev("(+ 1 x)").eq("ERROR 5: unbound symbol 'x'"))
+  assert(ev("(/ 4 0)").eq("ERROR 0: division by zero"))
+  assert(ev("((lambda (a) a) 1 2)").eq("ERROR 0: procedure expects 1 argument(s), got 2"))
+  assert(ev("(car 5)").eq("ERROR 0: car and cdr need a pair"))
+  assert(ev("(5 1)").eq("ERROR 0: not a procedure: 5"))
+  assert(ev("(+ 1 #t)").eq("ERROR 0: expected a number, got #t"))
+}
+
+test "reader errors: missing and extra parentheses, unterminated strings" {
+  assert(ev("(+ 1 2").eq("ERROR 0: missing ')' for this '('"))
+  assert(ev("(+ 1 2))").eq("ERROR 7: unexpected ')'"))
+  assert(ev("\"abc").eq("ERROR 0: unterminated string"))
+}
+
+test "recursion depth is bounded" {
+  let src = "(define (f n) (+ 1 (f n))) (f 1)"
+  assert(ev(src).find(": recursion too deep") > 0)
+}
+
+test "locate gives line and column" {
+  assert(types.locate("ab\ncd", 4).eq("2:2"))
+  assert(types.locate("", 0).eq("1:1"))
+}

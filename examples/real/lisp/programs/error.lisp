@@ -1,0 +1,12 @@
+; a program that fails on purpose: the output so far is kept, the error has a position
+(define (safe-div a b)
+  (if (= b 0)
+      (begin (display "no division") (newline) 0)
+      (/ a b)))
+(display (safe-div 10 2))
+(newline)
+(display (safe-div 1 0))
+(newline)
+(display (safe-div 9 (- 1 1)))
+(newline)
+(display (undefined-name 3))

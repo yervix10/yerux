@@ -1,0 +1,159 @@
+// The reader: source text to tokens, tokens to syntax nodes. Every error carries the byte offset it refers to.
+//
+// Syntax: integers (with an optional sign), #t / #f (also true / false), symbols, (lists), 'x for (quote x),
+// and ; comments to the end of the line.
+import types
+import std.text
+
+// Token kinds.
+const OPEN = 0
+const CLOSE = 1
+const QUOTE = 2
+const ATOM = 3
+const STR = 4
+const BAD = 5
+
+pub struct Tok { kind: Int, text: String, at: Int }
+
+fn is_space(b: Int) -> Bool {
+  return b == 32 || b == 9 || b == 10 || b == 13
+}
+
+fn is_delimiter(b: Int) -> Bool {
+  return is_space(b) || b == 40 || b == 41 || b == 39 || b == 59
+}
+
+// All tokens of `src`, in order.
+pub fn tokenize(src: view String) -> List<Tok> {
+  var out = List<Tok>.new()
+  var i = 0
+  while i < src.len() {
+    let b = src.byte(i)
+    if is_space(b) {
+      i = i + 1
+    } else if b == 59 {
+      // comment: skip to the end of the line
+      while i < src.len() && src.byte(i) != 10 {
+        i = i + 1
+      }
+    } else if b == 40 {
+      out.push(Tok { kind: OPEN, text: String.from("("), at: i })
+      i = i + 1
+    } else if b == 41 {
+      out.push(Tok { kind: CLOSE, text: String.from(")"), at: i })
+      i = i + 1
+    } else if b == 34 {
+      // string: up to the closing quote; \\n, \\t, \\\\ and \\" are escapes
+      var text = String.new()
+      let start = i
+      i = i + 1
+      while i < src.len() && src.byte(i) != 34 {
+        if src.byte(i) == 92 && i + 1 < src.len() {
+          let e = src.byte(i + 1)
+          if e == 110 {
+            text.push_str("\n")
+          } else if e == 116 {
+            text.push_str("\t")
+          } else {
+            text.push_byte(e)
+          }
+          i = i + 2
+        } else {
+          text.push_byte(src.byte(i))
+          i = i + 1
+        }
+      }
+      if i >= src.len() {
+        out.push(Tok { kind: BAD, text: String.from("unterminated string"), at: start })
+        return out
+      }
+      i = i + 1
+      out.push(Tok { kind: STR, text: move text, at: start })
+    } else if b == 39 {
+      out.push(Tok { kind: QUOTE, text: String.from("'"), at: i })
+      i = i + 1
+    } else {
+      let start = i
+      while i < src.len() && !is_delimiter(src.byte(i)) {
+        i = i + 1
+      }
+      out.push(Tok { kind: ATOM, text: src.slice(start, i), at: start })
+    }
+  }
+  return out
+}
+
+fn tok_copy(t: view Tok) -> Tok {
+  return Tok { kind: t.kind, text: t.text.clone(), at: t.at }
+}
+
+// Node for an atom: number, boolean or symbol.
+fn atom(it: mut types.Interp, t: view Tok) -> Int {
+  match text.parse_int(t.text) {
+    Ok(n) => { return it.add_node(0, n, List<Int>.new(), t.at) }
+    Err(_) => {}
+  }
+  if t.text.eq("#t") || t.text.eq("true") {
+    return it.add_node(1, 1, List<Int>.new(), t.at)
+  }
+  if t.text.eq("#f") || t.text.eq("false") {
+    return it.add_node(1, 0, List<Int>.new(), t.at)
+  }
+  let id = it.intern(t.text)
+  return it.add_node(2, id, List<Int>.new(), t.at)
+}
+
+// Parses one expression starting at toks[pos]; advances pos past it.
+fn expr(it: mut types.Interp, toks: view List<Tok>, pos: mut Int, src_len: Int) -> Result<Int, types.Fault> {
+  if pos >= toks.len() {
+    return Err(types.Fault { at: src_len, msg: String.from("unexpected end of input") })
+  }
+  let t = tok_copy(toks.at(pos))
+  pos = pos + 1
+  if t.kind == CLOSE {
+    return Err(types.Fault { at: t.at, msg: String.from("unexpected ')'") })
+  }
+  if t.kind == ATOM {
+    return Ok(atom(it, t))
+  }
+  if t.kind == STR {
+    it.strs.push(t.text.clone())
+    return Ok(it.add_node(4, it.strs.len() - 1, List<Int>.new(), t.at))
+  }
+  if t.kind == BAD {
+    return Err(types.Fault { at: t.at, msg: String.from("unterminated string") })
+  }
+  if t.kind == QUOTE {
+    let inner = expr(it, toks, pos, src_len)?
+    var kids = List<Int>.new()
+    let q = it.intern("quote")
+    kids.push(it.add_node(2, q, List<Int>.new(), t.at))
+    kids.push(inner)
+    return Ok(it.add_node(3, 0, move kids, t.at))
+  }
+  // a list: elements up to the matching ')'
+  var kids = List<Int>.new()
+  while true {
+    if pos >= toks.len() {
+      return Err(types.Fault { at: t.at, msg: String.from("missing ')' for this '('") })
+    }
+    if toks.at(pos).kind == CLOSE {
+      pos = pos + 1
+      break
+    }
+    kids.push(expr(it, toks, pos, src_len)?)
+  }
+  return Ok(it.add_node(3, 0, move kids, t.at))
+}
+
+// Every top-level expression of the interpreter's source, in order.
+pub fn read_program(it: mut types.Interp) -> Result<List<Int>, types.Fault> {
+  let toks = tokenize(it.source)
+  let end = it.source.len()
+  var forms = List<Int>.new()
+  var pos = 0
+  while pos < toks.len() {
+    forms.push(expr(it, toks, pos, end)?)
+  }
+  return Ok(move forms)
+}

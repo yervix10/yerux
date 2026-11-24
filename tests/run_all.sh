@@ -116,6 +116,7 @@ AUX=(
   "httpjson|bash tests/httpjson.sh"
   "difftool|bash tests/difftool.sh"
   "edlite|bash tests/edlite.sh"
+  "lisp|bash tests/lisp.sh"
   "json|bash tests/json.sh"
   "ffi_native|bash tests/ffi_native.sh"
   "stack_overflow|bash tests/stack_overflow.sh"
