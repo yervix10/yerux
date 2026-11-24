@@ -1,0 +1,326 @@
+// forth: the machine. One data stack, one return stack (return addresses and do-loop limit/index pairs), and the
+// cell memory. Output accumulates in `out`; a runtime error stops the program and names the problem.
+import compile
+
+const MAX_DATA: Int = 1000000
+const MAX_RETURN: Int = 1000000
+
+fn pop(ds: mut List<Int>) -> Result<Int, String> {
+  if ds.is_empty() {
+    return Err("data stack underflow")
+  }
+  return Ok(ds.pop())
+}
+
+fn top(ds: view List<Int>) -> Result<Int, String> {
+  if ds.is_empty() {
+    return Err("data stack underflow")
+  }
+  return Ok(ds.at(ds.len() - 1))
+}
+
+// Bit-by-bit and, or and xor (op 0, 1, 2) on the 64-bit two's complement forms of a and b.
+fn bitwise(a: Int, b: Int, op: Int) -> Int {
+  var x = a.truncate_uint64()
+  var y = b.truncate_uint64()
+  var r = 0u64
+  var p = 1u64
+  for k in 0..64 {
+    let bx = x % 2u64
+    let by = y % 2u64
+    var bit = 0u64
+    if op == 0 {
+      bit = bx * by
+    } else if op == 1 {
+      if bx + by > 0u64 {
+        bit = 1u64
+      }
+    } else {
+      bit = (bx + by) % 2u64
+    }
+    r = r + bit * p
+    if k < 63 {
+      p = p * 2u64
+    }
+    x = x / 2u64
+    y = y / 2u64
+  }
+  return r.truncate_int()
+}
+
+fn exec_prim(p: compile.Prim, ds: mut List<Int>, rs: view List<Int>, mem: mut List<Int>, out: mut String) -> Result<Bool, String> {
+  match p {
+    compile.Prim.Add => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(a.wrapping_add(b))
+    }
+    compile.Prim.Sub => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(a.wrapping_sub(b))
+    }
+    compile.Prim.Mul => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(a.wrapping_mul(b))
+    }
+    compile.Prim.Div => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      if b == 0 {
+        return Err("division by zero")
+      }
+      if b == -1 {
+        ds.push(0.wrapping_sub(a))
+      } else {
+        ds.push(a / b)
+      }
+    }
+    compile.Prim.Mod => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      if b == 0 {
+        return Err("division by zero")
+      }
+      if b == -1 {
+        ds.push(0)
+      } else {
+        ds.push(a % b)
+      }
+    }
+    compile.Prim.Negate => {
+      let a = pop(ds)?
+      ds.push(0.wrapping_sub(a))
+    }
+    compile.Prim.Abs => {
+      let a = pop(ds)?
+      if a < 0 {
+        ds.push(0.wrapping_sub(a))
+      } else {
+        ds.push(a)
+      }
+    }
+    compile.Prim.Min => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(if a < b { a } else { b })
+    }
+    compile.Prim.Max => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(if a > b { a } else { b })
+    }
+    compile.Prim.Eq => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(flag(a == b))
+    }
+    compile.Prim.Ne => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(flag(a != b))
+    }
+    compile.Prim.Lt => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(flag(a < b))
+    }
+    compile.Prim.Gt => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(flag(a > b))
+    }
+    compile.Prim.ZeroEq => {
+      let a = pop(ds)?
+      ds.push(flag(a == 0))
+    }
+    compile.Prim.ZeroLt => {
+      let a = pop(ds)?
+      ds.push(flag(a < 0))
+    }
+    compile.Prim.ZeroGt => {
+      let a = pop(ds)?
+      ds.push(flag(a > 0))
+    }
+    compile.Prim.And => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(bitwise(a, b, 0))
+    }
+    compile.Prim.Or => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(bitwise(a, b, 1))
+    }
+    compile.Prim.Xor => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(bitwise(a, b, 2))
+    }
+    compile.Prim.Invert => {
+      let a = pop(ds)?
+      ds.push(0.wrapping_sub(a).wrapping_sub(1))
+    }
+    compile.Prim.Dup => {
+      let a = top(ds)?
+      ds.push(a)
+    }
+    compile.Prim.Drop => {
+      let _a = pop(ds)?
+    }
+    compile.Prim.Swap => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(b)
+      ds.push(a)
+    }
+    compile.Prim.Over => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(a)
+      ds.push(b)
+      ds.push(a)
+    }
+    compile.Prim.Rot => {
+      let c = pop(ds)?
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(b)
+      ds.push(c)
+      ds.push(a)
+    }
+    compile.Prim.Nip => {
+      let b = pop(ds)?
+      let _a = pop(ds)?
+      ds.push(b)
+    }
+    compile.Prim.Tuck => {
+      let b = pop(ds)?
+      let a = pop(ds)?
+      ds.push(b)
+      ds.push(a)
+      ds.push(b)
+    }
+    compile.Prim.Dot => {
+      let a = pop(ds)?
+      out.push_str("{a} ")
+    }
+    compile.Prim.DotS => {
+      out.push_str("<{ds.len()}> ")
+      for i in 0..ds.len() {
+        out.push_str("{ds.at(i)} ")
+      }
+    }
+    compile.Prim.Cr => { out.push_str("\n") }
+    compile.Prim.Emit => {
+      let a = pop(ds)?
+      if a < 0 || a > 255 {
+        return Err("emit: {a} is not a byte")
+      }
+      out.push_byte(a)
+    }
+    compile.Prim.Space => { out.push_str(" ") }
+    compile.Prim.Fetch => {
+      let a = pop(ds)?
+      if a < 0 || a >= mem.len() {
+        return Err("address {a} is not a cell")
+      }
+      ds.push(mem.at(a))
+    }
+    compile.Prim.Store => {
+      let a = pop(ds)?
+      let x = pop(ds)?
+      if a < 0 || a >= mem.len() {
+        return Err("address {a} is not a cell")
+      }
+      mem.set(a, x)
+    }
+    compile.Prim.LoopI => {
+      if rs.is_empty() {
+        return Err("'i' outside a loop")
+      }
+      ds.push(rs.at(rs.len() - 1))
+    }
+  }
+  return Ok(true)
+}
+
+fn flag(b: Bool) -> Int {
+  if b {
+    return -1
+  }
+  return 0
+}
+
+// Runs a compiled program from its first operation, appending its output to out.
+pub fn run(prog: view compile.Program, out: mut String) -> Result<Bool, String> {
+  var ds = List<Int>.new()
+  var rs = List<Int>.new()
+  var mem = prog.mem.copy()
+  var pc = 0
+  while true {
+    if ds.len() > MAX_DATA {
+      return Err("data stack overflow")
+    }
+    match prog.code.at(pc) {
+      compile.Op.Lit(n) => {
+        ds.push(n)
+        pc = pc + 1
+      }
+      compile.Op.Call(a) => {
+        if rs.len() >= MAX_RETURN {
+          return Err("return stack overflow")
+        }
+        rs.push(pc + 1)
+        pc = a
+      }
+      compile.Op.Run(p) => {
+        exec_prim(p, ds, rs, mem, out)?
+        pc = pc + 1
+      }
+      compile.Op.Jmp(a) => { pc = a }
+      compile.Op.Jz(a) => {
+        let f = pop(ds)?
+        if f == 0 {
+          pc = a
+        } else {
+          pc = pc + 1
+        }
+      }
+      compile.Op.Say(s) => {
+        out.push_str(s)
+        pc = pc + 1
+      }
+      compile.Op.DoSetup => {
+        let index = pop(ds)?
+        let limit = pop(ds)?
+        rs.push(limit)
+        rs.push(index)
+        pc = pc + 1
+      }
+      compile.Op.LoopBack(a) => {
+        if rs.len() < 2 {
+          return Err("'loop' outside a loop")
+        }
+        let index = rs.pop() + 1
+        let limit = rs.at(rs.len() - 1)
+        if index == limit {
+          let _done = rs.pop()
+          pc = pc + 1
+        } else {
+          rs.push(index)
+          pc = a
+        }
+      }
+      compile.Op.Ret => {
+        if rs.is_empty() {
+          return Err("return with no caller")
+        }
+        pc = rs.pop()
+      }
+      compile.Op.Halt => { return Ok(true) }
+    }
+  }
+  return Ok(true)
+}
