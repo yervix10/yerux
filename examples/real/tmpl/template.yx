@@ -1,0 +1,262 @@
+// tmpl: a mustache-style template language over std.json data. The template is parsed into a tree once, then rendered.
+//
+//   {name}  {{ a.b.c }}     value, HTML-escaped (& < > " ')
+//   {{name}}                value, not escaped
+//   {{.}}                     the current item itself
+//   {{#name}}...{{/name}}     section: over an array, once per item; over any other truthy value, once with it as the
+//                             current item; skipped when falsy
+//   {{^name}}...{{/name}}     inverted section: rendered when the name is falsy or missing
+//   {{! text }}               comment
+// Falsy: null, false, 0, 0.0, "", []. A name is looked up in the current item, then in the root document; a missing
+// name is an error in a value tag and falsy in a section. Sections do not see the names of an enclosing section
+// except through the root (a limit of this design). Whitespace inside tags is ignored.
+import std.json
+import std.text
+
+pub enum Node {
+  Text(String),
+  Var(String, Bool, Int),
+  Section(String, Bool, List<Node>, Int),
+}
+
+// The template source and a read position into it.
+struct Scan {
+  src: String,
+  pos: Int,
+}
+
+// One-based line of a byte offset.
+pub fn line_of(src: view String, offset: Int) -> Int {
+  var line = 1
+  for i in 0..offset {
+    if src.byte(i) == 10 {
+      line = line + 1
+    }
+  }
+  return line
+}
+
+fn at_tag(s: view Scan, open: view String) -> Bool {
+  if s.pos + open.len() > s.src.len() {
+    return false
+  }
+  return s.src.slice(s.pos, s.pos + open.len()).eq(open)
+}
+
+fn skip_spaces(s: mut Scan) {
+  while s.pos < s.src.len() && (s.src.byte(s.pos) == 32 || s.src.byte(s.pos) == 9 || s.src.byte(s.pos) == 10) {
+    s.pos = s.pos + 1
+  }
+}
+
+// The text up to the closing delimiter (the position is left after it), trimmed.
+fn read_name(s: mut Scan, close: view String, line: Int) -> Result<String, String> {
+  let start = s.pos
+  while !at_tag(s, close) {
+    if s.pos >= s.src.len() {
+      return Err("line {line}: unclosed tag")
+    }
+    s.pos = s.pos + 1
+  }
+  let raw = s.src.slice(start, s.pos).trim()
+  s.pos = s.pos + close.len()
+  return Ok(String.from(raw))
+}
+
+fn flush(nodes: mut List<Node>, text: mut String) {
+  if text.len() > 0 {
+    nodes.push(Node.Text(String.from(text)))
+    text.clear()
+  }
+}
+
+// Parses nodes until the end of the source (until is empty) or the closing tag of the section `until`.
+fn parse_block(s: mut Scan, until: view String) -> Result<List<Node>, String> {
+  var nodes = List<Node>.new()
+  var text = String.new()
+  while true {
+    if s.pos >= s.src.len() {
+      if until.len() > 0 {
+        return Err("line {line_of(s.src, s.pos)}: section '{until}' is never closed")
+      }
+      flush(nodes, text)
+      return Ok(move nodes)
+    }
+    if !at_tag(s, "{{{{") {
+      text.push_byte(s.src.byte(s.pos))
+      s.pos = s.pos + 1
+    } else {
+      flush(nodes, text)
+      let line = line_of(s.src, s.pos)
+      if at_tag(s, "{{{{{{") {
+        s.pos = s.pos + 3
+        let name = read_name(s, "}}}}}}", line)?
+        nodes.push(Node.Var(move name, false, line))
+      } else {
+        s.pos = s.pos + 2
+        skip_spaces(s)
+        let kind = if s.pos < s.src.len() { s.src.byte(s.pos) } else { -1 }
+        if kind == '!'.to_int() {
+          s.pos = s.pos + 1
+          let _note = read_name(s, "}}}}", line)?
+        } else if kind == '/'.to_int() {
+          s.pos = s.pos + 1
+          let name = read_name(s, "}}}}", line)?
+          if until.len() == 0 {
+            return Err("line {line}: closing tag '{name}' has no open section")
+          }
+          if !name.eq(until) {
+            return Err("line {line}: closing tag '{name}' does not match section '{until}'")
+          }
+          flush(nodes, text)
+          return Ok(move nodes)
+        } else if kind == '#'.to_int() || kind == '^'.to_int() {
+          s.pos = s.pos + 1
+          let name = read_name(s, "}}}}", line)?
+          let body = parse_block(s, name)?
+          nodes.push(Node.Section(move name, kind == '^'.to_int(), move body, line))
+        } else {
+          let name = read_name(s, "}}}}", line)?
+          if name.is_empty() {
+            return Err("line {line}: empty tag")
+          }
+          nodes.push(Node.Var(move name, true, line))
+        }
+      }
+    }
+  }
+  return Ok(move nodes)
+}
+
+// The template text as a tree. The error names the line of the problem.
+pub fn parse(src: view String) -> Result<List<Node>, String> {
+  var s = Scan { src: String.from(src), pos: 0 }
+  let empty = String.new()
+  return parse_block(s, empty)
+}
+
+// The item a dotted path names, starting at v; a copy, or None.
+fn resolve(v: view json.Value, segs: view List<String>, i: Int) -> Option<json.Value> {
+  if i == segs.len() {
+    return Some(v.clone())
+  }
+  match v {
+    json.Value.Obj(members) => {
+      let k = json.find(members, segs.at(i))
+      if k < 0 {
+        return None
+      }
+      return resolve(members.at(k).value, segs, i + 1)
+    }
+    _ => { return None }
+  }
+}
+
+// The value a name refers to: looked up in the current item, then in the root document.
+fn lookup(name: view String, ctx: view json.Value, root: view json.Value) -> Option<json.Value> {
+  if name.eq(".") {
+    return Some(ctx.clone())
+  }
+  let segs = name.split(".")
+  match resolve(ctx, segs, 0) {
+    Some(v) => { return Some(move v) }
+    None => { return resolve(root, segs, 0) }
+  }
+}
+
+fn truthy(v: view json.Value) -> Bool {
+  match v {
+    json.Value.Null => { return false }
+    json.Value.Bool(b) => { return b }
+    json.Value.Int(n) => { return n != 0 }
+    json.Value.Float(f) => { return f != 0.0 }
+    json.Value.Str(s) => { return !s.is_empty() }
+    json.Value.Arr(items) => { return !items.is_empty() }
+    json.Value.Obj(_) => { return true }
+  }
+}
+
+fn escape_into(out: mut String, s: view String) {
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b == '&'.to_int() {
+      out.push_str("&amp;")
+    } else if b == '<'.to_int() {
+      out.push_str("&lt;")
+    } else if b == '>'.to_int() {
+      out.push_str("&gt;")
+    } else if b == '"'.to_int() {
+      out.push_str("&quot;")
+    } else if b == '\''.to_int() {
+      out.push_str("&#39;")
+    } else {
+      out.push_byte(b)
+    }
+  }
+}
+
+// The text of a value in a value tag. Null prints as nothing; arrays and objects as compact JSON.
+fn text_of(v: view json.Value) -> String {
+  match v {
+    json.Value.Null => { return String.new() }
+    json.Value.Bool(b) => { return String.from(if b { "true" } else { "false" }) }
+    json.Value.Int(n) => { return String.from("{n}") }
+    json.Value.Float(_) => { return json.to_string(v) }
+    json.Value.Str(s) => { return String.from(s) }
+    _ => { return json.to_string(v) }
+  }
+}
+
+// Renders nodes for the current item ctx. Names missing from both ctx and root are errors in value tags.
+pub fn render(nodes: view List<Node>, ctx: view json.Value, root: view json.Value, out: mut String) -> Result<Bool, String> {
+  for i in 0..nodes.len() {
+    match nodes.at(i) {
+      Node.Text(s) => { out.push_str(s) }
+      Node.Var(name, escape, line) => {
+        match lookup(name, ctx, root) {
+          None => { return Err("line {line}: unknown name '{name}'") }
+          Some(v) => {
+            let text = text_of(v)
+            if escape {
+              escape_into(out, text)
+            } else {
+              out.push_str(text)
+            }
+          }
+        }
+      }
+      Node.Section(name, inverted, body, line) => {
+        let found = lookup(name, ctx, root)
+        var on = false
+        match found {
+          None => { on = false }
+          Some(v) => { on = truthy(v) }
+        }
+        if inverted {
+          if !on {
+            render(body, ctx, root, out)?
+          }
+        } else {
+          match found {
+            None => { }
+            Some(v) => {
+              match v {
+                json.Value.Arr(items) => {
+                  for j in 0..items.len() {
+                    render(body, items.at(j), root, out)?
+                  }
+                }
+                _ => {
+                  if on {
+                    render(body, v, root, out)?
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return Ok(true)
+}

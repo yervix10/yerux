@@ -1,0 +1,79 @@
+// Unit tests: `yerux test examples/real/tmpl/tests.yx`. In these sources "[[" and "]]" stand for "{{" and "}}", and
+// "<<" and ">>" for "{" and "}" in JSON, so the literals need no doubled braces.
+import std.json
+import template
+
+fn tpl(s: view String) -> String {
+  return s.replace("[[[", "{{{{{{").replace("]]]", "}}}}}}").replace("[[", "{{{{").replace("]]", "}}}}").replace("<<", "{{").replace(">>", "}}")
+}
+
+// The rendered output, or "ERR: " and the message.
+fn run(t: view String, data: view String) -> String {
+  let nodes = match template.parse(tpl(t)) {
+    Ok(n) => move n
+    Err(e) => { return "ERR: {e}" }
+  }
+  let doc = match json.parse(tpl(data)) {
+    Ok(v) => move v
+    Err(e) => { return "ERR: json {e.message}" }
+  }
+  var out = String.new()
+  match template.render(nodes, doc, doc, out) {
+    Ok(_) => { return out }
+    Err(e) => { return "ERR: {e}" }
+  }
+}
+
+test "text and the escaped and raw value tags" {
+  assert(run("a[[x]]b", "<<\"x\": \"<&>\">>").eq("a&lt;&amp;&gt;b"))
+  assert(run("[[x]]", "<<\"x\": \"\\\"'\">>").eq("&quot;&#39;"))
+  assert(run("[[[x]]]", "<<\"x\": \"<i>\">>").eq("<i>"))
+  assert(run("[[ x ]]", "<<\"x\": 7>>").eq("7"))
+  assert(run("[[x]]", "<<\"x\": 1.5>>").eq("1.5"))
+  assert(run("[[x]]/[[y]]", "<<\"x\": true, \"y\": null>>").eq("true/"))
+}
+
+test "dotted names and the current item" {
+  assert(run("[[a.b.c]]", "<<\"a\": <<\"b\": <<\"c\": 3>>>>>>").eq("3"))
+  assert(run("[[a.z]]", "<<\"a\": <<\"b\": 1>>>>").eq("ERR: line 1: unknown name 'a.z'"))
+  assert(run("[[#xs]][[.]];[[/xs]]", "<<\"xs\": [1, 2, 3]>>").eq("1;2;3;"))
+}
+
+test "sections: arrays repeat, truthy objects render once, falsy skip" {
+  assert(run("[[#xs]]<[[n]]>[[/xs]]", "<<\"xs\": [<<\"n\": 1>>, <<\"n\": 2>>]>>").eq("<1><2>"))
+  assert(run("[[#o]][[n]][[/o]]", "<<\"o\": <<\"n\": \"x\">>>>").eq("x"))
+  assert(run("[[#f]]yes[[/f]][[^f]]no[[/f]]", "<<\"f\": false>>").eq("no"))
+  assert(run("[[#f]]yes[[/f]]", "<<\"f\": 0>>").eq(""))
+  assert(run("[[#f]]yes[[/f]]", "<<\"f\": \"\">>").eq(""))
+  assert(run("[[#f]]yes[[/f]]", "<<\"f\": []>>").eq(""))
+  assert(run("[[#f]]yes[[/f]]", "<<\"f\": [0]>>").eq("yes"))
+  assert(run("[[#f]]yes[[/f]][[^g]]none[[/g]]", "<<\"f\": 1>>").eq("yesnone"))
+}
+
+test "inverted sections render for missing names" {
+  assert(run("[[^gone]]absent[[/gone]]", "<<>>").eq("absent"))
+  assert(run("[[^xs]]empty[[/xs]]", "<<\"xs\": []>>").eq("empty"))
+}
+
+test "names fall back to the root document" {
+  assert(run("[[#xs]][[t]][[/xs]]", "<<\"t\": \"T\", \"xs\": [1]>>").eq("T"))
+  assert(run("[[#o]][[t]][[/o]]", "<<\"t\": \"T\", \"o\": <<\"u\": 1>>>>").eq("T"))
+}
+
+test "comments and tags across lines" {
+  assert(run("a[[! note ]]b", "<<>>").eq("ab"))
+  assert(run("x\n[[y]]", "<<\"y\": 1>>").eq("x\n1"))
+  assert(run("[[y]", "<<\"y\": 1>>").eq("ERR: line 1: unclosed tag"))
+  assert(run("[[#a]]\n\n[[y]][[/a]]", "<<\"a\": 1, \"y\": 2>>").eq("\n\n2"))
+}
+
+test "template errors name the line" {
+  assert(run("ok\n[[/a]]", "<<>>").eq("ERR: line 2: closing tag 'a' has no open section"))
+  assert(run("[[#a]]\n[[/b]]", "<<\"a\": 1>>").eq("ERR: line 2: closing tag 'b' does not match section 'a'"))
+  assert(run("[[#a]]", "<<\"a\": 1>>").eq("ERR: line 1: section 'a' is never closed"))
+  assert(run("[[]]", "<<>>").eq("ERR: line 1: empty tag"))
+}
+
+test "the data must be JSON" {
+  assert(run("x", "<<\"a\": >>").eq("ERR: json unexpected character"))
+}
