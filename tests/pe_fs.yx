@@ -1,0 +1,35 @@
+// Portable coverage for the Win32 path operations used by std.fs, std.env and std.io.
+import std.env
+import std.fs
+import std.io
+
+fn main() {
+    let name = "yerux_pe_fs_{env.pid()}"
+    let initial = env.current_dir().unwrap()
+    print(!io.file_exists(name))
+    let _ = fs.create_dir(name).unwrap()
+    print(io.file_exists(name))
+    match fs.create_dir(name) {
+        Ok(_) => { panic("duplicate directory") }
+        Err(e) => { print(e.kind == io.IoErrorKind.AlreadyExists) }
+    }
+
+    let _ = env.set_current_dir(name).unwrap()
+    let nested = env.current_dir().unwrap()
+    print(nested.ends_with(name))
+    let _ = fs.write("data.txt", "contents").unwrap()
+    print(io.file_exists("data.txt"))
+    let contents = fs.read_to_string("data.txt").unwrap()
+    print(contents)
+
+    let _ = env.set_current_dir("..").unwrap()
+    let restored = env.current_dir().unwrap()
+    print(restored.eq(initial))
+    match fs.remove_dir(name) {
+        Ok(_) => { panic("removed a nonempty directory") }
+        Err(e) => { print(e.kind == io.IoErrorKind.NotEmpty) }
+    }
+    let _ = fs.remove_file("{name}/data.txt").unwrap()
+    let _ = fs.remove_dir(name).unwrap()
+    print(!io.file_exists(name))
+}

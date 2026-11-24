@@ -27,7 +27,7 @@ out="$("$Y" run "$T/with space/hello crlf.yx" --native 2>&1 | tr -d '\r')"
 if [ -n "$EXE" ]; then [ -f "$T/with space/hello crlf.exe" ] || fail "default output should be hello crlf.exe"; fi
 
 # These must execute on Windows CI, including panic location and explicit exit.
-required='^(io_prompt|io_stdin_bytes|io_exit|panic_option_expect|conc_spawn|conc_runtime|conc_channel_worker_panic|drop_worker)$'
+required='^(io_prompt|io_stdin_bytes|io_exit|panic_option_expect|conc_spawn|conc_runtime|conc_channel_worker_panic|drop_worker|pe_fs)$'
 names=""
 if [ "${1:-}" = "--all" ]; then
   for f in examples/*.yx examples/real/*.yx tests/*.yx; do names="$names $f"; done
@@ -37,7 +37,7 @@ else
   names="$names tests/io_prompt.yx tests/io_stdin_bytes.yx tests/io_exit.yx tests/panic_option_expect.yx"
 fi
 if [ -n "$EXE" ] && [ "${1:-}" != "--all" ]; then
-  names="$names tests/conc_runtime.yx tests/conc_channel_worker_panic.yx tests/drop_worker.yx"
+  names="$names tests/conc_runtime.yx tests/conc_channel_worker_panic.yx tests/drop_worker.yx tests/pe_fs.yx"
 fi
 for f in $names; do
   n="$(basename "$f" .yx)"

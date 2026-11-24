@@ -51,7 +51,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 25] = [
+const IMPORTS: [&str; 31] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -77,6 +77,12 @@ const IMPORTS: [&str; 25] = [
     "ExitThread",
     "GetModuleHandleA",
     "GetProcAddress",
+    "GetFileAttributesA",
+    "GetCurrentDirectoryW",
+    "SetCurrentDirectoryA",
+    "CreateDirectoryA",
+    "RemoveDirectoryA",
+    "GetFileInformationByHandleEx",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -103,6 +109,12 @@ const IMP_WAITFORSINGLEOBJECT: usize = 21;
 const IMP_EXITTHREAD: usize = 22;
 const IMP_GETMODULEHANDLE: usize = 23;
 const IMP_GETPROCADDRESS: usize = 24;
+const IMP_GETFILEATTRIBUTES: usize = 25;
+const IMP_GETCURRENTDIRECTORY: usize = 26;
+const IMP_SETCURRENTDIRECTORY: usize = 27;
+const IMP_CREATEDIRECTORY: usize = 28;
+const IMP_REMOVEDIRECTORY: usize = 29;
+const IMP_GETFILEINFOEX: usize = 30;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
     for f in &ir.funcs {
@@ -110,7 +122,7 @@ pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
         for inst in f.blocks.iter().flat_map(|b| &b.insts) {
             let unsupported = match inst {
                 Inst::Syscall(_, args) => match constants[args[0]] {
-                    Some(0 | 1 | 2 | 3 | 35 | 39 | 60 | 82 | 87 | 228 | 231) => continue,
+                    Some(0 | 1 | 2 | 3 | 21 | 35 | 39 | 60 | 79 | 80 | 82..=84 | 87 | 228 | 231) => continue,
                     Some(n) => format!("raw system call {n}"),
                     None => "raw system call with a dynamic number".into(),
                 },
@@ -4603,7 +4615,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
                 a.test_rr(RDI);
                 a.jcc(CC_E, bad_fd);
             }
-            a.win_prologue(48);
+            a.win_prologue(if read { 64 } else { 48 });
             a.st(RSP, 48, RDX); // save the original count
             // The panic reporter keeps the source column and file index across writes.
             a.st(RSP, 56, R8);
@@ -4649,6 +4661,26 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             a.cmp_imm(RAX, 5); // ERROR_ACCESS_DENIED
             a.mov_imm(RAX, -13); // EACCES
             a.cmov_rr(CC_NE, RAX, RDX);
+            if read {
+                // ReadFile can report ACCESS_DENIED or INVALID_FUNCTION for
+                // directory handles. Check the handle rather than masking
+                // unrelated permission errors or device failures.
+                a.cmp_imm(RDI, 2);
+                a.jcc(CC_BE, done);
+                a.st(RSP, 32, RAX);
+                a.mov_rr(RCX, RDI);
+                a.mov_imm(RDX, 1); // FileStandardInfo
+                a.lea(R8, RSP, 72);
+                a.mov_imm(R9, 24);
+                a.call_iat(IMP_GETFILEINFOEX);
+                a.raw(&[0x85, 0xC0]); // test eax, eax
+                a.ld(RAX, RSP, 32);
+                a.jcc(CC_E, done);
+                a.movzx8_mem(RCX, RSP, 72 + 21); // Directory
+                a.test_rr(RCX);
+                a.mov_imm(RCX, -21); // EISDIR
+                a.cmov_rr(CC_NE, RAX, RCX);
+            }
             a.jmp(done);
             a.bind(broken_pipe);
             a.mov_imm(RAX, if read { 0 } else { -32 }); // EOF or EPIPE
@@ -4668,16 +4700,23 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         // Only calls accepted by validate_windows can reach this dispatch.
         a.bind(l_winsyscall);
         let (pid, clock, nap) = (a.label(), a.label(), a.label());
+        let (access, getcwd, chdir, mkdir, rmdir) =
+            (a.label(), a.label(), a.label(), a.label(), a.label());
         let (open, close, unlink, rename, winerr) = (a.label(), a.label(), a.label(), a.label(), a.label());
         for (number, stub) in [
             (0, l_osread),
             (1, l_oswrite),
             (2, open),
             (3, close),
+            (21, access),
             (35, nap),
             (39, pid),
             (60, l_osexit),
+            (79, getcwd),
+            (80, chdir),
             (82, rename),
+            (83, mkdir),
+            (84, rmdir),
             (87, unlink),
             (228, clock),
             (231, l_osexit),
@@ -4687,28 +4726,123 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         a.raw(&[0x0F, 0x0B]); // ud2
 
-        // GetLastError mapped to a negative errno in rax (a callee with its own frame)
+        // GetLastError mapped to a negative errno in rax (a callee with its own frame).
         a.bind(winerr);
         {
-            let (enoent, eexist, eacces, done) = (a.label(), a.label(), a.label(), a.label());
+            let errors: [(i64, &[i32]); 8] = [
+                (2, &[2, 3]),       // ENOENT
+                (17, &[80, 183]),   // EEXIST
+                (13, &[5, 32]),     // EACCES
+                (20, &[267]),       // ENOTDIR
+                (34, &[122]),       // ERANGE
+                (36, &[206]),       // ENAMETOOLONG
+                (39, &[145]),       // ENOTEMPTY
+                (84, &[1113]),      // EILSEQ
+            ];
             a.win_prologue(0);
             a.call_iat(IMP_GETLASTERROR);
             a.raw(&[0x89, 0xC0]); // zero-extend eax
-            for (code, target) in [(2, enoent), (3, enoent), (80, eexist), (183, eexist), (5, eacces)] {
-                a.cmp_imm(RAX, code);
-                a.jcc(CC_E, target);
+            let labels = errors.map(|_| a.label());
+            for ((_, codes), label) in errors.into_iter().zip(labels) {
+                for &code in codes {
+                    a.cmp_imm(RAX, code);
+                    a.jcc(CC_E, label);
+                }
             }
             a.mov_imm(RAX, -5); // EIO
+            let done = a.label();
             a.jmp(done);
-            a.bind(enoent);
-            a.mov_imm(RAX, -2);
-            a.jmp(done);
-            a.bind(eexist);
-            a.mov_imm(RAX, -17);
-            a.jmp(done);
-            a.bind(eacces);
-            a.mov_imm(RAX, -13);
+            for ((errno, _), label) in errors.into_iter().zip(labels) {
+                a.bind(label);
+                a.mov_imm(RAX, -errno);
+                a.jmp(done);
+            }
             a.bind(done);
+            a.win_epilogue();
+        }
+
+        // access(path, F_OK) and directory operations follow the same ANSI path
+        // policy as the existing CreateFileA, DeleteFileA and MoveFileExA stubs.
+        for (label, import) in [
+            (access, IMP_GETFILEATTRIBUTES),
+            (chdir, IMP_SETCURRENTDIRECTORY),
+            (mkdir, IMP_CREATEDIRECTORY),
+            (rmdir, IMP_REMOVEDIRECTORY),
+        ] {
+            let ok = a.label();
+            a.bind(label);
+            if label == access {
+                let supported = a.label();
+                a.test_rr(RSI);
+                a.jcc(CC_E, supported);
+                a.mov_imm(RAX, -22); // EINVAL: only the existence test is supported
+                a.ret();
+                a.bind(supported);
+            }
+            a.win_prologue(0);
+            a.mov_rr(RCX, RDI);
+            a.mov_imm(RDX, 0); // CreateDirectoryA uses default security attributes
+            a.call_iat(import);
+            if label == access {
+                a.raw(&[0x83, 0xF8, 0xFF]); // cmp eax, INVALID_FILE_ATTRIBUTES
+            } else {
+                a.raw(&[0x85, 0xC0]); // test eax, eax (BOOL)
+            }
+            a.jcc(CC_NE, ok);
+            a.call(winerr);
+            a.win_epilogue();
+            a.bind(ok);
+            a.mov_imm(RAX, 0);
+            a.win_epilogue();
+        }
+
+        // getcwd(buffer, capacity): get the UTF-16 working directory and
+        // convert it to UTF-8. Like Linux getcwd, the length includes the NUL.
+        a.bind(getcwd);
+        {
+            let (api_error, too_long, done) = (a.label(), a.label(), a.label());
+            a.win_prologue(64);
+            a.st(RSP, 64, RSI); // output capacity across VirtualAlloc
+            a.mov_imm(RSI, 65536); // room for 32768 UTF-16 code units
+            a.call(l_mmap);
+            a.mov_rr(RSI, RAX);
+            a.mov_imm(RCX, 32768);
+            a.mov_rr(RDX, RSI);
+            a.call_iat(IMP_GETCURRENTDIRECTORY);
+            a.raw(&[0x89, 0xC0]); // zero-extend eax
+            a.test_rax();
+            a.jcc(CC_E, api_error);
+            a.cmp_imm(RAX, 32768);
+            a.jcc(CC_AE, too_long);
+            a.ld(RAX, RSP, 64);
+            a.cmp_imm(RAX, 1);
+            a.jcc(CC_L, too_long);
+            a.mov_imm(RCX, i32::MAX as i64);
+            a.cmp_imm(RAX, i32::MAX);
+            a.cmov_rr(CC_G, RAX, RCX);
+            a.st(RSP, 32, RDI); // destination
+            a.st(RSP, 40, RAX); // destination bytes
+            a.mov_imm(RAX, 0);
+            a.st(RSP, 48, RAX);
+            a.st(RSP, 56, RAX);
+            a.mov_imm(RCX, 65001); // CP_UTF8
+            a.mov_imm(RDX, 0x80); // WC_ERR_INVALID_CHARS
+            a.mov_rr(R8, RSI);
+            a.mov_imm(R9, -1); // convert through the NUL
+            a.call_iat(IMP_WIDETOMULTI);
+            a.raw(&[0x89, 0xC0]); // zero-extend eax
+            a.test_rax();
+            a.jcc(CC_NE, done);
+            a.bind(api_error);
+            a.call(winerr);
+            a.jmp(done);
+            a.bind(too_long);
+            a.mov_imm(RAX, -34);
+            a.bind(done);
+            a.st(RSP, 72, RAX);
+            a.mov_rr(RDI, RSI);
+            a.call(l_osfree);
+            a.ld(RAX, RSP, 72);
             a.win_epilogue();
         }
 
