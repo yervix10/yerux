@@ -1,0 +1,65 @@
+// Deterministic sample data for lzh's self test and unit tests: a linear congruential generator and four kinds of
+// content (uniform random bytes, text-like words, byte runs, and copies of earlier output that give long matches).
+pub fn next(state: mut Int, bound: Int) -> Int {
+  state = (state * 1103515245 + 12345) % 2147483648
+  return (state / 65536) % bound
+}
+
+// One piece of content of a random kind, of about `size` bytes, copied from `out` when the kind is a copy.
+fn piece(state: mut Int, out: view List<Int>, size: Int) -> List<Int> {
+  var part = List<Int>.new()
+  let kind = next(state, 4)
+  if kind == 0 {
+    for _ in 0..size {
+      part.push(next(state, 256))
+    }
+  } else if kind == 1 {
+    for _ in 0..size {
+      let r = next(state, 10)
+      if r == 0 {
+        part.push(32)
+      } else if r == 1 {
+        part.push(10)
+      } else {
+        part.push(97 + next(state, 6) * next(state, 2))
+      }
+    }
+  } else if kind == 2 {
+    while part.len() < size {
+      let b = next(state, 256)
+      for _ in 0..1 + next(state, 40) {
+        part.push(b)
+      }
+    }
+  } else if out.len() == 0 {
+    part.push(65)
+  } else {
+    let from = next(state, out.len())
+    let span = out.len() - from
+    for k in 0..size {
+      part.push(out.at(from + k % span))
+    }
+  }
+  return part
+}
+
+// `size` bytes of sample content for the given state (the state advances, so the next call gives other bytes).
+pub fn sample(state: mut Int, size: Int) -> List<Int> {
+  var out = List<Int>.new()
+  while out.len() < size {
+    let want = min_int(200, size - out.len())
+    let part = piece(state, out, want)
+    for b in part {
+      out.push(b)
+    }
+  }
+  out.truncate(size)
+  return out
+}
+
+fn min_int(a: Int, b: Int) -> Int {
+  if a < b {
+    return a
+  }
+  return b
+}
