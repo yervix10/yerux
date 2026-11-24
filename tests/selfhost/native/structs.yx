@@ -1,0 +1,25 @@
+enum Kind { Small, Large }
+struct Point { x: Int, y: Int }
+struct Segment { from: Point, to: Point, kind: Kind, label: Text }
+fn span(s: Segment) -> Int { return s.to.x - s.from.x }
+fn flip(p: mut Point) {
+  let t = p.x
+  p.x = p.y
+  p.y = t
+}
+fn make(a: Int, b: Int) -> Point { return Point { x: a, y: b } }
+fn main() {
+  var p = make(3, 4)
+  flip(p)
+  print(p.x * 10 + p.y)
+  let s = Segment { from: p, to: Point { x: 40, y: 1 }, kind: Kind.Large, label: "seg" }
+  print(span(s))
+  print(s.label)
+  print(s.kind == Kind.Large)
+  var total = 0
+  for i in 0..5 {
+    let q = Point { x: i, y: i * i }
+    total = total + q.y - q.x
+  }
+  print(total)
+}

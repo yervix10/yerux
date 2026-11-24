@@ -514,14 +514,21 @@ Only functions reachable from `main` are emitted.
 
 Subset: `Int` and `Bool` values; functions with such parameters and results; `let`/`var`, assignment; `if`/`else`,
 `while`, `for i in a..b` and `a..=b`; `break`/`continue`; calls; `return`; `+ - * / %`, comparisons, `&& || !`,
-unary minus; `print` of an Int, a Bool or a string literal. Arithmetic is checked like the Rust backends: overflow
+unary minus; `print` of an Int, a Bool, a `Text` or a `String`. Added in the second round: `match` (statement and
+expression) over Int, Bool and enums made of unit variants, with literal, range, `_`, binding, `|` and guarded arms;
+`if` as an expression; `x: T` ascriptions; `const` items (inlined); enums of unit variants (their position is the
+value); text values (the address of an 8-byte length followed by the bytes), `String.from("...")` of a literal and
+`.len()` of a String; structs of single-word fields, allocated from a bump heap (a zero-filled 256 MiB tail of the
+image, never freed) with field reads and writes, `mut` struct parameters (passed by pointer) and by-value copies of
+structs read from a place. Functions with `mut Int`-style parameters, text comparisons, generics, lists, closures and
+mutable strings are still outside. Arithmetic is checked like the Rust backends: overflow
 (addition, subtraction, multiplication, negation, `MIN / -1`) and division or modulo by zero print the same
 `panic: ...` line on stderr and exit 101 (`MIN % -1` is 0). Panic locations (`at file:line:col`) are not printed.
 Everything else stops with `native: unsupported: <construct>` and exit code 3.
 
-`tests/selfhost_native.sh` builds the stages and `native`, compiles `tests/selfhost/native/*.yx` (4 programs: Fibonacci
-and gcd, loops and primes, an overflow panic, a division by zero) and every `examples/*.yx` and `tests/*.yx` program with
-both native backends, and requires identical stdout, exit status and first panic line. Measured: **46 of the 459
-corpus programs** fall inside the subset and match the Rust native backend; the other 413 are reported as outside it.
-The script fails if that number drops below 46. `native.yx` is built by the Rust compiler; it is not one of the seven
+`tests/selfhost_native.sh` builds the stages and `native`, compiles `tests/selfhost/native/*.yx` (8 programs: Fibonacci
+and gcd, loops and primes, an overflow panic, a division by zero, `match`, text, structs, strings) and every `examples/*.yx` and `tests/*.yx` program with
+both native backends, and requires identical stdout, exit status and first panic line. Measured: **51 of the 481
+corpus programs** fall inside the subset and match the Rust native backend (the first round measured 46 of 459); the
+other 430 are reported as outside it. The script fails if that number drops below 51. `native.yx` is built by the Rust compiler; it is not one of the seven
 bootstrap stages yet.

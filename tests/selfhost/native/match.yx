@@ -1,0 +1,31 @@
+enum Color { Red, Green, Blue }
+const LIMIT: Int = 10
+fn name(c: Color) -> Int {
+  match c {
+    Color.Red => { return 1 }
+    Color.Green | Color.Blue => { return 2 }
+  }
+  return 0
+}
+fn classify(n: Int) -> Int {
+  match n {
+    0 => { return 100 }
+    1..=9 => { return 200 }
+    x if x > 50 => { return x }
+    _ => { return 300 }
+  }
+  return 0
+}
+fn main() {
+  let x: Int = 5
+  let y = if x > 3 { 10 } else { 20 }
+  unsafe { print(y) }
+  print(name(Color.Green))
+  print(classify(7) + LIMIT)
+  print(classify(77))
+  print(classify(30))
+  print(classify(0))
+  let z = match x { 5 => 1, _ => 2 }
+  print(z)
+  print(name(Color.Red) == 1)
+}

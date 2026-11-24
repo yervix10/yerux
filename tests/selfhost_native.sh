@@ -50,7 +50,7 @@ done
 printf 'selfhost native: %d hand-written subset programs match the Rust native backend\n' "$subset"
 
 # the unsupported constructs are named, with exit code 3
-printf 'fn main() {\n  let s = String.from("x")\n  print(s.len())\n}\n' >"$tmp/out_of_subset.yx"
+printf 'fn main() {\n  var l = List<Int>.new()\n  l.push(1)\n  print(l.len())\n}\n' >"$tmp/out_of_subset.yx"
 "$bins/yerux-self" --emit-ast "$tmp/out_of_subset.yx" -o "$tmp/o.ast" >/dev/null 2>&1
 status=0
 "$tmp/native" "$tmp/o.ast" -o "$tmp/o.bin" >/dev/null 2>"$tmp/o.err" || status=$?
@@ -74,8 +74,8 @@ for file in examples/*.yx tests/*.yx; do
 done
 printf 'selfhost native: %d of %d corpus programs compile with the self-hosted native backend and match the Rust native backend (%d outside the subset)\n' \
   "$inside" "$tried" "$outside"
-if [[ $inside -lt ${SELFHOST_NATIVE_FLOOR:-46} ]]; then
-  printf 'selfhost native: fell below %d corpus programs\n' "${SELFHOST_NATIVE_FLOOR:-46}" >&2
+if [[ $inside -lt ${SELFHOST_NATIVE_FLOOR:-51} ]]; then
+  printf 'selfhost native: fell below %d corpus programs\n' "${SELFHOST_NATIVE_FLOOR:-51}" >&2
   failures=$((failures + 1))
 fi
 [[ $failures == 0 ]]
