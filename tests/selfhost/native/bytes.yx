@@ -1,0 +1,13 @@
+fn count_a(s: view String) -> Int {
+  var n = 0
+  for i in 0..s.len() {
+    if s.byte(i) == 97 { n = n + 1 }
+  }
+  return n
+}
+fn main() {
+  let s = String.from("banana bread")
+  print(count_a(s))
+  print(s.byte(0))
+  print(s.byte(99))
+}

@@ -520,15 +520,22 @@ expression) over Int, Bool and enums made of unit variants, with literal, range,
 value); text values (the address of an 8-byte length followed by the bytes), `String.from("...")` of a literal and
 `.len()` of a String; structs of single-word fields, allocated from a bump heap (a zero-filled 256 MiB tail of the
 image, never freed) with field reads and writes, `mut` struct parameters (passed by pointer) and by-value copies of
-structs read from a place. Functions with `mut Int`-style parameters, text comparisons, generics, lists, closures and
-mutable strings are still outside. Arithmetic is checked like the Rust backends: overflow
+structs read from a place. Third round: growable `List<Int>`/`List<Bool>`/`List<String>`/`List<struct>` (a header of
+length, capacity and data address, elements of 8 bytes; `new`, `push`, `len`, `at`/indexing with the same
+`index out of range` panic, `for x in list`) and mutable strings (`String.new`, `String.from`, `push_str`, `push_int`,
+`byte(i)`, `len`) over one `reserve` routine that regrows from the bump heap and copies; text literals share the string
+header (capacity 0), string interpolation (`std__fmt_lit`/`std__fmt_val` of Int and text), `move x`, and `Drop`
+impls are refused. Functions with `mut Int`-style parameters, text comparisons, generics, closures, `Option`/`Result`
+and the low-level intrinsics are still outside. Arithmetic is checked like the Rust backends: overflow
 (addition, subtraction, multiplication, negation, `MIN / -1`) and division or modulo by zero print the same
 `panic: ...` line on stderr and exit 101 (`MIN % -1` is 0). Panic locations (`at file:line:col`) are not printed.
 Everything else stops with `native: unsupported: <construct>` and exit code 3.
 
-`tests/selfhost_native.sh` builds the stages and `native`, compiles `tests/selfhost/native/*.yx` (8 programs: Fibonacci
-and gcd, loops and primes, an overflow panic, a division by zero, `match`, text, structs, strings) and every `examples/*.yx` and `tests/*.yx` program with
-both native backends, and requires identical stdout, exit status and first panic line. Measured: **51 of the 481
-corpus programs** fall inside the subset and match the Rust native backend (the first round measured 46 of 459); the
-other 430 are reported as outside it. The script fails if that number drops below 51. `native.yx` is built by the Rust compiler; it is not one of the seven
+`tests/selfhost_native.sh` builds the stages and `native`, compiles `tests/selfhost/native/*.yx` (12 programs: Fibonacci
+and gcd, loops and primes, an overflow panic, a division by zero, `match`, text, structs, strings, lists, interpolation, bytes) and every `examples/*.yx` and `tests/*.yx` program with
+both native backends, and requires identical stdout, exit status and first panic line. Measured: **60 of the 481
+corpus programs** fall inside the subset and match the Rust native backend (46 of 459 in the first round, 51 of 481 in
+the second); the other 421 are reported as outside it. The script fails if that number drops below 60. The most frequent
+remaining first blockers are generic functions (34), `__load8` (30), `Vec`-style `new` (22), parameter types other than
+Int and Bool (21), `to_int` (20), `get` (20) and `Err` (17). `native.yx` is built by the Rust compiler; it is not one of the seven
 bootstrap stages yet.
