@@ -1,0 +1,40 @@
+// std.toml: has / get_*_opt tell a missing key from 0, false and "" (friction 73);
+// a header with spaces inside the brackets still names its table (friction 75)
+import std.toml
+fn show(o: Option<Int>) {
+  match o {
+    Some(v) => { print("some {v}") }
+    None => { print("none") }
+  }
+}
+fn main() {
+  let doc = "[server]\nport = 0\ntls = false\nname = \"\"\nbare =\nword = \"x\"\n"
+  print(toml.has(doc, "server.port"))
+  print(toml.has(doc, "server.tls"))
+  print(toml.has(doc, "server.name"))
+  print(toml.has(doc, "server.bare"))
+  print(toml.has(doc, "server.gone"))
+  show(toml.get_int_opt(doc, "server.port"))
+  show(toml.get_int_opt(doc, "server.gone"))
+  show(toml.get_int_opt(doc, "server.word"))
+  match toml.get_bool_opt(doc, "server.tls") {
+    Some(b) => { print("bool {b}") }
+    None => { print("none") }
+  }
+  match toml.get_bool_opt(doc, "server.gone") {
+    Some(b) => { print("bool {b}") }
+    None => { print("none") }
+  }
+  match toml.get_string_opt(doc, "server.name") {
+    Some(s) => { print("str [{s}]") }
+    None => { print("none") }
+  }
+  match toml.get_string_opt(doc, "server.gone") {
+    Some(s) => { print("str [{s}]") }
+    None => { print("none") }
+  }
+  let spaced = "[ server ]\nport = 8080\n[\tdb ]\nhost = \"h\"\n"
+  print(toml.get_int(spaced, "server.port"))
+  print(toml.get_string(spaced, "db.host"))
+  print(toml.has(spaced, "server.port"))
+}

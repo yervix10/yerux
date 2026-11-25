@@ -816,11 +816,14 @@ the less-exercised standard modules `std.toml`, `std.csv` and `std.args` togethe
     `doc = "[server]\nport = 0\ntls = false\nname = \"\"\n"`, `toml.get_int(doc, "server.port")` and
     `toml.get_int(doc, "server.gone")` both print `0`, and the `get_bool` and `get_string` pairs print `false` and `[]`.
     Validation cannot distinguish them. Workaround: treat the empty value as absent (the program documents this).
+    *Fixed:* `toml.has(doc, key)` and `get_int_opt`/`get_bool_opt`/`get_string_opt` return `None` for a missing key
+    (`tests/std_toml_present.yx`).
 74. **`get_int` and `get_bool` return 0 or false for a string-typed value.** `port = "8080"` gives `get_int` = `0` and
     `get_string` = `8080`, with no error. A type check needs four probes per key.
 75. **A table header with spaces inside the brackets hides its keys.** `doc = "[ server ]\nport = 8080\n"`;
     `toml.get_int(doc, "server.port")` prints `0`. Valid TOML: `tomllib` reads `{'server': {'port': 8080}}`. The header
     name is taken as `" server "` without trimming (`raw_value` in src/std/toml.yx).
+    *Fixed:* the table name is trimmed (`tests/std_toml_present.yx`).
 76. **A comma inside `[...]` in an interpolation is reported as two expressions.**
     `let n = 3` then `print("{[n, 4][0]}")` gives "a `{}` in a string holds one expression". The splitter counts
     `(`/`)` but not `[`/`]`. `print("{(n, 4).0}")` works.
@@ -872,8 +875,9 @@ exit 0, repeated runs identical) and registered in `tests/real_programs.sh` (now
 88. **A panic inside a worker loses its own message.** `spawn move { return rx.recv().unwrap() }` on a closed channel
     reports only `called Result.unwrap() on an Err value: worker panicked` at `join`; when several workers fail the output
     is `panic: second panic during worker cleanup`, repeated. The original `unwrap on None` text is never printed, which
-    made the eventbus bug (friction 90) take a debugging session. Not changed: it needs a decision on whether workers
-    print their panic before cleanup.
+    made the eventbus bug (friction 90) take a debugging session.
+    *Fixed:* a worker prints its own `panic: ...` line to stderr before it unwinds, on the C and x64 native backends, so
+    `join` returning `Err` no longer hides the reason (`tests/thread_panic_message.yx`).
 89. **`for h in handles { h.join() }` says `cannot move 'h': it is only borrowed` and nothing about `for h in move handles`.**
     *Fixed:* the error now names `for x in move list` and `pop()` (`tests/e2070_for_move_element.yx`).
 90. **`Sender.close()` closes the channel for every clone.** Closing the original sender in the parent after cloning it

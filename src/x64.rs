@@ -3353,12 +3353,16 @@ fn emit_threads(
     a.ret();
 }
 
-/// Redirect a recoverable worker panic before it writes to stderr.
-fn emit_worker_panic_probe(a: &mut Asm, recover: usize, double_panic: usize) {
+/// A panic while a worker is already unwinding is fatal: checked before anything is written.
+fn emit_worker_panic_double(a: &mut Asm, double_panic: usize) {
     emit_tls_load(a, RAX, THREAD_UNWINDING);
     a.test_rax();
     a.jcc(CC_NE, double_panic);
+}
 
+/// Redirect a recoverable worker panic to its cleanup, after the message is on stderr (so `join` returning
+/// an error does not lose the reason). Clobbers rax and r8.
+fn emit_worker_panic_recover(a: &mut Asm, recover: usize) {
     emit_tls_load(a, RAX, 0);
     a.lea(RAX, RAX, -THREAD_TLS);
     a.ld(R8, RAX, THREAD_RECOVER);
@@ -3726,7 +3730,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
                 P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_STACK | P_DOUBLE_PANIC
             )
         {
-            emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
+            emit_worker_panic_double(&mut a, l_panic[P_DOUBLE_PANIC]);
         }
         a.lea_data(RSI, D_PANIC);
         a.mov_imm(RDX, 7);
@@ -3737,6 +3741,14 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.lea_data(RSI, D_NL);
         a.mov_imm(RDX, 1);
         a.call(l_write2);
+        if has_workers
+            && !matches!(
+                i,
+                P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_STACK | P_DOUBLE_PANIC
+            )
+        {
+            emit_worker_panic_recover(&mut a, l_thread_recover);
+        }
         if report {
             a.call(l_report);
         }
@@ -3980,8 +3992,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.mov_rr(R13, RBP);
     }
     if has_workers {
-        emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
-        // clobbers only rax and r8
+        emit_worker_panic_double(&mut a, l_panic[P_DOUBLE_PANIC]);
     }
     a.push(RDX);
     a.push(RSI);
@@ -4002,6 +4013,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     a.lea_data(RSI, D_NL);
     a.mov_imm(RDX, 1);
     a.call(l_write2);
+    if has_workers {
+        emit_worker_panic_recover(&mut a, l_thread_recover);
+    }
     if report {
         a.call(l_report);
     }
@@ -4145,7 +4159,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             a.mov_rr(R13, RBP);
         }
         if has_workers {
-            emit_worker_panic_probe(&mut a, l_thread_recover, l_panic[P_DOUBLE_PANIC]);
+            emit_worker_panic_double(&mut a, l_panic[P_DOUBLE_PANIC]);
         }
         a.raw(&[0x56, 0x52]); // push rsi; push rdx
         a.lea_data(RSI, D_PANIC);
@@ -4159,6 +4173,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         a.lea_data(RSI, D_NL);
         a.mov_imm(RDX, 1);
         a.call(l_write2);
+        if has_workers {
+            emit_worker_panic_recover(&mut a, l_thread_recover);
+        }
         if report {
             a.call(l_report);
         }

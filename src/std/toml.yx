@@ -118,7 +118,8 @@ fn strip_comment(line: view String) -> String {
   return String.from(line)
 }
 
-fn raw_value(input: view String, wanted: view String) -> String {
+fn find_value(input: view String, wanted: view String, found: mut Bool) -> String {
+  found = false
   // A hostile manifest should not allocate a String for every blank line.
   if input.len() > 16777216 { return String.new() }
   if !io.valid_utf8(input) { return String.new() }
@@ -138,7 +139,7 @@ fn raw_value(input: view String, wanted: view String) -> String {
     let line = strip_comment(lines.at(i)).trim()
     if line.starts_with("[") {
       if line.len() < 3 || !line.ends_with("]") { return String.new() }
-      table = line.slice(1, line.len() - 1)
+      table = line.slice(1, line.len() - 1).trim()
     } else {
       let eq = line.find(String.from("="))
       if eq >= 0 {
@@ -170,6 +171,7 @@ fn raw_value(input: view String, wanted: view String) -> String {
               j = j + 1
             }
           }
+          found = true
           return value
         }
       }
@@ -177,6 +179,36 @@ fn raw_value(input: view String, wanted: view String) -> String {
     i = i + 1
   }
   return String.new()
+}
+
+fn raw_value(input: view String, wanted: view String) -> String {
+  var found = false
+  return find_value(input, wanted, found)
+}
+
+// true when the key is present, whatever its value (0, false and "" included)
+pub fn has(input: view String, key: view String) -> Bool {
+  var found = false
+  let raw = find_value(input, key, found)
+  return found
+}
+
+pub fn get_string_opt(input: view String, key: view String) -> Option<String> {
+  if !has(input, key) { return None }
+  return Some(get_string(input, key))
+}
+
+// None when the key is absent or its value is not an integer
+pub fn get_int_opt(input: view String, key: view String) -> Option<Int> {
+  return toml_int(raw_value(input, key))
+}
+
+// None when the key is absent or its value is neither true nor false
+pub fn get_bool_opt(input: view String, key: view String) -> Option<Bool> {
+  let raw = raw_value(input, key)
+  if raw.eq("true") { return Some(true) }
+  if raw.eq("false") { return Some(false) }
+  return None
 }
 
 pub fn get_string(input: view String, key: view String) -> String {

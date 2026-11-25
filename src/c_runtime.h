@@ -30,12 +30,13 @@ static inline void nx_cleanup_push(NxCleanup *slot, bool *live, void *value, voi
 static inline void nx_cleanup_pop(void) { nx_cleanup_head = nx_cleanup_head->previous; }
 static _Thread_local bool nx_unwinding;
 static _Thread_local bool nx_in_destructor;
-static void nx_try_worker_panic(void) {
+static void nx_try_worker_panic_n(const char *m, int64_t n) {
   if (nx_unwinding) {
     fputs("panic: second panic during worker cleanup\n", stderr);
     exit(101);
   }
   if (!nx_worker_panic || nx_in_destructor) return;
+  fprintf(stderr, "panic: %.*s\n", (int)n, m); /* the worker's own message: join only reports that it panicked */
   jmp_buf *target = nx_worker_panic;
   nx_worker_panic = NULL;
   nx_unwinding = true;
@@ -49,6 +50,7 @@ static void nx_try_worker_panic(void) {
   }
   longjmp(*target, 1);
 }
+static void nx_try_worker_panic(const char *m) { nx_try_worker_panic_n(m, (int64_t)strlen(m)); }
 /* Source locations of panics: the generated program defines `nx_dbg` (a table of file:line:col, indexed by the
    `uint32_t l` that every checked operation receives as a constant; 0 = unknown). Programs without it (the
    self-hosted compiler's output) print no location. The location costs nothing on the fast path: the constant
@@ -66,8 +68,8 @@ __attribute__((noreturn, noinline, cold)) static void nx_panic_tail(uint32_t l) 
   nx_backtrace();
   exit(101);
 }
-__attribute__((noreturn)) static void nx_panic0(const char *m) { nx_try_worker_panic(); fprintf(stderr, "panic: %s\n", m); nx_panic_tail(0); }
-__attribute__((noreturn)) static void nx_panic_at_(const char *m, uint32_t l) { nx_try_worker_panic(); fprintf(stderr, "panic: %s\n", m); nx_panic_tail(l); }
+__attribute__((noreturn)) static void nx_panic0(const char *m) { nx_try_worker_panic(m); fprintf(stderr, "panic: %s\n", m); nx_panic_tail(0); }
+__attribute__((noreturn)) static void nx_panic_at_(const char *m, uint32_t l) { nx_try_worker_panic(m); fprintf(stderr, "panic: %s\n", m); nx_panic_tail(l); }
 #define nx_panic_at(m, l) nx_panic_at_((m), (l))
 /* programs of the self-hosted compiler define NX_SELFHOST_LOCS: their panics report `nx_cur_loc`, which the generated code sets around the sites that carry a position */
 #ifdef NX_SELFHOST_LOCS
@@ -152,7 +154,7 @@ static inline void nx_parallel_call(int64_t address, int64_t index) {
 }
 static inline void nx_drop_dyn(NxDyn *object) { ((void (*)(void *))object->table[0])(object->data); }
 __attribute__((noreturn)) static void nxl_panic_str(Str s, uint32_t l) {
-  nx_try_worker_panic();
+  nx_try_worker_panic_n(s.p, s.n);
   fputs("panic: ", stderr); if (s.n > 0) fwrite(s.p, 1, (size_t)s.n, stderr); fputc('\n', stderr);
   nx_panic_tail(l);
 }
@@ -348,7 +350,7 @@ static inline int64_t nx_wmul(int64_t a, int64_t b) { return (int64_t)((uint64_t
 static inline int64_t nxl_to_i64(__int128 v, uint32_t l) { if (v < (__int128)INT64_MIN || v > (__int128)INT64_MAX) nx_panic_at("integer conversion out of range", l); return (int64_t)v; }
 static inline int64_t nx_to_i64(__int128 v) { return nxl_to_i64(v, 0); }
 __attribute__((noreturn, noinline)) static void nx_range_panic(__int128 v, int64_t lo, int64_t hi, uint32_t l) {
-  nx_try_worker_panic();
+  nx_try_worker_panic("integer conversion out of range");
   if (v < (__int128)INT64_MIN || v > (__int128)INT64_MAX) fprintf(stderr, "panic: integer conversion out of range\n");
   else fprintf(stderr, "panic: integer conversion out of range: %lld not in %lld..%lld\n", (long long)v, (long long)lo, (long long)hi);
   nx_panic_tail(l);

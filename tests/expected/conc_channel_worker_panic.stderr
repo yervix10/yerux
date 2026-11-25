@@ -1,2 +1,3 @@
+panic: recoverable worker panic
 panic: parallel worker panic
   at tests/conc_channel_worker_panic.yx:25:17
