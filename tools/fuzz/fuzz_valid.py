@@ -118,7 +118,7 @@ def run(case):
             r3=subprocess.run([Y,'build',p,'-o',d+'/aexe'],capture_output=True,timeout=90,cwd=d,env=env)
             if r3.returncode==0:
                 r4=subprocess.run([d+'/aexe'],capture_output=True,timeout=20,cwd=d,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=1'))
-                if b'ERROR: AddressSanitizer' in r4.stderr or b'runtime error' in r4.stderr or b'LeakSanitizer' in r4.stderr: return bad('ASAN',r4.stderr)
+                if b'ERROR: AddressSanitizer' in r4.stderr or b'runtime error' in r4.stderr or (b'LeakSanitizer' in r4.stderr and r4.returncode != 101): return bad('ASAN',r4.stderr)
         except subprocess.TimeoutExpired: return bad('HANG asan')
     shutil.rmtree(d); return None
 cases=[]

@@ -67,6 +67,17 @@ def run(case):
         return (idx,path,'PANIC rc=%d'%r.returncode,err[-600:])
     if r.returncode!=0 and not err.strip():
         return (idx,path,'SILENT rc=%d'%r.returncode,b'')
+    if os.environ.get('DEEP'):
+        try: rf=subprocess.run([Y,'fmt','--stdout',p],capture_output=True,timeout=10)
+        except subprocess.TimeoutExpired: return (idx,path,'HANG fmt',b'')
+        if rf.returncode<0 or rf.returncode>=101 or b'panicked at src/' in rf.stderr: return (idx,path,'PANIC fmt',rf.stderr[-600:])
+        if rf.returncode==0 and r.returncode==0:
+            q=p+'.fmt.yx'; open(q,'wb').write(rf.stdout)
+            r2=subprocess.run([Y,'check',q],capture_output=True,timeout=10)
+            if r2.returncode!=0: return (idx,path,'FMT output no longer checks',r2.stderr[-400:])
+            rf2=subprocess.run([Y,'fmt','--stdout',q],capture_output=True,timeout=10)
+            if rf2.stdout!=rf.stdout: return (idx,path,'FMT not idempotent',b'')
+            os.remove(q)
     if r.returncode==0 and os.environ.get('DEEP'):
         for sub in (['c',p],['ir',p]):
             try: r2=subprocess.run([Y]+sub,capture_output=True,timeout=10)

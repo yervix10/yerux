@@ -1,0 +1,6 @@
+// Regression: `link ""` used to reach the C compiler as a bare `-l` and fail there.
+link ""
+
+fn main() {
+  print(1)
+}
