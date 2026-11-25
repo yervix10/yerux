@@ -31,7 +31,7 @@ group whose body can match the empty string and is repeated (`(a*)*`) is stopped
 rows of strings; `write` quotes fields when required and emits RFC 4180 CRLF
 records. `parse` is lenient about quoting (an unclosed quote runs to the end of the input) and returns no rows for input over 16 MiB or more than 100000 fields; `parse_checked` returns `Err("std.csv: line N: ...")` for those cases and for an unclosed quote or text after a closing quote. `std.toml` reads the manifest subset (tables and scalar strings,
 integers, booleans, flat arrays, also written over several lines) through dotted-key accessors. Strings resolve
-the escapes `\"`, `\\`, `\n` and `\t`; Unicode characters and commas in quoted strings are preserved. Invalid
+the escapes `\"`, `\\`, `\n`, `\r`, `\t`, `\uXXXX` and `\UXXXXXXXX`; literal strings `'...'` (no escapes) and quoted keys are read; integers accept `_` separators and `0x`/`0o`/`0b`; Unicode characters and commas in quoted strings are preserved. Invalid
 UTF-8 or a malformed table header encountered during a lookup returns the getter's usual missing-value default. Arrays are
 returned as strings; nested arrays/tables and multiline strings are outside
 this small reader.
