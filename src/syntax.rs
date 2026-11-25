@@ -825,6 +825,18 @@ pub struct Types {
 
 /// The pseudo-bound that marks a `const N: Int` parameter of a generic function.
 pub const CONST_BOUND: &str = "$const";
+/// A literal length that would collide with the const-parameter placeholders (`CONST_LEN + pid`).
+fn too_long(n: i64, pos: Pos) -> PR<()> {
+    if n >= 0 && n as usize >= CONST_LEN {
+        return Err(diag(
+            format!("this array is too large: {} elements take more than {} bytes", n, MAX_ARRAY_BYTES),
+            pos,
+        )
+        .note("help: use `List<T>` for large buffers"));
+    }
+    Ok(())
+}
+
 /// Array lengths at or above this stand for the const parameter `len - CONST_LEN` (in generic templates).
 pub const CONST_LEN: usize = 1 << 60;
 
@@ -2509,6 +2521,7 @@ impl Parser {
         match self.peek().clone() {
             Tok::Num(n) => {
                 self.bump();
+                too_long(n, npos)?;
                 Ok(n)
             }
             Tok::Id(n) if self.const_param(&n).is_some() => {
@@ -2519,7 +2532,9 @@ impl Parser {
                 if matches!(self.types.consts.get(&n), Some((_, Ty::Int | Ty::Range(..)))) =>
             {
                 self.bump();
-                Ok(self.types.consts[&n].0)
+                let len = self.types.consts[&n].0;
+                too_long(len, npos)?;
+                Ok(len)
             }
             _ => Err(diag(
                 format!("the length {} must be an integer literal or an Int const", what),

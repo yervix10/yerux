@@ -1,0 +1,8 @@
+error: this array is too large: 9223372036854775807 elements take more than 1048576 bytes
+ --> tests/e1981_array_len_huge.yx:3:15
+  |
+3 |   let a = [0; 9223372036854775807]
+  |               ^^^^^^^^^^^^^^^^^^^
+  = help: use `List<T>` for large buffers
+
+1 error(s). Nothing was generated.
