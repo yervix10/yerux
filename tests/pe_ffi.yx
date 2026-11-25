@@ -1,0 +1,30 @@
+extern "C" {
+  fn strlen(s: Ptr<UInt8>) -> UInt64
+  fn snprintf(dst: Ptr<UInt8>, len: UInt64, format: Text, ...) -> Int32
+  fn strtod(value: Text, end: Ptr<Ptr<UInt8>>) -> Float
+}
+
+// The fifth Yerux argument is passed on the stack before the Win64 call.
+fn format(buf: Ptr<UInt8>, a: Float, b: Int32, c: Float, d: Int32) -> Int32 {
+  unsafe {
+    return snprintf(buf, 64, "%.1f %d %.2f %d", a, b, c, d)
+  }
+}
+
+fn main() {
+  unsafe {
+    let buf = Ptr<UInt8>.alloc(64)
+    let a = strtod("1.5", Ptr<Ptr<UInt8>>.null())
+    let b: Int32 = 27
+    let c: Float32 = 3.25
+    let d: Int32 = 8
+    print(format(buf, a, b, c.to_float(), d))
+    print(strlen(buf))
+    print(buf.read() == 49u8 && buf.add(4).read() == 50u8 && buf.add(8).read() == 46u8)
+    print(snprintf(buf, 4, "%.2f hello", c))
+    print(strlen(buf))
+    print(buf.add(3).read() == 0u8)
+    print(snprintf(Ptr<UInt8>.null(), 0, "%d %.1f", b, a))
+    buf.free()
+  }
+}

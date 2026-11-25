@@ -1,5 +1,7 @@
+mod windows_ffi;
 mod windows_fs;
 mod windows_net;
+mod windows_relative;
 
 // Yerux native backend for x86-64 (Linux and Windows).
 // Hand-written machine-code assembler + runtime + executable writers: ELF64 (Linux, raw syscalls,
@@ -54,7 +56,7 @@ pub enum Os {
 }
 
 // Windows imports (kernel32.dll), in IAT order.
-const IMPORTS: [&str; 36] = [
+const IMPORTS: [&str; 37] = [
     "GetStdHandle",
     "WriteFile",
     "ExitProcess",
@@ -91,6 +93,7 @@ const IMPORTS: [&str; 36] = [
     "SetFilePointerEx",
     "SetFileInformationByHandle",
     "FlushFileBuffers",
+    "MultiByteToWideChar",
 ];
 const IMP_GETSTDHANDLE: usize = 0;
 const IMP_WRITEFILE: usize = 1;
@@ -128,15 +131,17 @@ const IMP_LOADLIBRARYEX: usize = 32;
 const IMP_SETFILEPOINTER: usize = 33;
 const IMP_SETFILEINFO: usize = 34;
 const IMP_FLUSHFILEBUFFERS: usize = 35;
+const IMP_MULTITOWIDE: usize = 36;
 
 pub fn validate_windows(ir: &IrProgram) -> Result<(), String> {
+    windows_ffi::validate(ir)?;
     for f in &ir.funcs {
         let constants = crate::ir::syscall_constants(f);
         for inst in f.blocks.iter().flat_map(|b| &b.insts) {
             let unsupported = match inst {
                 Inst::Syscall(_, args) => match constants[args[0]] {
                     Some(0 | 1 | 2 | 3 | 21 | 35 | 39 | 60 | 79 | 80 | 82..=84 | 87 | 228 | 231 | 332) => continue,
-                    Some(n) if windows_net::supports(n) || windows_fs::supports(n) => continue,
+                    Some(n) if windows_net::supports(n) || windows_fs::supports(n) || windows_relative::supports(n) => continue,
                     Some(n) => format!("raw system call {n}"),
                     None => "raw system call with a dynamic number".into(),
                 },
@@ -1040,6 +1045,7 @@ fn magic(d: i64) -> (i64, u32) {
 }
 
 struct Rt {
+    windows_externs: Vec<usize>,
     vtable_blob: usize,
     funcs: Vec<usize>,
     panic: Vec<usize>,
@@ -1862,7 +1868,20 @@ impl<'a> G<'a> {
                 self.fin(*d, dr);
             }
             Inst::ExternCall(dst, id, args, float_args, ret_float) => {
-                self.extern_call(*dst, *id, args, float_args, *ret_float)
+                if self.a.os == Os::Windows {
+                    self.windows_extern_call(self.rt.windows_externs[*id], args, float_args);
+                } else {
+                    self.extern_call(*id, args, float_args);
+                }
+                if let Some(d) = *dst {
+                    if *ret_float {
+                        self.ffin(d, 0);
+                    } else {
+                        let dr = self.dreg(d, RAX);
+                        self.a.mov_rr(dr, RAX);
+                        self.fin(d, dr);
+                    }
+                }
             }
             Inst::Call(dst, _, args) | Inst::CallInd(dst, _, args) => {
                 let nreg = args.len().min(ARG_REGS.len());
@@ -2270,14 +2289,32 @@ impl<'a> G<'a> {
         }
     }
 
-    fn extern_call(
-        &mut self,
-        dst: Option<V>,
-        id: usize,
-        args: &[V],
-        floats: &[bool],
-        ret_float: bool,
-    ) {
+    fn windows_extern_call(&mut self, label: usize, args: &[V], floats: &[bool]) {
+        const WIN_ARGS: [u8; 4] = [RCX, RDX, R8, R9];
+        // Reserve the four positional home slots and any stack arguments.
+        let saved_rsp = args.len().max(WIN_ARGS.len()) * 8;
+        let reserve = (saved_rsp + 8 + 15) & !15;
+        self.a.mov_rr(RAX, RSP);
+        self.a.and_imm(RSP, -16);
+        self.a.sub_imm(RSP, reserve as i32);
+        self.a.st(RSP, saved_rsp as i32, RAX);
+        for (position, &arg) in args.iter().enumerate() {
+            self.mov_to(RAX, arg);
+            self.a.st(RSP, (position * 8) as i32, RAX);
+        }
+        // Source vregs can occupy the outgoing registers. Stage all operands
+        // before loading them, keeping float bits in both registers for varargs.
+        for (position, (&reg, &is_float)) in WIN_ARGS.iter().zip(floats).enumerate() {
+            self.a.ld(reg, RSP, (position * 8) as i32);
+            if is_float {
+                self.a.movq_xr(position as u8, reg);
+            }
+        }
+        self.a.call(label);
+        self.a.ld(RSP, RSP, saved_rsp as i32);
+    }
+
+    fn extern_call(&mut self, id: usize, args: &[V], floats: &[bool]) {
         // Every function that calls extern code has a frame (`push rbp` + a 16-byte multiple), so rsp is
         // 16-byte aligned between instructions; reserve the stack arguments rounded up to 16 so it is still
         // aligned immediately before CALL, with the first stack argument at [rsp].
@@ -2350,15 +2387,6 @@ impl<'a> G<'a> {
         self.a.call_elf_got(id);
         if reserve != 0 {
             self.a.add_imm(RSP, reserve as i32);
-        }
-        if let Some(d) = dst {
-            if ret_float {
-                self.ffin(d, 0);
-            } else {
-                let dr = self.dreg(d, RAX);
-                self.a.mov_rr(dr, RAX);
-                self.fin(d, dr);
-            }
         }
     }
 }
@@ -3352,6 +3380,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     let report = a.report;
     let sockets = (os == Os::Windows && windows_net::reachable(ir))
         .then(|| windows_net::Stubs::new(&mut a));
+    let relative_files = (os == Os::Windows && windows_relative::reachable(ir))
+        .then(|| windows_relative::Stubs::new(&mut a));
+    let ffi = (os == Os::Windows).then(|| windows_ffi::Stubs::new(&mut a, ir));
     let has_workers = ir.funcs.iter().any(|f| {
         f.blocks.iter().any(|b| {
             b.insts.iter().any(|i| {
@@ -3636,6 +3667,12 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     }
     if sockets.is_some() {
         windows_net::emit_init(&mut a, &mut data);
+    }
+    if relative_files.is_some() {
+        windows_relative::emit_init(&mut a, &mut data);
+    }
+    if let Some(ffi) = &ffi {
+        ffi.emit_init(&mut a, &mut data);
     }
     // Startup may append strings for Windows API discovery. The vtables and
     // Float constants follow all such strings in the read-only data section.
@@ -4508,7 +4545,11 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
     }
 
     // user functions
+    if let Some(ffi) = &ffi {
+        ffi.emit(&mut a);
+    }
     let rt = Rt {
+        windows_externs: ffi.map_or_else(Vec::new, |ffi| ffi.labels),
         vtable_blob: data.len(),
         funcs: l_funcs.clone(),
         panic: l_panic.clone(),
@@ -4730,6 +4771,9 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
         let files = windows_fs::Stubs::new(&mut a);
         files.emit_dispatch(&mut a);
+        if let Some(relative_files) = &relative_files {
+            relative_files.emit_dispatch(&mut a);
+        }
         for (number, stub) in [
             (0, l_osread),
             (1, l_oswrite),
@@ -4759,6 +4803,10 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
         }
 
         files.emit(&mut a, winerr);
+        let dos_errno = a.label();
+        if let Some(relative_files) = &relative_files {
+            relative_files.emit(&mut a, winerr, dos_errno);
+        }
 
         // GetLastError mapped to a negative errno in rax (a callee with its own frame).
         a.bind(winerr);
@@ -4777,6 +4825,8 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
             ];
             a.win_prologue(0);
             a.call_iat(IMP_GETLASTERROR);
+            a.win_restore_frame();
+            a.bind(dos_errno);
             a.raw(&[0x89, 0xC0]); // zero-extend eax
             let labels = errors.map(|_| a.label());
             for ((_, codes), label) in errors.into_iter().zip(labels) {
@@ -4794,7 +4844,7 @@ fn build(ir: &IrProgram, debug_alloc: bool, os: Os, g: i64, win: WinLayout) -> B
                 a.jmp(done);
             }
             a.bind(done);
-            a.win_epilogue();
+            a.ret();
         }
 
         // access(path, F_OK) and directory operations follow the same ANSI path
