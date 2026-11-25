@@ -1,0 +1,122 @@
+// store.yx: the persistent map. State lives in snapshot.json (written by compaction) plus wal.log, an append-only
+// log. A write is a batch: records carry "end" and replay applies a batch only when its end record is read, so a
+// torn or unfinished batch is dropped and the log is cut back to the last complete batch.
+import codec
+import std.fs
+import std.io
+import std.path
+
+pub enum KvError { Io(String), Corrupt(String), Txn(String) }
+
+pub struct Store { dir: String, data: Map<String, codec.Value>, seq: Int, txn: Bool, pending: List<codec.Op> }
+
+pub fn message(e: view KvError) -> String {
+  match e {
+    KvError.Io(m) => { return "io: {m}" }
+    KvError.Corrupt(m) => { return "corrupt: {m}" }
+    KvError.Txn(m) => { return "transaction: {m}" }
+  }
+}
+
+pub fn check<T>(r: Result<T, io.IoError>) -> Result<T, KvError> {
+  match move r {
+    Ok(v) => { return Ok(move v) }
+    Err(e) => { return Err(KvError.Io(String.from(e.message))) }
+  }
+}
+
+fn wal_file(dir: view String) -> String { return path.join(dir, "wal.log") }
+
+fn snapshot_file(dir: view String) -> String { return path.join(dir, "snapshot.json") }
+
+pub fn apply(s: mut Store, op: codec.Op) {
+  match move op {
+    codec.Op.Set(key, value) => { s.data.insert(move key, move value) }
+    codec.Op.Del(key) => { let _ = s.data.remove(key) }
+  }
+}
+
+// Opens the directory: loads the snapshot, replays the log after it, and cuts the log back to the last complete
+// batch when its tail is torn or unfinished.
+pub fn open(dir: view String) -> Result<Store, KvError> {
+  check(fs.create_dir_all(dir))?
+  var s = Store { dir: String.from(dir), data: Map<String, codec.Value>.new(), seq: 0, txn: false, pending: List<codec.Op>.new() }
+  if fs.exists(snapshot_file(dir)) {
+    let text = check(fs.read_to_string(snapshot_file(dir)))?
+    match codec.parse_snapshot(text, s.data) {
+      Ok(seq) => {
+        s.seq = seq
+        print("open: snapshot at seq {seq}")
+      }
+      Err(m) => { return Err(KvError.Corrupt("snapshot: {m}")) }
+    }
+  }
+  let wal = wal_file(dir)
+  var replayed = 0
+  if fs.exists(wal) {
+    let text = check(fs.read_to_string(wal))?
+    let lines = text.split("\n")
+    var batch = List<codec.Op>.new()
+    var good = 0
+    var pos = 0
+    for i in 0..lines.len() {
+      let line = lines.at(i)
+      let last = i == lines.len() - 1
+      pos = pos + line.len() + 1
+      if line.is_empty() { continue }
+      match codec.parse_record(line) {
+        Ok(r) => {
+          let (seq, end, op) = move r
+          if seq > s.seq {
+            batch.push(move op)
+            if end {
+              for done in move batch { apply(s, move done) }
+              batch = List<codec.Op>.new()
+              s.seq = seq
+              replayed = replayed + 1
+              good = if last { text.len() } else { pos }
+            }
+          }
+        }
+        Err(msg) => {
+          if !last { return Err(KvError.Corrupt("log line {i + 1}: {msg}")) }
+          print("open: torn record at line {i + 1} ignored")
+        }
+      }
+    }
+    if !batch.is_empty() { print("open: {batch.len()} unfinished op(s) dropped") }
+    if good < text.len() {
+      check(fs.write(wal, text.slice(0, good)))?
+      print("open: log cut back to {good} bytes")
+    }
+  }
+  print("open: seq {s.seq}, replayed {replayed} record(s)")
+  return Ok(move s)
+}
+
+pub fn compact(s: mut Store) -> Result<Int, KvError> {
+  if s.txn { return Err(KvError.Txn("cannot compact while a transaction is open")) }
+  let text = codec.snapshot_text(s.seq, s.data)
+  let tmp = path.join(s.dir, "snapshot.tmp")
+  check(fs.write(tmp, text))?
+  check(fs.rename(tmp, snapshot_file(s.dir)))?
+  check(fs.write(wal_file(s.dir), ""))?
+  return Ok(s.data.len())
+}
+
+pub fn sorted_keys(s: view Store) -> List<String> {
+  var keys = List<String>.new()
+  for i in 0..s.data.len() { keys.push(String.from(s.data.keys.at(i))) }
+  keys.sort()
+  return keys
+}
+
+// Appends raw text to the log (a batch, or a torn record when simulating a crash).
+pub fn append_log(dir: view String, text: view String) -> Result<Int, KvError> {
+  check(fs.append(wal_file(dir), text))?
+  return Ok(text.len())
+}
+
+pub fn log_bytes(dir: view String) -> Result<Int, KvError> {
+  return check(fs.file_size(wal_file(dir)))
+}

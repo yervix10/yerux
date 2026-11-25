@@ -745,3 +745,44 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
     'share'". Pipeline uses one channel per worker with round-robin dealing instead.
 
     *Fixed in the docs:* CONCURRENCY.md no longer promises `share()`; it describes the one-channel-per-worker deal.
+
+## Round 13: kvstore, life, boolexpr, httpsuite
+
+Four programs in `examples/real/<name>/`, each with `expected.out`. Each was built on both backends (C and `--native`),
+gave identical output over repeated runs, exited 0, and matched an independent Python 3 model byte for byte.
+`tests/real_programs.sh` runs all thirteen programs of rounds 11 to 13 (about 25 s) and is part of `run_all.sh`.
+
+- **kvstore**: persistent key/value store in a temporary directory. Records are JSON lines in a write-ahead log with batch
+  end markers; replay applies only complete batches and cuts the log back at a torn one. Also: transactions with
+  rollback and commit, snapshot compaction, reopen, and a simulated crash. Three modules: `main.yx` 157 lines,
+  `store.yx` 122, `codec.yx` 135.
+- **life**: Conway's Game of Life on a torus, grid as arrays passed as `view [T]` / `mut [T]` slices, initial grids from
+  `std.rand` with three seeds, 60 generations each, period detection by hashing generations, snapshots every ten
+  generations, and PASS/FAIL checks of glider, blinker and block. 184 lines, 374 lines of output.
+- **boolexpr**: parser for boolean expressions with comparisons on integer variables. A `Logic` trait has two
+  implementations, Bool and the Kleene `Tri`, and one generic `eval<T: Logic>` serves both. The program prints the pretty
+  form, the value in each logic, the variables, truth tables for up to three unbound variables, and a simplifier whose
+  rows are checked. Three modules: `main.yx` 171 lines, `syntax.yx` 152, `logic.yx` 207.
+- **httpsuite**: one process runs the `std.http_server` on an ephemeral port in a spawned thread and sends a suite of
+  about a dozen requests with the `std.http` client. Covered: path parameters, percent-decoded query strings, a JSON
+  POST, 400, 404, 405 with `Allow`, and a raw malformed request. Ends with the server summary. 248 lines.
+
+### Round 13 frictions (not changed; minimal repros)
+
+68. **A named function used as a value inside an imported module does not resolve.** In `m.yx`:
+    `fn sq(x: view Int) -> Option<Int> { ... }` and `pub fn go() -> Option<Int> { let f = sq; return f(3) }`, with
+    `main.yx` doing `import m` and `print(m.go().unwrap())`, gives `variable 'sq' does not exist` at `let f = sq`
+    (`run main.yx`, exit 1). The same program works in a single file. Passing `sq` as an argument also fails. Found while
+    passing `as_int`-style helpers to a generic function in kvstore. Workaround: a closure.
+69. **An unresolved name causes a second, misleading error.** `let v = fld(nosuch)?` followed by `print("{v}")` gives
+    `variable 'nosuch' does not exist` and then `cannot infer the type parameter T of 'std__fmt_val'` with "no argument
+    has a type that mentions T". The second error is a cascade from `v` having no type and does not mention `v`.
+70. **`pub` on a struct field gives a generic parse error.** `pub struct Fail { pub pos: Int, msg: String }` gives
+    `error: expected ':'` at the second `pub`. SPEC says fields of a `pub` type are public, so the natural mistake
+    gets no hint. Expected: a message saying that fields take no `pub`. Also hit by kvstore and boolexpr.
+71. **`*v` on a `view` value that is not a Box is misreported.** `fn get(v: view T) -> T { return *v }` for an enum `T`
+    gives `type T has no method 'get'`. SPEC gives `*` only for `Box` (`*box`). The message should say that `*` needs
+    a Box. Workaround: `match` on the view and return the arms.
+72. **`import std.random` is an unknown module, and the diagnostic does not suggest `std.rand`.** `import std.random` with
+    `var r = random.new(1)` gives `cannot find module 'std.random'` and "looked for ./std/random.yx". The embedded module
+    is `std.rand`. A hint naming the existing module would help. Found while writing life.

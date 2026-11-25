@@ -1,0 +1,184 @@
+// life: Conway's Game of Life on a 16x16 torus (wrap-around), grid stored in fixed-size arrays.
+//
+//   life    no arguments: runs 3 seeded random worlds for 60 generations each (snapshots every 10
+//           generations, population statistics, period detection by hash plus exact comparison),
+//           then checks glider, blinker and block on a fresh grid (PASS/FAIL lines). Exit 0.
+// Deterministic: the initial grids come from std.rand (LCG), so equal seeds give equal grids.
+import std.rand
+
+const SIDE = 16
+const CELLS = 256
+const GENS = 60
+
+// Grid index of (x, y); accepts coordinates from -1 to SIDE, which wrap around the torus.
+fn idx(x: Int, y: Int) -> Int {
+  return ((y + SIDE) % SIDE) * SIDE + (x + SIDE) % SIDE
+}
+
+// Live neighbours of (x, y).
+fn neighbours(cur: view [Int], x: Int, y: Int) -> Int {
+  var n = 0
+  for dy in 0..3 {
+    for dx in 0..3 {
+      if dx != 1 || dy != 1 {
+        n = n + cur[idx(x + dx - 1, y + dy - 1)]
+      }
+    }
+  }
+  return n
+}
+
+// One generation from cur into next. Returns (births, deaths).
+fn step(cur: view [Int], next: mut [Int]) -> (Int, Int) {
+  var births = 0
+  var deaths = 0
+  for y in 0..SIDE {
+    for x in 0..SIDE {
+      let alive = cur[y * SIDE + x] == 1
+      let n = neighbours(cur, x, y)
+      let lives = n == 3 || (alive && n == 2)
+      if lives && !alive { births = births + 1 }
+      if !lives && alive { deaths = deaths + 1 }
+      next[y * SIDE + x] = if lives { 1 } else { 0 }
+    }
+  }
+  return (births, deaths)
+}
+
+// Advances the grid n generations in place.
+fn evolve(cur: mut [Int], n: Int) {
+  var next = [0; CELLS]
+  for _g in 0..n {
+    let _ = step(cur, next)
+    for i in 0..CELLS { cur[i] = next[i] }
+  }
+}
+
+fn population(g: view [Int]) -> Int {
+  var p = 0
+  for c in g { p = p + c }
+  return p
+}
+
+// Polynomial hash of a generation, kept below 2^31 - 1.
+fn hash(g: view [Int]) -> Int {
+  var h = 0
+  for c in g { h = (h * 31 + c + 1) % 2147483647 }
+  return h
+}
+
+fn same(a: view [Int], b: view [Int]) -> Bool {
+  return a == b
+}
+
+// Prints a grid: '#' for a live cell, '.' for a dead one.
+fn draw(g: view [Int]) {
+  for y in 0..SIDE {
+    var line = String.new()
+    for x in 0..SIDE {
+      if g[y * SIDE + x] == 1 { line.push_str("#") } else { line.push_str(".") }
+    }
+    print(line)
+  }
+}
+
+// A fresh grid with the given (x, y) cells, written flat as x0, y0, x1, y1, ...
+fn pattern(cells: view [Int], ox: Int, oy: Int) -> [Int; CELLS] {
+  var g = [0; CELLS]
+  for i in 0..cells.len() / 2 {
+    g[idx(ox + cells[2 * i], oy + cells[2 * i + 1])] = 1
+  }
+  return g
+}
+
+// Finds the first generation j that repeats at g (j < g <= GENS): returns (j, g - j), or (-1, 0).
+fn find_period(hashes: view List<Int>, hist: view List<Int>) -> (Int, Int) {
+  for g in 1..GENS + 1 {
+    for j in 0..g {
+      if hashes.at(j) == hashes.at(g) && same(hist[j * CELLS..(j + 1) * CELLS], hist[g * CELLS..(g + 1) * CELLS]) {
+        return (j, g - j)
+      }
+    }
+  }
+  return (-1, 0)
+}
+
+// Runs one seeded world for GENS generations and prints its report.
+fn simulate(seed: Int) {
+  var rng = rand.new(seed)
+  var cur = [0; CELLS]
+  for i in 0..CELLS {
+    if rand.range(rng, 0, 5) == 0 { cur[i] = 1 }
+  }
+  var next = [0; CELLS]
+  var hist = List<Int>.new()
+  var hashes = List<Int>.new()
+  var pops = List<Int>.new()
+  var births = 0
+  var deaths = 0
+  for g in 0..GENS + 1 {
+    if g > 0 {
+      let (b, d) = step(cur, next)
+      births = births + b
+      deaths = deaths + d
+      for i in 0..CELLS { cur[i] = next[i] }
+    }
+    for c in cur { hist.push(c) }
+    hashes.push(hash(cur))
+    pops.push(population(cur))
+    if g % 10 == 0 {
+      print("gen {g}:")
+      draw(cur)
+    }
+  }
+  var maxp = 0
+  for p in pops {
+    if p > maxp { maxp = p }
+  }
+  print("population: {pops}")
+  print("max {maxp}, births {births}, deaths {deaths}")
+  let (first, period) = find_period(hashes, hist)
+  if first < 0 {
+    print("period: above limit (no repeat within {GENS} generations)")
+  } else {
+    print("period {period}, cycle starts at generation {first}")
+  }
+}
+
+fn report(name: Text, ok: Bool) {
+  if ok { print("PASS {name}") } else { print("FAIL {name}") }
+}
+
+// Known patterns on a fresh grid; glider cells (1,0) (2,1) (0,2) (1,2) (2,2).
+fn checks() {
+  let glider = [1, 0, 2, 1, 0, 2, 1, 2, 2, 2]
+  var g = pattern(glider, 2, 2)
+  let start = g
+  evolve(g, 4)
+  report("glider moves by (1,1) after 4 generations", same(g, pattern(glider, 3, 3)))
+  evolve(g, 4 * SIDE - 4)
+  report("glider is back on its cells after 4*SIDE generations", same(g, start))
+
+  let blinker = [0, 0, 1, 0, 2, 0]
+  var b = pattern(blinker, 5, 5)
+  let b0 = b
+  evolve(b, 1)
+  report("blinker changes in 1 generation", !same(b, b0))
+  evolve(b, 1)
+  report("blinker has period 2", same(b, b0))
+
+  let block = [0, 0, 1, 0, 0, 1, 1, 1]
+  var k = pattern(block, 5, 5)
+  let k0 = k
+  evolve(k, 1)
+  report("block is a still life", same(k, k0))
+}
+
+fn main() {
+  let seeds = [7, 42, 2024]
+  for seed in seeds {
+    print("seed {seed}")
+    simulate(seed)
+  }
+  checks()
+}
