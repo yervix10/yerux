@@ -1,0 +1,66 @@
+// dupfinder: creates a tiny temporary directory, collects regular files,
+// and prints pairs whose size and text content are identical.
+import std.env
+import std.fs
+import std.io
+import std.path
+
+fn collect(dir: view String, rel: view String, out: mut List<String>) -> Result<Int, io.IoError> {
+  let entries = fs.read_dir_entries(dir)?
+  for entry in entries {
+    var name = String.from(rel)
+    if !rel.is_empty() { name.push_byte(47) }
+    name.push_str(entry.name)
+    if entry.kind == fs.FileKind.Dir {
+      let child = path.join(dir, entry.name)
+      collect(child, name, out)?
+    } else if entry.kind == fs.FileKind.File {
+      out.push(move name)
+    }
+  }
+  return Ok(0)
+}
+
+fn fixture(root: view String, rel: view String, body: view String) {
+  let full = path.join(root, rel)
+  fs.create_dir_all(path.parent(full)).unwrap()
+  fs.write(full, body).unwrap()
+}
+
+fn main() {
+  let root = path.join(env.temp_dir(), "yerux-dupfinder-{env.pid()}")
+  fs.create_dir_all(root).unwrap()
+  fixture(root, "a.txt", "same content\n")
+  fixture(root, "b.txt", "different\n")
+  fixture(root, "nested/c.txt", "same content\n")
+  fixture(root, "nested/d.txt", "same content\n")
+
+  var files = List<String>.new()
+  collect(root, "", files).unwrap()
+  files.sort()
+  print("files: {files.len()}")
+  var i = 0
+  var pairs = 0
+  while i < files.len() {
+    let a = path.join(root, files.at(i))
+    let a_size = fs.file_size(a).unwrap()
+    let a_body = fs.read_to_string(a).unwrap()
+    var j = i + 1
+    while j < files.len() {
+      let b = path.join(root, files.at(j))
+      let b_size = fs.file_size(b).unwrap()
+      if a_size == b_size {
+        let b_body = fs.read_to_string(b).unwrap()
+        if a_body.eq(b_body) {
+          print("{files.at(i)} == {files.at(j)}")
+          pairs = pairs + 1
+        }
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  print("duplicate pairs: {pairs}")
+  fs.remove_dir_all(root).unwrap()
+  print("temp dir removed: true")
+}

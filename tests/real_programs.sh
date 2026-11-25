@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT" || exit 2
 Y="${Y:-$ROOT/target/release/yerux}"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 fail=0
-for name in ledger logsum taskmgr httprouter warehouse logextract calclang fsclient pipeline life kvstore boolexpr httpsuite tomlconf csvpivot rgrep jsonq eventbus; do
+for name in ledger logsum taskmgr httprouter warehouse logextract calclang fsclient pipeline life kvstore boolexpr httpsuite tomlconf csvpivot rgrep jsonq eventbus dupfinder; do
   D="examples/real/$name"
   exp="$D/expected.out"
   [ -f "$exp" ] || { echo "FAIL real_programs: $name has no expected.out"; fail=1; continue; }
