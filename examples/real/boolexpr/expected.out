@@ -1,0 +1,131 @@
+case 1: p and not q
+  pretty: p and not q
+  simplified: p and not q
+  vars: p* q
+  bool: error: no value for variable 'q' at column 11
+  tri: U
+    q=0 -> 1 simplified 1
+    q=1 -> 0 simplified 0
+case 2: p or q and r
+  pretty: p or q and r
+  simplified: p or q and r
+  vars: p* q* r
+  bool: error: no value for variable 'r' at column 12
+  tri: U
+    r=0 -> 0 simplified 0
+    r=1 -> 1 simplified 1
+case 3: not (p and q) or r
+  pretty: not (p and q) or r
+  simplified: not (p and q) or r
+  vars: p q r
+  bool: error: no value for variable 'p' at column 6
+  tri: U
+    p=0 q=0 r=0 -> 1 simplified 1
+    p=1 q=0 r=0 -> 1 simplified 1
+    p=0 q=1 r=0 -> 1 simplified 1
+    p=1 q=1 r=0 -> 0 simplified 0
+    p=0 q=0 r=1 -> 1 simplified 1
+    p=1 q=0 r=1 -> 1 simplified 1
+    p=0 q=1 r=1 -> 1 simplified 1
+    p=1 q=1 r=1 -> 1 simplified 1
+case 4: p xor q
+  pretty: p xor q
+  simplified: p xor q
+  vars: p q*
+  bool: error: no value for variable 'p' at column 1
+  tri: U
+    p=0 -> 1 simplified 1
+    p=1 -> 0 simplified 0
+case 5: p -> q
+  pretty: p -> q
+  simplified: p -> q
+  vars: p* q
+  bool: error: no value for variable 'q' at column 6
+  tri: T
+    q=0 -> 1 simplified 1
+    q=1 -> 1 simplified 1
+case 6: p -> q -> r
+  pretty: p -> q -> r
+  simplified: p -> q -> r
+  vars: p q* r*
+  bool: error: no value for variable 'p' at column 1
+  tri: U
+    p=0 -> 1 simplified 1
+    p=1 -> 0 simplified 0
+case 7: n > 3 and p
+  pretty: n > 3 and p
+  simplified: n > 3 and p
+  vars: p*
+  bool: 1
+  tri: T
+    -> 1 simplified 1
+case 8: n <= 2 or not p
+  pretty: n <= 2 or not p
+  simplified: n <= 2 or not p
+  vars: p
+  bool: error: no value for variable 'p' at column 15
+  tri: U
+    p=0 -> 1 simplified 1
+    p=1 -> 0 simplified 0
+case 9: not not p
+  pretty: not not p
+  simplified: p
+  vars: p*
+  bool: 1
+  tri: T
+    -> 1 simplified 1
+case 10: p and p or false
+  pretty: p and p or false
+  simplified: p
+  vars: p
+  bool: error: no value for variable 'p' at column 1
+  tri: U
+    p=0 -> 0 simplified 0
+    p=1 -> 1 simplified 1
+case 11: true and (p or false)
+  pretty: true and (p or false)
+  simplified: p
+  vars: p*
+  bool: 0
+  tri: F
+    -> 0 simplified 0
+case 12: (p -> q) and (q -> p)
+  pretty: (p -> q) and (q -> p)
+  simplified: (p -> q) and (q -> p)
+  vars: p q*
+  bool: error: no value for variable 'p' at column 2
+  tri: U
+    p=0 -> 0 simplified 0
+    p=1 -> 1 simplified 1
+case 13: p and (q and r)
+  pretty: p and (q and r)
+  simplified: p and (q and r)
+  vars: p q r
+  bool: error: no value for variable 'p' at column 1
+  tri: U
+    p=0 q=0 r=0 -> 0 simplified 0
+    p=1 q=0 r=0 -> 0 simplified 0
+    p=0 q=1 r=0 -> 0 simplified 0
+    p=1 q=1 r=0 -> 0 simplified 0
+    p=0 q=0 r=1 -> 0 simplified 0
+    p=1 q=0 r=1 -> 0 simplified 0
+    p=0 q=1 r=1 -> 0 simplified 0
+    p=1 q=1 r=1 -> 1 simplified 1
+case 14: p and
+  parse error: unexpected end of input at column 6
+case 15: x > 1
+  pretty: x > 1
+  simplified: x > 1
+  vars: none
+  bool: error: no value for variable 'x' at column 1
+  tri: U
+    -> 0 simplified 0
+case 16: p = 4 and q
+  pretty: p = 4 and q
+  simplified: p = 4 and q
+  vars: q
+  bool: error: no value for variable 'p' at column 1
+  tri: U
+    q=0 -> 0 simplified 0
+    q=1 -> 0 simplified 0
+checks: 16 cases, 0 truth-table mismatches

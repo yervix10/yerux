@@ -1,0 +1,171 @@
+// boolexpr: parses boolean expressions over named variables and evaluates each one with the same generic evaluator
+// in two logics: Bool (an unbound variable is an error) and Tri (Kleene three-valued; an unbound variable is Unknown).
+// For each embedded case it prints the pretty form (minimal parentheses), the variables (* when bound), both values,
+// a truth table over the unbound variables (up to three) with the value of the expression and of its simplified form,
+// and checks that the simplifier keeps every row. Modules: syntax.yx (tokenizer, parser), logic.yx (Logic, Tri,
+// evaluator, pretty printer, simplifier).
+// Run: target/release/yerux run examples/real/boolexpr/main.yx   (no arguments; exit 0 always)
+import logic
+import syntax
+
+// The assignments "name=true", "name=false" or "name=INT" as an environment.
+fn env_of(assigns: view List<String>) -> logic.Env {
+    var env = logic.Env { bools: Map<String, Bool>.new(), ints: Map<String, Int>.new() }
+    for a in assigns {
+        let parts = a.split("=")
+        let name = String.from(parts.at(0))
+        let val = String.from(parts.at(1))
+        if val.eq("true") {
+            env.bools.insert(move name, true)
+        } else if val.eq("false") {
+            env.bools.insert(move name, false)
+        } else {
+            var v = 0
+            if val.parse_int(v) { env.ints.insert(move name, v) }
+        }
+    }
+    return env
+}
+
+fn pow2(k: Int) -> Int {
+    var p = 1
+    var i = 0
+    while i < k {
+        p = p * 2
+        i = i + 1
+    }
+    return p
+}
+
+// The environment for one row: bit i of mask is the value of free[i]; assigns stay as they are.
+fn row_env(assigns: view List<String>, free: view List<String>, mask: Int) -> logic.Env {
+    var all = List<String>.new()
+    for a in assigns { all.push(String.from(a)) }
+    var i = 0
+    for name in free {
+        var s = String.from(name)
+        s.push_str("=")
+        if (mask / pow2(i)) % 2 == 1 { s.push_str("true") } else { s.push_str("false") }
+        all.push(move s)
+        i = i + 1
+    }
+    return env_of(all)
+}
+
+fn bool_text(b: Bool) -> String {
+    if b { return String.from("1") }
+    return String.from("0")
+}
+
+// The value of a formula in two-valued logic, or the error text.
+fn bool_value(n: view syntax.Node, env: view logic.Env) -> String {
+    let unit = false
+    match logic.eval(n, env, false, unit) {
+        Ok(b) => { return bool_text(b) }
+        Err(f) => { return "error: {f.msg} at column {f.pos + 1}" }
+    }
+}
+
+// Whether the formula is true under a two-valued environment (used by the truth table; all variables are bound).
+fn truth(n: view syntax.Node, env: view logic.Env) -> Bool {
+    let unit = false
+    match logic.eval(n, env, false, unit) {
+        Ok(b) => { return b }
+        Err(f) => { return false }
+    }
+}
+
+// Prints the truth table over the unbound variables of n and of its simplified form; returns the mismatched rows.
+fn table(n: view syntax.Node, s: view syntax.Node, assigns: view List<String>, free: view List<String>) -> Int {
+    var mismatches = 0
+    var mask = 0
+    let rows = pow2(free.len())
+    while mask < rows {
+        var line = String.new()
+        var i = 0
+        while i < free.len() {
+            let v = if (mask / pow2(i)) % 2 == 1 { 1 } else { 0 }
+            line.push_str("{free.at(i)}={v} ")
+            i = i + 1
+        }
+        let env = row_env(assigns, free, mask)
+        let vn = truth(n, env)
+        let vs = truth(s, env)
+        if vn != vs { mismatches = mismatches + 1 }
+        print("    {line}-> {bool_text(vn)} simplified {bool_text(vs)}")
+        mask = mask + 1
+    }
+    return mismatches
+}
+
+fn vars_text(free: view List<String>, env: view logic.Env) -> String {
+    if free.is_empty() { return String.from("none") }
+    var s = String.new()
+    for name in free {
+        if !s.is_empty() { s.push_str(" ") }
+        s.push_str(name)
+        if env.bools.contains(name) || env.ints.contains(name) { s.push_str("*") }
+    }
+    return s
+}
+
+fn main() {
+    let cases = [
+        "p and not q | p=true",
+        "p or q and r | p=false q=true",
+        "not (p and q) or r |",
+        "p xor q | q=true",
+        "p -> q | p=false",
+        "p -> q -> r | r=false q=true",
+        "n > 3 and p | n=7 p=true",
+        "n <= 2 or not p | n=5",
+        "not not p | p=true",
+        "p and p or false |",
+        "true and (p or false) | p=false",
+        "(p -> q) and (q -> p) | q=true",
+        "p and (q and r) |",
+        "p and | p=true",
+        "x > 1 |",
+        "p = 4 and q |",
+    ]
+    var index = 0
+    var mismatches = 0
+    for raw in cases {
+        index = index + 1
+        let parts = String.from(raw).split("|")
+        let src = String.from(parts.at(0).trim())
+        var assigns = List<String>.new()
+        for a in parts.at(1).trim().split(" ") {
+            if !a.is_empty() { assigns.push(String.from(a)) }
+        }
+        print("case {index}: {src}")
+        match syntax.parse(src) {
+            Err(f) => { print("  parse error: {f.msg} at column {f.pos + 1}") }
+            Ok(n) => {
+                var free = List<String>.new()
+                logic.collect(n, free)
+                let env = env_of(assigns)
+                let s = logic.simplify(n)
+                print("  pretty: {logic.pretty(n)}")
+                print("  simplified: {logic.pretty(s)}")
+                print("  vars: {vars_text(free, env)}")
+                print("  bool: {bool_value(n, env)}")
+                let tri = match logic.eval(n, env, true, logic.Tri.Unknown) {
+                    Ok(t) => { "{t}" }
+                    Err(f) => { "error" }
+                }
+                print("  tri: {tri}")
+                var unbound = List<String>.new()
+                for name in free {
+                    if !env.bools.contains(name) { unbound.push(String.from(name)) }
+                }
+                if unbound.len() <= 3 {
+                    mismatches = mismatches + table(n, s, assigns, unbound)
+                } else {
+                    print("    truth table skipped: {unbound.len()} unbound variables")
+                }
+            }
+        }
+    }
+    print("checks: {index} cases, {mismatches} truth-table mismatches")
+}

@@ -1,0 +1,207 @@
+// boolexpr logic: the two logics (Bool and the Kleene three-valued Tri) behind one trait, the generic evaluator,
+// the pretty printer with minimal parentheses, the variable collector and the simplifier.
+import syntax
+
+pub struct Env { bools: Map<String, Bool>, ints: Map<String, Int> }
+
+pub enum Tri { True, False, Unknown }
+
+pub trait Logic {
+    fn lift(view self, b: Bool) -> Self
+    fn unknown(view self) -> Self
+    fn not_(view self) -> Self
+    fn and_(view self, o: view Self) -> Self
+    fn or_(view self, o: view Self) -> Self
+    fn copy_of(view self) -> Self
+}
+
+impl Logic for Bool {
+    fn lift(view self, b: Bool) -> Bool { return b }
+    fn unknown(view self) -> Bool { return false }
+    fn not_(view self) -> Bool { return !self }
+    fn and_(view self, o: view Bool) -> Bool { return self && o }
+    fn or_(view self, o: view Bool) -> Bool { return self || o }
+    fn copy_of(view self) -> Bool { return self }
+}
+
+impl Logic for Tri {
+    fn lift(view self, b: Bool) -> Tri {
+        if b { return Tri.True }
+        return Tri.False
+    }
+    fn unknown(view self) -> Tri { return Tri.Unknown }
+    fn not_(view self) -> Tri {
+        match self {
+            Tri.True => { return Tri.False }
+            Tri.False => { return Tri.True }
+            Tri.Unknown => { return Tri.Unknown }
+        }
+    }
+    fn and_(view self, o: view Tri) -> Tri {
+        match self {
+            Tri.False => { return Tri.False }
+            Tri.True => { return o.copy_of() }
+            Tri.Unknown => {
+                match o {
+                    Tri.False => { return Tri.False }
+                    _ => { return Tri.Unknown }
+                }
+            }
+        }
+    }
+    fn or_(view self, o: view Tri) -> Tri {
+        match self {
+            Tri.True => { return Tri.True }
+            Tri.False => { return o.copy_of() }
+            Tri.Unknown => {
+                match o {
+                    Tri.True => { return Tri.True }
+                    _ => { return Tri.Unknown }
+                }
+            }
+        }
+    }
+    fn copy_of(view self) -> Tri {
+        match self {
+            Tri.True => { return Tri.True }
+            Tri.False => { return Tri.False }
+            Tri.Unknown => { return Tri.Unknown }
+        }
+    }
+}
+
+impl Show for Tri {
+    fn show(view self) -> String {
+        match self {
+            Tri.True => { return String.from("T") }
+            Tri.False => { return String.from("F") }
+            Tri.Unknown => { return String.from("U") }
+        }
+    }
+}
+
+pub fn level(n: view syntax.Node) -> Int {
+    match n {
+        syntax.Node.Bin(op, a, b) => {
+            if op.eq("->") { return 1 }
+            if op.eq("or") { return 2 }
+            if op.eq("and") { return 3 }
+            return 4
+        }
+        syntax.Node.Not(a) => { return 5 }
+        _ => { return 6 }
+    }
+}
+
+// Minimal parentheses that still parse back to the same tree (and/or/xor and -> are left-associative except ->).
+pub fn pretty(n: view syntax.Node) -> String {
+    match n {
+        syntax.Node.Lit(b) => { if b { return String.from("true") } return String.from("false") }
+        syntax.Node.Var(name, pos) => { return String.from(name) }
+        syntax.Node.Cmp(name, op, v, pos) => { return "{name} {op} {v}" }
+        syntax.Node.Not(a) => {
+            let inner = pretty(*a)
+            if level(*a) < 5 { return "not ({inner})" }
+            return "not {inner}"
+        }
+        syntax.Node.Bin(op, a, b) => {
+            let l = level(n)
+            let left = pretty(*a)
+            let right = pretty(*b)
+            let lp = if level(*a) < l || (level(*a) == l && op.eq("->")) { "({left})" } else { move left }
+            let rp = if level(*b) < l || (level(*b) == l && !op.eq("->")) { "({right})" } else { move right }
+            return "{lp} {op} {rp}"
+        }
+    }
+}
+
+pub fn collect(n: view syntax.Node, out: mut List<String>) {
+    match n {
+        syntax.Node.Var(name, pos) => {
+            if !out.contains(name) { out.push(String.from(name)) }
+        }
+        syntax.Node.Not(a) => { collect(*a, out) }
+        syntax.Node.Bin(op, a, b) => {
+            collect(*a, out)
+            collect(*b, out)
+        }
+        _ => {}
+    }
+}
+
+// One generic evaluator for both logics. In open mode an unbound variable is Unknown; otherwise it is an error.
+pub fn eval<T: Logic>(n: view syntax.Node, env: view Env, open: Bool, unit: view T) -> Result<T, syntax.Fail> {
+    match n {
+        syntax.Node.Lit(b) => { return Ok(unit.lift(b)) }
+        syntax.Node.Var(name, pos) => {
+            if env.bools.contains(name) { return Ok(unit.lift(env.bools.get(name))) }
+            if open { return Ok(unit.unknown()) }
+            return Err(syntax.Fail { pos: pos, msg: "no value for variable '{name}'" })
+        }
+        syntax.Node.Cmp(name, op, v, pos) => {
+            if !env.ints.contains(name) {
+                if open { return Ok(unit.unknown()) }
+                return Err(syntax.Fail { pos: pos, msg: "no value for variable '{name}'" })
+            }
+            let x = env.ints.get(name)
+            var r = false
+            if op.eq("=") { r = x == v }
+            if op.eq("!=") { r = x != v }
+            if op.eq("<") { r = x < v }
+            if op.eq("<=") { r = x <= v }
+            if op.eq(">") { r = x > v }
+            if op.eq(">=") { r = x >= v }
+            return Ok(unit.lift(r))
+        }
+        syntax.Node.Not(a) => {
+            let x = eval(*a, env, open, unit)?
+            return Ok(x.not_())
+        }
+        syntax.Node.Bin(op, a, b) => {
+            let x = eval(*a, env, open, unit)?
+            let y = eval(*b, env, open, unit)?
+            if op.eq("and") { return Ok(x.and_(y)) }
+            if op.eq("or") { return Ok(x.or_(y)) }
+            if op.eq("->") { return Ok(x.not_().or_(y)) }
+            return Ok(x.and_(y.not_()).or_(x.not_().and_(y)))
+        }
+    }
+}
+
+// Rewrites that keep the truth table: double negation, constants, idempotence (same pretty form on both sides).
+fn is_lit(n: view syntax.Node, b: Bool) -> Bool {
+    match n {
+        syntax.Node.Lit(v) => { return v == b }
+        _ => { return false }
+    }
+}
+
+pub fn simplify(n: view syntax.Node) -> syntax.Node {
+    match n {
+        syntax.Node.Lit(b) => { return syntax.Node.Lit(b) }
+        syntax.Node.Var(name, pos) => { return syntax.Node.Var(String.from(name), pos) }
+        syntax.Node.Cmp(name, op, v, pos) => { return syntax.Node.Cmp(String.from(name), String.from(op), v, pos) }
+        syntax.Node.Not(a) => {
+            match *a {
+                syntax.Node.Not(c) => { return simplify(*c) }
+                syntax.Node.Lit(b) => { return syntax.Node.Lit(!b) }
+                _ => {}
+            }
+            return syntax.Node.Not(Box.new(simplify(*a)))
+        }
+        syntax.Node.Bin(op, a, b) => {
+            let x = simplify(*a)
+            let y = simplify(*b)
+            if op.eq("and") || op.eq("or") {
+                let and = op.eq("and")
+                let px = pretty(x)
+                let py = pretty(y)
+                if px == py { return x }
+                if is_lit(x, and) { return y }
+                if is_lit(y, and) { return x }
+                if is_lit(x, !and) || is_lit(y, !and) { return syntax.Node.Lit(!and) }
+            }
+            return syntax.Node.Bin(String.from(op), Box.new(move x), Box.new(move y))
+        }
+    }
+}

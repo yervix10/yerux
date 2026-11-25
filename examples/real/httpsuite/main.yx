@@ -1,0 +1,248 @@
+// httpsuite: one process, both sides of std.http. The server (std.http.server) runs on a spawned thread on
+// 127.0.0.1 with an ephemeral port; the main thread drives a fixed suite of requests through the std.http client
+// and one raw TCP connection, prints each exchange, then stops the server, joins it and prints its counts.
+// Output is deterministic (no ports, no timings). Exit 0 when every answer has the expected status, 1 otherwise.
+import std.http
+import std.http.server
+import std.io
+import std.json
+import std.net
+import std.text
+
+struct Api { hits: Atomic<Int> }
+
+// The string member `key` of a JSON object, if it is one.
+fn member_str(members: view List<json.Member>, key: Text) -> Option<String> {
+  let i = json.find(members, String.from(key))
+  if i < 0 { return None }
+  let v = members.at(i).value.clone()
+  match v {
+    Str(s) => { return Some(String.from(s)) }
+    _ => { return None }
+  }
+}
+
+// The integer member `key` of a JSON object, if it is one.
+fn member_int(members: view List<json.Member>, key: Text) -> Option<Int> {
+  let i = json.find(members, String.from(key))
+  if i < 0 { return None }
+  let v = members.at(i).value.clone()
+  match v {
+    Int(n) => { return Some(n) }
+    _ => { return None }
+  }
+}
+
+// POST /items: the body must be a JSON object with a string `name` and an integer `qty`.
+fn create(body: view String) -> server.Response {
+  match json.parse(body) {
+    Ok(v) => {
+      match v {
+        Obj(members) => {
+          match member_str(members, "name") {
+            Some(name) => {
+              match member_int(members, "qty") {
+                Some(qty) => { return server.json(201, "{{\"created\":{json.quote(name)},\"qty\":{qty}}}") }
+                None => {}
+              }
+            }
+            None => {}
+          }
+          return server.text(422, "name and qty are required")
+        }
+        _ => { return server.text(422, "body must be a JSON object") }
+      }
+    }
+    Err(_) => { return server.text(400, "invalid JSON") }
+  }
+}
+
+// GET /search?q=...&page=N: the decoded query values, page defaults to 1.
+fn search(req: view server.Request) -> server.Response {
+  match server.query_param(req, "q") {
+    Some(q) => {
+      var page = 1
+      match server.query_param(req, "page") {
+        Some(p) => {
+          match text.parse_int(p) {
+            Ok(n) => { page = n }
+            Err(_) => { return server.text(400, "page must be a number") }
+          }
+        }
+        None => {}
+      }
+      return server.text(200, "q={q} page={page}")
+    }
+    None => { return server.text(400, "q is required") }
+  }
+}
+
+// The answer for a matched route; `id` is the number given to `Router.add`.
+fn answer(id: Int, m: view server.Match, req: view server.Request) -> server.Response {
+  if id == 1 {
+    match server.header(req, "x-echo") {
+      Some(v) => { return server.text(200, "ok {v}") }
+      None => { return server.text(200, "ok") }
+    }
+  }
+  if id == 2 {
+    let item = server.param(m, "id").unwrap()
+    return server.json(200, "{{\"id\":{json.quote(item)}}}")
+  }
+  if id == 3 { return create(req.body) }
+  if id == 4 {
+    let item = server.param(m, "id").unwrap()
+    return server.json(200, "{{\"id\":{json.quote(item)},\"body\":{json.quote(req.body)}}}")
+  }
+  if id == 5 { return server.empty(204) }
+  return search(req)
+}
+
+impl server.Handler for Api {
+  fn handle(view self, req: view server.Request) -> server.Response {
+    self.hits.add(1)
+    var r = server.router()
+    r.add("GET", "/health", 1)
+    r.add("GET", "/items/:id", 2)
+    r.add("POST", "/items", 3)
+    r.add("PUT", "/items/:id", 4)
+    r.add("DELETE", "/items/:id", 5)
+    r.add("GET", "/search", 6)
+    let routed = r.route(req)
+    match routed {
+      Found(m) => { return answer(m.id, m, req) }
+      _ => { return server.unrouted(routed) }
+    }
+  }
+}
+
+// The first value of a response header (case-insensitive), or "-".
+fn header_of(r: view http.Response, name: Text) -> String {
+  let want = String.from(name).to_lower()
+  for i in 0..r.headers.len() {
+    if r.headers.at(i).0.to_lower().eq(want) { return String.from(r.headers.at(i).1) }
+  }
+  return String.from("-")
+}
+
+// Print one client exchange; 1 when it failed or its status is not `want`, else 0.
+fn show(n: Int, line: Text, want: Int, res: Result<http.Response, io.IoError>) -> Int {
+  print("[{n}] {line}")
+  match res {
+    Ok(r) => {
+      print("  status: {r.status}")
+      print("  content-type: {header_of(r, "Content-Type")}")
+      print("  content-length: {header_of(r, "Content-Length")}")
+      print("  allow: {header_of(r, "Allow")}")
+      print("  body: {r.body}")
+      if r.status != want {
+        print("  UNEXPECTED: wanted status {want}")
+        return 1
+      }
+      return 0
+    }
+    Err(e) => {
+      print("  error: {e.message}")
+      return 1
+    }
+  }
+}
+
+// Send `data` on a fresh connection and read until the server closes it.
+fn raw_exchange(addr: view net.SocketAddr, data: view String) -> Result<String, io.IoError> {
+  let s = net.connect(addr)?
+  let sent = net.write(s, data)?
+  var got = String.new()
+  while true {
+    let chunk = net.read(s, 65536)?
+    if chunk.is_empty() { break }
+    got.push_str(chunk)
+  }
+  return Ok(move got)
+}
+
+// Print a raw exchange: its status line and body. 1 when it failed or the status code is not `want`.
+fn show_raw(n: Int, line: Text, want: Int, res: Result<String, io.IoError>) -> Int {
+  print("[{n}] {line}")
+  match res {
+    Ok(raw) => {
+      let eol = raw.find("\r\n")
+      if eol < 0 { print("  no answer"); return 1 }
+      print("  status line: {raw.slice(0, eol)}")
+      let at = raw.find("\r\n\r\n")
+      let body = if at >= 0 { raw.slice(at + 4, raw.len()) } else { String.new() }
+      print("  body: {body.trim()}")
+      if eol >= 12 {
+        match text.parse_int(raw.slice(9, 12)) {
+          Ok(code) => {
+            if code == want { return 0 }
+          }
+          Err(_) => {}
+        }
+      }
+      print("  UNEXPECTED: wanted status {want}")
+      return 1
+    }
+    Err(e) => {
+      print("  error: {e.message}")
+      return 1
+    }
+  }
+}
+
+// The fixed suite. Returns the number of checks that failed.
+fn suite(addr: view net.SocketAddr) -> Int {
+  var bad = 0
+  let none = List<(String, String)>.new()
+  var echo = List<(String, String)>.new()
+  echo.push((String.from("X-Echo"), String.from("ping")))
+  bad = bad + show(1, "GET /health", 200, http.get(addr, "127.0.0.1", "/health", none))
+  bad = bad + show(2, "GET /health (X-Echo: ping)", 200, http.get(addr, "127.0.0.1", "/health", echo))
+  bad = bad + show(3, "GET /items/42", 200, http.get(addr, "127.0.0.1", "/items/42", none))
+  bad = bad + show(4, "GET /items/a%20b", 200, http.get(addr, "127.0.0.1", "/items/a%20b", none))
+  bad = bad + show(5, "GET /search?q=hello%20world+x&page=3", 200, http.get(addr, "127.0.0.1", "/search?q=hello%20world+x&page=3", none))
+  bad = bad + show(6, "GET /search?page=2", 400, http.get(addr, "127.0.0.1", "/search?page=2", none))
+  bad = bad + show(7, "POST /items (lamp, qty 2)", 201, http.post_json(addr, "127.0.0.1", "/items", none, "{{\"name\":\"lamp\",\"qty\":2}}"))
+  bad = bad + show(8, "POST /items (truncated JSON)", 400, http.post_json(addr, "127.0.0.1", "/items", none, "{{\"name\":"))
+  bad = bad + show(9, "PUT /items/42", 200, http.put_json(addr, "127.0.0.1", "/items/42", none, "{{\"qty\":5}}"))
+  bad = bad + show(10, "DELETE /items/42", 204, http.delete(addr, "127.0.0.1", "/items/42", none))
+  bad = bad + show(11, "GET /nope", 404, http.get(addr, "127.0.0.1", "/nope", none))
+  bad = bad + show(12, "DELETE /health", 405, http.delete(addr, "127.0.0.1", "/health", none))
+  bad = bad + show_raw(13, "raw: BROKEN (no HTTP version)", 400, raw_exchange(addr, "BROKEN\r\n\r\n"))
+  return bad
+}
+
+fn main() {
+  let l = net.listen(net.address("127.0.0.1", 0).unwrap()).unwrap()
+  let bound = net.listener_local_addr(l).unwrap()
+  let stop = server.stop_handle()
+  var cfg = server.config()
+  cfg.workers = 2
+  cfg.max_connections = 64
+  let app = Shared.new(Api { hits: Atomic<Int>.new(0) })
+  let probe = app.clone()
+  var failed = 0
+  var summary = server.Summary { connections: 0, requests: 0, per_worker: List<Int>.new() }
+  scope {
+    let s = stop.share()
+    let thread = spawn move || server.serve(l, move app, cfg, s)
+    failed = suite(bound)
+    stop.request()
+    match thread.join() {
+      Ok(done) => { summary = move done }
+      Err(_) => {
+        print("httpsuite: the server thread failed")
+        io.exit(1)
+      }
+    }
+  }
+  print("server: connections={summary.connections} requests={summary.requests} handler calls={probe.get().hits.load()}")
+  var handled = 0
+  for i in 0..summary.per_worker.len() { handled = handled + summary.per_worker.at(i) }
+  print("workers: {summary.per_worker.len()}, connections per worker add up to {handled}")
+  if failed > 0 {
+    print("httpsuite: {failed} check(s) failed")
+    io.exit(1)
+  }
+  print("httpsuite: all checks passed")
+}

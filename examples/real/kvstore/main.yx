@@ -1,0 +1,157 @@
+// kvstore: a persistent key/value store in a temporary directory (see store.yx for the log and snapshot, codec.yx
+// for the record format). The embedded session: writes, a transaction with rollback and commit, close and reopen
+// (replay), a simulated crash (a truncated record), recovery, compaction, and removal of the directory. Exit 0.
+import codec
+import std.env
+import std.fs
+import std.io
+import std.path
+import store
+
+// A write outside a transaction is a batch of one; inside one it is staged until commit.
+// Appends a batch to the log (one write; "end" is set on the last record only), then applies it.
+fn commit_batch(s: mut store.Store, ops: List<codec.Op>) -> Result<Int, store.KvError> {
+  let n = ops.len()
+  if n == 0 { return Ok(0) }
+  var text = String.new()
+  for i in 0..n { text.push_str(codec.encode_record(s.seq + i + 1, ops.at(i), i == n - 1)) }
+  let _ = store.append_log(s.dir, text)?
+  for op in move ops {
+    s.seq = s.seq + 1
+    store.apply(s, move op)
+  }
+  return Ok(n)
+}
+
+// A write outside a transaction is a batch of one; inside one it is staged until commit.
+fn stage(s: mut store.Store, op: codec.Op) -> Result<Int, store.KvError> {
+  if s.txn {
+    s.pending.push(move op)
+    return Ok(s.pending.len())
+  }
+  var ops = List<codec.Op>.new()
+  ops.push(move op)
+  return commit_batch(s, move ops)
+}
+
+// The newest staged write wins, then the stored data.
+fn get(s: view store.Store, key: view String) -> Option<codec.Value> {
+  var i = s.pending.len() - 1
+  while i >= 0 {
+    match s.pending.at(i) {
+      codec.Op.Set(k, v) => { if k.eq(key) { return Some(v.clone()) } }
+      codec.Op.Del(k) => { if k.eq(key) { return None } }
+    }
+    i = i - 1
+  }
+  let e = s.data.find(key)
+  if e < 0 { return None }
+  return Some(s.data.vals.at(e).clone())
+}
+
+fn set(s: mut store.Store, key: view String, value: codec.Value) -> Result<Int, store.KvError> {
+  return stage(s, codec.Op.Set(String.from(key), move value))
+}
+
+// 1 when the key existed (and was removed), 0 otherwise.
+fn del(s: mut store.Store, key: view String) -> Result<Int, store.KvError> {
+  match get(s, key) {
+    Some(_) => {}
+    None => { return Ok(0) }
+  }
+  let _ = stage(s, codec.Op.Del(String.from(key)))?
+  return Ok(1)
+}
+
+fn begin(s: mut store.Store) -> Result<Int, store.KvError> {
+  if s.txn { return Err(store.KvError.Txn("a transaction is already open")) }
+  s.txn = true
+  return Ok(0)
+}
+
+fn commit(s: mut store.Store) -> Result<Int, store.KvError> {
+  if !s.txn { return Err(store.KvError.Txn("no transaction to commit")) }
+  s.txn = false
+  var ops = List<codec.Op>.new()
+  while s.pending.len() > 0 { ops.push(s.pending.remove(0)) }
+  return commit_batch(s, move ops)
+}
+
+fn rollback(s: mut store.Store) -> Result<Int, store.KvError> {
+  if !s.txn { return Err(store.KvError.Txn("no transaction to roll back")) }
+  let n = s.pending.len()
+  s.pending = List<codec.Op>.new()
+  s.txn = false
+  return Ok(n)
+}
+
+fn report_key(s: view store.Store, key: view String) {
+  match get(s, key) {
+    Some(v) => {
+      let shown = codec.value_text(v)
+      print("  {key} = {shown}")
+    }
+    None => { print("  {key} = (missing)") }
+  }
+}
+
+fn step(label: Text, r: Result<Int, store.KvError>) {
+  match r {
+    Ok(n) => { print("{label}: ok, {n}") }
+    Err(e) => { print("{label}: error: {store.message(e)}") }
+  }
+}
+
+fn dump(s: view store.Store) {
+  for k in store.sorted_keys(s) { report_key(s, k) }
+}
+
+fn session(dir: view String) -> Result<Int, store.KvError> {
+  var db = store.open(dir)?
+  step("set name", set(db, "name", codec.Value.Text(String.from("yerux"))))
+  step("set count", set(db, "count", codec.Value.Num(3)))
+  print("transaction:")
+  step("begin", begin(db))
+  step("set count", set(db, "count", codec.Value.Num(4)))
+  step("set tag", set(db, "tag", codec.Value.Text(String.from("x"))))
+  step("del name", del(db, "name"))
+  report_key(db, "count")
+  step("rollback", rollback(db))
+  report_key(db, "count")
+  step("begin", begin(db))
+  step("set count", set(db, "count", codec.Value.Num(10)))
+  step("del tag", del(db, "tag"))
+  step("commit", commit(db))
+  step("commit again", commit(db))
+  print("close and reopen:")
+  db = store.open(dir)?
+  dump(db)
+  print("simulate a crash in the middle of a write:")
+  let _ = store.append_log(dir, r#"{"v":1,"seq":4,"end":true,"op":"set","key":"tag","value":"lo"#)?
+  db = store.open(dir)?
+  dump(db)
+  step("set tag", set(db, "tag", codec.Value.Text(String.from("after recovery"))))
+  print("compaction:")
+  step("compact", store.compact(db))
+  let size = store.log_bytes(dir)?
+  print("log bytes after compaction: {size}")
+  db = store.open(dir)?
+  dump(db)
+  return Ok(0)
+}
+
+fn main() {
+  let dir = path.join(env.temp_dir(), "yerux-kvstore-{env.pid()}")
+  match session(dir) {
+    Ok(_) => {}
+    Err(e) => {
+      print("fatal: {store.message(e)}")
+      io.exit(1)
+    }
+  }
+  match fs.remove_dir_all(dir) {
+    Ok(_) => { print("cleanup: directory removed") }
+    Err(e) => { print("cleanup: {e.message}") }
+  }
+  print("cleanup: directory exists = {fs.exists(dir)}")
+}

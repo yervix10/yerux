@@ -1,0 +1,152 @@
+// boolexpr syntax: the tokenizer and the recursive-descent parser of boolean expressions over named variables.
+// Grammar, lowest precedence first:
+//   expr := or ("->" expr)? ; or := and ("or" and)* ; and := xor ("and" xor)* ; xor := unary ("xor" unary)*
+//   unary := "not" unary | atom ; atom := "true" | "false" | NAME | NAME CMP INT | "(" expr ")"
+// Errors carry the byte offset of the offending token (Fail.pos) and a message.
+pub enum Node { Lit(Bool), Var(String, Int), Cmp(String, String, Int, Int), Not(Box<Node>), Bin(String, Box<Node>, Box<Node>) }
+
+pub struct Fail { pos: Int, msg: String }
+
+pub struct Tok { text: String, pos: Int }
+
+
+fn alnum(c: Int) -> Bool { return (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95 }
+
+pub fn tokenize(src: view String) -> Result<List<Tok>, Fail> {
+    var toks = List<Tok>.new()
+    var i = 0
+    while i < src.len() {
+        let c = src.byte(i)
+        if c == 32 {
+            i = i + 1
+        } else if alnum(c) {
+            var n = 1
+            while i + n < src.len() && alnum(src.byte(i + n)) { n = n + 1 }
+            toks.push(Tok { text: src.slice(i, i + n), pos: i })
+            i = i + n
+        } else if c == 45 && i + 1 < src.len() && src.byte(i + 1) == 62 {
+            toks.push(Tok { text: src.slice(i, i + 2), pos: i })
+            i = i + 2
+        } else if c == 60 || c == 62 || c == 33 || c == 61 {
+            var n = 1
+            if i + 1 < src.len() && src.byte(i + 1) == 61 { n = 2 }
+            if c == 33 && n == 1 { return Err(Fail { pos: i, msg: String.from("'!' must be followed by '='") }) }
+            toks.push(Tok { text: src.slice(i, i + n), pos: i })
+            i = i + n
+        } else if c == 40 || c == 41 {
+            toks.push(Tok { text: src.slice(i, i + 1), pos: i })
+            i = i + 1
+        } else {
+            return Err(Fail { pos: i, msg: String.from("unexpected character") })
+        }
+    }
+    toks.push(Tok { text: String.new(), pos: src.len() })
+    return Ok(move toks)
+}
+
+struct Parser { toks: List<Tok>, at: Int }
+
+fn word(p: view Parser) -> String { return String.from(p.toks.at(p.at).text) }
+
+fn at_word(p: view Parser, s: view String) -> Bool { return p.toks.at(p.at).text.eq(s) }
+
+fn fail_here(p: view Parser, msg: view String) -> Fail {
+    return Fail { pos: p.toks.at(p.at).pos, msg: String.from(msg) }
+}
+
+fn parse_expr(p: mut Parser) -> Result<Node, Fail> {
+    let left = parse_or(p)?
+    if at_word(p, "->") {
+        p.at = p.at + 1
+        let right = parse_expr(p)?
+        return Ok(Node.Bin(String.from("->"), Box.new(move left), Box.new(move right)))
+    }
+    return Ok(move left)
+}
+
+fn parse_or(p: mut Parser) -> Result<Node, Fail> {
+    var left = parse_and(p)?
+    while at_word(p, "or") {
+        p.at = p.at + 1
+        let right = parse_and(p)?
+        left = Node.Bin(String.from("or"), Box.new(move left), Box.new(move right))
+    }
+    return Ok(move left)
+}
+
+fn parse_and(p: mut Parser) -> Result<Node, Fail> {
+    var left = parse_xor(p)?
+    while at_word(p, "and") {
+        p.at = p.at + 1
+        let right = parse_xor(p)?
+        left = Node.Bin(String.from("and"), Box.new(move left), Box.new(move right))
+    }
+    return Ok(move left)
+}
+
+fn parse_xor(p: mut Parser) -> Result<Node, Fail> {
+    var left = parse_unary(p)?
+    while at_word(p, "xor") {
+        p.at = p.at + 1
+        let right = parse_unary(p)?
+        left = Node.Bin(String.from("xor"), Box.new(move left), Box.new(move right))
+    }
+    return Ok(move left)
+}
+
+fn parse_unary(p: mut Parser) -> Result<Node, Fail> {
+    if at_word(p, "not") {
+        p.at = p.at + 1
+        let inner = parse_unary(p)?
+        return Ok(Node.Not(Box.new(move inner)))
+    }
+    return parse_atom(p)
+}
+
+fn is_cmp(s: view String) -> Bool { return s.eq("=") || s.eq("!=") || s.eq("<") || s.eq("<=") || s.eq(">") || s.eq(">=") }
+
+fn is_int(s: view String) -> Bool { return !s.is_empty() && s.byte(0) >= 48 && s.byte(0) <= 57 }
+
+fn parse_atom(p: mut Parser) -> Result<Node, Fail> {
+    let pos = p.toks.at(p.at).pos
+    let w = word(p)
+    if w.is_empty() { return Err(fail_here(p, "unexpected end of input")) }
+    if w.eq("(") {
+        p.at = p.at + 1
+        let inner = parse_expr(p)?
+        if !at_word(p, ")") { return Err(fail_here(p, "expected ')'")) }
+        p.at = p.at + 1
+        return Ok(move inner)
+    }
+    if w.eq("true") {
+        p.at = p.at + 1
+        return Ok(Node.Lit(true))
+    }
+    if w.eq("false") {
+        p.at = p.at + 1
+        return Ok(Node.Lit(false))
+    }
+    if !alnum(w.byte(0)) || is_int(w) {
+        return Err(fail_here(p, "expected a value"))
+    }
+    p.at = p.at + 1
+    let op = word(p)
+    if is_cmp(op) {
+        p.at = p.at + 1
+        let num = word(p)
+        var v = 0
+        if !is_int(num) || !num.parse_int(v) { return Err(fail_here(p, "expected an integer after the operator")) }
+        p.at = p.at + 1
+        return Ok(Node.Cmp(move w, move op, v, pos))
+    }
+    return Ok(Node.Var(move w, pos))
+}
+
+pub fn parse(src: view String) -> Result<Node, Fail> {
+    let toks = tokenize(src)?
+    var p = Parser { toks: move toks, at: 0 }
+    let n = parse_expr(p)?
+    if !at_word(p, "") { return Err(fail_here(p, "unexpected token after the expression")) }
+    return Ok(move n)
+}
+

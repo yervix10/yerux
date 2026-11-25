@@ -1,0 +1,135 @@
+// codec.yx: values, operations and their JSON forms: one record per log line (format v1) and the snapshot.
+import std.json
+
+pub enum Value { Num(Int), Text(String) }
+
+derive Clone for Value
+
+pub enum Op { Set(String, Value), Del(String) }
+
+pub fn value_text(v: view Value) -> String {
+  match v {
+    Value.Num(n) => { return "{n}" }
+    Value.Text(t) => { return "\"{t}\"" }
+  }
+}
+
+fn value_json(v: view Value) -> json.Value {
+  match v {
+    Value.Num(n) => { return json.Value.Int(n) }
+    Value.Text(t) => { return json.Value.Str(String.from(t)) }
+  }
+}
+
+fn as_int(v: view json.Value) -> Option<Int> { match v { json.Value.Int(n) => { return Some(n) } _ => { return None } } }
+
+fn as_str(v: view json.Value) -> Option<String> { match v { json.Value.Str(s) => { return Some(String.from(s)) } _ => { return None } } }
+
+fn as_bool(v: view json.Value) -> Option<Bool> { match v { json.Value.Bool(b) => { return Some(b) } _ => { return None } } }
+
+fn as_list(v: view json.Value) -> Option<List<json.Value>> { match v { json.Value.Arr(items) => { return Some(items.clone()) } _ => { return None } } }
+
+fn as_value(v: view json.Value) -> Option<Value> {
+  match v {
+    json.Value.Int(n) => { return Some(Value.Num(n)) }
+    json.Value.Str(s) => { return Some(Value.Text(String.from(s))) }
+    _ => { return None }
+  }
+}
+
+fn field<T>(m: view List<json.Member>, key: view String, pick: view fn(view json.Value) -> Option<T>) -> Result<T, String> {
+  let i = json.find(m, key)
+  if i >= 0 {
+    match pick(m.at(i).value) {
+      Some(v) => { return Ok(move v) }
+      None => {}
+    }
+  }
+  return Err("field \"{key}\" is missing or has the wrong type")
+}
+
+fn member(key: Text, value: json.Value) -> json.Member { return json.Member { key: String.from(key), value: move value } }
+
+// One log line: {"v":1,"seq":N,"end":B,"op":"set"|"del","key":K[,"value":V]}
+pub fn encode_record(seq: Int, op: view Op, end: Bool) -> String {
+  var m = List<json.Member>.new()
+  m.push(member("v", json.Value.Int(1)))
+  m.push(member("seq", json.Value.Int(seq)))
+  m.push(member("end", json.Value.Bool(end)))
+  match op {
+    Op.Set(key, value) => {
+      m.push(member("op", json.Value.Str(String.from("set"))))
+      m.push(member("key", json.Value.Str(String.from(key))))
+      m.push(member("value", value_json(value)))
+    }
+    Op.Del(key) => {
+      m.push(member("op", json.Value.Str(String.from("del"))))
+      m.push(member("key", json.Value.Str(String.from(key))))
+    }
+  }
+  let text = json.to_string(json.Value.Obj(move m))
+  return "{text}\n"
+}
+
+pub fn parse_record(line: view String) -> Result<(Int, Bool, Op), String> {
+  let root = match json.parse(line) {
+    Ok(v) => move v
+    Err(e) => { return Err("{e.message} at byte {e.offset}") }
+  }
+  match root {
+    json.Value.Obj(m) => {
+      let version = field(m, "v", |v: view json.Value| as_int(v))?
+      if version != 1 { return Err("unsupported log version {version}") }
+      let seq = field(m, "seq", |v: view json.Value| as_int(v))?
+      let end = field(m, "end", |v: view json.Value| as_bool(v))?
+      let key = field(m, "key", |v: view json.Value| as_str(v))?
+      let op = field(m, "op", |v: view json.Value| as_str(v))?
+      if op.eq("set") {
+        let value = field(m, "value", |v: view json.Value| as_value(v))?
+        return Ok((seq, end, Op.Set(move key, move value)))
+      }
+      if op.eq("del") { return Ok((seq, end, Op.Del(move key))) }
+      return Err("unknown op \"{op}\"")
+    }
+    _ => { return Err("a log record must be an object") }
+  }
+}
+
+// Fills data from the snapshot text and returns its seq.
+pub fn parse_snapshot(text: view String, data: mut Map<String, Value>) -> Result<Int, String> {
+  let root = match json.parse(text) {
+    Ok(v) => move v
+    Err(e) => { return Err("{e.message} at byte {e.offset}") }
+  }
+  match root {
+    json.Value.Obj(m) => {
+      let seq = field(m, "seq", |v: view json.Value| as_int(v))?
+      for item in field(m, "entries", |v: view json.Value| as_list(v))? {
+        match item {
+          json.Value.Obj(e) => {
+            let key = field(e, "key", |v: view json.Value| as_str(v))?
+            let value = field(e, "value", |v: view json.Value| as_value(v))?
+            data.insert(move key, move value)
+          }
+          _ => { return Err("a snapshot entry must be an object") }
+        }
+      }
+      return Ok(seq)
+    }
+    _ => { return Err("the snapshot must be an object") }
+  }
+}
+
+pub fn snapshot_text(seq: Int, data: view Map<String, Value>) -> String {
+  var entries = List<json.Value>.new()
+  for i in 0..data.len() {
+    var m = List<json.Member>.new()
+    m.push(member("key", json.Value.Str(String.from(data.keys.at(i)))))
+    m.push(member("value", value_json(data.vals.at(i))))
+    entries.push(json.Value.Obj(move m))
+  }
+  var root = List<json.Member>.new()
+  root.push(member("seq", json.Value.Int(seq)))
+  root.push(member("entries", json.Value.Arr(move entries)))
+  return json.to_string(json.Value.Obj(move root))
+}
