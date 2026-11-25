@@ -56,3 +56,16 @@ comparan código de salida y stdout (el C ya se compila con las comprobaciones h
 Medido: 6 000 mutantes en `check`/`c`/`ir` y 683 mutantes aceptados en el diferencial C vs nativo. Resultado: sin pánicos, cuelgues ni
 salidas sin texto en el frontend. Una única diferencia, ya documentada en SPEC.md (recursión infinita: el C acaba en SIGSEGV, el
 nativo en `panic: stack overflow` con código 101; el oráculo C no tiene guardia). Sin defectos nuevos, por lo que no hay regresiones que añadir.
+
+## Fuzzing profundo, ronda 14 (ASan/UBSan + fmt)
+
+Herramientas en `tools/fuzz/` (ver su README). Campañas: 24 000 entradas malformadas con `check` + `fmt --stdout`
+(sin panics, cuelgues, ni fmt no idempotente), y 3 × 2 500 mutaciones válidas con el C generado compilado con
+`-fsanitize=address,undefined` y comparado con el backend nativo. Solo se sanitizó el C generado, no el compilador Rust.
+
+- **Arreglado:** `link ""` (o con espacios / `-` inicial) llegaba al compilador de C como un `-l` suelto y fallaba con
+  `cc: error: missing argument to '-l'`. Ahora es un diagnóstico del parser (`tests/e988_link_empty_name.yx`).
+- **No son bugs:** fugas de LSan tras un `panic` (exit 101, el proceso aborta sin liberar; el fuzzer ya las ignora),
+  `native_linux_memory`/`ptr_rw`/`pe_ffi` (mal uso de punteros crudos por la mutación, UB del propio programa),
+  `generic_recursion` (recursión infinita: C sin guarda de pila, documentado en SPEC.md), `loop_dead_step`
+  (bucle de ~9e18 iteraciones vacío: gcc lo elimina, el nativo lo ejecuta).

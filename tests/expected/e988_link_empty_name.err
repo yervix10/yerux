@@ -1,0 +1,7 @@
+error: `link` needs a library name such as "libm.so.6" (not empty, no spaces, no leading `-`)
+ --> tests/e988_link_empty_name.yx:2:6
+  |
+2 | link ""
+  |      ^^
+
+1 error(s). Nothing was generated.

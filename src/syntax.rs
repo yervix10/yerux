@@ -2693,8 +2693,17 @@ impl Parser {
                 self.bump();
                 match self.bump() {
                     Token {
-                        t: Tok::Str(lib), ..
-                    } => links.push(lib),
+                        t: Tok::Str(lib),
+                        pos,
+                    } => {
+                        if lib.is_empty() || lib.starts_with('-') || lib.chars().any(char::is_whitespace) {
+                            return Err(diag(
+                                "`link` needs a library name such as \"libm.so.6\" (not empty, no spaces, no leading `-`)",
+                                pos,
+                            ));
+                        }
+                        links.push(lib)
+                    }
                     t => return Err(diag("expected a library name string after `link`", t.pos)),
                 }
                 continue;
