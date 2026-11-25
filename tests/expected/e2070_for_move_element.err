@@ -1,0 +1,9 @@
+error: cannot move 'h': it is only borrowed
+ --> tests/e2070_for_move_element.yx:8:25
+  |
+8 |     for h in hs { print(h.join().unwrap()) }
+  |                         ^
+  = help: whoever lent it is still the owner; only move what you own
+  = help: an element of a list is only borrowed (`for x in list`, `let x = l.at(i)`): write `for x in move list { .. }` to own the elements one by one (for example to `join()` handles), or take one with `l.pop()`
+
+1 error(s). Nothing was generated.

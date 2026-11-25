@@ -1,0 +1,17 @@
+error: cannot infer the type argument(s) E of Result.Ok
+ --> tests/e2069_result_infer_help.yx:2:11
+  |
+2 |   var r = Ok(0)
+  |           ^^^^^
+  = nothing here says what type it should hold
+  = help: write them out, e.g. `Result<Int, Int>.Ok` (all 2 type argument(s), or give the variable a type: `let r: Result<Int, Int> = ..`)
+
+error: cannot infer the type argument(s) T of Result.Err
+ --> tests/e2069_result_infer_help.yx:3:7
+  |
+3 |   r = Err(String.from("x"))
+  |       ^^^^^^^^^^^^^^^^^^^^^
+  = nothing here says what type it should hold
+  = help: write them out, e.g. `Result<Int, Int>.Err` (all 2 type argument(s), or give the variable a type: `let r: Result<Int, Int> = ..`)
+
+2 error(s). Nothing was generated.

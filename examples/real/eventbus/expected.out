@@ -1,0 +1,14 @@
+published 120 events from 3 publishers
+broker: routed 193 deliveries, 16 dead letters, 0 out-of-order events
+subscriber   events   total   max  per topic
+billing          39   20154   927  12 27 0 0 0 0 
+warehouse        27   14292   970  12 0 15 0 0 0 
+pager            23   13861   989  0 0 0 23 0 0 
+auditor         104   54825   989  12 27 15 23 27 0 
+stats service answered 5 requests
+  orders    12
+  payments  27
+  shipping  15
+  alerts    23
+  audit     27
+check: deliveries 193 = subscriber events 193: true

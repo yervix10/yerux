@@ -1,0 +1,402 @@
+// jsonq: a small JSON query tool. std.json parses the document; this program adds a path language on top:
+//   .name  ["name"]  [3]  [-1]  [*]  ..name  [?field OP literal]   then pipes:  | length | sum | min | max | keys | first
+// A query runs on every value the previous step produced. Results print as compact JSON, one per line.
+// A bad query or a bad document is reported with its offset; the run goes on. No input, no files; deterministic.
+//   yerux run examples/real/jsonq/main.yx     |  yerux build examples/real/jsonq/main.yx [--native] -o BIN
+import std.json
+import std.text
+
+struct Step {
+  kind: Int,
+  name: String,
+  index: Int,
+  op: String,
+  lit: json.Value,
+}
+
+struct Query {
+  steps: List<Step>,
+  pipes: List<String>,
+}
+
+const FIELD: Int = 0
+const INDEX: Int = 1
+const WILD: Int = 2
+const RECURSE: Int = 3
+const FILTER: Int = 4
+
+fn is_name_byte(b: Int) -> Bool {
+  return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+}
+
+fn skip(q: view String, i: mut Int) {
+  while i < q.len() && q.byte(i) == 32 { i = i + 1 }
+}
+
+fn read_name(q: view String, i: mut Int) -> String {
+  var out = String.new()
+  while i < q.len() && is_name_byte(q.byte(i)) {
+    out.push_byte(q.byte(i))
+    i = i + 1
+  }
+  return out
+}
+
+fn plain_step(kind: Int, name: view String, index: Int) -> Step {
+  return Step { kind: kind, name: String.from(name), index: index, op: String.new(), lit: json.Value.Null }
+}
+
+// a literal inside a filter: an integer, a "string", true, false or null
+fn read_literal(q: view String, i: mut Int) -> Result<json.Value, String> {
+  skip(q, i)
+  if i >= q.len() { return Err(String.from("a literal is missing")) }
+  let c = q.byte(i)
+  if c == 34 {
+    var s = String.new()
+    i = i + 1
+    while i < q.len() && q.byte(i) != 34 {
+      s.push_byte(q.byte(i))
+      i = i + 1
+    }
+    if i >= q.len() { return Err(String.from("unterminated string literal")) }
+    i = i + 1
+    return Ok(json.Value.Str(move s))
+  }
+  let w = read_name(q, i)
+  if w == "true" { return Ok(json.Value.Bool(true)) }
+  if w == "false" { return Ok(json.Value.Bool(false)) }
+  if w == "null" { return Ok(json.Value.Null) }
+  var neg = false
+  var start = i
+  if w.len() == 0 && c == 45 {
+    neg = true
+    i = i + 1
+  }
+  var digits = String.new()
+  if neg { digits = read_name(q, i) } else { digits = String.from(w) }
+  var n = 0
+  if digits.len() == 0 || !digits.parse_int(n) { return Err("bad literal at offset {start}") }
+  if neg { n = 0 - n }
+  return Ok(json.Value.Int(n))
+}
+
+fn parse_query(q: view String) -> Result<Query, String> {
+  var out = Query { steps: List<Step>.new(), pipes: List<String>.new() }
+  var i = 0
+  skip(q, i)
+  while i < q.len() {
+    let c = q.byte(i)
+    if c == 124 {
+      i = i + 1
+      skip(q, i)
+      let p = read_name(q, i)
+      if p != "length" && p != "sum" && p != "min" && p != "max" && p != "keys" && p != "first" {
+        return Err("unknown pipe '{p}'")
+      }
+      out.pipes.push(move p)
+      skip(q, i)
+    } else if out.pipes.len() > 0 {
+      return Err("a step after a pipe, at offset {i}")
+    } else if c == 46 && i + 1 < q.len() && q.byte(i + 1) == 46 {
+      i = i + 2
+      let n = read_name(q, i)
+      if n.len() == 0 { return Err("a name must follow '..' at offset {i}") }
+      out.steps.push(plain_step(RECURSE, n, 0))
+    } else if c == 46 && i + 1 < q.len() && q.byte(i + 1) == 91 {
+      i = i + 1
+    } else if c == 46 {
+      i = i + 1
+      let n = read_name(q, i)
+      if n.len() == 0 { return Err("a name must follow '.' at offset {i}") }
+      out.steps.push(plain_step(FIELD, n, 0))
+    } else if c == 91 {
+      i = i + 1
+      skip(q, i)
+      if i >= q.len() { return Err(String.from("unclosed '['")) }
+      let d = q.byte(i)
+      if d == 42 {
+        i = i + 1
+        out.steps.push(plain_step(WILD, "", 0))
+      } else if d == 34 {
+        var key = String.new()
+        i = i + 1
+        while i < q.len() && q.byte(i) != 34 {
+          key.push_byte(q.byte(i))
+          i = i + 1
+        }
+        if i >= q.len() { return Err(String.from("unterminated key")) }
+        i = i + 1
+        out.steps.push(plain_step(FIELD, key, 0))
+      } else if d == 63 {
+        i = i + 1
+        skip(q, i)
+        let field = read_name(q, i)
+        if field.len() == 0 { return Err("a field name must follow '?' at offset {i}") }
+        skip(q, i)
+        var op = String.new()
+        while i < q.len() && (q.byte(i) == 61 || q.byte(i) == 33 || q.byte(i) == 60 || q.byte(i) == 62) {
+          op.push_byte(q.byte(i))
+          i = i + 1
+        }
+        if op != "==" && op != "!=" && op != "<" && op != "<=" && op != ">" && op != ">=" {
+          return Err("bad comparison '{op}' at offset {i}")
+        }
+        let lit = read_literal(q, i)?
+        var st = plain_step(FILTER, field, 0)
+        st.op = move op
+        st.lit = move lit
+        out.steps.push(move st)
+      } else {
+        var neg = false
+        if d == 45 {
+          neg = true
+          i = i + 1
+        }
+        var n = 0
+        var any = false
+        while i < q.len() && q.byte(i) >= 48 && q.byte(i) <= 57 {
+          n = n * 10 + (q.byte(i) - 48)
+          i = i + 1
+          any = true
+        }
+        if !any { return Err("bad index at offset {i}") }
+        if neg { n = 0 - n }
+        out.steps.push(plain_step(INDEX, "", n))
+      }
+      skip(q, i)
+      if i >= q.len() || q.byte(i) != 93 { return Err("expected ']' at offset {i}") }
+      i = i + 1
+    } else {
+      return Err("unexpected '{q.slice(i, i + 1)}' at offset {i}")
+    }
+    skip(q, i)
+  }
+  return Ok(move out)
+}
+
+fn collect(v: view json.Value, name: view String, out: mut List<json.Value>) {
+  match v {
+    Obj(ms) => {
+      for m in ms {
+        if m.key == name { out.push(m.value.clone()) }
+        collect(m.value, name, out)
+      }
+    }
+    Arr(items) => {
+      for it in items { collect(it, name, out) }
+    }
+    _ => {}
+  }
+}
+
+// ordering of a value and a literal of the same kind: -1, 0, 1, or 2 when they cannot be compared
+fn compare(a: view json.Value, b: view json.Value) -> Int {
+  match a {
+    Int(x) => {
+      match b {
+        Int(y) => { if x < y { return -1 } else if x > y { return 1 } else { return 0 } }
+        _ => { return 2 }
+      }
+    }
+    Str(x) => {
+      match b {
+        Str(y) => { if x < y { return -1 } else if x > y { return 1 } else { return 0 } }
+        _ => { return 2 }
+      }
+    }
+    Bool(x) => {
+      match b {
+        Bool(y) => { if x == y { return 0 } else { return 2 } }
+        _ => { return 2 }
+      }
+    }
+    Null => {
+      match b {
+        Null => { return 0 }
+        _ => { return 2 }
+      }
+    }
+    _ => { return 2 }
+  }
+}
+
+fn keeps(item: view json.Value, st: view Step) -> Bool {
+  match item {
+    Obj(ms) => {
+      let at = json.find(ms, st.name)
+      if at < 0 { return false }
+      let c = compare(ms.at(at).value, st.lit)
+      if c == 2 { return st.op == "!=" }
+      if st.op == "==" { return c == 0 }
+      if st.op == "!=" { return c != 0 }
+      if st.op == "<" { return c < 0 }
+      if st.op == "<=" { return c <= 0 }
+      if st.op == ">" { return c > 0 }
+      return c >= 0
+    }
+    _ => { return false }
+  }
+}
+
+fn apply(step: view Step, current: view List<json.Value>) -> List<json.Value> {
+  var out = List<json.Value>.new()
+  for v in current {
+    if step.kind == FIELD {
+      match v {
+        Obj(ms) => {
+          let at = json.find(ms, step.name)
+          if at >= 0 { out.push(ms.at(at).value.clone()) }
+        }
+        _ => {}
+      }
+    } else if step.kind == INDEX {
+      match v {
+        Arr(items) => {
+          var k = step.index
+          if k < 0 { k = items.len() + k }
+          if k >= 0 && k < items.len() { out.push(items.at(k).clone()) }
+        }
+        _ => {}
+      }
+    } else if step.kind == WILD {
+      match v {
+        Arr(items) => { for it in items { out.push(it.clone()) } }
+        Obj(ms) => { for m in ms { out.push(m.value.clone()) } }
+        _ => {}
+      }
+    } else if step.kind == RECURSE {
+      collect(v, step.name, out)
+    } else {
+      match v {
+        Arr(items) => {
+          for it in items {
+            if keeps(it, step) { out.push(it.clone()) }
+          }
+        }
+        Obj(_) => {
+          if keeps(v, step) { out.push(v.clone()) }
+        }
+        _ => {}
+      }
+    }
+  }
+  return out
+}
+
+fn pipe(name: view String, vals: view List<json.Value>) -> Result<List<json.Value>, String> {
+  var out = List<json.Value>.new()
+  if name == "length" {
+    var n = 0
+    for v in vals {
+      match v {
+        Arr(items) => { n = n + items.len() }
+        Obj(ms) => { n = n + ms.len() }
+        Str(s) => { n = n + s.len() }
+        _ => { n = n + 1 }
+      }
+    }
+    out.push(json.Value.Int(n))
+  } else if name == "first" {
+    if vals.len() > 0 { out.push(vals.at(0).clone()) }
+  } else if name == "keys" {
+    for v in vals {
+      match v {
+        Obj(ms) => {
+          var ks = List<json.Value>.new()
+          for m in ms { ks.push(json.Value.Str(String.from(m.key))) }
+          out.push(json.Value.Arr(move ks))
+        }
+        _ => { return Err(String.from("keys needs objects")) }
+      }
+    }
+  } else {
+    var have = false
+    var acc = 0
+    for v in vals {
+      match v {
+        Int(n) => {
+          if !have {
+            acc = n
+            have = true
+          } else if name == "sum" { acc = acc + n }
+          else if name == "min" { if n < acc { acc = n } }
+          else if n > acc { acc = n }
+        }
+        _ => { return Err("{name} needs numbers, found {json.type_name(v)}") }
+      }
+    }
+    if have { out.push(json.Value.Int(acc)) }
+  }
+  return Ok(move out)
+}
+
+fn run(doc: view json.Value, text: view String) {
+  print("> {text}")
+  let parsed = parse_query(text)
+  match parsed {
+    Err(m) => { print("  query error: {m}") }
+    Ok(q) => {
+      var cur = List<json.Value>.new()
+      cur.push(doc.clone())
+      for st in q.steps { cur = apply(st, cur) }
+      var failed = false
+      for p in q.pipes {
+        if failed { break }
+        match pipe(p, cur) {
+          Ok(next) => { cur = move next }
+          Err(m) => {
+            print("  pipe error: {m}")
+            failed = true
+          }
+        }
+      }
+      if !failed {
+        if cur.len() == 0 { print("  (no match)") }
+        for v in cur { print("  {json.to_string(v)}") }
+      }
+    }
+  }
+}
+
+fn document() -> String {
+  var d = String.new()
+  d.push_str(r#"{"shop": "Corner Books", "open": true, "rating": 4,"#)
+  d.push_str(r#" "staff": [{"name": "Ana", "age": 34, "roles": ["clerk", "buyer"]},"#)
+  d.push_str(r#" {"name": "Luis", "age": 51, "roles": ["owner"]}, {"name": "Mei", "age": 27, "roles": []}],"#)
+  d.push_str(r#" "books": ["#)
+  d.push_str(r#"{"id": 1, "title": "Dune", "price": 12, "tags": ["scifi", "classic"], "stock": {"main": 4, "annex": 0}},"#)
+  d.push_str(r#"{"id": 2, "title": "Emma", "price": 9, "tags": ["classic"], "stock": {"main": 0, "annex": 3}},"#)
+  d.push_str(r#"{"id": 3, "title": "Ficciones", "price": 15, "tags": [], "stock": {"main": 2, "annex": 2}},"#)
+  d.push_str(r#"{"id": 4, "title": "Solaris", "price": 11, "tags": ["scifi"], "stock": {"main": 7, "annex": 1}}],"#)
+  d.push_str(r#" "note": null, "caf\u00e9": "Caf\u00e9 \ud83d\ude00"}"#)
+  return d
+}
+
+fn main() {
+  let doc = document()
+  match json.parse(doc) {
+    Err(e) => { print("document error at {e.offset}: {e.message}") }
+    Ok(v) => {
+      print("document: {json.type_name(v)}, {json.to_string(v).len()} bytes compact")
+      let queries = [
+        ".shop", ".rating", ".staff[0].name", ".staff[-1].age", ".staff[*].name", ".books[*].title | length",
+        ".books[*].price | sum", ".books[*].price | max", ".books[*].price | min", "..name", "..main | sum",
+        ".books[?price > 10].title", ".books[?price >= 11][?id != 4].title", ".staff[?age < 40].roles",
+        ".staff[?name == \"Mei\"].age", ".books[?title == \"Dune\"].stock | keys", ".books[1].stock.annex",
+        ".books[*].tags[*]", ".books[*].tags[*] | length", ".[\"café\"]", ".note", ".missing.deeper",
+        ".books[9]", ".staff[*].name | sum", ".books | keys", ". bad", ".books[", ".books[?price ~ 3]",
+        ".staff[*]..age | max | first", ".books[?stock == 1].id", ".shop | length"
+      ]
+      for q in queries { run(v, q) }
+    }
+  }
+  for bad in [r#"{"a": }"#, "[1, 2", "", r#"{"a": 1} extra"#] {
+    match json.parse(bad) {
+      Ok(_) => { print("unexpectedly valid: {bad}") }
+      Err(e) => {
+        let lc = json.line_col(bad, e.offset)
+        print("bad document {bad}: {e.message} at {lc.0}:{lc.1}")
+      }
+    }
+  }
+}

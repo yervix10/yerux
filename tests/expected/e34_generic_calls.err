@@ -18,7 +18,7 @@ error: cannot infer the type argument(s) T of Maybe.None
 12 |     let n = Maybe.None
    |             ^^^^^^^^^^
    = nothing here says what type it should hold
-   = help: write them out, e.g. `Maybe<Int>.None`
+   = help: write them out, e.g. `Maybe<Int>.None` (all 1 type argument(s), or give the variable a type: `let r: Maybe<Int> = ..`)
 
 error: Maybe takes 1 type argument(s) but 2 given
   --> examples/e34_generic_calls.yx:13:13

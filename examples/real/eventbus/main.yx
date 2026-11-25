@@ -1,0 +1,208 @@
+// eventbus: publishers, a broker and subscribers, each in its own thread, connected by channels. Three publishers send
+// numbered events over one unbounded channel; the broker checks that each publisher's events arrive in order, routes
+// every event to the subscribers whose topic mask contains its topic (bounded channels, so a slow subscriber
+// pushes back) and counts dead letters; subscribers fold what they receive into order-independent summaries.
+// Afterwards a stats service answers requests that carry their own reply channel. The arrival order of events from
+// different publishers varies between runs, so only order-independent results are printed. Deterministic output.
+//   yerux run examples/real/eventbus/main.yx     |  yerux build examples/real/eventbus/main.yx [--native] -o BIN
+import std.fmt
+
+const TOPICS: Int = 6
+const PUBLISHERS: Int = 3
+const PER_PUBLISHER: Int = 40
+const SUB_CAPACITY: Int = 3
+
+struct Event {
+  src: Int,
+  seq: Int,
+  topic: Int,
+  value: Int,
+}
+
+struct Subscriber {
+  name: String,
+  mask: Int,
+}
+
+struct Summary {
+  count: Int,
+  total: Int,
+  biggest: Int,
+  per_topic: List<Int>,
+}
+
+struct BrokerReport {
+  routed: Int,
+  dead: Int,
+  disorder: Int,
+}
+
+struct Request {
+  topic: Int,
+  reply: Sender<Int>,
+}
+
+fn topic_name(t: Int) -> String {
+  if t == 0 { return String.from("orders") }
+  if t == 1 { return String.from("payments") }
+  if t == 2 { return String.from("shipping") }
+  if t == 3 { return String.from("alerts") }
+  if t == 4 { return String.from("audit") }
+  return String.from("debug")
+}
+
+fn subscribers() -> List<Subscriber> {
+  var s = List<Subscriber>.new()
+  // bit t of the mask is topic t
+  s.push(Subscriber { name: String.from("billing"), mask: 2 + 1 })
+  s.push(Subscriber { name: String.from("warehouse"), mask: 1 + 4 })
+  s.push(Subscriber { name: String.from("pager"), mask: 8 })
+  s.push(Subscriber { name: String.from("auditor"), mask: 63 - 32 })
+  return s
+}
+
+fn publish(id: Int, out: Sender<Event>) -> Int {
+  var state = 12345 + id * 7919
+  for seq in 0..PER_PUBLISHER {
+    state = (state * 1103515245 + 12345) % 2147483648
+    let topic = (state / 65536) % TOPICS
+    let value = (state / 7) % 1000
+    out.send(Event { src: id, seq: seq, topic: topic, value: value })
+  }
+  return PER_PUBLISHER
+}
+
+fn broker(input: Receiver<Event>, outs: List<Sender<Event>>, masks: List<Int>, total: Int) -> BrokerReport {
+  var next_seq = List<Int>.new()
+  for _ in 0..PUBLISHERS { next_seq.push(0) }
+  var report = BrokerReport { routed: 0, dead: 0, disorder: 0 }
+  for _ in 0..total {
+    let ev = input.recv().unwrap()
+    if next_seq.at(ev.src) != ev.seq { report.disorder = report.disorder + 1 }
+    next_seq.set(ev.src, ev.seq + 1)
+    var delivered = 0
+    for i in 0..outs.len() {
+      if (masks.at(i) / pow2(ev.topic)) % 2 == 1 {
+        outs.at(i).send(Event { src: ev.src, seq: ev.seq, topic: ev.topic, value: ev.value })
+        delivered = delivered + 1
+      }
+    }
+    if delivered == 0 { report.dead = report.dead + 1 }
+    report.routed = report.routed + delivered
+  }
+  for tx in outs { tx.close() }
+  return report
+}
+
+fn pow2(n: Int) -> Int {
+  var r = 1
+  for _ in 0..n { r = r * 2 }
+  return r
+}
+
+fn subscribe(input: Receiver<Event>) -> Summary {
+  var s = Summary { count: 0, total: 0, biggest: -1, per_topic: List<Int>.new() }
+  for _ in 0..TOPICS { s.per_topic.push(0) }
+  while true {
+    match input.recv() {
+      Some(ev) => {
+        s.count = s.count + 1
+        s.total = s.total + ev.value
+        if ev.value > s.biggest { s.biggest = ev.value }
+        s.per_topic.set(ev.topic, s.per_topic.at(ev.topic) + 1)
+      }
+      None => { break }
+    }
+  }
+  return s
+}
+
+// answers "how many events did the topic have?" for each request, on the reply channel the request brought
+fn stats_service(requests: Receiver<Request>, counts: List<Int>) -> Int {
+  var served = 0
+  while true {
+    match requests.recv() {
+      Some(req) => {
+        req.reply.send(counts.at(req.topic))
+        req.reply.close()
+        served = served + 1
+      }
+      None => { break }
+    }
+  }
+  return served
+}
+
+fn main() {
+  let subs = subscribers()
+  let total = PUBLISHERS * PER_PUBLISHER
+  let (ev_tx, ev_rx) = Sender<Event>.unbounded()
+  var summaries = List<Summary>.new()
+  var report = BrokerReport { routed: 0, dead: 0, disorder: 0 }
+  var published = 0
+  scope {
+    var outs = List<Sender<Event>>.new()
+    var masks = List<Int>.new()
+    var sub_handles = List<JoinHandle<Summary>>.new()
+    for s in subs {
+      let (tx, rx) = Sender<Event>.bounded(SUB_CAPACITY)
+      outs.push(move tx)
+      masks.push(s.mask)
+      let h = spawn move { return subscribe(move rx) }
+      sub_handles.push(move h)
+    }
+    let b = spawn move { return broker(move ev_rx, move outs, move masks, total) }
+    var pub_handles = List<JoinHandle<Int>>.new()
+    for p in 0..PUBLISHERS {
+      let tx = ev_tx.clone()
+      let h = spawn move { return publish(p, move tx) }
+      pub_handles.push(move h)
+    }
+    while pub_handles.len() > 0 {
+      let h = pub_handles.pop()
+      published = published + h.join().unwrap()
+    }
+    report = b.join().unwrap()
+    while sub_handles.len() > 0 {
+      let h = sub_handles.pop()
+      summaries.push(h.join().unwrap())
+    }
+    summaries.reverse()
+  }
+  print("published {published} events from {PUBLISHERS} publishers")
+  print("broker: routed {report.routed} deliveries, {report.dead} dead letters, {report.disorder} out-of-order events")
+  print("{fmt.pad_right("subscriber", 11, ' ')} {fmt.pad_left("events", 7, ' ')} {fmt.pad_left("total", 7, ' ')} {fmt.pad_left("max", 5, ' ')}  per topic")
+  var topic_counts = List<Int>.new()
+  for _ in 0..TOPICS { topic_counts.push(0) }
+  for i in 0..subs.len() {
+    let s = summaries.at(i)
+    var line = String.new()
+    for t in 0..TOPICS {
+      line.push_str("{s.per_topic.at(t)} ")
+      if subs.at(i).mask == 31 || (subs.at(i).mask / pow2(t)) % 2 == 1 {
+        if subs.at(i).name == "auditor" { topic_counts.set(t, s.per_topic.at(t)) }
+      }
+    }
+    print("{fmt.pad_right(subs.at(i).name, 11, ' ')} {fmt.pad_left("{s.count}", 7, ' ')} {fmt.pad_left("{s.total}", 7, ' ')} {fmt.pad_left("{s.biggest}", 5, ' ')}  {line}")
+  }
+  // the auditor sees topics 0-4: those counts are what the stats service answers with
+  var served = 0
+  var answers = List<Int>.new()
+  let (req_tx, req_rx) = Sender<Request>.unbounded()
+  scope {
+    let service = spawn move { return stats_service(move req_rx, move topic_counts) }
+    for t in 0..5 {
+      let (reply_tx, reply_rx) = Sender<Int>.bounded(1)
+      req_tx.send(Request { topic: t, reply: move reply_tx })
+      answers.push(reply_rx.recv().unwrap())
+      if reply_rx.recv().is_some() { print("unexpected second reply") }
+    }
+    req_tx.close()
+    served = service.join().unwrap()
+  }
+  print("stats service answered {served} requests")
+  for t in 0..5 { print("  {fmt.pad_right(topic_name(t), 9, ' ')} {answers.at(t)}") }
+  var from_subs = 0
+  for s in summaries { from_subs = from_subs + s.count }
+  print("check: deliveries {report.routed} = subscriber events {from_subs}: {report.routed == from_subs}")
+}

@@ -1,0 +1,5 @@
+fn main() {
+  var r = Ok(0)
+  r = Err(String.from("x"))
+  print(r.is_ok())
+}
