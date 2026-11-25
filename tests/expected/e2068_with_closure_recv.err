@@ -1,0 +1,7 @@
+error: cannot wait or acquire a lock inside a with closure
+ --> tests/e2068_with_closure_recv.yx:5:51
+  |
+5 |     let h = spawn move { return shared.get().with(|r| r.recv().is_none()) }
+  |                                                   ^^^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

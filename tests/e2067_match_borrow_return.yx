@@ -1,0 +1,15 @@
+fn first() -> String {
+  let o = Some(String.from("a"))
+  match o {
+    Some(r) => { return r }
+    None => { return String.new() }
+  }
+}
+fn second() -> String {
+  let o = Some(String.from("a"))
+  match o {
+    Some(r) => { return move r }
+    None => { return String.new() }
+  }
+}
+fn main() { print(first()) }

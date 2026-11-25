@@ -98,7 +98,7 @@ Same rules as `std.io` (raw syscalls, `view String` paths, NUL in a path is `Inv
 | `read_to_string(path)` | `Result<String, IoError>` | `= io.read_file`; `InvalidData` when not UTF-8. |
 | `read_lines(path)` | `Result<List<String>, IoError>` | Without `\n` / `\r\n`; a final newline adds no empty line. |
 | `write(path, data)`, `append(path, data)` | `Result<Int, IoError>` | `= io.write_file` / `io.append_file` (mode 0644, umask applies). |
-| `copy(from, to)` | `Result<Int, IoError>` | Byte copy (any content, not only UTF-8), `to` gets the permission bits of `from`; a directory is `IsDirectory`. Returns the bytes copied. |
+| `copy(from, to)` | `Result<Int, IoError>` | Byte copy (any content, not only UTF-8), `to` gets the permission bits of `from`; a directory is `IsDirectory`; copying a file onto itself (same device and inode, also through a hard link) is an `Invalid argument` error and leaves it untouched. Returns the bytes copied. |
 | `rename(from, to)` | `Result<Int, IoError>` | `rename(2)`: replaces a file `to`, same file system only. |
 | `remove_file(path)` | `Result<Int, IoError>` | A directory is `IsDirectory`. |
 | `create_dir(path)` | `Result<Int, IoError>` | Mode 0755; `AlreadyExists`, `NotFound` (missing parent). |

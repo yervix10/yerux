@@ -583,6 +583,8 @@ struct Checker<'a> {
     drop_self: Option<usize>,
     /// hidden `$m` variable of a borrowing `match` -> (scrutinee place, exclusive, line)
     match_scruts: HashMap<String, (Expr, bool, usize)>,
+    /// names bound by a borrowing `match` arm (they only borrow the scrutinee's payload)
+    match_bound: HashSet<usize>,
     // function values and closures (check_fn.rs)
     lifted: Vec<Func>, // closure bodies and thunks, emitted as ordinary functions
     thunks: HashSet<String>, // function items already given a thunk
@@ -1636,6 +1638,9 @@ impl<'a> Checker<'a> {
                             );
                         if let Some(nt) = self.fn_borrow_note(vty) {
                             d = d.note(nt);
+                        }
+                        if self.match_bound.contains(&i) {
+                            d = d.note("help: this name was bound by `match x { .. }`, which only borrows the payload: write `match move x { .. }` to take it out");
                         }
                         self.err(d);
                         vty
@@ -4647,6 +4652,9 @@ impl<'a> Checker<'a> {
                     None => Ty::Err,
                 };
                 *id = self.declare(name, ty, *mode, *mode == Mode::Mut);
+                if hidden_root(place).is_some_and(|r| self.match_scruts.contains_key(&r)) {
+                    self.match_bound.insert(*id);
+                }
             }
             SK::Match(scrut, arms) => {
                 // What is matched, and how are the payloads bound? (see `MK`)
@@ -4829,6 +4837,9 @@ impl<'a> Checker<'a> {
                                 .note("help: borrows cannot leave the function; take the value by ownership (without `view`/`mut`)");
                             if let Some(nt) = self.fn_borrow_note(cty) {
                                 d = d.note(nt);
+                            }
+                            if self.lookup(&n).is_some_and(|i| self.match_bound.contains(&i)) {
+                                d = d.note("help: this name was bound by `match x { .. }`, which only borrows the payload: write `match move x { .. }` and `return move name` to take it out, or copy it (`String.from(name)`)");
                             }
                             self.err(d);
                             self.st.dead = true;
@@ -8115,6 +8126,8 @@ impl<'a> Checker<'a> {
                 bind[k] = Some(t);
             }
         }
+        let mut saw_err = false;
+        let errs_at_start = self.errs.len();
         let mut bad = false;
         // closure literals are checked after the other arguments: those fix the type parameters that the
         // closure's parameters need, and the closure's body then fixes the ones in its result type
@@ -8175,6 +8188,9 @@ impl<'a> Checker<'a> {
                 pre[k] = Some(t);
                 t
             };
+            if t == Ty::Err {
+                saw_err = true;
+            }
             if let Err(prior) = unify(&self.types, pat, t, &g.pids, &mut bind) {
                 bad = true;
                 let (got, want) = (self.tn(t), self.tn(pat));
@@ -8192,10 +8208,15 @@ impl<'a> Checker<'a> {
         if bad {
             return Ty::Err;
         }
-        if args.iter().any(|a| a.ty == Ty::Err) {
+        if args.iter().any(|a| a.ty == Ty::Err) || saw_err {
+            // an argument that already failed: its own error is the one to read, not a follow-up about T
             return Ty::Err;
         }
         if let Some(k) = bind.iter().position(|b| b.is_none()) {
+            if self.errs.len() > errs_at_start && g.name.starts_with("__") {
+                // an argument (a closure body) already reported its own problem; the missing type is a consequence
+                return Ty::Err;
+            }
             self.err(
                 diag(
                     format!(
@@ -8580,6 +8601,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         frozen: vec![],
         drop_self: None,
         match_scruts: HashMap::new(),
+        match_bound: HashSet::new(),
         lifted: vec![],
         thunks: HashSet::new(),
         nclos: 0,

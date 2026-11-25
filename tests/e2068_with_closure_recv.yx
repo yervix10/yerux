@@ -1,0 +1,9 @@
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let shared = Shared.new(Locked.new(move rx))
+  scope {
+    let h = spawn move { return shared.get().with(|r| r.recv().is_none()) }
+    print(h.join().unwrap())
+  }
+  tx.close()
+}

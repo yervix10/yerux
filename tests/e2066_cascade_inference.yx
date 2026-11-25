@@ -1,0 +1,4 @@
+fn main() {
+  let bad = " ".repeat(2)
+  print("[{bad}]")
+}

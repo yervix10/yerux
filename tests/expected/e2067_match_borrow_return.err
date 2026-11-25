@@ -1,0 +1,17 @@
+error: cannot return 'r': it is only borrowed
+ --> tests/e2067_match_borrow_return.yx:4:25
+  |
+4 |     Some(r) => { return r }
+  |                         ^
+  = help: borrows cannot leave the function; take the value by ownership (without `view`/`mut`)
+  = help: this name was bound by `match x { .. }`, which only borrows the payload: write `match move x { .. }` and `return move name` to take it out, or copy it (`String.from(name)`)
+
+error: cannot move 'r': it is only borrowed
+  --> tests/e2067_match_borrow_return.yx:11:25
+   |
+11 |     Some(r) => { return move r }
+   |                         ^^^^^^
+   = help: whoever lent it is still the owner; only move what you own
+   = help: this name was bound by `match x { .. }`, which only borrows the payload: write `match move x { .. }` to take it out
+
+2 error(s). Nothing was generated.

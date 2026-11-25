@@ -686,6 +686,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
 57. **A cascade error produces a misleading inference error.** `let bad = " ".repeat(2)` then `print("[{bad}]")`
     gives, after the first error, "cannot infer the type parameter T of 'std__fmt_val'" with "no argument has a type
     that mentions T". The variable's type is an error type; the message never mentions `bad`.
+    *Fixed:* a generic call whose argument already failed no longer adds `cannot infer the type parameter T` (`tests/e2066_cascade_inference.yx`).
 58. **A quote inside `{expr}` is accepted, but SPEC says it cannot be.** SPEC (Strings) says `{expr}` cannot contain a
     quote or a brace. `print("x{"ab"}y")` prints `xaby`, exit 0. Either the lexer or the spec must change. Found by
     logextract, calclang and fsclient.
@@ -716,6 +717,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
     borrow; `return r` where a String is needed gives "'r' is a String and is not copied", help `String.from(r)`. The
     help never suggests `match move v`, which is the form that works (`match move o { Some(r) => { return move r } ... }`).
     Writing `move r` gives "cannot move 'r': it is only borrowed".
+    *Fixed:* both errors now add the help to use `match move x { .. }` (`tests/e2067_match_borrow_return.yx`).
 64. **`import std.cli` does not exist.** The task named `std.cli`; the error is "cannot find module 'std.cli'". The CLI
     layer in the tree is `std.args`. Either add the module or correct the docs that name it.
 65. **`std.args.parse_with`: a valued option at the end of argv is silently a flag.** With `valued = ["prefix"]` and argv
@@ -737,6 +739,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
     }
     ```
     `check` reports the internal name first. Workaround: receive outside `with`.
+    *Fixed:* the internal `__spawn_owned` inference error is no longer reported when the closure body already failed (`tests/e2068_with_closure_recv.yx`).
 67. **`Receiver::share()` is documented but missing.** `docs/CONCURRENCY.md` says `rx.share()` gives a multi-consumer
     handle. `let (tx, rx) = Sender<Int>.unbounded(); let pool = rx.share()` gives "type Receiver<Int> has no method
     'share'". Pipeline uses one channel per worker with round-robin dealing instead.
