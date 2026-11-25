@@ -40,3 +40,19 @@ variantes). Hallazgos, todos corregidos (3 pánicos o cuelgues y 1 defecto de pr
 
 Sin hallazgos en el resto: lexer, parser, `check`, `c` e `ir` no entraron en pánico ni se colgaron con las demás mutaciones; el
 anidamiento profundo ya tenía el límite de 2 000 niveles y las cadenas de operadores el de 50 000.
+
+## Fuzzing profundo, ronda 2 (mutaciones sintácticamente válidas)
+
+Segundo fuzzer propio (Python, fuera del repo): parte de `tests/*.yx` y `examples/*.yx` (sin los `e*.yx` ni archivos grandes) y aplica 1-3
+mutaciones que suelen conservar la sintaxis: literales enteros por valores límite (`0`, `-1`, `127`, `128`, `255`, `256`, `65535`,
+`2147483647`, `2147483648`, `4294967296`, `9223372036854775807`), operadores por otro de su familia (aritméticos, comparación, lógicos,
+bit a bit), tipos por otro tipo numérico/`Bool`/`Text`, identificadores por otro de la misma entrada, y líneas borradas o duplicadas.
+Cada mutante pasa por `yerux check`; si es aceptado, también `yerux c` e `yerux ir`. Se busca señal/código >= 101, `panicked at`,
+cuelgue (10 s) y error sin texto.
+
+Diferencial: de los mutantes aceptados se construye `yerux build` (C) y `yerux build --native`, se ejecutan con stdin vacío (8 s) y se
+comparan código de salida y stdout (el C ya se compila con las comprobaciones habituales; ASan/UBSan lo cubre `tests/run_all.sh`).
+
+Medido: 6 000 mutantes en `check`/`c`/`ir` y 683 mutantes aceptados en el diferencial C vs nativo. Resultado: sin pánicos, cuelgues ni
+salidas sin texto en el frontend. Una única diferencia, ya documentada en SPEC.md (recursión infinita: el C acaba en SIGSEGV, el
+nativo en `panic: stack overflow` con código 101; el oráculo C no tiene guardia). Sin defectos nuevos, por lo que no hay regresiones que añadir.
