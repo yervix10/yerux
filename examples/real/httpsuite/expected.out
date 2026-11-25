@@ -1,0 +1,78 @@
+[1] GET /health
+  status: 200
+  content-type: text/plain; charset=utf-8
+  content-length: 2
+  allow: -
+  body: ok
+[2] GET /health (X-Echo: ping)
+  status: 200
+  content-type: text/plain; charset=utf-8
+  content-length: 7
+  allow: -
+  body: ok ping
+[3] GET /items/42
+  status: 200
+  content-type: application/json
+  content-length: 11
+  allow: -
+  body: {"id":"42"}
+[4] GET /items/a%20b
+  status: 200
+  content-type: application/json
+  content-length: 12
+  allow: -
+  body: {"id":"a b"}
+[5] GET /search?q=hello%20world+x&page=3
+  status: 200
+  content-type: text/plain; charset=utf-8
+  content-length: 22
+  allow: -
+  body: q=hello world x page=3
+[6] GET /search?page=2
+  status: 400
+  content-type: text/plain; charset=utf-8
+  content-length: 13
+  allow: -
+  body: q is required
+[7] POST /items (lamp, qty 2)
+  status: 201
+  content-type: application/json
+  content-length: 26
+  allow: -
+  body: {"created":"lamp","qty":2}
+[8] POST /items (truncated JSON)
+  status: 400
+  content-type: text/plain; charset=utf-8
+  content-length: 12
+  allow: -
+  body: invalid JSON
+[9] PUT /items/42
+  status: 200
+  content-type: application/json
+  content-length: 32
+  allow: -
+  body: {"id":"42","body":"{\"qty\":5}"}
+[10] DELETE /items/42
+  status: 204
+  content-type: -
+  content-length: -
+  allow: -
+  body: 
+[11] GET /nope
+  status: 404
+  content-type: text/plain; charset=utf-8
+  content-length: 13
+  allow: -
+  body: no such route
+[12] DELETE /health
+  status: 405
+  content-type: text/plain; charset=utf-8
+  content-length: 18
+  allow: GET
+  body: method not allowed
+[13] raw: BROKEN (no HTTP version)
+  status line: HTTP/1.1 400 Bad Request
+  body: malformed request line
+server: connections=13 requests=12 handler calls=12
+workers: 2, connections per worker add up to 13
+httpsuite: all checks passed
