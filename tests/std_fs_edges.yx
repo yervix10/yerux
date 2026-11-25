@@ -1,0 +1,40 @@
+// std.fs edge cases: copying a file onto itself used to truncate it; missing paths, directories and unicode names
+import std.fs
+import std.io
+
+fn show(res: view Result<Int, io.IoError>) {
+  match res {
+    Ok(n) => { print("ok {n}") }
+    Err(e) => { print("err {e.message}") }
+  }
+}
+
+fn text(path: view String) {
+  match fs.read_to_string(path) {
+    Ok(s) => { print("read {s.len()}") }
+    Err(e) => { print("err {e.message}") }
+  }
+}
+
+fn main() {
+  let d = "/tmp/yerux_std_fs_edges"
+  let _ = fs.remove_dir_all(d)
+  show(fs.create_dir_all(d))
+  show(fs.write("{d}/f", "data"))
+  show(fs.copy("{d}/f", "{d}/f"))
+  text("{d}/f")
+  show(fs.hard_link("{d}/f", "{d}/h"))
+  show(fs.copy("{d}/f", "{d}/h"))
+  text("{d}/h")
+  show(fs.copy("{d}/f", "{d}/g"))
+  text("{d}/g")
+  show(fs.copy("{d}/missing", "{d}/x"))
+  show(fs.copy(d, "{d}/x"))
+  show(fs.write("{d}/uni é😀", "héllo"))
+  text("{d}/uni é😀")
+  show(fs.write("{d}/empty", ""))
+  text("{d}/empty")
+  show(fs.remove_file("{d}/missing"))
+  show(fs.remove_dir(d))
+  let _ = fs.remove_dir_all(d)
+}

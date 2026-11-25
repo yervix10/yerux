@@ -1,0 +1,17 @@
+ok 0
+ok 4
+err copy '/tmp/yerux_std_fs_edges/f': Invalid argument (os error 22)
+read 4
+ok 0
+err copy '/tmp/yerux_std_fs_edges/h': Invalid argument (os error 22)
+read 4
+ok 4
+read 4
+err stat '/tmp/yerux_std_fs_edges/missing': No such file or directory (os error 2)
+err copy '/tmp/yerux_std_fs_edges': Is a directory (os error 21)
+ok 6
+read 6
+ok 0
+read 0
+err remove '/tmp/yerux_std_fs_edges/missing': No such file or directory (os error 2)
+err remove directory '/tmp/yerux_std_fs_edges': Directory not empty (os error 39)

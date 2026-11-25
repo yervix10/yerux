@@ -219,6 +219,24 @@ pub fn append(path: view String, data: view String) -> Result<Int, io.IoError> {
     return io.append_file(path, data)
 }
 
+// do the two open descriptors name the same file (same device and inode)?
+fn same_open_file(a: Int, b: Int) -> Bool {
+    let sa = __alloc(STATX_SIZE)
+    let sb = __alloc(STATX_SIZE)
+    let empty = __alloc(8)
+    __store8(empty, 0)
+    let ra = statx(a, empty, AT_EMPTY_PATH, sa)
+    let rb = statx(b, empty, AT_EMPTY_PATH, sb)
+    var same = false
+    if ra >= 0 && rb >= 0 {
+        same = __load64(sa + 32) == __load64(sb + 32) && __load64(sa + 136) == __load64(sb + 136)
+    }
+    __free(sa)
+    __free(sb)
+    __free(empty)
+    return same
+}
+
 /// Copy the bytes of `from` to `to` (created or truncated, with the permission bits of `from`). Works for
 /// any content, not only UTF-8. Returns the number of bytes copied.
 pub fn copy(from: view String, to: view String) -> Result<Int, io.IoError> {
@@ -232,10 +250,22 @@ pub fn copy(from: view String, to: view String) -> Result<Int, io.IoError> {
     if src < 0 {
         return Err(io.os_error("open", from, 0 - src))
     }
-    let dst = __syscall(2, dst_p.raw_addr(), 524865, info.mode, 0, 0, 0)
+    // open without O_TRUNC first: copying a file onto itself must not empty it
+    let dst = __syscall(2, dst_p.raw_addr(), 524353, info.mode, 0, 0, 0)
     if dst < 0 {
         let c = __syscall(3, src, 0, 0, 0, 0, 0)
         return Err(io.os_error("open", to, 0 - dst))
+    }
+    if same_open_file(src, dst) {
+        let c1 = __syscall(3, src, 0, 0, 0, 0, 0)
+        let c2 = __syscall(3, dst, 0, 0, 0, 0, 0)
+        return Err(io.os_error("copy", to, 22))
+    }
+    let cut = __syscall(77, dst, 0, 0, 0, 0, 0)
+    if cut < 0 {
+        let c1 = __syscall(3, src, 0, 0, 0, 0, 0)
+        let c2 = __syscall(3, dst, 0, 0, 0, 0, 0)
+        return Err(io.os_error("truncate", to, 0 - cut))
     }
     let buf = __alloc(65536)
     var total = 0
