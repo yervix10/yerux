@@ -4648,7 +4648,13 @@ impl<'a> Checker<'a> {
                     let t = self.expr(scrut);
                     checked = Some(t);
                     if matches!(t, Ty::Enum(_)) && self.types.owned(t) {
-                        kind = MK::Move; // a temporary: its payloads are moved out
+                        // a temporary: its payloads are moved out, unless an arm takes a payload apart with a
+                        // nested pattern (`Some((a, b))`): then the hidden variable is matched like any other place
+                        kind = if arms.iter().any(|a| a.pat.as_ref().is_some_and(pat_nests)) {
+                            MK::Borrow(Mode::View)
+                        } else {
+                            MK::Move
+                        };
                     }
                 }
                 if has_general || kind != MK::Copy {
@@ -5290,7 +5296,7 @@ impl<'a> Checker<'a> {
         let mut out: Vec<Stmt> = vec![];
         let sp = scrut.pos;
         match kind {
-            MK::Borrow(m) => {
+            MK::Borrow(m) if checked.is_none() => {
                 // the scrutinee stays where it is: `$m` is a borrow of it
                 let mut m = m;
                 let mut probe = scrut.clone();
@@ -6508,6 +6514,17 @@ fn drop_impls_overlap(types: &Types, a: &ImplDef, b: &ImplDef) -> bool {
     go(types, a.self_ty, b.self_ty, &vars, &mut sub, 0)
 }
 
+/// Does a pattern look inside a payload with a pattern more specific than a name or `_`?
+fn pat_nests(p: &Pat) -> bool {
+    let inner = |q: &Pat| !matches!(q, Pat::Wild(_) | Pat::Bind(_, None, _));
+    match p {
+        Pat::Variant(_, subs, _) => subs.iter().any(inner),
+        Pat::Or(alts, _) => alts.iter().any(pat_nests),
+        Pat::Bind(_, Some(q), _) => pat_nests(q),
+        _ => false,
+    }
+}
+
 fn unify(
     types: &Types,
     pat: Ty,
@@ -7558,6 +7575,9 @@ impl<'a> Checker<'a> {
                 ));
             } else {
                 d = d.note(help);
+            }
+            if tr == "Equal" && matches!(t, Ty::Enum(_)) {
+                d = d.note("an enum compares with `==` without an impl only when none of its variants carries data");
             }
             self.err(d);
             return Err(());

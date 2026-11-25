@@ -34,9 +34,26 @@ fn main() {
     Some((u, v)) => { print(u) }
     None => { print("none") }
   }
+  temporaries()
   let sh = Shape.Named((String.from("sq"), 4))
   match sh {
     Shape.Named((name, side)) => { print("{name} {side}") }
     Shape.Anon => { print("anon") }
+  }
+}
+
+fn split(s: view String) -> Option<(String, String)> {
+  if s.len() < 2 { return None }
+  return Some((String.from(s), String.from("tail")))
+}
+
+fn temporaries() {
+  match split("ab") {
+    Some((x, y)) => { print("{x} {y}") }
+    None => { print("none") }
+  }
+  match split("a") {
+    Some((x, _)) => { print(x) }
+    None => { print("none") }
   }
 }

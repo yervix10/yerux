@@ -1,0 +1,6 @@
+enum Level { Low, High }
+
+fn main() {
+  let a = Level.Low
+  print(a < Level.High)
+}

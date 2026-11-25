@@ -1,0 +1,7 @@
+enum Shape { Circle(Int), Empty }
+
+fn main() {
+  let a = Shape.Circle(1)
+  let b = Shape.Circle(1)
+  print(a == b)
+}

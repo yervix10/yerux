@@ -341,6 +341,10 @@ enum Name { Variant, Variant(Type, ...), ... }
 - **Built-in traits:** `Copy`, `Equal` (`==`, `!=`), `Ordered` (`<`, `<=`, `>`, `>=`), `Show`
   (`show()` and `"{x}"`), `Hash` (for `Map` and `Set` keys), `Clone` (`derive`, see the book
   chapter 9).
+- **Equality of enums.** `==` and `!=` on an enum none of whose variants carries data compare the variants and need
+  no `impl Equal` (`tests/enum_equal_fieldless.yx`). An enum with a payload, and any struct, needs `impl Equal`
+  (`tests/e2055_enum_payload_equal.yx`). `<`, `<=`, `>` and `>=` always need `impl Ordered`, also for fieldless enums
+  (`tests/e2056_enum_ordered.yx`).
 - **Traits** list method signatures. `impl Trait for Type { ... }` must define each method with
   the exact signature. Every method's first parameter is `self`, `view self`, or `mut self`.
 - **Dispatch.** Generic code uses static dispatch. Run-time dispatch uses `Box<dyn Trait>`, and a

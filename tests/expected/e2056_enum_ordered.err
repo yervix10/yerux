@@ -1,0 +1,8 @@
+error: cannot use `<` on values of type Level: it does not implement Ordered
+ --> tests/e2056_enum_ordered.yx:5:9
+  |
+5 |   print(a < Level.High)
+  |         ^^^^^^^^^^^^^^
+  = help: add `impl Ordered for Level { fn cmp(view self, other: view Level) -> Int { .. } }`
+
+1 error(s). Nothing was generated.

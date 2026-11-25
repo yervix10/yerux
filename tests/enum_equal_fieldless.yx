@@ -1,0 +1,13 @@
+// `==` and `!=` on an enum whose variants carry no data compare the variants; no `impl Equal` is needed (friction 54).
+enum Method { Get, Post, Delete }
+
+fn is_read(m: view Method) -> Bool { return m == Method.Get }
+
+fn main() {
+  let a = Method.Get
+  let b = Method.Post
+  print(a == Method.Get)
+  print(a != b)
+  print(is_read(a))
+  print(is_read(b))
+}

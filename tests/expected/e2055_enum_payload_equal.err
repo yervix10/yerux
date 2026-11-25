@@ -1,0 +1,9 @@
+error: cannot use `==` on values of type Shape: it does not implement Equal
+ --> tests/e2055_enum_payload_equal.yx:6:9
+  |
+6 |   print(a == b)
+  |         ^^^^^^
+  = help: add `impl Equal for Shape { fn eq(view self, other: view Shape) -> Bool { .. } }`
+  = an enum compares with `==` without an impl only when none of its variants carries data
+
+1 error(s). Nothing was generated.
