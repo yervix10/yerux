@@ -13,6 +13,7 @@ struct Parser {
   error_line: Int,
   legacy: Bool,
   build: Bool,
+  depth: Int,
 }
 
 fn hex(s: view String) -> String {
@@ -250,6 +251,13 @@ fn return_type(p: mut Parser) -> String {
 }
 
 fn parse_type(p: mut Parser) -> String {
+  if p.failed || !enter(p) { return String.new() }
+  let value = type_inner(p)
+  p.depth = p.depth - 1
+  return value
+}
+
+fn type_inner(p: mut Parser) -> String {
   if eat_kw(p, "fn") {
     expect(p, "(")
     var params = String.from("[")
@@ -555,7 +563,25 @@ fn postfix(p: mut Parser, base: String, first: Int) -> String {
   return out
 }
 
+// Syntactic nesting (blocks, types, patterns, operands) is bounded like the Rust parser's: 2000 levels.
+fn enter(p: mut Parser) -> Bool {
+  p.depth = p.depth + 1
+  if p.depth > 2000 {
+    p.depth = p.depth - 1
+    p.failed = true
+    return false
+  }
+  return true
+}
+
 fn parse_unary(p: mut Parser) -> String {
+  if p.failed || !enter(p) { return String.new() }
+  let value = unary_inner(p)
+  p.depth = p.depth - 1
+  return value
+}
+
+fn unary_inner(p: mut Parser) -> String {
   if p.failed { return String.new() }
   if sym(p, "!") || sym(p, "-") {
     let op = bump(p)
@@ -692,6 +718,13 @@ fn pattern_atom(p: mut Parser) -> String {
 }
 
 fn pattern(p: mut Parser) -> String {
+  if p.failed || !enter(p) { return String.new() }
+  let value = pattern_inner(p)
+  p.depth = p.depth - 1
+  return value
+}
+
+fn pattern_inner(p: mut Parser) -> String {
   let first = pattern_atom(p)
   if !sym(p, "|") { return first }
   var out = String.from("[")
@@ -722,6 +755,13 @@ fn unpack(p: mut Parser, mutable: Bool) -> String {
 }
 
 fn block(p: mut Parser) -> String {
+  if p.failed || !enter(p) { return String.new() }
+  let value = block_inner(p)
+  p.depth = p.depth - 1
+  return value
+}
+
+fn block_inner(p: mut Parser) -> String {
   expect(p, "{{")
   var out = String.from("[")
   while !at_close(p, "}}") {
@@ -1167,7 +1207,7 @@ fn run(source: view String, build: Bool) {
   }
   var p = Parser {
     tokens: move tokens, structs: move structs, imports: List<String>.new(), tuple_arities: List<Int>.new(),
-    i: 0, failed: false, error_line: 0, legacy: legacy, build: build,
+    i: 0, failed: false, error_line: 0, legacy: legacy, build: build, depth: 0,
   }
   var ast = String.new()
   if legacy {

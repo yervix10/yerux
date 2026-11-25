@@ -243,13 +243,24 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
   }
 
   var i = start
+  var late = false
   while i < end {
     let decl = ast.child(tree, i, 2)
     if tree.at(decl).tag == "Import" {
       issue(resolver, ctx.module_id, String.from("late-import"))
+      late = true
       break
     }
     i = tree.at(i).end
+  }
+  // an `import` inside a body reads as the name `import` (hex 696d706f7274): the Rust loader rejects any `import` token after the items
+  if !late {
+    for node in start..end {
+      if tree.at(node).tag == "Var" && tree.at(node + 1).tag == "696d706f7274" {
+        issue(resolver, ctx.module_id, String.from("late-import"))
+        break
+      }
+    }
   }
 
   // Mirror the compiler's module namespace and its top-level item scan.
