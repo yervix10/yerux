@@ -1,0 +1,8 @@
+error: 'add' expects 2 argument(s) but got 3
+ --> tests/e2002_too_many_arguments.yx:6:9
+  |
+6 |   print(add(1, 2, 3))
+  |         ^^^^^^^^^^^^
+  = help: pass the number of arguments shown in the function's signature
+
+1 error(s). Nothing was generated.

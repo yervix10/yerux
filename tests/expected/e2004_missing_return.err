@@ -1,0 +1,7 @@
+error: function 'double' must return a Int on every path
+ --> tests/e2004_missing_return.yx:1:4
+  |
+1 | fn double(n: Int) -> Int {
+  |    ^^^^^^
+
+1 error(s). Nothing was generated.

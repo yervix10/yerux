@@ -1,0 +1,8 @@
+error: variable 'nombre' does not exist
+ --> tests/e2001_undefined_variable.yx:2:9
+  |
+2 |   print(nombre)
+  |         ^^^^^^
+  = help: check the spelling, scope, and whether the name needs to be imported or qualified
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+fn double(n: Int) -> Int {
+  let result = n * 2
+}
+
+fn main() {
+  print(double(3))
+}

@@ -1,0 +1,8 @@
+error: struct Point has no field 'z'
+ --> tests/e2007_unknown_field.yx:5:9
+  |
+5 |   print(p.z)
+  |         ^^^
+  = help: check the field name and the struct's declared fields
+
+1 error(s). Nothing was generated.

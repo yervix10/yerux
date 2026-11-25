@@ -531,3 +531,46 @@ earlier CSV example avoid braces in messages. Error text that contains JSON synt
 `fs.is_file`/`fs.is_dir` follow symlinks). The inventory example first used the `fs.` spelling and got a list of
 40 public items without a hint that `exists` is the one it wanted; the docs table in STDLIB_IO lists
 `io.file_exists` and a later section introduces `fs.exists`.
+
+# Round 5: beginner mistakes in the error tests
+
+## Open
+
+### `=` in an `if` condition reports a missing `{`
+
+```yx
+fn main() {
+  var x = 1
+  if x = 2 {
+    print("dos")
+  }
+}
+```
+
+The diagnostic is `error: expected '{'` pointing at the `=`, and it never
+mentions `==`. A beginner who wrote an assignment where a comparison belongs
+is told to add a brace, which sends them looking in the wrong place. Test
+`e2019_assign_in_if`.
+
+### A missing return says "a Int" and gives no next step
+
+```yx
+fn double(n: Int) -> Int {
+  let result = n * 2
+}
+```
+
+`error: function 'double' must return a Int on every path` has a grammar slip
+and no help line. It is understandable, but the wording should be "an Int" and
+the help could say to add a `return` on every path. Test `e2004_missing_return`.
+
+### A value returned from a function without `->` has no hint
+
+```yx
+fn log() { return 1 }
+```
+
+`error: this function returns no value` points at the `1` but does not say that
+`log` has no declared return type or that the fix is `-> Int` (or removing the
+value). A beginner may read the message as a statement rather than a fix. Test
+`e2012_return_from_void`.

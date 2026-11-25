@@ -1,0 +1,7 @@
+fn answer() -> Int {
+  return "cuarenta y dos"
+}
+
+fn main() {
+  print(answer())
+}

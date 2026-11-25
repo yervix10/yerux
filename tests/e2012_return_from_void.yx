@@ -1,0 +1,7 @@
+fn log() {
+  return 1
+}
+
+fn main() {
+  log()
+}
