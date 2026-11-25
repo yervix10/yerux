@@ -1,0 +1,8 @@
+error: expected Int but this is Text
+ --> tests/e2005_wrong_return_type.yx:2:10
+  |
+2 |   return "cuarenta y dos"
+  |          ^^^^^^^^^^^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+1 error(s). Nothing was generated.

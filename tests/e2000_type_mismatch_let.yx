@@ -1,0 +1,4 @@
+fn main() {
+  let age: Int = "treinta"
+  print(age)
+}

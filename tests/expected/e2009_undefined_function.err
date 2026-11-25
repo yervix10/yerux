@@ -1,0 +1,8 @@
+error: function 'saludar' does not exist
+ --> tests/e2009_undefined_function.yx:2:3
+  |
+2 |   saludar()
+  |   ^^^^^^^^^
+  = help: check the function name and import the module that defines it
+
+1 error(s). Nothing was generated.

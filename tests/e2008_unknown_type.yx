@@ -1,0 +1,7 @@
+fn area(w: Widget) -> Int {
+  return w.size
+}
+
+fn main() {
+  print("sin uso")
+}

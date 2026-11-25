@@ -1,0 +1,9 @@
+error: unknown type 'Widget'
+ --> tests/e2008_unknown_type.yx:1:12
+  |
+1 | fn area(w: Widget) -> Int {
+  |            ^^^^^^
+  = built-in types: Int, Char, Bool, Text, String, List<T>, Float, Float32, Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64
+  = help: check the type name, then define it or import the module that exports it
+
+1 error(s). Nothing was generated.
