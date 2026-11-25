@@ -1,0 +1,37 @@
+open: seq 0, replayed 0 record(s)
+set name: ok, 1
+set count: ok, 1
+transaction:
+begin: ok, 0
+set count: ok, 1
+set tag: ok, 2
+del name: ok, 1
+  count = 4
+rollback: ok, 3
+  count = 3
+begin: ok, 0
+set count: ok, 1
+del tag: ok, 0
+commit: ok, 1
+commit again: error: transaction: no transaction to commit
+close and reopen:
+open: seq 3, replayed 3 record(s)
+  count = 10
+  name = "yerux"
+simulate a crash in the middle of a write:
+open: torn record at line 4 ignored
+open: log cut back to 192 bytes
+open: seq 3, replayed 3 record(s)
+  count = 10
+  name = "yerux"
+set tag: ok, 1
+compaction:
+compact: ok, 3
+log bytes after compaction: 0
+open: snapshot at seq 4
+open: seq 4, replayed 0 record(s)
+  count = 10
+  name = "yerux"
+  tag = "after recovery"
+cleanup: directory removed
+cleanup: directory exists = false
