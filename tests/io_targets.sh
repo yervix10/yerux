@@ -15,6 +15,7 @@ for m in "${services[@]}"; do
   if ! "$Y" build "tests/$m.yx" --target aarch64 -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
     echo "FAIL: $m did not build for aarch64"; cat "$TMP/err"; fail=1
   fi
+  case "$m" in fs_basic|fs_handles|fs_autoclose|fs_buffered) continue;; esac  # these build for windows now (checked below)
   if "$Y" build "tests/$m.yx" --target windows -o "$TMP/x" >"$TMP/out" 2>"$TMP/err"; then
     echo "FAIL: $m built for windows"; fail=1; continue
   fi
@@ -22,7 +23,7 @@ for m in "${services[@]}"; do
     { echo "FAIL: unclear message for $m on windows"; cat "$TMP/err"; fail=1; }
 done
 # Both targets support basic file I/O, environment, clocks and the thread runtime.
-for m in io_basic time_clock env_set conc_runtime pe_fs pe_fs_metadata; do
+for m in io_basic time_clock env_set conc_runtime pe_fs pe_fs_metadata fs_basic fs_handles fs_autoclose fs_buffered; do
   for t in aarch64 windows; do
     "$Y" build "tests/$m.yx" --target "$t" -o "$TMP/x" >"$TMP/out" 2>"$TMP/err" ||
       { echo "FAIL: $m did not build for $t"; cat "$TMP/err"; fail=1; }
