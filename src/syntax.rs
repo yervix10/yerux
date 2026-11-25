@@ -34,6 +34,10 @@ pub struct Diag {
 }
 
 const MAX_NEST: usize = 2000;
+/// Variants of one enum and arms of one `match`: the checker and the code generators are not linear in them
+/// (a few seconds at these sizes); nothing real comes near.
+const MAX_VARIANTS: usize = 5_000;
+const MAX_ARMS: usize = 10_000;
 const MAX_CHAIN: usize = 50000;
 
 pub fn diag(msg: impl Into<String>, pos: Pos) -> Diag {
@@ -80,6 +84,31 @@ fn source_line(src: &str, n: usize) -> &str {
     })
 }
 
+/// The part of `line` to show for a diagnostic at 1-based column `col` spanning `len` columns: the whole line
+/// up to 200 characters, otherwise a window of about 160 around the column with `...` at the cut ends.
+/// Returns the text and the column and length to underline in it.
+fn clip_line(line: &str, col: usize, len: usize) -> (String, usize, usize) {
+    const LIMIT: usize = 200;
+    const SIDE: usize = 80;
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= LIMIT {
+        return (line.to_string(), col, len);
+    }
+    let at = col.saturating_sub(1).min(chars.len());
+    let start = at.saturating_sub(SIDE);
+    let end = (at + SIDE).min(chars.len());
+    let mut text = String::new();
+    if start > 0 {
+        text.push_str("...");
+    }
+    text.extend(&chars[start..end]);
+    if end < chars.len() {
+        text.push_str("...");
+    }
+    let lead = if start > 0 { 3 } else { 0 };
+    (text, at - start + lead + 1, len.min(end - at).max(1))
+}
+
 pub fn render(d: &Diag, file: &str, src: &str) -> String {
     let line = source_line(src, d.pos.line.saturating_sub(1));
     let w = d.pos.line.to_string().len();
@@ -93,12 +122,14 @@ pub fn render(d: &Diag, file: &str, src: &str) -> String {
         w = w
     );
     s += &format!("{:w$} |\n", "", w = w);
+    // a very long line (minified or generated source, a fuzzed file) is shown as a window around the column
+    let (line, col, len) = clip_line(line, d.pos.col, d.pos.len);
     s += &format!("{} | {}\n", d.pos.line, line);
     s += &format!(
         "{:w$} | {}{}\n",
         "",
-        " ".repeat(d.pos.col.saturating_sub(1)),
-        "^".repeat(d.pos.len.max(1)),
+        " ".repeat(col.saturating_sub(1)),
+        "^".repeat(len.max(1)),
         w = w
     );
     let mut notes = d.notes.clone();
@@ -830,6 +861,18 @@ pub struct Types {
 
 /// The pseudo-bound that marks a `const N: Int` parameter of a generic function.
 pub const CONST_BOUND: &str = "$const";
+/// A literal length that would collide with the const-parameter placeholders (`CONST_LEN + pid`).
+fn too_long(n: i64, pos: Pos) -> PR<()> {
+    if n >= 0 && n as usize >= CONST_LEN {
+        return Err(diag(
+            format!("this array is too large: {} elements take more than {} bytes", n, MAX_ARRAY_BYTES),
+            pos,
+        )
+        .note("help: use `List<T>` for large buffers"));
+    }
+    Ok(())
+}
+
 /// Array lengths at or above this stand for the const parameter `len - CONST_LEN` (in generic templates).
 pub const CONST_LEN: usize = 1 << 60;
 
@@ -2514,6 +2557,7 @@ impl Parser {
         match self.peek().clone() {
             Tok::Num(n) => {
                 self.bump();
+                too_long(n, npos)?;
                 Ok(n)
             }
             Tok::Id(n) if self.const_param(&n).is_some() => {
@@ -2524,7 +2568,9 @@ impl Parser {
                 if matches!(self.types.consts.get(&n), Some((_, Ty::Int | Ty::Range(..)))) =>
             {
                 self.bump();
-                Ok(self.types.consts[&n].0)
+                let len = self.types.consts[&n].0;
+                too_long(len, npos)?;
+                Ok(len)
             }
             _ => Err(diag(
                 format!("the length {} must be an integer literal or an Int const", what),
@@ -2955,6 +3001,9 @@ impl Parser {
         let mut variants: Vec<(String, Vec<Ty>)> = vec![];
         while !self.is_sym("}") {
             let (v, vp) = self.ident()?;
+            if variants.len() >= MAX_VARIANTS {
+                return Err(diag(format!("this enum has more than {} variants", MAX_VARIANTS), vp));
+            }
             if variants.iter().any(|(n, _)| *n == v) {
                 return Err(diag(format!("duplicate variant '{}'", v), vp));
             }
@@ -3689,6 +3738,9 @@ impl Parser {
         let mut arms = vec![];
         while !self.is_sym("}") {
             let apos = self.pos();
+            if arms.len() >= MAX_ARMS {
+                return Err(diag(format!("this `match` has more than {} arms", MAX_ARMS), apos));
+            }
             let pat = self.pat()?;
             let guard = if self.is_kw("if") {
                 self.bump();

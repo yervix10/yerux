@@ -752,6 +752,20 @@ impl Loader<'_> {
                 }
             }
         }
+        // paren depth before each token, for the variant declarations of an enum (computed once: a scan per
+        // identifier made an enum with thousands of variants quadratic)
+        let mut paren_before: Vec<i32> = vec![];
+        if toks.iter().take(2).any(|f| is_id(f, "enum")) {
+            let mut depth = 0i32;
+            for k in toks {
+                paren_before.push(depth);
+                if is_sym(k, "(") {
+                    depth += 1;
+                } else if is_sym(k, ")") {
+                    depth -= 1;
+                }
+            }
+        }
         let mut fn_header = false;
         let mut paren = 0i32;
         let mut closure_params = false;
@@ -965,19 +979,7 @@ impl Loader<'_> {
                 let in_enum = toks.iter().take(2).any(|f| is_id(f, "enum"));
                 // the paren depth is only needed inside an enum declaration (scanning it for every identifier
                 // of a long function body made module loading quadratic)
-                let depth = if in_enum {
-                    let mut depth = 0i32;
-                    for k in toks.iter().take(j) {
-                        if is_sym(k, "(") {
-                            depth += 1;
-                        } else if is_sym(k, ")") {
-                            depth -= 1;
-                        }
-                    }
-                    depth
-                } else {
-                    0
-                };
+                let depth = if in_enum { paren_before[j] } else { 0 };
                 let decl = in_enum
                     && depth == 0
                     && matches!(prev, Some(p) if is_sym(p, "{") || is_sym(p, ","));

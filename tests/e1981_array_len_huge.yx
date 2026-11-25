@@ -1,0 +1,5 @@
+// An array length that collides with the const-parameter placeholders (1 << 60 and up) panicked the checker
+fn main() {
+  let a = [0; 9223372036854775807]
+  print(a[0])
+}

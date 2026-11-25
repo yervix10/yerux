@@ -1,0 +1,7 @@
+error: this enum has more than 5000 variants
+    --> tests/e1982_enum_too_many_variants.yx:5003:3
+     |
+5003 |   V5000,
+     |   ^^^^^
+
+1 error(s). Nothing was generated.

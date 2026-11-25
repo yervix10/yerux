@@ -9,3 +9,34 @@ Revisión estática de `src/`, priorizando rutas de parseo, análisis y generaci
 5. **`src/ir.rs:1642` — `pre_apre.take().unwrap()`.** La generación IR para `push_str`/`eq` presupone que el análisis previo preparó el argumento prestado. Una llamada mal tipada que escapara la barrera de errores del compilador podría terminar aquí; no encontré evidencia de que el flujo normal genere IR tras un error de tipos.
 
 Los `unwrap` protegidos inmediatamente por `is_some`/validaciones de aridad y los pánicos de invariantes de backend no se priorizaron. No se modificó código del compilador.
+
+## Fuzzing del frontend (`yerux check`)
+
+Fuzzer propio (Python, fuera del repo): parte de `tests/*.yx`, `examples/*.yx` y `examples/real/**/*.yx` y aplica 1-3 mutaciones por
+entrada: truncar, duplicar/borrar/permutar tokens, borrar o insertar llaves y comillas, intercambiar identificadores, sustituir
+palabras clave y tipos, números enormes (`99999999999999999999999999`, `0xFFFF...`, `1e999999`), Unicode raro (BOM, RLO, NUL, controles,
+emoji, U+10FFFF), anidamiento de 100 a 20000 niveles y líneas duplicadas o borradas. Cada entrada se ejecuta con `yerux check`
+(plazo 5 s); si pasa, con `DEEP=1` también `yerux c` y `yerux ir`. Se busca: salida por señal o código >= 101, `panicked at src/`,
+desbordamiento de pila, cuelgue y salida de error sin texto.
+
+Medido: unas 190 000 entradas (7 semillas por 4 000 a 25 000 y 3 de 20 000 con `c`/`ir`), más 18 entradas hechas a mano (1 000 000 de
+paréntesis, corchetes, llaves, `-` y `!` seguidos; cadena de 50 MB; 300 000 `let`; 200 000 brazos de `match`; enum de 100 000
+variantes). Hallazgos, todos corregidos (3 pánicos o cuelgues y 1 defecto de presentación):
+
+1. **Pánico** `index out of bounds` en `src/syntax.rs:951` (`intern_array`): `[0; 9223372036854775807]`. Una longitud literal >= `1 << 60`
+   coincidía con los marcadores de parámetro const (`CONST_LEN + pid`). Ahora `array_len` la rechaza con «this array is too large».
+   Prueba: `tests/e1981_array_len_huge.yx`.
+2. **Cuelgue cuadrático** en enums con miles de variantes (8 000 variantes: 13 s; 16 000: más de 20 s). Tres causas:
+   `check.rs` clonaba el `EnumDef` entero por cada brazo de `match` (el `==` automático de un enum sin payload genera un `match` por
+   variante); `modules.rs::rewrite` recorría los tokens anteriores en cada identificador para contar paréntesis; y `cgen` indentaba con
+   un nivel por anidamiento (un `match` de n brazos sobre enteros anida n niveles: espacios cuadráticos). Ahora: sin clon,
+   profundidad de paréntesis precalculada, sangría limitada a 40 niveles. 8 000 variantes: 0,9 s; 100 000: 2 s (antes 86 s en
+   `rewrite`).
+3. **Límites con diagnóstico** para lo que sigue siendo superlineal: más de 5 000 variantes en un enum y más de 10 000 brazos en un
+   `match` (`this enum has more than 5000 variants`, `this match has more than 10000 arms`). Pruebas:
+   `tests/e1982_enum_too_many_variants.yx`, `tests/e1983_match_too_many_arms.yx`.
+4. **Diagnóstico de 1 MB**: un error en una línea muy larga imprimía la línea entera (y el subrayado). Ahora se muestra una ventana
+   de unos 160 caracteres alrededor de la columna, con `...` en los cortes (líneas de hasta 200 caracteres: sin cambio).
+
+Sin hallazgos en el resto: lexer, parser, `check`, `c` e `ir` no entraron en pánico ni se colgaron con las demás mutaciones; el
+anidamiento profundo ya tenía el límite de 2 000 niveles y las cadenas de operadores el de 50 000.
