@@ -585,6 +585,8 @@ struct Checker<'a> {
     match_scruts: HashMap<String, (Expr, bool, usize)>,
     /// names bound by a borrowing `match` arm (they only borrow the scrutinee's payload)
     match_bound: HashSet<usize>,
+    /// names bound by `for x in list` (borrowed elements)
+    loop_bound: HashSet<usize>,
     // function values and closures (check_fn.rs)
     lifted: Vec<Func>, // closure bodies and thunks, emitted as ordinary functions
     thunks: HashSet<String>, // function items already given a thunk
@@ -1641,6 +1643,9 @@ impl<'a> Checker<'a> {
                         }
                         if self.match_bound.contains(&i) {
                             d = d.note("help: this name was bound by `match x { .. }`, which only borrows the payload: write `match move x { .. }` to take it out");
+                        }
+                        if self.loop_bound.contains(&i) {
+                            d = d.note("help: an element of a list is only borrowed (`for x in list`, `let x = l.at(i)`): write `for x in move list { .. }` to own the elements one by one (for example to `join()` handles), or take one with `l.pop()`");
                         }
                         self.err(d);
                         vty
@@ -4654,6 +4659,8 @@ impl<'a> Checker<'a> {
                 *id = self.declare(name, ty, *mode, *mode == Mode::Mut);
                 if hidden_root(place).is_some_and(|r| self.match_scruts.contains_key(&r)) {
                     self.match_bound.insert(*id);
+                } else if matches!(&place.k, EK::Method { m, .. } if m == "at") {
+                    self.loop_bound.insert(*id);
                 }
             }
             SK::Match(scrut, arms) => {
@@ -8023,8 +8030,13 @@ impl<'a> Checker<'a> {
                                 )
                                 .note("nothing here says what type it should hold")
                                 .note(format!(
-                                    "help: write them out, e.g. `{}<Int>.{}`",
-                                    name, vname
+                                    "help: write them out, e.g. `{}<{}>.{}` (all {} type argument(s), or give the variable a type: `let r: {}<{}> = ..`)",
+                                    name,
+                                    ps.iter().map(|_| "Int").collect::<Vec<_>>().join(", "),
+                                    vname,
+                                    ps.len(),
+                                    name,
+                                    ps.iter().map(|_| "Int").collect::<Vec<_>>().join(", ")
                                 )),
                             );
                             return (Ty::Err, EK::Int(0));
@@ -8613,6 +8625,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         drop_self: None,
         match_scruts: HashMap::new(),
         match_bound: HashSet::new(),
+        loop_bound: HashSet::new(),
         lifted: vec![],
         thunks: HashSet::new(),
         nclos: 0,

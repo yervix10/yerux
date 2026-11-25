@@ -792,3 +792,35 @@ of that name; test `tests/mod_ok/fn_value`). 69: could not be reproduced with un
 `does not exist` error appears); kept as `e2069` so it stays that way. 70: `pub` on a field is rejected with "a struct field takes no `pub`"
 (`e2070`). 71: `*x` on a non-Box says "cannot dereference a value of type T with `*`" (`e2071`). 72: the missing-module error suggests
 `std.rand` for `std.random` and similar common names (`e2072`).
+
+## Round 14: jsonq, eventbus
+
+Two programs in `examples/real/<name>/`, each with `expected.out`, built on both backends (C and `--native` identical,
+exit 0, repeated runs identical) and registered in `tests/real_programs.sh` (now fifteen programs).
+
+- **jsonq**: a JSON query tool. `std.json` parses the document; the program adds a path language on top (`.name`,
+  `["name"]`, `[3]`, `[-1]`, `[*]`, `..name`, `[?field OP literal]`, pipes `length sum min max keys first`), reports query
+  errors with offsets and bad documents with line and column. 31 queries and 4 bad documents; one module, 407 lines.
+- **eventbus**: three publisher threads, a broker thread and four subscriber threads connected by channels (one
+  unbounded, four bounded with capacity 3), a stats service answering requests that carry their own reply `Sender`, and
+  scope/join of every handle. Only order-independent results are printed; the totals (193 deliveries, 16 dead letters,
+  per-subscriber counts, sums and maxima) match an independent Python 3 model of the generator and the routing. 223 lines.
+
+### Round 14 frictions (87, 89 and 90 fixed or documented; 88 open)
+
+87. **The help for an uninferable `Ok(..)` names a type that does not exist.** `var r = Ok(0)` says "write them out, e.g.
+    `Result<Int>.Ok`", but `Result` takes two type arguments and `Result<Int>.Ok` is then an error. *Fixed:* the help now
+    shows all the arguments and the `let r: Result<Int, Int> = ..` form (`tests/e2069_result_infer_help.yx`).
+88. **A panic inside a worker loses its own message.** `spawn move { return rx.recv().unwrap() }` on a closed channel
+    reports only `called Result.unwrap() on an Err value: worker panicked` at `join`; when several workers fail the output
+    is `panic: second panic during worker cleanup`, repeated. The original `unwrap on None` text is never printed, which
+    made the eventbus bug (friction 90) take a debugging session. Not changed: it needs a decision on whether workers
+    print their panic before cleanup.
+89. **`for h in handles { h.join() }` says `cannot move 'h': it is only borrowed` and nothing about `for h in move handles`.**
+    *Fixed:* the error now names `for x in move list` and `pop()` (`tests/e2070_for_move_element.yx`).
+90. **`Sender.close()` closes the channel for every clone.** Closing the original sender in the parent after cloning it
+    into publisher threads made the broker's first `recv` return `None`. The behaviour is by design (and what a bounded
+    pipeline wants); the documentation said only "stop new sends". *Documented* in `docs/CONCURRENCY.md`.
+91. **A multi-line JSON literal cannot be a raw string.** Friction 47 again: the 14-line test document had to be built
+    with eight `push_str(r#"..."#)` calls. Not changed (documented limit).
+

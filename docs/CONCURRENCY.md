@@ -103,7 +103,8 @@ prelude APIs. Run them with `tests/run_all.sh --fast` (or
 `Sender<T>.bounded(capacity)` and `Sender<T>.unbounded()` return a sender and
 single receiver. `send(value)` returns `Bool`; `recv()` returns `Option<T>`.
 The sender may be cloned for multiple producers. Call `close()` on a sender to
-stop new sends, or let the final sender drop. The receiver drains queued values
+stop new sends from every clone of it (the channel is closed, not just that handle: closing the original before its
+clones have sent makes their later sends return `false`), or let the final sender drop. The receiver drains queued values
 and then gets `None`. Closing or dropping the receiver makes later sends return
 `false`. `recv_timeout(ms)` returns `None` if it times out or the closed channel
 is drained. `select2(left, right, timeout_ms)` waits on two receivers with the

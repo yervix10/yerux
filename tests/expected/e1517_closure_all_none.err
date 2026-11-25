@@ -12,7 +12,7 @@ error: cannot infer the type argument(s) T of Option.None
 4 |     if v > 5 { return None }
   |                       ^^^^
   = nothing here says what type it should hold
-  = help: write them out, e.g. `Option<Int>.None`
+  = help: write them out, e.g. `Option<Int>.None` (all 1 type argument(s), or give the variable a type: `let r: Option<Int> = ..`)
 
 error: cannot infer the type argument(s) T of Option.None
  --> tests/e1517_closure_all_none.yx:5:12
@@ -20,6 +20,6 @@ error: cannot infer the type argument(s) T of Option.None
 5 |     return None
   |            ^^^^
   = nothing here says what type it should hold
-  = help: write them out, e.g. `Option<Int>.None`
+  = help: write them out, e.g. `Option<Int>.None` (all 1 type argument(s), or give the variable a type: `let r: Option<Int> = ..`)
 
 3 error(s). Nothing was generated.

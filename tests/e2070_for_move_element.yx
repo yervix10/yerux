@@ -1,0 +1,10 @@
+fn main() {
+  var hs = List<JoinHandle<Int>>.new()
+  scope {
+    for i in 0..3 {
+      let h = spawn move { return i * 2 }
+      hs.push(move h)
+    }
+    for h in hs { print(h.join().unwrap()) }
+  }
+}
