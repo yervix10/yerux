@@ -2972,6 +2972,10 @@ impl Parser {
     fn struct_fields(&mut self) -> PR<Vec<(String, Ty)>> {
         let mut fields: Vec<(String, Ty)> = vec![];
         while !self.is_sym("}") {
+            if matches!(self.peek(), Tok::Id(n) if n == "pub") {
+                return Err(diag("a struct field takes no `pub`".to_string(), self.pos())
+                    .note("the fields of a `pub struct` are public and those of a private struct are private: write `name: Type`"));
+            }
             let (f, fp) = self.ident()?;
             if fields.iter().any(|(n, _)| *n == f) {
                 return Err(diag(format!("duplicate field '{}'", f), fp));

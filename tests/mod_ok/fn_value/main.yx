@@ -1,0 +1,7 @@
+import m
+
+fn main() {
+  print(m.go().unwrap())
+  print(m.via_arg().unwrap())
+  print(m.shadow())
+}

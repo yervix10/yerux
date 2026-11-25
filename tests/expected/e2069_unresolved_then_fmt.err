@@ -1,0 +1,8 @@
+error: variable 'nosuch' does not exist
+ --> tests/e2069_unresolved_then_fmt.yx:8:15
+  |
+8 |   let v = fld(nosuch)?
+  |               ^^^^^^
+  = help: check the spelling, scope, and whether the name needs to be imported or qualified
+
+1 error(s). Nothing was generated.

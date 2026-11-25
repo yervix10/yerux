@@ -767,7 +767,7 @@ gave identical output over repeated runs, exited 0, and matched an independent P
   about a dozen requests with the `std.http` client. Covered: path parameters, percent-decoded query strings, a JSON
   POST, 400, 404, 405 with `Allow`, and a raw malformed request. Ends with the server summary. 248 lines.
 
-### Round 13 frictions (not changed; minimal repros)
+### Round 13 frictions (68, 70-72 fixed; 69 not reproducible; minimal repros)
 
 68. **A named function used as a value inside an imported module does not resolve.** In `m.yx`:
     `fn sq(x: view Int) -> Option<Int> { ... }` and `pub fn go() -> Option<Int> { let f = sq; return f(3) }`, with
@@ -786,3 +786,9 @@ gave identical output over repeated runs, exited 0, and matched an independent P
 72. **`import std.random` is an unknown module, and the diagnostic does not suggest `std.rand`.** `import std.random` with
     `var r = random.new(1)` gives `cannot find module 'std.random'` and "looked for ./std/random.yx". The embedded module
     is `std.rand`. A hint naming the existing module would help. Found while writing life.
+
+Resolution: 68 fixed in `modules.rs::rewrite` (a function of the module used as a value is renamed unless the file also binds a local
+of that name; test `tests/mod_ok/fn_value`). 69: could not be reproduced with unresolved arguments to generic or plain functions (only the
+`does not exist` error appears); kept as `e2069` so it stays that way. 70: `pub` on a field is rejected with "a struct field takes no `pub`"
+(`e2070`). 71: `*x` on a non-Box says "cannot dereference a value of type T with `*`" (`e2071`). 72: the missing-module error suggests
+`std.rand` for `std.random` and similar common names (`e2072`).

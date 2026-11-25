@@ -1,0 +1,14 @@
+fn sq(x: view Int) -> Option<Int> { return Some(x * x) }
+fn apply(f: fn(view Int) -> Option<Int>, n: Int) -> Option<Int> { return f(n) }
+
+pub fn go() -> Option<Int> {
+  let f = sq
+  return f(3)
+}
+
+pub fn via_arg() -> Option<Int> { return apply(sq, 4) }
+
+pub fn shadow() -> Int {
+  let sq = 7
+  return sq + 1
+}
