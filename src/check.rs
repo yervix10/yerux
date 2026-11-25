@@ -7395,6 +7395,17 @@ impl<'a> Checker<'a> {
             }
             None => {
                 let mut d = diag(format!("type {} has no method '{}'", tyn, m), pos);
+                // `*v` is parsed as `v.get()` with a span that starts at the `*`, before its operand
+                let star = nargs == 0
+                    && m == "get"
+                    && matches!(&e.k, EK::Method { recv, .. } if recv.pos.line == pos.line && recv.pos.col > pos.col);
+                if star {
+                    d = diag(format!("cannot dereference a value of type {} with `*`", tyn), pos)
+                        .note("`*x` only applies to a Box (`*box` is the value inside it); a `view` or a plain value is already used as it is")
+                        .note("help: use the value directly, or `match` on it and return the arms");
+                    self.err(d);
+                    return Err(());
+                }
                 if let Some(n) = self.unmet_bound_note(rt, &m) {
                     for l in n.split('\n') {
                         d = d.note(l.to_string());

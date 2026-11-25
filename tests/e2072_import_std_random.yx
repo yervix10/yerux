@@ -1,0 +1,2 @@
+import std.random
+fn main() { var r = random.new(1) }

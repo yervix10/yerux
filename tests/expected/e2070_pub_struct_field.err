@@ -1,0 +1,8 @@
+error: a struct field takes no `pub`
+ --> tests/e2070_pub_struct_field.yx:1:19
+  |
+1 | pub struct Fail { pub pos: Int, msg: String }
+  |                   ^^^
+  = the fields of a `pub struct` are public and those of a private struct are private: write `name: Type`
+
+1 error(s). Nothing was generated.

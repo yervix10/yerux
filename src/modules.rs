@@ -555,6 +555,26 @@ impl Loader<'_> {
                             import, rel, self.root.display()
                         ));
                     }
+                    if segs.len() == 2 && segs[0] == "std" {
+                        let guess = match segs[1].as_str() {
+                            "random" | "rng" | "randomness" => Some("rand"),
+                            "string" | "strings" | "str" => Some("text"),
+                            "file" | "files" | "filesystem" => Some("fs"),
+                            "os" | "sys" | "environment" => Some("env"),
+                            "list" | "map" | "set" | "maps" | "lists" => Some("collections"),
+                            "thread" | "threads" | "mutex" | "atomic" => Some("sync"),
+                            "datetime" | "date" | "clock" => Some("time"),
+                            "network" | "socket" | "tcp" => Some("net"),
+                            "logging" => Some("log"),
+                            "cli" | "argv" => Some("args"),
+                            "maths" => Some("math"),
+                            "sha" | "sha256" | "crc" | "md5" => Some("hash"),
+                            _ => None,
+                        };
+                        if let Some(g) = guess {
+                            error = error.note(format!("help: did you mean `import std.{}`?", g));
+                        }
+                    }
                     self.report(file, error);
                     continue;
                 }
@@ -764,6 +784,29 @@ impl Loader<'_> {
                 } else if is_sym(k, ")") {
                     depth -= 1;
                 }
+            }
+        }
+        // names bound as locals somewhere in this file (let/var/for/param/closure param/pattern): a function of
+        // the module with such a name is only renamed when called, since `f` alone could be the local
+        let mut bound_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (k, tk) in toks.iter().enumerate() {
+            let Tok::Id(n) = &tk.t else { continue };
+            if !own.get(n).is_some_and(|it| it.kind == Kind::Func) {
+                continue;
+            }
+            let prev = if k > 0 { Some(&toks[k - 1]) } else { None };
+            let nx = toks.get(k + 1);
+            let dotted = matches!(prev, Some(p) if is_sym(p, "."));
+            if dotted {
+                continue;
+            }
+            let b = matches!(prev, Some(p) if is_id(p, "let") || is_id(p, "var") || is_id(p, "for") || is_id(p, "mut") || is_sym(p, "|"))
+                || matches!(nx, Some(x) if is_sym(x, ":") || is_sym(x, "@") || is_sym(x, "=>") || is_sym(x, "|"))
+                || (matches!(prev, Some(p) if is_sym(p, "(") || is_sym(p, ","))
+                    && matches!(nx, Some(x) if is_sym(x, ")") || is_sym(x, ","))
+                    && (arm_arrow_ahead(toks, k) || unpack_bind_ahead(toks, k)));
+            if b && !matches!(prev, Some(p) if is_id(p, "fn")) {
+                bound_names.insert(n.clone());
             }
         }
         let mut fn_header = false;
@@ -1008,7 +1051,7 @@ impl Loader<'_> {
                 if self.trace.is_some() && it.kind == Kind::Func && call && !prev_fn {
                     self.trace(file, "call", &[&x, &mangle(ekey, &x)]);
                 }
-                if !ekey.is_empty() && (it.kind != Kind::Func || call) {
+                if !ekey.is_empty() && (it.kind != Kind::Func || call || (!prev_fn && !bound_names.contains(&x))) {
                     out.push(Token {
                         t: Tok::Id(mangle(ekey, &x)),
                         pos: t.pos,

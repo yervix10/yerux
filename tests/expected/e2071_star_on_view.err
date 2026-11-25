@@ -1,0 +1,9 @@
+error: cannot dereference a value of type T with `*`
+ --> tests/e2071_star_on_view.yx:4:10
+  |
+4 |   return *v
+  |          ^^
+  = `*x` only applies to a Box (`*box` is the value inside it); a `view` or a plain value is already used as it is
+  = help: use the value directly, or `match` on it and return the arms
+
+1 error(s). Nothing was generated.

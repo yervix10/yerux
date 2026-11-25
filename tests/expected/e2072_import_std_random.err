@@ -1,0 +1,10 @@
+error: cannot find module 'std.random'
+ --> tests/e2072_import_std_random.yx:1:1
+  |
+1 | import std.random
+  | ^^^^^^^^^^^^^^^^^
+  = looked for tests/std/random.yx
+  = help: `import std.random` loads std/random.yx from the folder of the file you compile (tests); create it, or fix the name
+  = help: did you mean `import std.rand`?
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+enum T { A, B }
+
+fn get(v: view T) -> T {
+  return *v
+}
+
+fn main() {}

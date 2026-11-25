@@ -1,0 +1,13 @@
+struct Fail { pos: Int }
+
+fn fld<T>(x: T) -> Result<T, Fail> {
+  return Err(Fail { pos: 1 })
+}
+
+fn g() -> Result<Int, Fail> {
+  let v = fld(nosuch)?
+  print("{v}")
+  return Ok(1)
+}
+
+fn main() {}

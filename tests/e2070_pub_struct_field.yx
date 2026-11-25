@@ -1,0 +1,2 @@
+pub struct Fail { pub pos: Int, msg: String }
+fn main() { }
