@@ -1,0 +1,9 @@
+error: a `match` statement arm needs a block `{ .. }`
+ --> tests/e1980_match_stmt_bare_arm.yx:4:17
+  |
+4 |         None => 0,
+  |                 ^
+  = a bare expression arm (`P => e,`) is only for a `match` used as a value
+  = help: write `P => { e }`, or `let x = match v { P => e, .. }` to use the value
+
+1 error(s). Nothing was generated.
