@@ -1,0 +1,16 @@
+// A panic inside a worker keeps its message: it is printed on stderr before the worker unwinds,
+// and `join` still reports the failure (friction 88)
+fn main() {
+  scope {
+    let a = spawn move {
+      let v = List<Int>.new()
+      return v.at(5)
+    }
+    match a.join() {
+      Ok(v) => { print(v) }
+      Err(e) => { print("first: {e}") }
+    }
+    let b = spawn move { panic("boom from b") }
+    print(b.join().is_err())
+  }
+}
