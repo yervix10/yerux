@@ -833,7 +833,10 @@ fn match_arms(p: mut Parser, tag: Text, as_value: Bool) -> String {
   if mutable { value = node2("Un", String.from("6d7574"), value) }
   expect(p, "{{")
   var arms = String.from("[")
+  var count = 0
   while !at_close(p, "}}") {
+    if count >= 10000 { p.failed = true; return String.new() }
+    count = count + 1
     let pat = pattern(p)
     var guard = missing()
     if eat_kw(p, "if") { guard = parse_expr(p) }
