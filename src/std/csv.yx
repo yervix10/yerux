@@ -1,7 +1,7 @@
 // RFC 4180 CSV. Records are lists of fields; a final CRLF is optional.
 // `parse` is lenient about malformed quoting (an unclosed quote runs to the end of the input, text after a closing quote
-// is kept) but never hides a limit: input over 16 MiB or over 100000 fields panics. `parse_checked` reports all of
-// these as an Err with a line number instead.
+// is kept) and returns no rows for input over 16 MiB or over 100000 fields (hostile input never crashes the caller).
+// `parse_checked` reports all of these as an Err with a line number instead.
 fn line_of(input: view String, upto: Int) -> Int {
   var line = 1
   var k = 0
@@ -75,7 +75,7 @@ fn parse_impl(input: view String, strict: Bool) -> Result<List<List<String>>, St
 pub fn parse(input: view String) -> List<List<String>> {
   match parse_impl(input, false) {
     Ok(rows) => { return rows }
-    Err(m) => { panic(m) }
+    Err(_) => { return List<List<String>>.new() }
   }
 }
 

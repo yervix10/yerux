@@ -16,4 +16,5 @@ fn main() {
   var big = String.new()
   for i in 0..100001 { big.push_str("x,") }
   n(big)
+  print(csv.parse(big).len())
 }
