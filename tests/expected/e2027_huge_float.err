@@ -1,0 +1,7 @@
+error: the literal 1e999999 is too large for Float (largest 1.8e308)
+ --> tests/e2027_huge_float.yx:2:11
+  |
+2 |   let x = 1e999999
+  |           ^^^^^^^^
+
+1 error(s). Nothing was generated.

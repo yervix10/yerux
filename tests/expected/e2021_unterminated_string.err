@@ -1,0 +1,7 @@
+error: unterminated string
+ --> tests/e2021_unterminated_string.yx:2:9
+  |
+2 |   print("hola)
+  |         ^
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+error: unexpected character '﻿'
+ --> tests/e2025_bom.yx:1:1
+  |
+1 | ﻿fn main() {
+  | ^
+
+1 error(s). Nothing was generated.

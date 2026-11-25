@@ -1,0 +1,7 @@
+error: number too large (the largest is 18446744073709551615)
+ --> tests/e2028_huge_hex.yx:2:11
+  |
+2 |   let x = 0xFFFFFFFFFFFFFFFFFF
+  |           ^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+error: field 'x' is given twice
+ --> tests/e2037_duplicate_struct_field.yx:4:28
+  |
+4 |   let p = Point { x: 1, x: 2 }
+  |                            ^
+
+1 error(s). Nothing was generated.

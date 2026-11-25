@@ -1,0 +1,9 @@
+error: import cycle: extra_modules.e2035_cycle_a -> extra_modules.e2035_cycle_b -> extra_modules.e2035_cycle_a
+ --> tests/extra_modules/e2035_cycle_b.yx:1:1
+  |
+1 | import extra_modules.e2035_cycle_a
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = modules cannot import each other, directly or through others
+  = help: move what they share into a third module that both of them import
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,9 @@
+error: import cycle: e2034_self_import_cycle -> e2034_self_import_cycle
+ --> tests/e2034_self_import_cycle.yx:1:1
+  |
+1 | import e2034_self_import_cycle
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = modules cannot import each other, directly or through others
+  = help: move what they share into a third module that both of them import
+
+1 error(s). Nothing was generated.

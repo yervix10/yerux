@@ -1,0 +1,7 @@
+error: missing '{'
+ --> tests/e2039_extra_brace.yx:4:1
+  |
+4 | }
+  | ^
+
+1 error(s). Nothing was generated.

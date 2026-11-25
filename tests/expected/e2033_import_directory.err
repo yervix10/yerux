@@ -1,0 +1,9 @@
+error: cannot find module 'extra_modules'
+ --> tests/e2033_import_directory.yx:1:1
+  |
+1 | import extra_modules
+  | ^^^^^^^^^^^^^^^^^^^^
+  = looked for tests/extra_modules.yx
+  = help: `import extra_modules` loads extra_modules.yx from the folder of the file you compile (tests); create it, or fix the name
+
+1 error(s). Nothing was generated.

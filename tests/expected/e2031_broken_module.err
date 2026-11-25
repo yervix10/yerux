@@ -1,0 +1,7 @@
+error: missing closing '}'
+ --> tests/extra_modules/e2031_broken.yx:1:13
+  |
+1 | fn broken() {
+  |             ^
+
+1 error(s). Nothing was generated.

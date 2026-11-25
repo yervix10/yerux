@@ -1,0 +1,7 @@
+fn main() {
+  print("uno")
+}
+
+fn main() {
+  print("dos")
+}

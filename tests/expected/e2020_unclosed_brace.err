@@ -1,0 +1,7 @@
+error: missing closing '}'
+ --> tests/e2020_unclosed_brace.yx:1:11
+  |
+1 | fn main() {
+  |           ^
+
+1 error(s). Nothing was generated.
