@@ -4684,10 +4684,11 @@ impl<'a> Checker<'a> {
                         if arm.vname == "_" {
                             wildcard = true;
                         } else {
-                            let def = self.types.enums[e].clone();
-                            match def.variants.iter().position(|v| v.0 == arm.vname) {
+                            // no clone of the enum here: it may have thousands of variants (and so may the matches)
+                            let def_name = self.types.enums[e].name.clone();
+                            match self.types.enums[e].variants.iter().position(|v| v.0 == arm.vname) {
                                 None => self.err(diag(
-                                    format!("enum {} has no variant '{}'", def.name, arm.vname),
+                                    format!("enum {} has no variant '{}'", def_name, arm.vname),
                                     arm.pos,
                                 )),
                                 Some(vi) => {
@@ -4698,12 +4699,12 @@ impl<'a> Checker<'a> {
                                             arm.pos,
                                         ));
                                     }
-                                    payload = def.variants[vi].1.clone();
+                                    payload = self.types.enums[e].variants[vi].1.clone();
                                     if payload.len() != arm.binds.len() {
                                         self.err(diag(
                                             format!(
                                                 "{}.{} carries {} value(s) but the pattern binds {}",
-                                                def.name,
+                                                def_name,
                                                 arm.vname,
                                                 payload.len(),
                                                 arm.binds.len()
@@ -4731,13 +4732,12 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(e) = eid {
                     if !wildcard {
-                        let def = self.types.enums[e].clone();
-                        let missing: Vec<&str> = def
+                        let missing: Vec<String> = self.types.enums[e]
                             .variants
                             .iter()
                             .enumerate()
                             .filter(|(i, _)| !seen.contains(i))
-                            .map(|(_, v)| v.0.as_str())
+                            .map(|(_, v)| v.0.clone())
                             .collect();
                         if !missing.is_empty() {
                             self.err(

@@ -1,0 +1,7 @@
+error: this `match` has more than 10000 arms
+     --> tests/e1983_match_too_many_arms.yx:10004:5
+      |
+10004 |     10000 => {}
+      |     ^^^^^
+
+1 error(s). Nothing was generated.

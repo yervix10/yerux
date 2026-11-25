@@ -283,8 +283,10 @@ fn generate_pass(
 }
 
 impl Gen<'_> {
+    /// Indentation stops growing at 40 levels: a match with thousands of arms nests that deep and the
+    /// whitespace alone was quadratic in its size (C does not care).
     fn line(&mut self, s: &str) {
-        for _ in 0..self.ind {
+        for _ in 0..self.ind.min(40) {
             self.out.push_str("  ");
         }
         self.out.push_str(s);
