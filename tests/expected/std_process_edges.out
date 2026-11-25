@@ -1,0 +1,11 @@
+err spawn '/nonexistent/prog': No such file or directory (os error 2)
+err spawn: empty program name
+err spawn '/etc/passwd': Permission denied (os error 13)
+err spawn '/tmp': Permission denied (os error 13)
+ok code=3 sig=0 out=0 err=0
+ok code=0 sig=0 out=3000000 err=2
+ok code=-1 sig=9 out=0 err=0
+ok code=0 sig=0 out=2 err=0
+ok code=0 sig=0 out=7 err=0
+err spawn: an argument contains a NUL byte
+timeout

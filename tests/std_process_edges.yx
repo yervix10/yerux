@@ -1,0 +1,48 @@
+// std.process edge cases: missing and non-executable programs, NUL in arguments, signals, large and invalid output, timeout
+import std.process
+import std.io
+fn show(r: view Result<process.Output, io.IoError>) {
+  match r {
+    Ok(o) => { print("ok code={o.status.code} sig={o.status.signal} out={o.stdout.len()} err={o.stderr.len()}") }
+    Err(e) => { print("err {e.message}") }
+  }
+}
+fn main() {
+  show(process.run("/nonexistent/prog", List<String>.new()))
+  show(process.run("", List<String>.new()))
+  show(process.run("/etc/passwd", List<String>.new()))
+  show(process.run("/tmp", List<String>.new()))
+  var a = List<String>.new()
+  a.push("-c")
+  a.push("exit 3")
+  show(process.run("/bin/sh", a))
+  var b = List<String>.new()
+  b.push("-c")
+  b.push("head -c 3000000 /dev/zero; echo e >&2")
+  show(process.run("/bin/sh", b))
+  var c = List<String>.new()
+  c.push("-c")
+  c.push("kill -9 $$")
+  show(process.run("/bin/sh", c))
+  var d = List<String>.new()
+  d.push("-c")
+  d.push("printf '\\377\\376'")
+  show(process.run("/bin/sh", d))
+  var e = List<String>.new()
+  e.push("é😀")
+  show(process.run("/bin/echo", e))
+  var z = List<String>.new()
+  var nul = String.new()
+  nul.push_str("a")
+  nul.push_byte(0)
+  nul.push_str("b")
+  z.push(move nul)
+  show(process.run("/bin/echo", z))
+  var s = List<String>.new()
+  s.push("-c")
+  s.push("sleep 5")
+  match process.run_timeout("/bin/sh", s, 200) {
+    Ok(o) => { match o { Some(x) => { print("finished") } None => { print("timeout") } } }
+    Err(e) => { print("err {e.message}") }
+  }
+}
