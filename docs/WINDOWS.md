@@ -118,28 +118,34 @@ Invoke-Expression (Invoke-RestMethod 'http://10.0.2.2:8000/agent.ps1')
 `python3 tests/windows_pe_audit.py` builds the runtime goldens in `tests/` and the standalone programs
 under `examples/`. Intentional compile-error examples and modules without `main` are excluded. The
 [audit snapshot](windows-pe-rejections.tsv) records each rejected source and its exact first diagnostic.
-The previous round added TCP, directory iteration and file positioning. This round adds the
-handle-relative operations used by `fs.remove_dir_all`.
+At `094f8d4`, 31 of 528 programs were rejected. Handle-relative filesystem support reduced
+that to 27 and added the `pe_remove_tree` fixture. The latest comparison holds that corpus
+fixed and measures the Windows C runtime changes.
 
-| Same corpus before and after | `8de0022` | With recursive tree removal |
+| Same corpus before and after | With recursive tree removal | With Universal CRT calls |
 |---|---:|---:|
-| Test goldens rejected | 26/458 | 22/458 |
+| Test goldens rejected | 22/459 | 19/459 |
 | Example entry points rejected | 5/70 | 5/70 |
-| Total rejected | **31/528** | **27/528** |
+| Total rejected | **27/529** | **24/529** |
 
-The new `pe_remove_tree` golden also builds, giving **502/529 builds** in the updated corpus.
+The new `pe_ffi` golden also builds, giving **506/530 builds** in the updated corpus.
 A program can use several unsupported features. The table counts only its first diagnostic.
 
 | First compiler rejection | Before | After |
 |---|---:|---:|
-| Handle-relative filesystem access (`openat`) | 9 | 0 |
-| Process handling (`wait4`) | 11 | 12 |
-| Extern C | 6 | 6 |
-| POSIX symbolic link creation (`symlink`) | 0 | 3 |
-| POSIX permissions (`chmod`) | 2 | 3 |
+| Process handling (`wait4`) | 12 | 12 |
+| Extern C | 6 | 3 |
+| POSIX symbolic link creation (`symlink`) | 3 | 3 |
+| POSIX permissions (`chmod`) | 3 | 3 |
 | POSIX link reading (`readlink`) | 1 | 1 |
 | Raw poll (`ppoll`) | 1 | 1 |
 | Raw Linux memory mapping (`mmap`) | 1 | 1 |
+
+The PE backend resolves reachable `strlen`, `memset`, `strtod`, and `snprintf` calls from the
+system Universal CRT. Calls use the Win64 ABI, including floating-point varargs and stack
+arguments. Wine 10.0 matched the C goldens for `ffi_text_contract`, `ptr_construct`, `ptr_rw`,
+and `pe_ffi` with and without optimization. Windows CI requires the new `pe_ffi` fixture.
+Explicit `link` libraries and other C symbols still receive a compile-time diagnostic.
 
 The Windows CI smoke suite requires `pe_remove_tree` and runs the `minidb` CLI through compaction
 and readback. `minidb` closes the log before replacing it and reopens it on demand. Under Wine
@@ -198,7 +204,7 @@ above are from an earlier native Windows run.
 * Redirected I/O preserves bytes. Console rendering depends on the code page and font. Interactive Unicode input
   needs separate verification.
 * Executables use the console subsystem and the shared x86-64 register allocator. Subprocesses,
-  extern C, raw Linux polling and runtime backtraces remain unavailable.
+  arbitrary C imports, raw Linux polling and runtime backtraces remain unavailable.
 * Path-taking Win32 file calls still use the ANSI code page. Native path syntax and separator rules
   differ from the POSIX `std.path` conventions. Recursive tree removal uses handle-relative NT
   opens and deletion on filesystems that support `FileDispositionInformationEx`. It opens directory
@@ -223,7 +229,7 @@ The `windows-check` CI job cross-checks the Rust compiler with
 | No C compiler | build/run fall back to the native backend with a note; `check`, `c`, `ir`, `fmt`, `lsp` need none |
 | `yerux doctor` | reports the compiler found (or MISSING and why), wine, temp dir, platform, and compiles + runs a program with each backend; exit 1 only if no backend works |
 | Paths and command lines | temp files use `std::env::temp_dir()`; file arguments may contain spaces and either slash; CRLF and BOM sources are accepted (checked by `tests/win_smoke.sh`) |
-| Limits | the native Windows backend has the limits listed above (extern C and unsupported OS intrinsics are rejected with `not supported on the windows target yet`); programs using them need the C backend (MinGW) or Linux |
+| Limits | the native Windows backend reports `not supported on the windows target yet` for unavailable C symbols, explicit C libraries and OS intrinsics; programs using them need the C backend (MinGW) or Linux |
 
 `tests/win_smoke.sh` runs on Linux and Windows. It checks `--version`, `doctor`, `run` on a CRLF
 source in a directory with spaces, the default output name, and native output against the
