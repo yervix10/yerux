@@ -1,0 +1,3 @@
+import no.such.module
+
+fn main() {}

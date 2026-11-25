@@ -1,0 +1,8 @@
+error: duplicate variant 'Red'
+ --> tests/e2038_duplicate_enum_variant.yx:1:26
+  |
+1 | enum Color { Red, Green, Red }
+  |                          ^^^
+  = help: rename or remove the repeated declaration
+
+1 error(s). Nothing was generated.

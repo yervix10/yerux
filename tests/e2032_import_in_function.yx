@@ -1,0 +1,4 @@
+fn main() {
+  import std.fs
+  print("hola")
+}

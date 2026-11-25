@@ -1,0 +1,7 @@
+error: expected an expression
+ --> tests/e2023_invalid_char_at.yx:2:3
+  |
+2 |   @
+  |   ^
+
+1 error(s). Nothing was generated.

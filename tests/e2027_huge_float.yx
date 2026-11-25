@@ -1,0 +1,4 @@
+fn main() {
+  let x = 1e999999
+  print(x)
+}

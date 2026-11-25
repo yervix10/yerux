@@ -1,0 +1,7 @@
+error: number too large (the largest is 18446744073709551615, written as UInt64)
+ --> tests/e2026_huge_int.yx:2:11
+  |
+2 |   let x = 999999999999999999999999999999999999999999999999
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

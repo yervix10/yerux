@@ -1,0 +1,7 @@
+error: function 'main' is defined twice
+ --> tests/e2036_duplicate_function.yx:5:4
+  |
+5 | fn main() {
+  |    ^^^^
+
+1 error(s). Nothing was generated.

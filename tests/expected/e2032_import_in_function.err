@@ -1,0 +1,8 @@
+error: `import` must come before every other declaration
+ --> tests/e2032_import_in_function.yx:2:3
+  |
+2 |   import std.fs
+  |   ^^^^^^
+  = help: move all `import` lines to the top of the file
+
+1 error(s). Nothing was generated.

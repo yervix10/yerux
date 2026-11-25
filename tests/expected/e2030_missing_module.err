@@ -1,0 +1,9 @@
+error: cannot find module 'no.such.module'
+ --> tests/e2030_missing_module.yx:1:1
+  |
+1 | import no.such.module
+  | ^^^^^^^^^^^^^^^^^^^^^
+  = looked for tests/no/such/module.yx
+  = help: `import no.such.module` loads no/such/module.yx from the folder of the file you compile (tests); create it, or fix the name
+
+1 error(s). Nothing was generated.
