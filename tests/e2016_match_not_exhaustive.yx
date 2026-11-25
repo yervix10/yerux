@@ -1,0 +1,11 @@
+enum Light { Red, Green }
+
+fn go(l: Light) -> Bool {
+  match l {
+    Green => { return true }
+  }
+}
+
+fn main() {
+  print(go(Light.Green))
+}

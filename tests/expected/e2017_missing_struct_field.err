@@ -1,0 +1,7 @@
+error: missing field(s) in Point: y
+ --> tests/e2017_missing_struct_field.yx:4:11
+  |
+4 |   let p = Point { x: 1 }
+  |           ^^^^^^^^^^^^^^
+
+1 error(s). Nothing was generated.

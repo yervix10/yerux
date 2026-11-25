@@ -1,0 +1,8 @@
+error: cannot loop over a value of type Int
+ --> tests/e2018_for_over_int.yx:2:12
+  |
+2 |   for i in 10 {
+  |            ^^
+  = you can loop over a range (`for i in 0..n`), a List (`for x in list`, `for mut x in list`, `for x in move list`) or the characters of a String (`for c in s.chars()`); a type with `fn next(mut self) -> Option<T>` is an iterator and works too
+
+1 error(s). Nothing was generated.

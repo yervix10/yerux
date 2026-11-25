@@ -1,0 +1,7 @@
+error: expected '{'
+ --> tests/e2019_assign_in_if.yx:3:8
+  |
+3 |   if x = 2 {
+  |        ^
+
+1 error(s). Nothing was generated.

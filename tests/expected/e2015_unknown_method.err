@@ -1,0 +1,8 @@
+error: type Text has no method 'shout'
+ --> tests/e2015_unknown_method.yx:3:3
+  |
+3 |   name.shout()
+  |   ^^^^^^^^^^^^
+  = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+
+1 error(s). Nothing was generated.

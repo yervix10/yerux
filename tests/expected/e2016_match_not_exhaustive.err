@@ -1,0 +1,8 @@
+error: `match` is not exhaustive: missing Red
+ --> tests/e2016_match_not_exhaustive.yx:4:3
+  |
+4 |   match l {
+  |   ^^^^^
+  = help: add the missing arms, or a catch-all arm `_ => { }`
+
+1 error(s). Nothing was generated.

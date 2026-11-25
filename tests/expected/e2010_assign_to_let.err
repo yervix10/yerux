@@ -1,0 +1,8 @@
+error: cannot reassign 'count': it was declared with `let` (immutable)
+ --> tests/e2010_assign_to_let.yx:3:3
+  |
+3 |   count = 2
+  |   ^^^^^
+  = help: declare it with `var`
+
+1 error(s). Nothing was generated.
