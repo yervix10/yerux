@@ -1,0 +1,246 @@
+// httprouter: the core of an HTTP/1.1 server without sockets. Raw request texts are parsed (request line, headers,
+// Content-Length body), matched against a route table with path parameters, and answered by handlers; query strings
+// are percent-decoded, JSON bodies parsed with std.json, responses rendered by std.http.server.
+// Errors: malformed or short request 400, body over MAX_BODY 413, unknown path 404, wrong method 405 with Allow.
+import std.http.server
+import std.json
+import std.text
+
+const MAX_BODY = 64
+
+pub enum Method { Get, Post, Delete }
+
+pub struct Request { method: Method, path: String, query: String, body: String }
+
+// A handler answers one matched request; `params` holds the captured path parameters.
+pub trait Handler {
+  fn handle(view self, req: view Request, params: view List<(String, String)>) -> server.Response
+}
+
+pub struct Route { method: Method, pattern: String, handler: Box<dyn Handler> }
+
+pub enum Found { Hit(Int, List<(String, String)>), Missing, Wrong(String) }
+
+fn method_of(token: view String) -> Option<Method> {
+  if token.eq("GET") { return Some(Method.Get) }
+  if token.eq("POST") { return Some(Method.Post) }
+  if token.eq("DELETE") { return Some(Method.Delete) }
+  return None
+}
+
+fn method_name(m: view Method) -> Text {
+  match m {
+    Get => { return "GET" }
+    Post => { return "POST" }
+    Delete => { return "DELETE" }
+  }
+}
+
+// Parses one request text; Err carries the status code to answer with.
+fn parse(raw: view String) -> Result<Request, Int> {
+  let end = raw.find("\r\n\r\n")
+  if end < 0 { return Err(400) }
+  let lines = raw.slice(0, end).split("\r\n")
+  let start = lines.at(0).split(" ")
+  if start.len() != 3 || !start.at(2).eq("HTTP/1.1") || !start.at(1).starts_with("/") { return Err(400) }
+  let method = ok_or(method_of(start.at(0)), 400)?
+  let target = start.at(1)
+  let qmark = target.find("?")
+  let path = if qmark < 0 { String.from(target) } else { target.slice(0, qmark) }
+  let query = if qmark < 0 { String.new() } else { target.slice(qmark + 1, target.len()) }
+  var headers = List<(String, String)>.new()
+  for i in 1..lines.len() {
+    let colon = lines.at(i).find(":")
+    if colon <= 0 { return Err(400) }
+    headers.push((lines.at(i).slice(0, colon).to_lower(), lines.at(i).slice(colon + 1, lines.at(i).len()).trim()))
+  }
+  var want = 0
+  for i in 0..headers.len() {
+    if headers.at(i).0.eq("content-length") { want = text.parse_int(headers.at(i).1).unwrap_or(-1) }
+  }
+  if want < 0 { return Err(400) }
+  if want > MAX_BODY { return Err(413) }
+  let rest = end + 4
+  if raw.len() - rest != want { return Err(400) }
+  var body = String.new()
+  body.push_slice(raw, rest, raw.len())
+  return Ok(Request { method: method, path: move path, query: move query, body: move body })
+}
+
+// The percent-decoded value of parameter `name` in a query string such as `page=2&q=x`.
+fn query_value(query: view String, name: view String) -> Option<String> {
+  let pairs = query.split("&")
+  for i in 0..pairs.len() {
+    let eq = pairs.at(i).find("=")
+    if eq >= 0 && pairs.at(i).slice(0, eq).eq(name) {
+      return server.url_decode(pairs.at(i).slice(eq + 1, pairs.at(i).len()), true)
+    }
+  }
+  return None
+}
+
+// Matches "/users/:id/tasks" against a path; the captured segments come back as (name, value) pairs.
+fn match_path(pattern: view String, path: view String) -> Option<List<(String, String)>> {
+  let want = pattern.split("/")
+  let got = path.split("/")
+  if want.len() != got.len() { return None }
+  var params = List<(String, String)>.new()
+  for i in 0..want.len() {
+    if want.at(i).starts_with(":") {
+      params.push((want.at(i).slice(1, want.at(i).len()), String.from(got.at(i))))
+    } else if !want.at(i).eq(got.at(i)) {
+      return None
+    }
+  }
+  return Some(move params)
+}
+
+fn param(params: view List<(String, String)>, name: view String) -> String {
+  for i in 0..params.len() {
+    if params.at(i).0.eq(name) { return String.from(params.at(i).1) }
+  }
+  return String.new()
+}
+
+fn route(routes: view List<Route>, req: view Request) -> Found {
+  var allow = String.new()
+  for i in 0..routes.len() {
+    match match_path(routes.at(i).pattern, req.path) {
+      Some(params) => {
+        if method_name(routes.at(i).method).eq(method_name(req.method)) { return Found.Hit(i, move params) }
+        if !allow.is_empty() { allow.push_str(", ") }
+        allow.push_str(method_name(routes.at(i).method))
+      }
+      None => {}
+    }
+  }
+  if allow.is_empty() { return Found.Missing }
+  return Found.Wrong(move allow)
+}
+
+fn failure(status: Int) -> server.Response {
+  return server.text(status, "{server.reason(status)}\n")
+}
+
+fn answer(routes: view List<Route>, raw: view String) -> server.Response {
+  let req = match parse(raw) { Ok(r) => { move r } Err(status) => { return failure(status) } }
+  match route(routes, req) {
+    Hit(i, params) => { return routes.at(i).handler.handle(req, params) }
+    Missing => { return failure(404) }
+    Wrong(allow) => {
+      var r = failure(405)
+      server.add_header(r, "Allow", allow)
+      return r
+    }
+  }
+}
+
+// GET /users/:id/tasks?page=N&q=text: two tasks per page, filtered by the decoded q.
+pub struct ListTasks { per_page: Int }
+
+impl Handler for ListTasks {
+  fn handle(view self, req: view Request, params: view List<(String, String)>) -> server.Response {
+    let page = text.parse_int(query_value(req.query, "page").unwrap_or(String.from("1"))).unwrap_or(0)
+    if page < 1 { return server.text(400, "page must be a positive number\n") }
+    let q = query_value(req.query, "q").unwrap_or(String.new())
+    var items = List<json.Value>.new()
+    var matched = 0
+    for t in ["write spec", "review pr", "ship release", "fix bug"] {
+      let title = String.from(t)
+      if !q.is_empty() && !title.contains(q) { continue }
+      matched = matched + 1
+      if matched > (page - 1) * self.per_page && matched <= page * self.per_page {
+        items.push(json.Value.Str(move title))
+      }
+    }
+    var members = List<json.Member>.new()
+    members.push(json.Member { key: "user", value: json.Value.Str(param(params, "id")) })
+    members.push(json.Member { key: "page", value: json.Value.Int(page) })
+    members.push(json.Member { key: "q", value: json.Value.Str(move q) })
+    members.push(json.Member { key: "total", value: json.Value.Int(matched) })
+    members.push(json.Member { key: "tasks", value: json.Value.Arr(move items) })
+    return server.json(200, json.to_string(json.Value.Obj(move members)))
+  }
+}
+
+// POST /users/:id/tasks with {"title": "...", "priority": N}
+pub struct CreateTask { max_priority: Int }
+
+impl Handler for CreateTask {
+  fn handle(view self, req: view Request, params: view List<(String, String)>) -> server.Response {
+    let doc = match json.parse(req.body) {
+      Ok(d) => { move d }
+      Err(e) => { return server.text(400, "invalid json at byte {e.offset}: {e.message}\n") }
+    }
+    match doc {
+      Obj(members) => { return create(param(params, "id"), members, self.max_priority) }
+      _ => { return server.text(400, "body must be an object\n") }
+    }
+  }
+}
+
+fn create(user: String, members: view List<json.Member>, max_priority: Int) -> server.Response {
+  let t = json.find(members, "title")
+  let p = json.find(members, "priority")
+  if t < 0 || p < 0 { return server.text(400, "title and priority are required\n") }
+  let title = match members.at(t).value {
+    Str(s) => { String.from(s) }
+    _ => { return server.text(400, "title must be a string\n") }
+  }
+  let priority = match members.at(p).value {
+    Int(n) => { n }
+    _ => { return server.text(400, "priority must be an integer\n") }
+  }
+  if priority < 1 || priority > max_priority { return server.text(400, "priority must be 1..{max_priority}\n") }
+  var obj = List<json.Member>.new()
+  obj.push(json.Member { key: "user", value: json.Value.Str(move user) })
+  obj.push(json.Member { key: "title", value: json.Value.Str(move title) })
+  obj.push(json.Member { key: "priority", value: json.Value.Int(priority) })
+  return server.json(201, json.to_string(json.Value.Obj(move obj)))
+}
+
+// DELETE /users/:id/tasks/:task
+pub struct DeleteTask { status: Int }
+
+impl Handler for DeleteTask {
+  fn handle(view self, req: view Request, params: view List<(String, String)>) -> server.Response {
+    return server.empty(self.status)
+  }
+}
+
+fn main() {
+  var routes = List<Route>.new()
+  routes.push(Route { method: Method.Get, pattern: "/users/:id/tasks", handler: Box.new(ListTasks { per_page: 2 }) })
+  routes.push(Route { method: Method.Post, pattern: "/users/:id/tasks", handler: Box.new(CreateTask { max_priority: 3 }) })
+  routes.push(Route { method: Method.Delete, pattern: "/users/:id/tasks/:task", handler: Box.new(DeleteTask { status: 204 }) })
+
+  let requests = [
+    "GET /users/7/tasks?page=1&q=re HTTP/1.1\r\nHost: tasks.local\r\n\r\n",
+    "GET /users/7/tasks?q=sh%69p&page=1 HTTP/1.1\r\nHost: tasks.local\r\n\r\n",
+    "GET /users/7/tasks?page=x HTTP/1.1\r\nHost: tasks.local\r\n\r\n",
+    "POST /users/7/tasks HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 35\r\n\r\n{{\"title\": \"ship it\", \"priority\": 2}}",
+    "POST /users/7/tasks HTTP/1.1\r\nContent-Length: 16\r\n\r\n{{\"title\": \"ship\"",
+    "POST /users/7/tasks HTTP/1.1\r\nContent-Length: 35\r\n\r\n{{\"title\": \"ship it\", \"priority\": 9}}",
+    "POST /users/7/tasks HTTP/1.1\r\nContent-Length: 100\r\n\r\n",
+    "DELETE /users/7/tasks/3 HTTP/1.1\r\nHost: tasks.local\r\n\r\n",
+    "GET /users/7/tasks/3 HTTP/1.1\r\nHost: tasks.local\r\n\r\n",
+    "GET /nope HTTP/1.1\r\nHost: tasks.local\r\n\r\n",
+    "PUT /users/7/tasks HTTP/1.1\r\nHost: tasks.local\r\n\r\n",
+    "GET /users/7/tasks\r\n\r\n",
+  ]
+  var statuses = Map<Int, Int>.new()
+  for n in 0..requests.len() {
+    let raw = String.from(requests[n])
+    let resp = answer(routes, raw)
+    let head = raw.split("\r\n")
+    print("== request {n + 1}: {head.at(0)}")
+    print(server.render(resp, false, resp.status >= 400).replace("\r", "\\r").replace("\n", "\\n"))
+    statuses.insert(resp.status, statuses.get_or(resp.status, 0) + 1)
+  }
+  var codes = statuses.keys.copy()
+  codes.sort()
+  print("== status counts")
+  for i in 0..codes.len() {
+    print("{codes.at(i)}: {statuses.get(codes.at(i))}")
+  }
+}

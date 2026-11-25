@@ -1,0 +1,117 @@
+> add|Write parser|3|lang,core
+added #3
+> add|Fix lexer bug|2|lang
+added #4
+> add|Buy coffee beans|1|home
+added #5
+> add||1|home
+error: add: the title is empty
+> add|Plan trip|two|home
+error: add: priority must be a number, got "two"
+> start|1
+error: task #1 is not todo
+> start|1
+error: task #1 is not todo
+> start|3
+started #3
+> done|1
+finished #1
+> done|1
+error: task #1 is already done
+> tag|2|urgent
+tagged #2 urgent
+> tag|2|urgent
+error: task #2 already has tag urgent
+> list|all
+#1 done p2 Set up CI [infra]
+#2 todo p1 Draft changelog [urgent]
+#3 doing p3 Write parser [lang, core]
+#4 todo p2 Fix lexer bug [lang]
+#5 todo p1 Buy coffee beans [home]
+> list|tag:lang
+#3 doing p3 Write parser [lang, core]
+#4 todo p2 Fix lexer bug [lang]
+> list|status:doing
+#3 doing p3 Write parser [lang, core]
+> remove|4
+removed #4
+> done|9
+error: no task with id 9
+> done|x
+error: not a task id: "x"
+> frobnicate|1
+error: unknown command "frobnicate"
+> list|color:red
+error: unknown filter "color:red"
+> add|Write docs|2|
+added #6
+> tag|5|lang
+tagged #5 lang
+> report
+status todo: 3
+status doing: 1
+status done: 1
+tag core: 1
+tag home: 1
+tag infra: 1
+tag lang: 2
+tag urgent: 1
+{
+  "next_id": 7,
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Set up CI",
+      "priority": 2,
+      "status": "done",
+      "tags": [
+        "infra"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Draft changelog",
+      "priority": 1,
+      "status": "todo",
+      "tags": [
+        "urgent"
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Write parser",
+      "priority": 3,
+      "status": "doing",
+      "tags": [
+        "lang",
+        "core"
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Buy coffee beans",
+      "priority": 1,
+      "status": "todo",
+      "tags": [
+        "home",
+        "lang"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Write docs",
+      "priority": 2,
+      "status": "todo",
+      "tags": []
+    }
+  ]
+}
+report:
+status todo: 3
+status doing: 1
+status done: 1
+tag core: 1
+tag home: 1
+tag infra: 1
+tag lang: 2
+tag urgent: 1

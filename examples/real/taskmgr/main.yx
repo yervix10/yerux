@@ -1,0 +1,250 @@
+// taskmgr: tasks kept in a JSON document (std.json), changed by an embedded command script. Commands:
+//   add|TITLE|PRIORITY|TAGS  start|ID  done|ID  remove|ID  tag|ID|TAG  list|all|tag:NAME|status:NAME  report
+// A bad command, argument or unknown id prints "error: ..." and the script goes on. Then the final store as pretty
+// JSON and the report. Exit 0; an unreadable embedded store exits 1.
+import std.io
+import std.json
+import std.text
+
+enum Status { Todo, Doing, Done }
+
+struct Task { id: Int, title: String, priority: Int, status: Status, tags: List<String> }
+
+struct Store { next_id: Int, tasks: List<Task> }
+
+// One line: a raw string literal may not span lines.
+fn embedded_store() -> String {
+  return String.from(r#"{"next_id": 3, "tasks": [{"id": 1, "title": "Set up CI", "priority": 2, "status": "doing", "tags": ["infra"]}, {"id": 2, "title": "Draft changelog", "priority": 1, "status": "todo", "tags": []}]}"#)
+}
+
+fn status_name(s: Status) -> String {
+  match s { Status.Todo => { return String.from("todo") } Status.Doing => { return String.from("doing") } Status.Done => { return String.from("done") } }
+}
+
+fn parse_status(s: view String) -> Result<Status, String> {
+  for st in [Status.Todo, Status.Doing, Status.Done] {
+    if status_name(st).eq(s) { return Ok(st) }
+  }
+  return Err("unknown status \"{s}\"")
+}
+
+// How many items satisfy `pred`.
+fn count<T>(items: view List<T>, pred: view fn(view T) -> Bool) -> Int {
+  var n = 0
+  for i in 0..items.len() { if pred(items.at(i)) { n = n + 1 } }
+  return n
+}
+
+// The member `key`, when it exists and `pick` accepts its value.
+fn field<T>(m: view List<json.Member>, key: view String, pick: view fn(view json.Value) -> Option<T>) -> Result<T, String> {
+  let i = json.find(m, key)
+  if i >= 0 {
+    match pick(m.at(i).value) {
+      Some(v) => { return Ok(move v) }
+      None => {}
+    }
+  }
+  return Err("\"{key}\" is missing or has the wrong type")
+}
+
+fn as_int(v: view json.Value) -> Option<Int> { match v { json.Value.Int(n) => { return Some(n) } _ => { return None } } }
+
+fn as_str(v: view json.Value) -> Option<String> { match v { json.Value.Str(s) => { return Some(String.from(s)) } _ => { return None } } }
+
+fn as_list(v: view json.Value) -> Option<List<json.Value>> { match v { json.Value.Arr(items) => { return Some(items.clone()) } _ => { return None } } }
+fn as_tags(v: view json.Value) -> Option<List<String>> {
+  match v {
+    json.Value.Arr(items) => {
+      var out = List<String>.new()
+      for it in items { out.push(as_str(it)?) }
+      return Some(move out)
+    }
+    _ => { return None }
+  }
+}
+
+fn task_from_json(v: view json.Value) -> Result<Task, String> {
+  match v {
+    json.Value.Obj(m) => {
+      return Ok(Task {
+        id: field(m, "id", as_int)?,
+        title: field(m, "title", as_str)?,
+        priority: field(m, "priority", as_int)?,
+        status: parse_status(field(m, "status", as_str)?)?,
+        tags: field(m, "tags", as_tags)?,
+      })
+    }
+    _ => { return Err("a task must be an object") }
+  }
+}
+
+fn load(text: view String) -> Result<Store, String> {
+  let root = match json.parse(text) {
+    Ok(v) => move v
+    Err(e) => { return Err("store: {e.message} at byte {e.offset}") }
+  }
+  match root {
+    json.Value.Obj(m) => {
+      var tasks = List<Task>.new()
+      for it in field(m, "tasks", as_list)? { tasks.push(task_from_json(it)?) }
+      return Ok(Store { next_id: field(m, "next_id", as_int)?, tasks: move tasks })
+    }
+    _ => { return Err("store must be an object") }
+  }
+}
+
+fn member(key: Text, value: json.Value) -> json.Member { return json.Member { key: String.from(key), value: move value } }
+
+fn store_json(s: view Store) -> json.Value {
+  var tasks = List<json.Value>.new()
+  for t in s.tasks {
+    var tags = List<json.Value>.new()
+    for g in t.tags { tags.push(json.Value.Str(String.from(g))) }
+    var m = List<json.Member>.new()
+    m.push(member("id", json.Value.Int(t.id)))
+    m.push(member("title", json.Value.Str(String.from(t.title))))
+    m.push(member("priority", json.Value.Int(t.priority)))
+    m.push(member("status", json.Value.Str(status_name(t.status))))
+    m.push(member("tags", json.Value.Arr(move tags)))
+    tasks.push(json.Value.Obj(move m))
+  }
+  var top = List<json.Member>.new()
+  top.push(member("next_id", json.Value.Int(s.next_id)))
+  top.push(member("tasks", json.Value.Arr(move tasks)))
+  return json.Value.Obj(move top)
+}
+
+// The position of the task whose id is `id_text`.
+fn index_of(s: view Store, id_text: view String) -> Result<Int, String> {
+  let id = match text.parse_int(id_text) {
+    Ok(n) => n
+    Err(_) => { return Err("not a task id: \"{id_text}\"") }
+  }
+  for i in 0..s.tasks.len() { if s.tasks.at(i).id == id { return Ok(i) } }
+  return Err("no task with id {id}")
+}
+
+// A comma list; blank items are dropped.
+fn tag_list(s: view String) -> List<String> {
+  var out = List<String>.new()
+  for part in s.split(",") { if !part.trim().is_empty() { out.push(part.trim()) } }
+  return out
+}
+
+fn add(s: mut Store, f: view List<String>) -> Result<String, String> {
+  if f.len() != 4 { return Err("add takes title|priority|tags") }
+  let title = f.at(1).trim()
+  if title.is_empty() { return Err("add: the title is empty") }
+  let p = match text.parse_int(f.at(2)) {
+    Ok(n) => n
+    Err(_) => { return Err("add: priority must be a number, got \"{f.at(2)}\"") }
+  }
+  if p < 1 || p > 3 { return Err("add: priority must be 1..3, got {p}") }
+  let id = s.next_id
+  s.next_id = id + 1
+  s.tasks.push(Task { id: id, title: move title, priority: p, status: Status.Todo, tags: tag_list(f.at(3)) })
+  return Ok("added #{id}\n")
+}
+
+// `all`, `tag:NAME` or `status:NAME`; an unknown filter is an error before anything is printed.
+fn list(s: view Store, f: view List<String>) -> Result<String, String> {
+  if f.len() != 2 { return Err("list takes a filter") }
+  let filter = f.at(1)
+  let by_status = filter.starts_with("status:")
+  let by_tag = filter.starts_with("tag:")
+  let name = if by_status { filter.slice(7, filter.len()) } else if by_tag { filter.slice(4, filter.len()) } else { String.new() }
+  let known = filter.eq("all") || (by_status && parse_status(name).is_ok()) || (by_tag && !name.is_empty())
+  if !known { return Err("unknown filter \"{filter}\"") }
+  var out = String.new()
+  for t in s.tasks {
+    let keep = if filter.eq("all") { true } else if by_status { status_name(t.status).eq(name) } else { t.tags.contains(name) }
+    if keep {
+      let tags = t.tags.join(", ")
+      let st = status_name(t.status)
+      out.push_str("#{t.id} {st} p{t.priority} {t.title} [{tags}]\n")
+    }
+  }
+  return Ok(move out)
+}
+
+// remove, tag, start and done: the commands that act on one task.
+fn change(s: mut Store, verb: view String, f: view List<String>) -> Result<String, String> {
+  let want = if verb.eq("tag") { 3 } else { 2 }
+  if f.len() != want { return Err("{verb} takes {want - 1} argument(s)") }
+  let i = index_of(s, f.at(1))?
+  let id = s.tasks.at(i).id
+  let st = s.tasks.at(i).status
+  if verb.eq("remove") {
+    let _ = s.tasks.remove(i)
+    return Ok("removed #{id}\n")
+  }
+  if verb.eq("tag") {
+    let tag = f.at(2).trim()
+    if s.tasks.at(i).tags.contains(tag) { return Err("task #{id} already has tag {tag}") }
+    s.tasks.at(i).tags.push(String.from(tag))
+    return Ok("tagged #{id} {tag}\n")
+  }
+  if verb.eq("start") {
+    if st != Status.Todo { return Err("task #{id} is not todo") }
+    s.tasks.at(i).status = Status.Doing
+    return Ok("started #{id}\n")
+  }
+  if st == Status.Done { return Err("task #{id} is already done") }
+  s.tasks.at(i).status = Status.Done
+  return Ok("finished #{id}\n")
+}
+
+fn report(s: view Store) -> String {
+  var out = String.new()
+  for st in [Status.Todo, Status.Doing, Status.Done] {
+    let n = count(s.tasks, |t: view Task| t.status == st)
+    out.push_str("status {status_name(st)}: {n}\n")
+  }
+  var tags = Map<String, Int>.new()
+  for t in s.tasks {
+    for g in t.tags { tags.insert(String.from(g), tags.get_or(g, 0) + 1) }
+  }
+  var names = List<String>.new()
+  for i in 0..tags.len() { names.push(String.from(tags.keys.at(i))) }
+  names.sort()
+  for name in names { out.push_str("tag {name}: {tags.get(name)}\n") }
+  return out
+}
+
+fn apply(s: mut Store, f: view List<String>) -> Result<String, String> {
+  let verb = f.at(0)
+  if verb.eq("add") { return add(s, f) }
+  if verb.eq("list") { return list(s, f) }
+  if verb.eq("report") { return Ok(report(s)) }
+  if verb.eq("start") || verb.eq("done") || verb.eq("remove") || verb.eq("tag") { return change(s, verb, f) }
+  return Err("unknown command \"{verb}\"")
+}
+
+fn main() {
+  var store = Store { next_id: 1, tasks: List<Task>.new() }
+  match load(embedded_store()) {
+    Ok(s) => { store = move s }
+    Err(e) => {
+      io.eprintln("taskmgr: {e}")
+      io.exit(1)
+    }
+  }
+  let script = [
+    "add|Write parser|3|lang,core", "add|Fix lexer bug|2|lang", "add|Buy coffee beans|1|home",
+    "add||1|home", "add|Plan trip|two|home", "start|1", "start|1", "start|3", "done|1", "done|1",
+    "tag|2|urgent", "tag|2|urgent", "list|all", "list|tag:lang", "list|status:doing", "remove|4",
+    "done|9", "done|x", "frobnicate|1", "list|color:red", "add|Write docs|2|", "tag|5|lang", "report",
+  ]
+  var out = String.new()
+  for line in script {
+    out.push_str("> {line}\n")
+    match apply(store, String.from(line).split("|")) {
+      Ok(msg) => { out.push_str(msg) }
+      Err(e) => { out.push_str("error: {e}\n") }
+    }
+  }
+  out.push_str(json.to_pretty(store_json(store)))
+  out.push_str("\nreport:\n")
+  out.push_str(report(store))
+  let _ = io.write_stdout(out)
+}

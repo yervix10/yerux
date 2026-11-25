@@ -1,0 +1,25 @@
+ledger: 11 valid, 6 rejected
+  rejected line 10: bad amount "-40"
+  rejected line 11: bad date "2026-13-01"
+  rejected line 12: unknown account "cash"
+  rejected line 14: bad amount "-3.333"
+  rejected line 15: memo is required
+  rejected line 16: expected 4 fields
+
+balances
+  assets:checking      -1,200.00
+  expenses:food          -180.55
+  expenses:rent         1,200.00
+  expenses:transport      -76.40
+  income:salary         4,900.00
+  net total 4,643.05
+
+outflow by month
+  2026-01     1,311.70
+  2026-02       103.85
+  2026-03        41.40
+
+budgets
+  expenses:food      used 180.55 left -30.55 OVER
+  expenses:transport used 76.40 left -16.40 OVER
+  error: no entries for expenses:fun

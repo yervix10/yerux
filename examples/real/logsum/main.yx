@@ -1,0 +1,165 @@
+// logsum: summarizes an HTTP access log: status counts, the busiest paths and the rejected records.
+//
+//   logsum   prints the report for the built-in log (400 records generated from a fixed seed, a few damaged on purpose)
+//
+// A record is "METHOD PATH STATUS BYTES". A malformed record is listed on the report with its line number and does
+// not stop the run. Exit status: 0 always; the report itself lists the rejects.
+import std.fmt
+
+struct Hit {
+  path: String,
+  status: Int,
+  bytes: Int,
+}
+
+struct Stat {
+  path: String,
+  count: Int,
+  bytes: Int,
+}
+
+fn lcg(s: Int) -> Int {
+  return (s * 1103515245 + 12345) % 2147483648
+}
+
+// The built-in log: `count` records, with a few damaged on purpose.
+fn synth(count: Int) -> List<String> {
+  let methods = ["GET", "GET", "GET", "POST", "PUT", "DELETE"]
+  let paths = ["/", "/index.html", "/api/items", "/api/items/42", "/static/app.js", "/login", "/logout", "/favicon.ico"]
+  let statuses = [200, 200, 200, 204, 301, 404, 500]
+  var out = List<String>.new()
+  var seed = 20251125
+  for i in 0..count {
+    seed = lcg(seed)
+    let m = methods[(seed / 65536) % methods.len()]
+    seed = lcg(seed)
+    let p = paths[(seed / 65536) % paths.len()]
+    seed = lcg(seed)
+    let s = statuses[(seed / 65536) % statuses.len()]
+    seed = lcg(seed)
+    let b = (seed / 65536) % 5000
+    if i == 40 {
+      out.push("GET /broken")
+    } else if i == 120 {
+      out.push("FETCH /x 200 10")
+    } else if i == 200 {
+      out.push("GET /x 2OO 5")
+    } else if i == 311 {
+      out.push("POST /api/items")
+    } else {
+      out.push("{m} {p} {s} {b}")
+    }
+  }
+  return out
+}
+
+fn parse_record(line: view String) -> Result<Hit, String> {
+  let parts = line.split(" ")
+  if parts.len() != 4 {
+    return Err("expected 4 fields, found {parts.len()}")
+  }
+  let method = parts.at(0)
+  if !(method.eq("GET") || method.eq("POST") || method.eq("PUT") || method.eq("DELETE")) {
+    return Err("unknown method '{method}'")
+  }
+  var status = 0
+  if !parts.at(2).parse_int(status) {
+    return Err("bad status '{parts.at(2)}'")
+  }
+  var bytes = 0
+  if !parts.at(3).parse_int(bytes) {
+    return Err("bad byte count '{parts.at(3)}'")
+  }
+  return Ok(Hit { path: String.from(parts.at(1)), status: status, bytes: bytes })
+}
+
+// Adds one request to the per-path statistics; `index` maps a path to its position in `stats`.
+fn record(stats: mut List<Stat>, index: mut Map<String, Int>, path: view String, bytes: Int) {
+  let e = index.find(path)
+  if e < 0 {
+    index.insert(String.from(path), stats.len())
+    stats.push(Stat { path: String.from(path), count: 1, bytes: bytes })
+  } else {
+    stats.at(e).count = stats.at(e).count + 1
+    stats.at(e).bytes = stats.at(e).bytes + bytes
+  }
+}
+
+// Busier first: more bytes, then the path in byte order.
+fn busier(a: view Stat, b: view Stat) -> Bool {
+  if a.bytes != b.bytes {
+    return a.bytes > b.bytes
+  }
+  return a.path < b.path
+}
+
+// Insertion sort; the list is short, and it keeps the comparison in one place.
+fn sort_stats(stats: mut List<Stat>) {
+  for i in 1..stats.len() {
+    var j = i
+    while j > 0 && busier(stats.at(j), stats.at(j - 1)) {
+      stats.swap(j, j - 1)
+      j = j - 1
+    }
+  }
+}
+
+fn main() {
+  let log = synth(400)
+  var stats = List<Stat>.new()
+  var index = Map<String, Int>.new()
+  var by_status = Map<Int, Int>.new()
+  var rejects = List<String>.new()
+  var parsed = 0
+  var total = 0
+  for n in 0..log.len() {
+    match parse_record(log.at(n)) {
+      Ok(h) => {
+        parsed = parsed + 1
+        total = total + h.bytes
+        let c = by_status.get_or(h.status, 0)
+        by_status.insert(h.status, c + 1)
+        record(stats, index, h.path, h.bytes)
+      }
+      Err(e) => {
+        rejects.push("  line {n + 1}: {e}")
+      }
+    }
+  }
+
+  print("logsum: {log.len()} records, {parsed} parsed, {rejects.len()} rejected")
+  print("")
+  print("status  count  share  histogram")
+  var codes = List<Int>.new()
+  for i in 0..by_status.len() {
+    codes.push(by_status.keys.at(i))
+  }
+  codes.sort()
+  for i in 0..codes.len() {
+    let c = codes.at(i)
+    let n = by_status.get(c)
+    let code = fmt.pad_left("{c}", 6, ' ')
+    let cnt = fmt.pad_left("{n}", 6, ' ')
+    let pct = fmt.pad_left("{n * 100 / parsed}%", 6, ' ')
+    let bar = String.from("#").repeat(n * 30 / parsed)
+    print("{code}{cnt}{pct}  {bar}")
+  }
+
+  sort_stats(stats)
+  print("")
+  print("busiest paths by bytes:")
+  let top = if stats.len() < 5 { stats.len() } else { 5 }
+  for i in 0..top {
+    let name = fmt.pad_right(stats.at(i).path, 18, ' ')
+    let hits = fmt.pad_left("{stats.at(i).count}", 6, ' ')
+    let size = fmt.pad_left("{stats.at(i).bytes}", 9, ' ')
+    print("  {name}{hits}{size}")
+  }
+
+  print("")
+  print("total bytes: {total}, mean per request: {total / parsed}")
+  print("rejected: {rejects.len()}")
+  for i in 0..rejects.len() {
+    print(rejects.at(i))
+  }
+}

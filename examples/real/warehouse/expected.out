@@ -1,0 +1,68 @@
+warehouse: 30 days, 5 skus, backlog cap 6
+day 00  orders 3  filled 3  revenue 16.95  grams 5750  wasted 0  stock 82  backlog 0
+day 01  orders 3  filled 3  revenue 11.72  grams 8250  wasted 0  stock 73  backlog 0
+day 02  orders 2  filled 2  revenue 5.70  grams 6000  wasted 0  stock 67  backlog 0
+day 03  orders 4  filled 4  revenue 16.05  grams 6500  wasted 0  stock 58  backlog 0
+day 04  orders 4  filled 2  revenue 19.89  grams 2500  wasted 15  stock 36  backlog 2
+        waiting: #13 flour x5, #14 bread x5
+day 05  orders 4  filled 1  revenue 1.89  grams 1000  wasted 10  stock 25  backlog 5
+        waiting: #13 flour x5, #14 bread x5, #17 bread x4, #18 flour x2, #19 salad x6
+day 06  orders 3  filled 2  revenue 9.03  grams 7000  wasted 0  stock 18  backlog 6
+        waiting: #13 flour x5, #14 bread x5, #17 bread x4, #18 flour x2, #19 salad x6, #23 salad x5
+day 07  orders 3  filled 9  revenue 91.79  grams 19250  wasted 6  stock 64  backlog 0
+day 08  orders 3  filled 3  revenue 12.51  grams 5500  wasted 0  stock 57  backlog 0
+day 09  orders 2  filled 1  revenue 5.67  grams 3000  wasted 0  stock 54  backlog 1
+        waiting: #30 bread x5
+day 10  orders 3  filled 1  revenue 5.16  grams 4000  wasted 0  stock 50  backlog 3
+        waiting: #30 bread x5, #33 bread x5, #34 bread x6
+day 11  orders 2  filled 1  revenue 6.20  grams 500  wasted 2  stock 46  backlog 4
+        waiting: #30 bread x5, #33 bread x5, #34 bread x6, #36 bread x6
+day 12  orders 4  filled 3  revenue 16.02  grams 14000  wasted 3  stock 29  backlog 5
+        waiting: #30 bread x5, #33 bread x5, #34 bread x6, #36 bread x6, #38 flour x6
+day 13  orders 3  filled 1  revenue 1.29  grams 1000  wasted 0  stock 28  backlog 6
+        waiting: #33 bread x5, #34 bread x6, #36 bread x6, #38 flour x6, #42 bread x1, #43 milk x6
+day 14  orders 2  filled 6  revenue 42.84  grams 18000  wasted 3  stock 91  backlog 0
+day 15  orders 4  filled 3  revenue 19.71  grams 15000  wasted 0  stock 76  backlog 1
+        waiting: #49 flour x6
+day 16  orders 2  filled 2  revenue 22.38  grams 3500  wasted 0  stock 68  backlog 1
+        waiting: #49 flour x6
+day 17  orders 4  filled 4  revenue 19.44  grams 11000  wasted 0  stock 56  backlog 1
+        waiting: #49 flour x6
+day 18  orders 2  filled 1  revenue 7.56  grams 4000  wasted 6  stock 46  backlog 2
+        waiting: #49 flour x6, #57 bread x4
+day 19  orders 3  filled 1  revenue 7.74  grams 6000  wasted 14  stock 26  backlog 3
+        waiting: #57 bread x4, #59 flour x5, #60 salad x3
+day 20  orders 4  filled 1  revenue 2.58  grams 2000  wasted 0  stock 24  backlog 6
+        waiting: #57 bread x4, #59 flour x5, #60 salad x3, #61 salad x3, #62 bread x6, #64 flour x2
+day 21  orders 4  filled 10  revenue 77.85  grams 23000  wasted 0  stock 77  backlog 0
+day 22  orders 3  filled 3  revenue 13.95  grams 11000  wasted 0  stock 66  backlog 0
+day 23  orders 4  filled 3  revenue 29.19  grams 3250  wasted 0  stock 56  backlog 1
+        waiting: #74 flour x5
+day 24  orders 2  filled 1  revenue 11.34  grams 6000  wasted 0  stock 50  backlog 2
+        waiting: #74 flour x5, #76 salad x6
+day 25  orders 4  filled 3  revenue 4.13  grams 3000  wasted 7  stock 40  backlog 3
+        waiting: #74 flour x5, #76 salad x6, #78 flour x6
+day 26  orders 2  filled 2  revenue 9.03  grams 7000  wasted 1  stock 32  backlog 3
+        waiting: #74 flour x5, #76 salad x6, #78 flour x6
+day 27  orders 3  filled 0  revenue 0.00  grams 0  wasted 0  stock 32  backlog 5
+        waiting: #76 salad x6, #78 flour x6, #84 salad x6, #85 flour x4, #86 milk x5
+day 28  orders 2  filled 6  revenue 49.52  grams 20250  wasted 4  stock 91  backlog 0
+day 29  orders 3  filled 2  revenue 6.72  grams 6000  wasted 0  stock 85  backlog 1
+        waiting: #91 flour x3
+
+totals
+  orders 91, filled 84, backordered 27, cancelled 6
+  revenue 543.85, restock cost 897.00
+  shipped 223250 g, wasted 71 units worth 177.07
+  on hand 85 units, still waiting 1
+
+PASS fresh line price
+PASS bulk line weight
+PASS money format
+PASS catalog lookup
+PASS backlog capacity
+PASS earliest expiry first
+PASS empty expired lot dropped
+PASS lot still sellable on last day
+PASS expired lot discarded
+PASS rng first draw
