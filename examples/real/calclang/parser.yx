@@ -1,0 +1,105 @@
+// The recursive-descent (precedence-climbing) parser of calclang, from tokens to the Box-based AST.
+// Grammar: expr := let N = e in e | if e then e else e | unary (OP unary)*   unary := - unary | INT | N | N(args) | (e)
+import lexer
+
+pub enum Expr { Num(Int, Int), Var(String, Int), Neg(Box<Expr>, Int), Bin(String, Box<Expr>, Box<Expr>, Int), Let(String, Box<Expr>, Box<Expr>, Int), If(Box<Expr>, Box<Expr>, Box<Expr>, Int), Call(String, List<Expr>, Int) }
+
+struct Parser { toks: List<lexer.Tok>, at: Int }
+
+// Binding power of a binary operator token, 0 when the token is not one.
+pub fn binop_prec(op: view String) -> Int {
+  if op.eq("||") { return 1 }
+  if op.eq("&&") { return 2 }
+  if op.eq("==") || op.eq("!=") || op.eq("<") || op.eq("<=") || op.eq(">") || op.eq(">=") { return 3 }
+  if op.eq("+") || op.eq("-") { return 4 }
+  if op.eq("*") || op.eq("/") || op.eq("%") { return 5 }
+  return 0
+}
+
+fn is_word(p: view Parser, s: view String) -> Bool { return p.toks.at(p.at).text.eq(s) }
+
+fn expect(p: mut Parser, s: view String) -> Result<Bool, lexer.Failure> {
+  if is_word(p, s) {
+    p.at = p.at + 1
+    return Ok(true)
+  }
+  let t = p.toks.at(p.at)
+  let found = if t.text.is_empty() { String.from("end of input") } else { String.from(t.text) }
+  return Err(lexer.fail(t.pos, lexer.CalcError.Syntax("expected '{s}', found '{found}'")))
+}
+
+fn parse_expr(p: mut Parser) -> Result<Expr, lexer.Failure> {
+  let pos = p.toks.at(p.at).pos
+  if is_word(p, "let") {
+    p.at = p.at + 1
+    let name = String.from(p.toks.at(p.at).text)
+    p.at = p.at + 1
+    expect(p, "=")?
+    let value = parse_expr(p)?
+    expect(p, "in")?
+    let body = parse_expr(p)?
+    return Ok(Expr.Let(move name, Box.new(move value), Box.new(move body), pos))
+  }
+  if is_word(p, "if") {
+    p.at = p.at + 1
+    let cond = parse_expr(p)?
+    expect(p, "then")?
+    let yes = parse_expr(p)?
+    expect(p, "else")?
+    let no = parse_expr(p)?
+    return Ok(Expr.If(Box.new(move cond), Box.new(move yes), Box.new(move no), pos))
+  }
+  return parse_bin(p, 1)
+}
+
+fn parse_bin(p: mut Parser, min: Int) -> Result<Expr, lexer.Failure> {
+  var left = parse_unary(p)?
+  while binop_prec(p.toks.at(p.at).text) >= min && binop_prec(p.toks.at(p.at).text) > 0 {
+    let op = String.from(p.toks.at(p.at).text)
+    let pos = p.toks.at(p.at).pos
+    let prec = binop_prec(op)
+    p.at = p.at + 1
+    let right = parse_bin(p, prec + 1)?
+    left = Expr.Bin(move op, Box.new(move left), Box.new(move right), pos)
+  }
+  return Ok(move left)
+}
+
+fn parse_unary(p: mut Parser) -> Result<Expr, lexer.Failure> {
+  let pos = p.toks.at(p.at).pos
+  let text = String.from(p.toks.at(p.at).text)
+  p.at = p.at + 1
+  if text.eq("-") { return Ok(Expr.Neg(Box.new(parse_unary(p)?), pos)) }
+  if text.eq("(") {
+    let inner = parse_expr(p)?
+    expect(p, ")")?
+    return Ok(move inner)
+  }
+  if text.is_empty() || !lexer.alnum(text.byte(0)) {
+    return Err(lexer.fail(pos, lexer.CalcError.Syntax("expected an expression, found '{text}'")))
+  }
+  if text.byte(0) >= 48 && text.byte(0) <= 57 {
+    var n = 0
+    if !text.parse_int(n) { return Err(lexer.fail(pos, lexer.CalcError.Syntax("bad integer '{text}'"))) }
+    return Ok(Expr.Num(n, pos))
+  }
+  if !is_word(p, "(") { return Ok(Expr.Var(move text, pos)) }
+  p.at = p.at + 1
+  var args = List<Expr>.new()
+  if !is_word(p, ")") {
+    args.push(parse_expr(p)?)
+    while is_word(p, ",") {
+      p.at = p.at + 1
+      args.push(parse_expr(p)?)
+    }
+  }
+  expect(p, ")")?
+  return Ok(Expr.Call(move text, move args, pos))
+}
+
+pub fn parse_source(src: view String) -> Result<Expr, lexer.Failure> {
+  var p = Parser { toks: lexer.tokenize(src)?, at: 0 }
+  let e = parse_expr(p)?
+  if !is_word(p, "") { return Err(lexer.fail(p.toks.at(p.at).pos, lexer.CalcError.Syntax("unexpected '{p.toks.at(p.at).text}' after the expression"))) }
+  return Ok(move e)
+}

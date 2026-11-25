@@ -1,0 +1,38 @@
+// The tokenizer of calclang and the error type shared by the stages. Positions are byte offsets into the program.
+
+pub struct Tok { text: String, pos: Int }
+
+pub enum CalcError { Syntax(String), UnknownVar(String), UnknownFn(String), Arity(String, Int, Int), DivZero, Overflow(String), Type(String) }
+
+pub struct Failure { pos: Int, err: CalcError }
+
+pub fn fail(pos: Int, err: CalcError) -> Failure { return Failure { pos: pos, err: move err } }
+
+pub fn alnum(c: Int) -> Bool { return (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95 }
+
+fn sym_len(src: view String, i: Int) -> Int {
+  for op in ["==", "!=", "<=", ">=", "&&", "||", "+", "-", "*", "/", "%", "<", ">", "(", ")", ",", "="] {
+    let s = String.from(op)
+    if i + s.len() <= src.len() && src.slice(i, i + s.len()).eq(s) { return s.len() }
+  }
+  return 0
+}
+
+pub fn tokenize(src: view String) -> Result<List<Tok>, Failure> {
+  var toks = List<Tok>.new()
+  var i = 0
+  while i < src.len() {
+    let c = src.byte(i)
+    var n = 1
+    if alnum(c) {
+      while i + n < src.len() && alnum(src.byte(i + n)) { n = n + 1 }
+    } else if c != 32 && c != 9 && c != 10 {
+      n = sym_len(src, i)
+      if n == 0 { return Err(fail(i, CalcError.Syntax("unexpected character '{src.slice(i, i + 1)}'"))) }
+    }
+    if c != 32 && c != 9 && c != 10 { toks.push(Tok { text: src.slice(i, i + n), pos: i }) }
+    i = i + n
+  }
+  toks.push(Tok { text: String.new(), pos: src.len() })
+  return Ok(move toks)
+}

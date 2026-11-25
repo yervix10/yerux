@@ -1,0 +1,250 @@
+// Document pipeline: a producer thread deals 58 documents round-robin to 4 workers over bounded job channels
+// (backpressure). Workers tokenize, compute stats and send a Report (Ok or Err) back; progress is an Atomic.
+// The collector sorts reports by document id and prints a table. No input, network or files; deterministic.
+//   yerux run examples/real/pipeline/main.yx     |  yerux build examples/real/pipeline/main.yx [--native] -o BIN
+import std.fmt
+import std.sort
+import std.text
+
+const WORKERS: Int = 4
+const JOB_CAPACITY: Int = 2
+const MODULUS: Int = 1000000007
+
+struct Job {
+  id: Int,
+  text: String,
+}
+
+struct DocStats {
+  words: Int,
+  unique: Int,
+  top: String,
+  top_count: Int,
+  checksum: Int,
+}
+
+struct Report {
+  id: Int,
+  result: Result<DocStats, String>,
+}
+
+fn corpus() -> List<String> {
+  var docs = List<String>.new()
+  docs.push(String.from("The quick brown fox jumps over the lazy dog."))
+  docs.push(String.from("A fox is quick; a dog is lazy, and the fox knows it."))
+  docs.push(String.from("Rivers run to the sea. The sea keeps the rivers."))
+  docs.push(String.from("Little Ada wrote the first program. Ada was clever."))
+  docs.push(String.from("Pipelines pass work along. Workers pass results back."))
+  docs.push(String.from("Red green blue, red green blue, red."))
+  docs.push(String.from("One two three four five six seven eight nine ten."))
+  docs.push(String.from("Compilers translate source into machine code."))
+  docs.push(String.from("Channels carry values between threads safely."))
+  docs.push(String.from("Locks protect data; atomics count events."))
+  docs.push(String.from("Sorting by key makes the output stable."))
+  docs.push(String.from("Hash maps give fast lookups for short keys."))
+  docs.push(String.from("Snow fell all night over the quiet village."))
+  docs.push(String.from("Bread, butter, jam, and bread again."))
+  docs.push(String.from("Mountains rise where plates collide slowly."))
+  docs.push(String.from("Music fills the hall while the band tunes up."))
+  docs.push(String.from("Numbers add up; numbers multiply; numbers rest."))
+  docs.push(String.from("!!! ... --- ;;;"))
+  docs.push(String.from("Cats sleep, dogs run, birds sing at dawn."))
+  docs.push(String.from("Trains leave at noon and arrive at dusk."))
+  docs.push(String.from("Gardens need water, sun, and patience."))
+  docs.push(String.from("Stars shine brightest on the darkest nights."))
+  docs.push(String.from("Maps show roads, rivers, and hills."))
+  docs.push(String.from("Teachers explain, students ask, and everyone learns."))
+  docs.push(String.from("Ships cross the ocean with careful captains."))
+  docs.push(String.from("Coffee, tea, water, and milk are common drinks."))
+  docs.push(String.from("The engine hums; the engine hums; the engine hums."))
+  docs.push(String.from("Apples, pears, plums, and cherries ripen in August."))
+  docs.push(String.from("Winter brings frost to the high meadows."))
+  docs.push(String.from("Letters travel slowly but arrive in time."))
+  docs.push(String.from("Clocks tick while the kettle sings."))
+  docs.push(String.from("Forests breathe in carbon and breathe out air."))
+  docs.push(String.from("Bridges join banks that cannot meet otherwise."))
+  docs.push(String.from("Paper folds into cranes, boats, and planes."))
+  docs.push(String.from("Engines, wheels, gears, and belts keep machines moving."))
+  docs.push(String.from("Doctors heal, nurses comfort, and cooks feed."))
+  docs.push(String.from("Kites rise when the wind is strong and steady."))
+  docs.push(String.from("Oceans hold most of the water on Earth."))
+  docs.push(String.from("Deserts are dry, hot by day, and cold by night."))
+  docs.push(String.from("Libraries hold books, maps, and quiet rooms."))
+  docs.push(String.from(""))
+  docs.push(String.from("Volcanoes erupt; lava flows; ash falls."))
+  docs.push(String.from("Owls hunt at night while mice hide."))
+  docs.push(String.from("Painters mix red, yellow, and blue into green."))
+  docs.push(String.from("Robots assemble cars in silent halls."))
+  docs.push(String.from("Markets open early and close late."))
+  docs.push(String.from("Rain taps on the roof all through the afternoon."))
+  docs.push(String.from("Farmers plant seeds before the spring rains."))
+  docs.push(String.from("Violins sing; cellos hum; drums keep time."))
+  docs.push(String.from("Comets return on long orbits around the sun."))
+  docs.push(String.from("Puzzles reward patience, practice, and practice."))
+  docs.push(String.from("Glaciers carve valleys over thousands of years."))
+  docs.push(String.from("Fishermen check their nets at dawn."))
+  docs.push(String.from("Tea kettles whistle when the water boils."))
+  docs.push(String.from("Traffic lights turn green, yellow, then red."))
+  docs.push(String.from("Gold, silver, and bronze mark the podium."))
+  docs.push(String.from("The end of the story is the start of another."))
+  docs.push(String.from("Every river finds the sea in the end."))
+  return docs
+}
+
+// Lowercased ASCII letter runs of the text, in order of appearance.
+fn tokens(s: view String) -> List<String> {
+  var words = List<String>.new()
+  var word = String.from("")
+  for i in 0..s.len() {
+    var b = s.byte(i)
+    if b >= 65 && b <= 90 { b = b + 32 }
+    if b >= 97 && b <= 122 {
+      word.push_byte(b)
+    } else {
+      if word.len() > 0 {
+        words.push(word.clone())
+        word.clear()
+      }
+    }
+  }
+  if word.len() > 0 { words.push(word.clone()) }
+  return words
+}
+
+// Stats of one document. Ties in frequency are broken by the smaller word. The checksum is a polynomial hash
+// over all bytes of the text, reduced modulo MODULUS.
+fn analyze(id: Int, text: view String) -> Result<DocStats, String> {
+  if text.len() == 0 {
+    return Err(String.from("doc {id}: empty document rejected"))
+  }
+  var counts = Map<String, Int>.new()
+  let words = tokens(text)
+  for w in words {
+    counts.insert(w.clone(), counts.get_or(w, 0) + 1)
+  }
+  var top = String.from("")
+  var top_count = 0
+  for i in 0..counts.len() {
+    let n = counts.vals.at(i)
+    let key = counts.keys.at(i)
+    if n > top_count || (n == top_count && key < top) {
+      top = key.clone()
+      top_count = n
+    }
+  }
+  var checksum = 0
+  for i in 0..text.len() {
+    checksum = (checksum * 31 + text.byte(i)) % MODULUS
+  }
+  return Ok(DocStats { words: words.len(), unique: counts.len(), top: move top, top_count: top_count, checksum: checksum })
+}
+
+fn worker(jobs: Receiver<Job>, out: Sender<Report>, progress: Shared<Atomic<Int>>) -> Int {
+  var handled = 0
+  while true {
+    match jobs.recv() {
+      Some(job) => {
+        let result = analyze(job.id, job.text)
+        out.send(Report { id: job.id, result: move result })
+        progress.add(1)
+        handled = handled + 1
+      }
+      None => { break }
+    }
+  }
+  return handled
+}
+
+fn produce(docs: List<String>, senders: List<Sender<Job>>) {
+  for i in 0..docs.len() {
+    senders.at(i % WORKERS).send(Job { id: i, text: docs.at(i).clone() })
+  }
+  for tx in senders {
+    tx.close()
+  }
+}
+
+// A bounded(1) channel between two threads: every value arrives once and in order.
+fn backpressure_check() -> Bool {
+  let (tx, rx) = Sender<Int>.bounded(1)
+  var ok = true
+  scope {
+    let sender = spawn move {
+      for i in 0..20 {
+        tx.send(i * i)
+      }
+      tx.close()
+      return 0
+    }
+    for i in 0..20 {
+      if rx.recv().unwrap() != i * i { ok = false }
+    }
+    sender.join()
+  }
+  return ok && rx.recv().is_none()
+}
+
+fn main() {
+  print("backpressure: bounded(1) 20 items in order: {backpressure_check()}")
+  let docs = corpus()
+  let total = docs.len()
+  let progress = Shared.new(Atomic<Int>.new(0))
+  let (results_tx, results_rx) = Sender<Report>.unbounded()
+  var reports = List<Report>.new()
+  scope {
+    var senders = List<Sender<Job>>.new()
+    var handles = List<JoinHandle<Int>>.new()
+    for _ in 0..WORKERS {
+      let (tx, rx) = Sender<Job>.bounded(JOB_CAPACITY)
+      senders.push(move tx)
+      let out = results_tx.clone()
+      let p = progress.clone()
+      let h = spawn move { return worker(move rx, move out, move p) }
+      handles.push(move h)
+    }
+    let producer = spawn move {
+      produce(move docs, move senders)
+      return 0
+    }
+    for _ in 0..total {
+      reports.push(results_rx.recv().unwrap())
+    }
+    producer.join()
+    while handles.len() > 0 {
+      let h = handles.pop()
+      h.join()
+    }
+  }
+  sort.stable_by(reports, |a: view Report, b: view Report| -> Int { return a.id - b.id })
+  print("progress: {progress.load()} of {total} jobs")
+  print("{fmt.pad_left("id", 3, ' ')} {fmt.pad_left("words", 6, ' ')} {fmt.pad_left("uniq", 5, ' ')} {fmt.pad_left("top word", 10, ' ')} {fmt.pad_left("n", 3, ' ')} checksum")
+  var ok = 0
+  var rejected = 0
+  var words = 0
+  var uniq = 0
+  var combined = 0
+  var best_id = -1
+  var best_count = 0
+  for r in reports {
+    match r.result {
+      Ok(s) => {
+        ok = ok + 1
+        words = words + s.words
+        uniq = uniq + s.unique
+        combined = (combined * 131 + s.checksum) % MODULUS
+        if s.top_count > best_count {
+          best_count = s.top_count
+          best_id = r.id
+        }
+        print("{fmt.pad_left("{r.id}", 3, ' ')} {fmt.pad_left("{s.words}", 6, ' ')} {fmt.pad_left("{s.unique}", 5, ' ')} {fmt.pad_left(s.top, 10, ' ')} {fmt.pad_left("{s.top_count}", 3, ' ')} {s.checksum}")
+      }
+      Err(msg) => {
+        rejected = rejected + 1
+        print("{fmt.pad_left("{r.id}", 3, ' ')} error: {msg}")
+      }
+    }
+  }
+  print("summary: docs={total} ok={ok} rejected={rejected} words={words} unique_sum={uniq}")
+  print("combined checksum: {combined}")
+  print("peak repetition: doc {best_id}, top word {best_count} times")
+}

@@ -1,0 +1,146 @@
+// The evaluator of calclang: values, a checked Int/Bool semantics and an environment of let bindings.
+import lexer
+import parser
+
+pub enum Value { I(Int), B(Bool) }
+
+struct Binding { name: String, value: Value }
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+pub fn describe(e: view lexer.CalcError) -> String {
+  match e {
+    lexer.CalcError.Syntax(m) => { return "syntax error: {m}" }
+    lexer.CalcError.UnknownVar(n) => { return "unknown variable '{n}'" }
+    lexer.CalcError.UnknownFn(n) => { return "unknown function '{n}'" }
+    lexer.CalcError.Arity(n, want, got) => { return "{n} takes {want} argument(s), got {got}" }
+    lexer.CalcError.DivZero => { return "division by zero" }
+    lexer.CalcError.Overflow(op) => { return "integer overflow in {op}" }
+    lexer.CalcError.Type(m) => { return "type error: {m}" }
+  }
+}
+
+// Overflow is found from the wrapping result and the operand signs, so nothing traps.
+fn checked(op: view String, x: Int, y: Int) -> Option<Int> {
+  if op.eq("+") {
+    let r = x.wrapping_add(y)
+    if (x >= 0) == (y >= 0) && (r >= 0) != (x >= 0) { return None }
+    return Some(r)
+  }
+  if op.eq("-") {
+    let r = x.wrapping_sub(y)
+    if (x >= 0) != (y >= 0) && (r >= 0) != (x >= 0) { return None }
+    return Some(r)
+  }
+  if x == 0 || y == 0 { return Some(0) }
+  if (x == -1 && y == MIN_INT) || (y == -1 && x == MIN_INT) { return None }
+  let r = x.wrapping_mul(y)
+  if r / y != x { return None }
+  return Some(r)
+}
+
+fn int_of(v: Value, pos: Int) -> Result<Int, lexer.Failure> {
+  match v {
+    Value.I(n) => { return Ok(n) }
+    Value.B(_) => { return Err(lexer.fail(pos, lexer.CalcError.Type("expected Int, found Bool"))) }
+  }
+}
+
+fn bool_of(v: Value, pos: Int) -> Result<Bool, lexer.Failure> {
+  match v {
+    Value.B(b) => { return Ok(b) }
+    Value.I(_) => { return Err(lexer.fail(pos, lexer.CalcError.Type("expected Bool, found Int"))) }
+  }
+}
+
+fn int_op(op: view String, x: Int, y: Int, pos: Int) -> Result<Value, lexer.Failure> {
+  if op.eq("+") || op.eq("-") || op.eq("*") {
+    let what = if op.eq("+") { "addition" } else if op.eq("-") { "subtraction" } else { "multiplication" }
+    match checked(op, x, y) {
+      Some(r) => { return Ok(Value.I(r)) }
+      None => { return Err(lexer.fail(pos, lexer.CalcError.Overflow(String.from(what)))) }
+    }
+  }
+  if op.eq("/") || op.eq("%") {
+    if y == 0 { return Err(lexer.fail(pos, lexer.CalcError.DivZero)) }
+    if op.eq("%") { return Ok(Value.I(if y == -1 { 0 } else { x % y })) }
+    if x == MIN_INT && y == -1 { return Err(lexer.fail(pos, lexer.CalcError.Overflow(String.from("division")))) }
+    return Ok(Value.I(x / y))
+  }
+  if op.eq("<") { return Ok(Value.B(x < y)) }
+  if op.eq("<=") { return Ok(Value.B(x <= y)) }
+  if op.eq(">") { return Ok(Value.B(x > y)) }
+  return Ok(Value.B(x >= y))
+}
+
+fn eval(e: view parser.Expr, env: mut List<Binding>) -> Result<Value, lexer.Failure> {
+  match e {
+    parser.Expr.Num(n, _) => { return Ok(Value.I(n)) }
+    parser.Expr.Var(name, pos) => {
+      var i = env.len()
+      while i > 0 {
+        i = i - 1
+        if env.at(i).name.eq(name) { return Ok(env.at(i).value) }
+      }
+      return Err(lexer.fail(pos, lexer.CalcError.UnknownVar(String.from(name))))
+    }
+    parser.Expr.Neg(x, pos) => {
+      let v = int_of(eval(x.get(), env)?, pos)?
+      if v == MIN_INT { return Err(lexer.fail(pos, lexer.CalcError.Overflow(String.from("negation")))) }
+      return Ok(Value.I(0 - v))
+    }
+    parser.Expr.Bin(op, l, r, pos) => {
+      let a = eval(l.get(), env)?
+      if op.eq("&&") || op.eq("||") {
+        let x = bool_of(a, pos)?
+        if (op.eq("&&") && !x) || (op.eq("||") && x) { return Ok(Value.B(x)) }
+        return Ok(Value.B(bool_of(eval(r.get(), env)?, pos)?))
+      }
+      let b = eval(r.get(), env)?
+      if op.eq("==") || op.eq("!=") {
+        let same = match a {
+          Value.I(x) => { int_of(b, pos)? == x }
+          Value.B(x) => { bool_of(b, pos)? == x }
+        }
+        return Ok(Value.B(if op.eq("==") { same } else { !same }))
+      }
+      return int_op(op, int_of(a, pos)?, int_of(b, pos)?, pos)
+    }
+    parser.Expr.Let(name, value, body, _) => {
+      let v = eval(value.get(), env)?
+      let mark = env.len()
+      env.push(Binding { name: String.from(name), value: v })
+      let result = eval(body.get(), env)
+      env.truncate(mark)
+      return result
+    }
+    parser.Expr.If(c, t, f, pos) => {
+      if bool_of(eval(c.get(), env)?, pos)? { return eval(t.get(), env) }
+      return eval(f.get(), env)
+    }
+    parser.Expr.Call(name, args, pos) => {
+      if !name.eq("abs") && !name.eq("max") { return Err(lexer.fail(pos, lexer.CalcError.UnknownFn(String.from(name)))) }
+      let want = if name.eq("abs") { 1 } else { 2 }
+      if args.len() != want { return Err(lexer.fail(pos, lexer.CalcError.Arity(String.from(name), want, args.len()))) }
+      var vals = List<Int>.new()
+      for a in args { vals.push(int_of(eval(a, env)?, pos)?) }
+      let x = vals.at(0)
+      if name.eq("abs") {
+        if x == MIN_INT { return Err(lexer.fail(pos, lexer.CalcError.Overflow(String.from("abs")))) }
+        return Ok(Value.I(if x < 0 { 0 - x } else { x }))
+      }
+      return Ok(Value.I(if x >= vals.at(1) { x } else { vals.at(1) }))
+    }
+  }
+}
+
+// "= value" or "! error", without positions, so that a pretty-printed program compares equal.
+pub fn outcome(e: view parser.Expr) -> String {
+  var env = List<Binding>.new()
+  env.push(Binding { name: String.from("answer"), value: Value.I(42) })
+  match eval(e, env) {
+    Ok(Value.I(n)) => { return "= {n}" }
+    Ok(Value.B(b)) => { return "= {b}" }
+    Err(f) => { return "! {describe(f.err)}" }
+  }
+}

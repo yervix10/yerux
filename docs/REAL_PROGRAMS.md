@@ -645,3 +645,84 @@ and exit 0. `tests/real_programs.sh` builds and runs all five on both backends (
     `Equal` impl but does not say what happens without one. Either reject it or document the structural comparison.
 55. **Bounds on struct type parameters are rejected (documented).** `struct Box3<T: Show> { v: T }` gives
     "type parameters of a struct or enum cannot have bounds". Workaround: bound the `impl` blocks instead (warehouse).
+
+## Round 12: logextract, calclang, fsclient, pipeline
+
+Four programs in `examples/real/<name>/`, each with `expected.out`, built and run on both backends (C and `--native`
+identical, exit 0) and checked against an independent Python 3 model (byte for byte). `pipeline` also gives the same output
+over 5 runs per backend. `tests/real_programs.sh` runs all nine programs (about 20 s).
+
+- **logextract**: extracts records from a mixed 42-line log (nginx access, syslog, key=value, Java-style stack traces,
+  garbage) with `std.regex` captures; validates IPs, statuses, ISO timestamps and durations (ms and s to integer ms);
+  per-format counts, field table, exception histogram, unmatched lines with line numbers, and a redacted output built
+  with `replace`. 250 lines.
+- **calclang**: expression language with a recursive-descent parser to an enum AST, a recursive evaluator with an
+  environment and positioned errors, a pretty-printer and a `parse(pretty(ast))` check. Three files
+  (`main.yx` 86 lines, `lexer.yx` 38, `parser.yx` 105, `eval.yx` 146); the main file is under the 250 limit,
+  the whole program is 375 lines.
+- **fsclient**: a file-store client built on `std.args` (`put`, `get`, `ls --prefix`, `rm`, `sync` with a manifest of
+  `std.hash` checksums, `verify`, `--help`) over a temporary directory that the program creates and removes. 248 lines.
+  The task named `std.cli`; that module does not exist, so the CLI layer is `std.args`.
+- **pipeline**: 4 workers with `spawn move` take jobs from channels and send per-document stats back; the collector
+  sorts by id, so the output does not depend on scheduling. Shared progress uses an atomic. A worker reports an empty
+  document as an error value. 250 lines.
+
+Frictions were re-checked after rebuilding the binary at the current `main`. Friction 45 of Round 11 (`+` on an owned
+String temporary) is fixed on main (fc682b3) and is no longer listed.
+
+### Round 12 frictions (not changed; minimal repros)
+
+56. **`Text` has no `len()` or `repeat()`.** `let t = "abc"; print(t.len())` gives "type Text has no method 'len'" and
+    the help suggests an `impl` block. `String.from(t).len()` works. `" ".repeat(3)` fails the same way; the help points
+    to `std.text`, which is not the fix for a method call. Workaround: `String.from(...)` first.
+57. **A cascade error produces a misleading inference error.** `let bad = " ".repeat(2)` then `print("[{bad}]")`
+    gives, after the first error, "cannot infer the type parameter T of 'std__fmt_val'" with "no argument has a type
+    that mentions T". The variable's type is an error type; the message never mentions `bad`.
+58. **A quote inside `{expr}` is accepted, but SPEC says it cannot be.** SPEC (Strings) says `{expr}` cannot contain a
+    quote or a brace. `print("x{"ab"}y")` prints `xaby`, exit 0. Either the lexer or the spec must change. Found by
+    logextract, calclang and fsclient.
+59. **A `const` of type `Text` is rejected with a wrong note.** `const PAT: Text = "^a+$"` gives "a const must be
+    computed from literals, other consts and arithmetic" with the note "function calls are not allowed here yet". The
+    value is a literal and there is no call. Workaround: `fn pat() -> String { return String.from("^a+$") }`.
+60. **Text results and array elements are not accepted for `view String` parameters.** Still open from Round 11 friction
+    48. `fn pat() -> Text`; `std_is(pat(), "aa")` with `std_is(p: view String, ...)` gives "expected String but this is
+    Text". A Text variable is accepted.
+61. **`std.regex`: `]` as the first member of a class is rejected.** `regex.check("[]]")` returns
+    `Err("empty character class at offset 0")`. Python `re.compile("[]]")` is valid. The module header does not list this.
+62. **`std.regex`: bounded repetition `{n}` is silently a literal (wrong result, no error).**
+    ```
+    import std.regex
+    fn main() {
+      print(regex.find("a{2}", "aa"))
+      print(regex.find("a{2}", "a{2}"))
+    }
+    ```
+    prints `-1` then `0`, exit 0. Python `re.search("a{2}", "aa")` matches. The module promises an error for unsupported
+    syntax; this case is not covered.
+63. **The copy error for a borrowed match binding suggests the wrong fix.** `match v` on an owned local binds `r` as a
+    borrow; `return r` where a String is needed gives "'r' is a String and is not copied", help `String.from(r)`. The
+    help never suggests `match move v`, which is the form that works (`match move o { Some(r) => { return move r } ... }`).
+    Writing `move r` gives "cannot move 'r': it is only borrowed".
+64. **`import std.cli` does not exist.** The task named `std.cli`; the error is "cannot find module 'std.cli'". The CLI
+    layer in the tree is `std.args`. Either add the module or correct the docs that name it.
+65. **`std.args.parse_with`: a valued option at the end of argv is silently a flag.** With `valued = ["prefix"]` and argv
+    `["fsclient", "ls", "--prefix"]`, `--prefix` is recorded as a flag and no value or error is reported, so `ls --prefix`
+    lists everything. The function's comment says it takes the next word as the value.
+66. **A wrong first diagnostic inside `spawn` with a `with` closure.** A `with` closure calling `r.recv()` on a
+    `Locked` receiver reports first "cannot infer the type parameter T of '__spawn_owned'" (an internal name), and only
+    then "cannot wait or acquire a lock inside a with closure" at `r.recv()`. Repro:
+    ```
+    fn main() {
+      let (tx, rx) = Sender<Int>.unbounded()
+      let shared = Shared.new(Locked.new(move rx))
+      scope {
+        let h = spawn move { return shared.get().with(|r| r.recv().is_none()) }
+        print(h.join().unwrap())
+      }
+      tx.close()
+    }
+    ```
+    `check` reports the internal name first. Workaround: receive outside `with`.
+67. **`Receiver::share()` is documented but missing.** `docs/CONCURRENCY.md` says `rx.share()` gives a multi-consumer
+    handle. `let (tx, rx) = Sender<Int>.unbounded(); let pool = rx.share()` gives "type Receiver<Int> has no method
+    'share'". Pipeline uses one channel per worker with round-robin dealing instead.
