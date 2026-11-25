@@ -2479,6 +2479,10 @@ impl Parser {
                 };
                 (r.ok_or_else(ovf)?, Ty::Int)
             }
+            EK::Text(_) => {
+                return Err(diag("a const holds a number, Bool or Char: a Text constant is not supported", e.pos)
+                    .note("help: write the text where it is used, or return it from a function: `fn pattern() -> Text { return \"..\" }`"))
+            }
             _ => {
                 return Err(diag(
                     "a const must be computed from literals, other consts and arithmetic",

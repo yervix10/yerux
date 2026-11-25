@@ -8,10 +8,12 @@ pub struct Parsed {
   positionals: List<String>,
   subcommand: String,
   help: Bool,
+  // problems found by `parse_with`: a valued option at the end of argv has no value (`option --prefix needs a value`)
+  errors: List<String>,
 }
 
 pub fn parse(argv: view List<String>) -> Parsed {
-  var out = Parsed { flags: List<String>.new(), options: List<(String, String)>.new(), positionals: List<String>.new(), subcommand: String.new(), help: false }
+  var out = Parsed { flags: List<String>.new(), options: List<(String, String)>.new(), positionals: List<String>.new(), subcommand: String.new(), help: false, errors: List<String>.new() }
   var i = 1
   var positional_only = false
   while i < argv.len() {
@@ -50,9 +52,10 @@ pub fn parse(argv: view List<String>) -> Parsed {
 
 /// Like `parse`, but with a schema: the names in `valued` are options that take the next word as their value
 /// (`--title TEXT`, or `-o FILE` for a one-letter name; `--title=TEXT` still works), and with
-/// `with_subcommand` false the first positional stays a positional (`subcommand` is left empty).
+/// `with_subcommand` false the first positional stays a positional (`subcommand` is left empty). A valued option that is
+/// the last word of argv has no value to take: it is reported in `errors` (and still recorded as a flag), never silently.
 pub fn parse_with(argv: view List<String>, valued: view List<String>, with_subcommand: Bool) -> Parsed {
-  var out = Parsed { flags: List<String>.new(), options: List<(String, String)>.new(), positionals: List<String>.new(), subcommand: String.new(), help: false }
+  var out = Parsed { flags: List<String>.new(), options: List<(String, String)>.new(), positionals: List<String>.new(), subcommand: String.new(), help: false, errors: List<String>.new() }
   var i = 1
   var positional_only = false
   while i < argv.len() {
@@ -74,6 +77,7 @@ pub fn parse_with(argv: view List<String>, valued: view List<String>, with_subco
           i = i + 1
           out.options.push((move k, String.from(argv.at(i))))
         } else {
+          if is_valued(valued, k) { out.errors.push("option --{k} needs a value") }
           out.flags.push(move k)
         }
       }
@@ -85,6 +89,7 @@ pub fn parse_with(argv: view List<String>, valued: view List<String>, with_subco
           i = i + 1
           out.options.push((move f, String.from(argv.at(i))))
         } else {
+          if is_valued(valued, f) && j + 1 == a.len() { out.errors.push("option -{f} needs a value") }
           out.flags.push(move f)
         }
         j = j + 1

@@ -687,14 +687,17 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
 58. **A quote inside `{expr}` is accepted, but SPEC says it cannot be.** SPEC (Strings) says `{expr}` cannot contain a
     quote or a brace. `print("x{"ab"}y")` prints `xaby`, exit 0. Either the lexer or the spec must change. Found by
     logextract, calclang and fsclient.
+    *Resolved by aligning SPEC:* the compiler's behaviour stays; SPEC now says string literals are allowed inside `{expr}` (but not a `}` or `{`).
 59. **A `const` of type `Text` is rejected with a wrong note.** `const PAT: Text = "^a+$"` gives "a const must be
     computed from literals, other consts and arithmetic" with the note "function calls are not allowed here yet". The
     value is a literal and there is no call. Workaround: `fn pat() -> String { return String.from("^a+$") }`.
+    *Fixed message:* "a const holds a number, Bool or Char: a Text constant is not supported" with a help (`tests/e2064_const_text.yx`).
 60. **Text results and array elements are not accepted for `view String` parameters.** Still open from Round 11 friction
     48. `fn pat() -> Text`; `std_is(pat(), "aa")` with `std_is(p: view String, ...)` gives "expected String but this is
     Text". A Text variable is accepted.
 61. **`std.regex`: `]` as the first member of a class is rejected.** `regex.check("[]]")` returns
     `Err("empty character class at offset 0")`. Python `re.compile("[]]")` is valid. The module header does not list this.
+    *Fixed:* `]` first in a class is a member (`tests/std_regex_bounds.yx`); `[]` is an unclosed class.
 62. **`std.regex`: bounded repetition `{n}` is silently a literal (wrong result, no error).**
     ```
     import std.regex
@@ -705,6 +708,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
     ```
     prints `-1` then `0`, exit 0. Python `re.search("a{2}", "aa")` matches. The module promises an error for unsupported
     syntax; this case is not covered.
+    *Fixed:* `{n}`, `{n,}` and `{n,m}` are implemented (greedy, at most 100 copies; invalid bounds are errors); a `{` that starts no bound stays literal (`tests/std_regex_bounds.yx`, `docs/REGEX_CSV_TOML.md`). Note that in an ordinary string `{2}` is an interpolation: write patterns raw (`r"a{2}"`).
 63. **The copy error for a borrowed match binding suggests the wrong fix.** `match v` on an owned local binds `r` as a
     borrow; `return r` where a String is needed gives "'r' is a String and is not copied", help `String.from(r)`. The
     help never suggests `match move v`, which is the form that works (`match move o { Some(r) => { return move r } ... }`).
@@ -714,6 +718,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
 65. **`std.args.parse_with`: a valued option at the end of argv is silently a flag.** With `valued = ["prefix"]` and argv
     `["fsclient", "ls", "--prefix"]`, `--prefix` is recorded as a flag and no value or error is reported, so `ls --prefix`
     lists everything. The function's comment says it takes the next word as the value.
+    *Fixed:* `Parsed` has an `errors` list; a valued option without a value adds `option --prefix needs a value` (`tests/std_args_missing_value.yx`).
 66. **A wrong first diagnostic inside `spawn` with a `with` closure.** A `with` closure calling `r.recv()` on a
     `Locked` receiver reports first "cannot infer the type parameter T of '__spawn_owned'" (an internal name), and only
     then "cannot wait or acquire a lock inside a with closure" at `r.recv()`. Repro:
@@ -732,3 +737,5 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
 67. **`Receiver::share()` is documented but missing.** `docs/CONCURRENCY.md` says `rx.share()` gives a multi-consumer
     handle. `let (tx, rx) = Sender<Int>.unbounded(); let pool = rx.share()` gives "type Receiver<Int> has no method
     'share'". Pipeline uses one channel per worker with round-robin dealing instead.
+
+    *Fixed in the docs:* CONCURRENCY.md no longer promises `share()`; it describes the one-channel-per-worker deal.

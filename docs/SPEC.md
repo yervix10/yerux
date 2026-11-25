@@ -90,7 +90,7 @@ Escapes in `Text`, `String` and `Char` literals:
 | `\"` `\\` | quote, backslash |
 | `\u{HEX}` | Unicode scalar, Char literals and strings (`'\u{1F600}'`) |
 | `{{` `}}` | literal `{` and `}` in a string |
-| `{expr}` | interpolation (string literals only) |
+| `{expr}` | interpolation: one expression on the same line. It may contain string literals with escapes (`"x{"ab"}y"`, `"{s.split(" ").len()}"`), but not a `}` or a nested `{` (a literal brace inside the expression is an error); write `{{` `}}` outside it (`tests/interp_string_literal.yx`, `tests/e2063_interp_brace_in_literal.yx`) |
 
 Any other escape is an error (`unknown escape in a character literal`). A `{` that is not
 closed on the same line is an error (`this { in a string is never closed`).
