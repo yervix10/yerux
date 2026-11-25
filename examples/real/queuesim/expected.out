@@ -1,0 +1,39 @@
+customers 300, total work 1879, last arrival 624
+-- 2 clerks
+first come: served 300, done at 942, longest line 103, clerks busy 99%
+  class 0: n=96 mean wait 186.49 worst 315
+  class 1: n=107 mean wait 181.58 worst 312
+  class 2: n=97 mean wait 190.18 worst 315
+  short  : n=274 mean wait 188.28 worst 315
+  long   : n=26 mean wait 161.12 worst 309
+shortest job: served 300, done at 951, longest line 31, clerks busy 98%
+  class 0: n=96 mean wait 55.34 worst 790
+  class 1: n=107 mean wait 63.76 worst 849
+  class 2: n=97 mean wait 36.05 worst 627
+  short  : n=274 mean wait 12.43 worst 163
+  long   : n=26 mean wait 470.27 worst 849
+urgent, ageing 15: served 300, done at 942, longest line 102, clerks busy 99%
+  class 0: n=96 mean wait 172.03 worst 305
+  class 1: n=107 mean wait 181.23 worst 316
+  class 2: n=97 mean wait 203.87 worst 332
+  short  : n=274 mean wait 187.78 worst 332
+  long   : n=26 mean wait 162.69 worst 305
+-- 3 clerks
+first come: served 300, done at 639, longest line 25, clerks busy 98%
+  class 0: n=96 mean wait 24.91 worst 51
+  class 1: n=107 mean wait 21.63 worst 51
+  class 2: n=97 mean wait 24.41 worst 53
+  short  : n=274 mean wait 24.08 worst 53
+  long   : n=26 mean wait 18.31 worst 45
+shortest job: served 300, done at 643, longest line 13, clerks busy 97%
+  class 0: n=96 mean wait 7.82 worst 182
+  class 1: n=107 mean wait 10.03 worst 283
+  class 2: n=97 mean wait 7.78 worst 98
+  short  : n=274 mean wait 4.55 worst 54
+  long   : n=26 mean wait 51.27 worst 283
+urgent, ageing 15: served 300, done at 639, longest line 24, clerks busy 98%
+  class 0: n=96 mean wait 16.21 worst 38
+  class 1: n=107 mean wait 21.87 worst 49
+  class 2: n=97 mean wait 32.10 worst 58
+  short  : n=274 mean wait 23.83 worst 58
+  long   : n=26 mean wait 18.50 worst 45

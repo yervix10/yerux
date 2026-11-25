@@ -1,0 +1,121 @@
+// Combining the two edit scripts from a common base into stable and conflicting regions.
+import diff
+
+pub enum Region<T> {
+    Stable(List<T>),
+    Conflict(List<T>, List<T>, List<T>),
+}
+
+pub struct Merged<T> { regions: List<Region<T>>, conflicts: Int }
+
+impl<T: Clone> Merged<T> {
+    // The result with every conflict resolved for one side.
+    fn take_side(view self, ours: Bool) -> List<T> {
+        var out = List<T>.new()
+        for r in self.regions {
+            match r {
+                Stable(items) => { diff.append(out, items, 0, items.len()) }
+                Conflict(o, _, t) => {
+                    if ours { diff.append(out, o, 0, o.len()) } else { diff.append(out, t, 0, t.len()) }
+                }
+            }
+        }
+        return out
+    }
+}
+
+// What one side holds for base[lo..hi], given that its blocks first..last are exactly those inside that range.
+fn side<T: Clone>(base: view List<T>, other: view List<T>, script: view List<diff.Block>, first: Int, last: Int, lo: Int, hi: Int) -> List<T> {
+    var out = List<T>.new()
+    var at = lo
+    for i in first..last {
+        let a0 = script.at(i).a0
+        diff.append(out, base, at, a0)
+        diff.append(out, other, script.at(i).b0, script.at(i).b1)
+        at = script.at(i).a1
+    }
+    diff.append(out, base, at, hi)
+    return out
+}
+
+fn equal_lists<T: Equal>(a: view List<T>, b: view List<T>) -> Bool {
+    if a.len() != b.len() { return false }
+    for i in 0..a.len() {
+        if !(a.at(i) == b.at(i)) { return false }
+    }
+    return true
+}
+
+pub fn three_way<T: Equal + Clone>(base: view List<T>, ours: view List<T>, theirs: view List<T>) -> Merged<T> {
+    let x = diff.blocks(base, ours)
+    let y = diff.blocks(base, theirs)
+    var result = Merged { regions: List<Region<T>>.new(), conflicts: 0 }
+    var i = 0
+    var j = 0
+    var at = 0
+    while i < x.len() || j < y.len() {
+        let from_x = j >= y.len() || (i < x.len() && x.at(i).a0 <= y.at(j).a0)
+        let lo = if from_x { x.at(i).a0 } else { y.at(j).a0 }
+        var hi = lo
+        let i0 = i
+        let j0 = j
+        // grow the region while a block of either side overlaps or touches it
+        var grew = true
+        while grew {
+            grew = false
+            if i < x.len() && x.at(i).a0 <= hi {
+                hi = max(hi, x.at(i).a1)
+                i = i + 1
+                grew = true
+            }
+            if j < y.len() && y.at(j).a0 <= hi {
+                hi = max(hi, y.at(j).a1)
+                j = j + 1
+                grew = true
+            }
+        }
+        var head = List<T>.new()
+        diff.append(head, base, at, lo)
+        if head.len() > 0 { result.regions.push(Region<T>.Stable(move head)) }
+        var o = side(base, ours, x, i0, i, lo, hi)
+        var t = side(base, theirs, y, j0, j, lo, hi)
+        if i == i0 {
+            result.regions.push(Region<T>.Stable(move t))
+        } else if j == j0 || equal_lists(o, t) {
+            result.regions.push(Region<T>.Stable(move o))
+        } else {
+            var old = List<T>.new()
+            diff.append(old, base, lo, hi)
+            result.regions.push(Region<T>.Conflict(move o, move old, move t))
+            result.conflicts = result.conflicts + 1
+        }
+        at = hi
+    }
+    var tail = List<T>.new()
+    diff.append(tail, base, at, base.len())
+    if tail.len() > 0 { result.regions.push(Region<T>.Stable(move tail)) }
+    return result
+}
+
+fn push_all(out: mut List<String>, items: view List<String>) {
+    for item in items { out.push(item.clone()) }
+}
+
+pub fn render(m: view Merged<String>) -> List<String> {
+    var out = List<String>.new()
+    for r in m.regions {
+        match r {
+            Stable(items) => { push_all(out, items) }
+            Conflict(o, b, t) => {
+                out.push(String.from("<<<<<<< ours"))
+                push_all(out, o)
+                out.push(String.from("||||||| base"))
+                push_all(out, b)
+                out.push(String.from("======="))
+                push_all(out, t)
+                out.push(String.from(">>>>>>> theirs"))
+            }
+        }
+    }
+    return out
+}

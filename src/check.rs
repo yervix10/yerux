@@ -7435,6 +7435,15 @@ impl<'a> Checker<'a> {
                             tyn, t
                         ));
                     }
+                } else if m == "clone" && tyn.starts_with("Box<") {
+                    d = d.note("a Box has no `clone`, and `derive Clone` does not reach through one");
+                    d = d.note("help: clone the value inside and box it again: `Box.new((*b).clone())`; for a recursive type write its `impl Clone` by hand");
+                } else if tyn.starts_with("Map<") && matches!(m.as_str(), "get_mut" | "keys") {
+                    d = d.note(if m == "keys" {
+                        "help: `import std.collections` and visit the entries with `collections.map_for_each(m, f)`, or keep the keys in a List beside the map"
+                    } else {
+                        "help: a map value is not changed in place: `let v = m.take(key)` (the key must exist), change `v`, then `m.insert(key, move v)`"
+                    });
                 } else if let Some(t) = ts.first() {
                     d = d.note(format!(
                         "help: `{}` is a method of trait {}: write `impl {} for {} {{ .. }}`",

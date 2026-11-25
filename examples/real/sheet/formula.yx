@@ -1,0 +1,204 @@
+// Cell names, the formula parser and the expression tree.
+pub const COLS: Int = 26
+pub const ROWS: Int = 99
+
+pub enum Func { Sum, Min, Max, Count, Avg }
+derive Clone, Equal for Func
+
+pub enum Expr {
+    Num(Int),
+    Ref(Int),
+    Range(Int, Int),
+    Neg(Box<Expr>),
+    Bin(Char, Box<Expr>, Box<Expr>),
+    Call(Func, List<Expr>),
+}
+
+// `derive Clone` does not reach through a Box, so the tree is cloned by hand.
+impl Clone for Expr {
+    fn clone(view self) -> Expr {
+        match self {
+            Num(n) => { return Expr.Num(n) }
+            Ref(at) => { return Expr.Ref(at) }
+            Range(a, b) => { return Expr.Range(a, b) }
+            Neg(x) => {
+                let inner: Expr = (*x).clone()
+                return Expr.Neg(Box.new(move inner))
+            }
+            Bin(op, l, r) => {
+                let a: Expr = (*l).clone()
+                let b: Expr = (*r).clone()
+                return Expr.Bin(op, Box.new(move a), Box.new(move b))
+            }
+            Call(f, args) => { return Expr.Call(f.clone(), args.clone()) }
+        }
+    }
+}
+
+pub fn cell_name(at: Int) -> String {
+    var s = String.new()
+    s.push_char(Char.from_int(65 + at % COLS))
+    s.push_int(at / COLS + 1)
+    return s
+}
+
+pub fn cell_index(name: view String) -> Option<Int> {
+    if name.len() < 2 { return None }
+    let col = name.byte(0) - 65
+    if col < 0 || col >= COLS { return None }
+    var row = 0
+    for i in 1..name.len() {
+        let d = name.byte(i) - 48
+        if d < 0 || d > 9 || row > ROWS { return None }
+        row = row * 10 + d
+    }
+    if row < 1 || row > ROWS { return None }
+    return Some((row - 1) * COLS + col)
+}
+
+struct Parser { src: String, pos: Int }
+
+fn is_digit(c: Int) -> Bool { return c >= 48 && c <= 57 }
+fn is_upper(c: Int) -> Bool { return c >= 65 && c <= 90 }
+
+impl Parser {
+    fn peek(mut self) -> Int {
+        while self.pos < self.src.len() && self.src.byte(self.pos) == 32 { self.pos = self.pos + 1 }
+        if self.pos >= self.src.len() { return 0 }
+        return self.src.byte(self.pos)
+    }
+
+    fn eat(mut self, c: Char) -> Bool {
+        if self.peek() != c.to_int() { return false }
+        self.pos = self.pos + 1
+        return true
+    }
+
+    fn fail(view self, msg: view String) -> String { return "{msg} at offset {self.pos}" }
+
+    fn word(mut self) -> String {
+        let start = self.pos
+        while self.pos < self.src.len() {
+            let c = self.src.byte(self.pos)
+            if !is_upper(c) && !is_digit(c) { break }
+            self.pos = self.pos + 1
+        }
+        return self.src.slice(start, self.pos)
+    }
+
+    fn sum(mut self) -> Result<Expr, String> {
+        var left = self.product()?
+        while true {
+            var op = '+'
+            if self.eat('+') { op = '+' } else if self.eat('-') { op = '-' } else { break }
+            let right = self.product()?
+            left = Expr.Bin(op, Box.new(move left), Box.new(move right))
+        }
+        return Ok(move left)
+    }
+
+    fn product(mut self) -> Result<Expr, String> {
+        var left = self.atom()?
+        while true {
+            var op = '*'
+            if self.eat('*') { op = '*' } else if self.eat('/') { op = '/' } else { break }
+            let right = self.atom()?
+            left = Expr.Bin(op, Box.new(move left), Box.new(move right))
+        }
+        return Ok(move left)
+    }
+
+    fn atom(mut self) -> Result<Expr, String> {
+        if self.eat('-') {
+            let inner = self.atom()?
+            return Ok(Expr.Neg(Box.new(move inner)))
+        }
+        if self.eat('(') {
+            let inner = self.sum()?
+            if !self.eat(')') { return Err(self.fail("expected ')'")) }
+            return Ok(move inner)
+        }
+        let c = self.peek()
+        if is_digit(c) {
+            let text = self.word()
+            var n = 0
+            if !text.parse_int(n) { return Err(self.fail("bad number")) }
+            return Ok(Expr.Num(n))
+        }
+        if !is_upper(c) { return Err(self.fail("expected a value")) }
+        let name = self.word()
+        if self.eat('(') { return self.call(name) }
+        match cell_index(name) {
+            Some(at) => { return Ok(Expr.Ref(at)) }
+            None => { return Err(self.fail("unknown cell {name}")) }
+        }
+    }
+
+    fn argument(mut self) -> Result<Expr, String> {
+        let start = self.pos
+        self.peek()
+        let first = self.word()
+        if self.eat(':') {
+            self.peek()
+            let second = self.word()
+            match (cell_index(first), cell_index(second)) {
+                (Some(a), Some(b)) => { return Ok(Expr.Range(a, b)) }
+                _ => { return Err(self.fail("bad range")) }
+            }
+        }
+        self.pos = start
+        return self.sum()
+    }
+
+    fn call(mut self, name: view String) -> Result<Expr, String> {
+        var found: Option<Func> = None
+        if name.eq("SUM") { found = Some(Func.Sum) }
+        if name.eq("MIN") { found = Some(Func.Min) }
+        if name.eq("MAX") { found = Some(Func.Max) }
+        if name.eq("COUNT") { found = Some(Func.Count) }
+        if name.eq("AVG") { found = Some(Func.Avg) }
+        if found.is_none() { return Err(self.fail("unknown function {name}")) }
+        let func = found.unwrap()
+        var args = List<Expr>.new()
+        while true {
+            args.push(self.argument()?)
+            if !self.eat(',') { break }
+        }
+        if !self.eat(')') { return Err(self.fail("expected ')'")) }
+        return Ok(Expr.Call(move func, move args))
+    }
+}
+
+pub fn parse(src: view String) -> Result<Expr, String> {
+    var p = Parser { src: String.from(src), pos: 0 }
+    let e = p.sum()?
+    if p.peek() != 0 { return Err(p.fail("unexpected text")) }
+    return Ok(move e)
+}
+
+// Every cell the expression reads, with repetitions.
+pub fn refs(e: view Expr, out: mut List<Int>) {
+    match e {
+        Num(_) => {}
+        Ref(at) => { out.push(at) }
+        Range(a, b) => { for at in range_cells(a, b) { out.push(at) } }
+        Neg(x) => { refs(*x, out) }
+        Bin(_, l, r) => {
+            refs(*l, out)
+            refs(*r, out)
+        }
+        Call(_, args) => { for a in args { refs(a, out) } }
+    }
+}
+
+pub fn range_cells(a: Int, b: Int) -> List<Int> {
+    var out = List<Int>.new()
+    let r0 = min(a / COLS, b / COLS)
+    let r1 = max(a / COLS, b / COLS)
+    let c0 = min(a % COLS, b % COLS)
+    let c1 = max(a % COLS, b % COLS)
+    for r in r0..(r1 + 1) {
+        for c in c0..(c1 + 1) { out.push(r * COLS + c) }
+    }
+    return out
+}

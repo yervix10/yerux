@@ -1,0 +1,8 @@
+error: type Map<Int, List> has no method 'get_mut'
+ --> tests/e2135_map_get_mut_help.yx:4:3
+  |
+4 |   m.get_mut(1).push(2)
+  |   ^^^^^^^^^^^^
+  = help: a map value is not changed in place: `let v = m.take(key)` (the key must exist), change `v`, then `m.insert(key, move v)`
+
+1 error(s). Nothing was generated.

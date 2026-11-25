@@ -1,0 +1,241 @@
+// queuesim: a discrete event simulation of a service centre. A generic binary heap orders the events; the waiting
+// line is a trait object (first come, shortest job, highest priority with ageing), and a generic Tally collects
+// statistics per key. Every policy sees the same generated customers. Deterministic output.
+//   yerux run examples/real/queuesim/main.yx   |  yerux build examples/real/queuesim/main.yx [--native] -o BIN
+import std.fmt
+
+trait Before {
+    fn before(view self, other: view Self) -> Bool
+}
+
+struct Heap<T> { items: List<T> }
+
+impl<T: Before> Heap<T> {
+    fn new() -> Heap<T> { return Heap { items: List<T>.new() } }
+    fn len(view self) -> Int { return self.items.len() }
+    fn push(mut self, x: T) {
+        self.items.push(move x)
+        var i = self.items.len() - 1
+        while i > 0 {
+            let parent = (i - 1) / 2
+            if !self.items.at(i).before(self.items.at(parent)) { break }
+            self.items.swap(i, parent)
+            i = parent
+        }
+    }
+    fn pop(mut self) -> Option<T> {
+        let n = self.items.len()
+        if n == 0 { return None }
+        self.items.swap(0, n - 1)
+        let top = self.items.pop()
+        var i = 0
+        while true {
+            var best = i
+            for child in (2 * i + 1)..(2 * i + 3) {
+                if child < self.items.len() && self.items.at(child).before(self.items.at(best)) { best = child }
+            }
+            if best == i { break }
+            self.items.swap(i, best)
+            i = best
+        }
+        return Some(move top)
+    }
+}
+
+struct Customer { id: Int, arrival: Int, service: Int, class: Int }
+derive Clone for Customer
+
+enum Kind { Arrive(Customer), Finish(Int) }
+
+struct Event { time: Int, seq: Int, kind: Kind }
+
+impl Before for Event {
+    fn before(view self, other: view Event) -> Bool {
+        if self.time != other.time { return self.time < other.time }
+        return self.seq < other.seq
+    }
+}
+
+trait Line {
+    fn title(view self) -> String
+    fn join(mut self, c: Customer)
+    fn next(mut self, now: Int) -> Option<Customer>
+    fn waiting(view self) -> Int
+}
+
+struct Fifo { queue: List<Customer>, head: Int }
+impl Line for Fifo {
+    fn title(view self) -> String { return String.from("first come") }
+    fn join(mut self, c: Customer) { self.queue.push(move c) }
+    fn next(mut self, now: Int) -> Option<Customer> {
+        if self.head >= self.queue.len() { return None }
+        let c = self.queue.at(self.head).clone()
+        self.head = self.head + 1
+        return Some(move c)
+    }
+    fn waiting(view self) -> Int { return self.queue.len() - self.head }
+}
+
+struct Job { c: Customer }
+impl Before for Job {
+    fn before(view self, other: view Job) -> Bool {
+        if self.c.service != other.c.service { return self.c.service < other.c.service }
+        return self.c.id < other.c.id
+    }
+}
+struct Shortest { heap: Heap<Job> }
+impl Line for Shortest {
+    fn title(view self) -> String { return String.from("shortest job") }
+    fn join(mut self, c: Customer) { self.heap.push(Job { c: move c }) }
+    fn next(mut self, now: Int) -> Option<Customer> {
+        match self.heap.pop() {
+            Some(j) => { return Some(j.c.clone()) }
+            None => { return None }
+        }
+    }
+    fn waiting(view self) -> Int { return self.heap.len() }
+}
+
+// Class 0 is the most urgent; waiting `age` ticks raises a customer by one class.
+struct Urgent { queue: List<Customer>, age: Int }
+impl Urgent {
+    fn rank(view self, c: view Customer, now: Int) -> Int { return c.class - (now - c.arrival) / self.age }
+}
+impl Line for Urgent {
+    fn title(view self) -> String { return "urgent, ageing {self.age}" }
+    fn join(mut self, c: Customer) { self.queue.push(move c) }
+    fn next(mut self, now: Int) -> Option<Customer> {
+        if self.queue.len() == 0 { return None }
+        var best = 0
+        for i in 1..self.queue.len() {
+            if self.rank(self.queue.at(i), now) < self.rank(self.queue.at(best), now) { best = i }
+        }
+        return Some(self.queue.remove(best))
+    }
+    fn waiting(view self) -> Int { return self.queue.len() }
+}
+
+struct Stat { count: Int, total: Int, worst: Int }
+derive Clone for Stat
+
+struct Tally<K> { rows: Map<K, Stat> }
+impl<K: Hash + Equal + Clone> Tally<K> {
+    fn new() -> Tally<K> { return Tally { rows: Map<K, Stat>.new() } }
+    fn add(mut self, key: K, value: Int) {
+        var s = self.row(key)
+        s.count = s.count + 1
+        s.total = s.total + value
+        if value > s.worst { s.worst = value }
+        self.rows.insert(move key, move s)
+    }
+    fn row(view self, key: view K) -> Stat {
+        if self.rows.contains(key) { return self.rows.get(key).clone() }
+        return Stat { count: 0, total: 0, worst: 0 }
+    }
+}
+
+// The mean with two decimals, in integers.
+fn mean(s: view Stat) -> String {
+    if s.count == 0 { return String.from("-") }
+    let hundredths = (s.total * 100 + s.count / 2) / s.count
+    return "{hundredths / 100}.{fmt.zero_pad(hundredths % 100, 2)}"
+}
+
+fn rand(state: mut Int, bound: Int) -> Int {
+    state = (state * 1103515245 + 12345) % 2147483648
+    return (state / 65536) % bound
+}
+
+fn customers(n: Int, seed: Int) -> List<Customer> {
+    var state = seed
+    var out = List<Customer>.new()
+    var clock = 0
+    for id in 0..n {
+        clock = clock + rand(state, 5)
+        var service = 1 + rand(state, 8)
+        if rand(state, 10) == 0 { service = service + 20 }
+        let class = rand(state, 3)
+        out.push(Customer { id: id, arrival: clock, service: service, class: class })
+    }
+    return out
+}
+
+struct Report { served: Int, end: Int, longest_line: Int, busy: Int, by_class: Tally<Int>, by_size: Tally<String> }
+
+fn simulate(people: view List<Customer>, clerks: Int, line: mut dyn Line) -> Report {
+    var events = Heap<Event>.new()
+    var seq = 0
+    for c in people {
+        events.push(Event { time: c.arrival, seq: seq, kind: Kind.Arrive(c.clone()) })
+        seq = seq + 1
+    }
+    var idle = clerks
+    var r = Report { served: 0, end: 0, longest_line: 0, busy: 0, by_class: Tally<Int>.new(), by_size: Tally<String>.new() }
+    while events.len() > 0 {
+        let ev = events.pop().unwrap()
+        let now = ev.time
+        r.end = now
+        match ev.kind {
+            Arrive(c) => { line.join(c.clone()) }
+            Finish(_) => {
+                idle = idle + 1
+                r.served = r.served + 1
+            }
+        }
+        while idle > 0 {
+            match line.next(now) {
+                Some(c) => {
+                    idle = idle - 1
+                    let wait = now - c.arrival
+                    r.by_class.add(c.class, wait)
+                    let size = if c.service > 8 { String.from("long") } else { String.from("short") }
+                    r.by_size.add(move size, wait)
+                    r.busy = r.busy + c.service
+                    events.push(Event { time: now + c.service, seq: seq, kind: Kind.Finish(c.id) })
+                    seq = seq + 1
+                }
+                None => { break }
+            }
+        }
+        if line.waiting() > r.longest_line { r.longest_line = line.waiting() }
+    }
+    return r
+}
+
+fn print_report(title: view String, clerks: Int, r: view Report) {
+    let use_pct = r.busy * 100 / (r.end * clerks)
+    print("{title}: served {r.served}, done at {r.end}, longest line {r.longest_line}, clerks busy {use_pct}%")
+    for class in 0..3 {
+        let s = r.by_class.row(class)
+        print("  class {class}: n={s.count} mean wait {mean(s)} worst {s.worst}")
+    }
+    for size in ["short", "long"] {
+        let key = String.from(size)
+        let s = r.by_size.row(key)
+        print("  {fmt.pad_right(size, 5, ' ')}  : n={s.count} mean wait {mean(s)} worst {s.worst}")
+    }
+}
+
+fn lines() -> List<Box<dyn Line>> {
+    var all = List<Box<dyn Line>>.new()
+    all.push(Box<dyn Line>.new(Fifo { queue: List<Customer>.new(), head: 0 }))
+    all.push(Box<dyn Line>.new(Shortest { heap: Heap<Job>.new() }))
+    all.push(Box<dyn Line>.new(Urgent { queue: List<Customer>.new(), age: 15 }))
+    return all
+}
+
+fn main() {
+    let people = customers(300, 2024)
+    var work = 0
+    for c in people { work = work + c.service }
+    print("customers {people.len()}, total work {work}, last arrival {people.at(people.len() - 1).arrival}")
+    for clerks in [2, 3] {
+        print("-- {clerks} clerks")
+        var all = lines()
+        while all.len() > 0 {
+            var line = all.remove(0)
+            let r = simulate(people, clerks, line.get())
+            print_report(line.title(), clerks, r)
+        }
+    }
+}

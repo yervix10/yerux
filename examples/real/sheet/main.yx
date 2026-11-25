@@ -1,0 +1,108 @@
+// sheet: a small spreadsheet engine. Cells A1..Z99 hold integers, text or formulas (+ - * /, parentheses, unary
+// minus, cell references and SUM, MIN, MAX, COUNT, AVG over cells and ranges). The engine keeps the dependency
+// graph, recalculates only the cells reachable from an edit, in topological order, and marks cycles. A built-in
+// script of edits runs, and after each edit the incremental result is compared with a full recalculation.
+//   yerux run examples/real/sheet/main.yx   |  yerux build examples/real/sheet/main.yx [--native] -o BIN
+import engine
+import formula
+import std.fmt
+
+fn show_cells(s: view engine.Sheet, names: view String) {
+    var parts = List<String>.new()
+    for name in names.split(" ") {
+        let at = formula.cell_index(name).unwrap()
+        parts.push("{name}={s.display(at)}")
+    }
+    let joined = parts.join("  ")
+    print("  {joined}")
+}
+
+fn edit(s: mut engine.Sheet, name: view String, input: view String) {
+    let at = formula.cell_index(name).unwrap()
+    match s.set(at, input) {
+        Ok(touched) => {
+            var names = List<String>.new()
+            for t in touched { names.push(formula.cell_name(t)) }
+            let order = names.join(",")
+            print("set {name} <- '{input}'  recalculated {touched.len()}: {order}")
+        }
+        Err(e) => { print("set {name} <- '{input}'  rejected: {e}") }
+    }
+    var full = s.clone()
+    full.recalc_all()
+    var differ = 0
+    for at in s.used() {
+        let a = s.display(at)
+        let b = full.display(at)
+        if a != b { differ = differ + 1 }
+    }
+    if differ > 0 { print("  MISMATCH against full recalculation: {differ}") }
+}
+
+fn grid(s: view engine.Sheet, cols: Int, rows: Int) {
+    var head = String.from("     ")
+    for c in 0..cols {
+        let col = formula.cell_name(c).slice(0, 1)
+        head.push_str(fmt.pad_left(col, 8, ' '))
+    }
+    print(head)
+    for r in 0..rows {
+        var line = fmt.pad_left("{r + 1}", 4, ' ')
+        line.push_str(" ")
+        for c in 0..cols {
+            let text = s.display(r * formula.COLS + c)
+            line.push_str(fmt.pad_left(text, 8, ' '))
+        }
+        print(line)
+    }
+}
+
+fn main() {
+    var s = engine.new_sheet()
+    let setup = [("A1", "10"), ("A2", "20"), ("A3", "30"), ("B1", "=A1*2"), ("B2", "=A2*2"), ("B3", "=A3*2"),
+        ("A4", "=SUM(A1:A3)"), ("B4", "=SUM(B1:B3)"), ("C1", "=AVG(A1:B3)"), ("C2", "=MAX(A1:B3) - MIN(A1:B3)"),
+        ("C3", "total"), ("C4", "=(A4 + B4) / COUNT(A1:C3)"), ("D1", "=C4*C4 - -C2")]
+    for item in setup {
+        let at = formula.cell_index(item.0).unwrap()
+        let _ = s.set(at, item.1).unwrap()
+    }
+    grid(s, 4, 4)
+    print("-- edits")
+    edit(s, "A2", "25")
+    show_cells(s, "B2 A4 B4 C1 C2 C4 D1")
+    edit(s, "C3", "7")
+    show_cells(s, "C4 D1")
+    edit(s, "A1", "=D1")
+    show_cells(s, "A1 B1 A4 C4 D1")
+    edit(s, "A1", "100")
+    show_cells(s, "A1 B1 A4 C4 D1")
+    edit(s, "E1", "=E2+1")
+    edit(s, "E2", "=E3+1")
+    edit(s, "E3", "=E1+1")
+    show_cells(s, "E1 E2 E3")
+    edit(s, "E3", "=A3")
+    show_cells(s, "E1 E2 E3")
+    edit(s, "F1", "=1/(A1-100)")
+    edit(s, "F2", "=F1+1")
+    show_cells(s, "F1 F2")
+    edit(s, "F3", "=SUM(F1:F2")
+    edit(s, "F4", "=ZZ9 + 1")
+    edit(s, "F5", "=FOO(A1)")
+    edit(s, "F6", "=9223372036854775807 + A1")
+    show_cells(s, "F3 F6")
+    edit(s, "F1", "")
+    show_cells(s, "F1 F2")
+    print("-- chain")
+    edit(s, "G1", "1")
+    for r in 2..41 {
+        let at = formula.cell_index("G{r}").unwrap()
+        let _ = s.set(at, "=G{r - 1} + {r}").unwrap()
+    }
+    show_cells(s, "G10 G40")
+    let at = formula.cell_index("G1").unwrap()
+    let touched = s.set(at, "1000").unwrap()
+    print("changing G1 recalculated {touched.len()} cells")
+    show_cells(s, "G10 G40")
+    print("-- final")
+    grid(s, 6, 4)
+}
