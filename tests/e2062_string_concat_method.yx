@@ -1,0 +1,6 @@
+fn main() {
+  let a = String.from("a")
+  let u = String.from("b")
+  let c = String.from("c").concat(u)
+  print(c)
+}

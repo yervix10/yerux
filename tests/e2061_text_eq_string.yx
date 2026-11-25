@@ -1,0 +1,5 @@
+fn main() {
+  let t = "a"
+  let s = String.from("a")
+  print(t.eq(s))
+}

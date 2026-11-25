@@ -941,6 +941,14 @@ impl<'a> Checker<'a> {
                     _ => None,
                 }
             }
+            EK::Call(..) | EK::Method { .. } => {
+                self.err(
+                    diag("expected a variable or a field here", pos)
+                        .note("this is the result of a call, a temporary: `.at(i)` and other borrowing accesses need a variable")
+                        .note("help: store it first, `let parts = s.split(\" \")`, then use `parts.at(0)` (quotes inside `{..}` of a string are fine)"),
+                );
+                None
+            }
             _ => {
                 self.err(diag("expected a variable or a field here", pos));
                 None
@@ -3258,6 +3266,9 @@ impl<'a> Checker<'a> {
                 } else if let Some(near) = nearest_name(m, STRING_METHODS) {
                     d = d.note(format!("help: did you mean `{near}`?"));
                 }
+                if m == "concat" {
+                    d = d.note("help: `concat` exists only as the static function `String.concat(a, b)`; to append to a String use `s.push_str(x)`, or interpolate: `\"{a}{b}\"`");
+                }
                 self.err(d
                     .note("methods: len() (bytes), push_str(x), push_int(n), push_char(c), push_byte(b), push_slice(x, from, to), reserve(n), eq(x), byte(i), char_at(i), char_size(i), clear(), and the library methods (starts_with, find, trim, ...)")
                     .note("to visit the characters write `for c in s.chars() { .. }`"));
@@ -3823,6 +3834,15 @@ impl<'a> Checker<'a> {
                 self.hoist_text(arg);
             }
             let by_value = mode == Mode::Own || (mode == Mode::View && !self.types.owned(pty));
+            if by_value && pty == Ty::Text && pre[k].is_none() && self.isp(arg) && self.peek_ty(arg) == Some(Ty::String) {
+                // `t.eq(s)` with a String `s`: not a copy problem, the parameter is simply a Text
+                self.err(
+                    diag("expected Text but this is String", apos)
+                        .note("a String is not a Text, and passing it would not copy it")
+                        .note("help: compare with the String as receiver instead: `s.eq(t)` accepts a Text"),
+                );
+                continue;
+            }
             if by_value || pre[k].is_some() {
                 let t = match pre[k] {
                     Some(t) => t,

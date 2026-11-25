@@ -1,8 +1,9 @@
-error: unterminated raw string
+error: this raw string is not closed on its line
  --> tests/e1413_raw_unterminated.yx:2:11
   |
 2 |   let s = r#"{"a": 1}"
   |           ^
-  = a raw string ends with a quote followed by as many `#` as it started with: r#"{"a": 1}"#; it must fit on one line
+  = a raw string ends with a quote followed by as many `#` as it started with: r#"{"a": 1}"#; it must fit on one line, so a closing quote on a later line does not count
+  = help: write the text on one line, or join lines with interpolation or `push_str`
 
 1 error(s). Nothing was generated.

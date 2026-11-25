@@ -624,20 +624,25 @@ and exit 0. `tests/real_programs.sh` builds and runs all five on both backends (
     Same family as friction 39. Workaround: `let` the result, then index.
 47. **A multi-line raw string gives "unterminated raw string".** SPEC requires a raw string on one line, so this is a
     documented limit, but the message says "unterminated" when the literal is closed on the next line. Workaround: one long line.
+    *Fixed message:* "this raw string is not closed on its line" with the one-line rule and a help (`tests/expected/e1413_raw_unterminated.err`). The one-line limit itself stays, as in SPEC.
 48. **A Text result cannot be passed to a `view String` parameter.** `show(name())` with `name() -> Text` and
     `show(s: view String)` gives `expected String but this is Text`; the same for an element of a Text array (`show(a[0])`).
     A Text variable is accepted (`let t = a[0]; show(t)`). Workaround: `String.from(...)`.
 49. **`Text.eq` rejects a String argument, and the help is wrong.** `t.eq(s)` with `s: String` gives
     "'s' is a String and is not copied" with `help: use move s`; `t.eq(move s)` then gives "expected Text but this is String".
     `String.eq(Text)` works. Workaround: compare with the String as receiver.
+    *Fixed:* `t.eq(s)` now says `expected Text but this is String` with the right help (`tests/e2061_text_eq_string.yx`).
 50. **A quote inside `{expr}` gives "expected a variable or a field here".** `print("x {s.split(" ").at(0)}")` points at
     `s.split(`. The real cause is the `"` inside the interpolation; the message does not mention quotes.
     Workaround: store the value in a variable first.
+    *Re-diagnosed:* the quote is not the cause (string literals are allowed inside `{..}`); the cause is `.at(0)` on a call result. The error now says so and suggests storing it first (`tests/e2059_call_result_at.yx`).
 51. **`==` on a String call result needs a `let` first.** `print(if money(5) == "5" { "y" } else { "n" })` gives
     "cannot use `==` here: the left side is a String value that is not a variable". The message is clear; the
     restriction is awkward in expressions. Workaround: `let m = money(5)` then `m.eq("5")`.
+    *Kept:* the message already names the rule and the fix; the restriction is deliberate (`==` borrows its left side).
 52. **`+=` is not in the language, and the diagnostic is generic.** `n += 2` gives `expected an expression` at the `+`.
     SPEC does not mention `+=`. Workaround: `n = n + 2`. A message saying that `+=` is unsupported would help.
+    *Fixed:* `n += 2` now says "`+=` does not exist: assignment has no compound form" with `n = n + 2` (`tests/e2060_compound_assignment.yx`).
 53. **`String.concat` exists only in static form.** `String.concat(a, b)` works; `String.from("c").concat(u)` gives
     "String has no method 'concat'". Reported by the ledger author; not re-run this round.
 54. **`==` on an enum without an `Equal` impl is accepted silently.** `enum Method { Get, Post }` with `m == Method.Get`
@@ -645,3 +650,4 @@ and exit 0. `tests/real_programs.sh` builds and runs all five on both backends (
     `Equal` impl but does not say what happens without one. Either reject it or document the structural comparison.
 55. **Bounds on struct type parameters are rejected (documented).** `struct Box3<T: Show> { v: T }` gives
     "type parameters of a struct or enum cannot have bounds". Workaround: bound the `impl` blocks instead (warehouse).
+    *Fixed message:* the missing-method error points to `String.concat(a, b)`, `push_str` and interpolation (`tests/e2062_string_concat_method.yx`).

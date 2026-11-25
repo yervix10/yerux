@@ -1,0 +1,9 @@
+error: expected Text but this is String
+ --> tests/e2061_text_eq_string.yx:4:14
+  |
+4 |   print(t.eq(s))
+  |              ^
+  = a String is not a Text, and passing it would not copy it
+  = help: compare with the String as receiver instead: `s.eq(t)` accepts a Text
+
+1 error(s). Nothing was generated.

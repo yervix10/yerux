@@ -1,0 +1,8 @@
+error: `+=` does not exist: assignment has no compound form
+ --> tests/e2060_compound_assignment.yx:3:5
+  |
+3 |   n += 2
+  |     ^
+  = help: write the operation out: `n = n + 2`
+
+1 error(s). Nothing was generated.

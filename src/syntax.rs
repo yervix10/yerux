@@ -299,8 +299,9 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                 i += 1;
             }
             if i >= cs.len() || cs[i] == '\n' {
-                return Err(diag("unterminated raw string", Pos { line, col: scol, len: 1 })
-                    .note("a raw string ends with a quote followed by as many `#` as it started with: r#\"{\"a\": 1}\"#; it must fit on one line"));
+                return Err(diag("this raw string is not closed on its line", Pos { line, col: scol, len: 1 })
+                    .note("a raw string ends with a quote followed by as many `#` as it started with: r#\"{\"a\": 1}\"#; it must fit on one line, so a closing quote on a later line does not count")
+                    .note("help: write the text on one line, or join lines with interpolation or `push_str`"));
             }
             tok = Tok::Str(cs[body..i].iter().collect());
             i += 1 + hashes;
@@ -4352,6 +4353,17 @@ impl Parser {
                 }
                 _ => self.after_name(x, pos),
             },
+            Tok::Sym("=") => {
+                // `n += 2`: the operator was taken as binary and its right side is the `=` that follows
+                let prev = self.t.iter().position(|t| t.pos == pos).and_then(|k| k.checked_sub(1)).map(|k| &self.t[k]);
+                if let Some(Token { t: Tok::Sym(op @ ("+" | "-" | "*" | "/" | "%")), pos: op_pos }) = prev {
+                    if op_pos.line == pos.line && op_pos.col + 1 == pos.col {
+                        return Err(diag(format!("`{}=` does not exist: assignment has no compound form", op), *op_pos)
+                            .note("help: write the operation out: `n = n + 2`"));
+                    }
+                }
+                Err(diag("expected an expression", pos))
+            }
             _ => Err(diag("expected an expression", pos)),
         }
     }

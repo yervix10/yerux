@@ -1,0 +1,9 @@
+error: expected a variable or a field here
+ --> tests/e2059_call_result_at.yx:3:11
+  |
+3 |   let x = s.split(" ").at(0)
+  |           ^^^^^^^^^^^^
+  = this is the result of a call, a temporary: `.at(i)` and other borrowing accesses need a variable
+  = help: store it first, `let parts = s.split(" ")`, then use `parts.at(0)` (quotes inside `{..}` of a string are fine)
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,6 @@
+fn main() {
+  let s = String.from("a b")
+  let x = s.split(" ").at(0)
+  print(x)
+  print("x {s.len()}")
+}
