@@ -1,6 +1,6 @@
 # Yerux Guide
 
-A one-page tour of the Yerux language (v0.5, the version in `Cargo.toml`; `yerux --version`). For a progressive tutorial see [The Yerux Book](book/README.md). Every `yx` code block in this guide is a complete program: save it as `file.yx` and run `yerux run file.yx` (or `yerux run file.yx --native`). The programs were run on both backends and the comments show their real output.
+A one-page tour of the Yerux language (v0.9.0-rc1, the version in `Cargo.toml`; `yerux --version`). For a progressive tutorial see [The Yerux Book](book/README.md). Every `yx` code block in this guide is a complete program: save it as `file.yx` and run `yerux run file.yx` (or `yerux run file.yx --native`). The programs were run on both backends and the comments show their real output.
 
 ---
 
