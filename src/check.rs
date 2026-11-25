@@ -3918,7 +3918,15 @@ impl<'a> Checker<'a> {
                 // a temporary (`show(make())`, `show(Point { .. })`): kept alive in a hidden variable for the call
                 self.hint = Some(pty);
                 let t = self.expr(arg);
-                if t != Ty::Err {
+                if t == Ty::Text && pty == Ty::String {
+                    // a Text result (`pat()`, an array element) lent to a `view String`: turned into a String held for the call
+                    let old = std::mem::replace(
+                        arg,
+                        Expr { k: EK::Int(0), pos: apos, ty: Ty::String },
+                    );
+                    arg.k = EK::Static { ty: Ty::String, f: "from".into(), args: vec![old] };
+                    self.hoist_view_temp(arg, Ty::String, before, &sig.params);
+                } else if t != Ty::Err {
                     self.expect(t, pty, apos);
                     self.hoist_view_temp(arg, t, before, &sig.params);
                 }
@@ -4009,7 +4017,7 @@ impl<'a> Checker<'a> {
     fn hoist_text(&mut self, arg: &mut Expr) {
         let is_text = match &arg.k {
             EK::Text(_) => true,
-            EK::Var(..) | EK::Field(..) => self.peek_ty(arg) == Some(Ty::Text),
+            EK::Var(..) | EK::Field(..) | EK::Call(..) | EK::Method { .. } => self.peek_ty(arg) == Some(Ty::Text),
             _ => false,
         };
         if !is_text {
@@ -7415,6 +7423,10 @@ impl<'a> Checker<'a> {
                     Ty::Int | Ty::Bool | Ty::Text | Ty::Struct(_) | Ty::Enum(_)
                 ) {
                     d = d.note("help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`");
+                }
+                if matches!(rt, Ty::Text) {
+                    d = d.note("a Text is an immutable literal: it has no `len()`, `repeat()` or other String methods");
+                    d = d.note("help: make a String first, `String.from(t)`, then call the method on that");
                 }
                 self.err(d);
                 return Err(());

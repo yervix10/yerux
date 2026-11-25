@@ -1,0 +1,4 @@
+fn main() {
+  let t = "abc"
+  print(t.len())
+}

@@ -1,0 +1,9 @@
+// A Text call result or array element lent to a `view String` parameter (friction 60)
+fn pat() -> Text { return "aa" }
+fn is(p: view String, t: view String) -> Bool { return p.eq(t) }
+fn main() {
+  print(is(pat(), "aa"))
+  let a = ["x", "y"]
+  print(is(a[0], "x"))
+  let t = "abc"
+}

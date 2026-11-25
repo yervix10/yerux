@@ -1,7 +1,0 @@
-import std.io
-
-fn help() -> Text { return "help" }
-
-fn main() {
-    io.eprintln(help())
-}

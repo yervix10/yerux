@@ -30,8 +30,8 @@ compares stdout, stderr and exit status with expected results on both backends.
   `0xff`, then checks direct arguments and directory traversal.
 - Help stays an immutable `Text` value. When a call requires `view String`,
   yxscan passes `String.from(options.usage())` explicitly. The compiler
-  continues to reject `io.eprintln(help())` when `help() -> Text`
-  ([regression test](../tests/e1561_text_requires_string_conversion.yx)).
+  used to reject `io.eprintln(help())` when `help() -> Text`; since the round 12 hardening a Text call result or array
+  element is accepted for a `view String` parameter ([test](../tests/text_result_to_view_string.yx)).
 
 ### Remaining limits
 
@@ -682,6 +682,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
 56. **`Text` has no `len()` or `repeat()`.** `let t = "abc"; print(t.len())` gives "type Text has no method 'len'" and
     the help suggests an `impl` block. `String.from(t).len()` works. `" ".repeat(3)` fails the same way; the help points
     to `std.text`, which is not the fix for a method call. Workaround: `String.from(...)` first.
+    *Improved message:* the error now says a Text is an immutable literal without String methods and suggests `String.from(t)` (`tests/e2065_text_len.yx`).
 57. **A cascade error produces a misleading inference error.** `let bad = " ".repeat(2)` then `print("[{bad}]")`
     gives, after the first error, "cannot infer the type parameter T of 'std__fmt_val'" with "no argument has a type
     that mentions T". The variable's type is an error type; the message never mentions `bad`.
@@ -696,6 +697,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
 60. **Text results and array elements are not accepted for `view String` parameters.** Still open from Round 11 friction
     48. `fn pat() -> Text`; `std_is(pat(), "aa")` with `std_is(p: view String, ...)` gives "expected String but this is
     Text". A Text variable is accepted.
+    *Fixed:* a Text call result or array element is converted to a String held for the call (`tests/text_result_to_view_string.yx`); the old rejection tests e1561 and e2058 were removed.
 61. **`std.regex`: `]` as the first member of a class is rejected.** `regex.check("[]]")` returns
     `Err("empty character class at offset 0")`. Python `re.compile("[]]")` is valid. The module header does not list this.
     *Fixed:* `]` first in a class is a member (`tests/std_regex_bounds.yx`); `[]` is an unclosed class.

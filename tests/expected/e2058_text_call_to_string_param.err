@@ -1,8 +1,0 @@
-error: expected String but this is Text
- --> tests/e2058_text_call_to_string_param.yx:3:18
-  |
-3 | fn main() { show(name()) }
-  |                  ^^^^^^
-  = help: a Text is a string literal type and is not a String: make a String with `String.from(text)`
-
-1 error(s). Nothing was generated.

@@ -4,5 +4,7 @@ error: type Text has no method 'shout'
 3 |   name.shout()
   |   ^^^^^^^^^^^^
   = help: define it in an `impl` block, e.g. `impl Point { fn norm(view self) -> Int { .. } }`
+  = a Text is an immutable literal: it has no `len()`, `repeat()` or other String methods
+  = help: make a String first, `String.from(t)`, then call the method on that
 
 1 error(s). Nothing was generated.
