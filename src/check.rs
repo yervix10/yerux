@@ -2639,7 +2639,7 @@ impl<'a> Checker<'a> {
     fn isp(&self, e: &Expr) -> bool {
         match &e.k {
             EK::Var(n, _) => self.lookup(n).is_some() || !self.types.consts.contains_key(n),
-            EK::Field(..) => true,
+            EK::Field(..) | EK::Payload(..) => true,
             EK::Method { recv, m, .. } if m == "at" => {
                 !matches!(self.peek_ty(recv), Some(Ty::Dyn(_)) | Some(Ty::Box(_)))
             }

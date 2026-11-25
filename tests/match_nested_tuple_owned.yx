@@ -1,0 +1,42 @@
+// A nested tuple pattern inside `Some` over an owned payload borrows the parts (friction 44).
+fn pair(a: view String, b: view String) -> Option<(String, String)> {
+  if a.len() == 0 { return None }
+  return Some((String.from(a), String.from(b)))
+}
+
+enum Shape {
+  Named((String, Int)),
+  Anon,
+}
+
+fn main() {
+  let p: Option<(String, String)> = Some((String.from("left"), String.from("right")))
+  match p {
+    Some((x, y)) => { print("{x}-{y}") }
+    None => { print("none") }
+  }
+  match p {
+    Some((x, _)) => { print(x) }
+    None => { print("none") }
+  }
+  let q: Option<(String, Int)> = Some((String.from("n"), 7))
+  match q {
+    Some((s, n)) => { print("{s}={n}") }
+    None => { print("none") }
+  }
+  let r = pair("a", "b")
+  match r {
+    Some((u, v)) => { print(u + "+" + v) }
+    None => { print("none") }
+  }
+  let e = pair("", "b")
+  match e {
+    Some((u, v)) => { print(u) }
+    None => { print("none") }
+  }
+  let sh = Shape.Named((String.from("sq"), 4))
+  match sh {
+    Shape.Named((name, side)) => { print("{name} {side}") }
+    Shape.Anon => { print("anon") }
+  }
+}
