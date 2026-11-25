@@ -3,7 +3,7 @@
 import std.env
 import std.fs
 
-struct Part { expr: Bool, text: String }
+struct Part { expr: Bool, text: String, line: Int, col: Int }
 
 fn hex(s: view String) -> String {
   let digits = String.from("0123456789abcdef")
@@ -52,7 +52,7 @@ fn emit_interp(parts: view List<Part>, count: Int, line: Int) {
   emit_row(line, String.from("Sym:28"))
   emit_interp(parts, count - 1, line)
   emit_row(line, String.from("Sym:2c"))
-  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false, line % 1000000, false) }
+  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false, line % 1000000, false, parts.at(count - 1).line, parts.at(count - 1).col) }
   else { emit(line, "Str:", parts.at(count - 1).text) }
   emit_row(line, String.from("Sym:29"))
 }
@@ -78,9 +78,14 @@ fn col_at(src: view String, at: Int) -> Int {
   return col
 }
 
-fn report_error(src: view String, message: view String, at: Int, len: Int, note1: Text, note2: Text) {
+// `ol`/`oc`: where the first character of `src` is in the file (1, 1 for the file itself; the position of an
+// interpolated expression inside its string), so a nested error is reported where the Rust lexer reports it.
+fn report_error(src: view String, ol: Int, oc: Int, message: view String, at: Int, len: Int, note1: Text, note2: Text) {
   let m = String.from(message)
-  print("Error:{hex(m)}:{line_at(src, at)}:{col_at(src, at)}:{len}")
+  let found_line = line_at(src, at)
+  var found_col = col_at(src, at)
+  if found_line == 1 { found_col = found_col + oc - 1 }
+  print("Error:{hex(m)}:{found_line + ol - 1}:{found_col}:{len}")
   if note1 != "" { print("Note:{hex(String.from(note1))}") }
   if note2 != "" { print("Note:{hex(String.from(note2))}") }
   env.exit(1)
@@ -142,7 +147,7 @@ fn main() {
             Some(flag) => { if flag == "--columns" { columns = true } }
             None => {}
           }
-          lex(src, true, line, columns)
+          lex(src, true, line, columns, 1, 1)
         }
       }
     }
@@ -176,7 +181,7 @@ fn raw_closes(src: view String, at: Int, hashes: Int) -> Bool {
   return true
 }
 
-fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
+fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool, ol: Int, oc: Int) {
   var line = first_line
   var line_start = 0
   let n = src.len()
@@ -199,7 +204,7 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
       i = i + 1
       let body = i
       while i < n && src.byte(i) != 10 && !raw_closes(src, i, hashes) { i = i + 1 }
-      if i >= n || src.byte(i) == 10 { report_error(src, "this raw string is not closed on its line", body - hashes - 2, 1, "a raw string ends with a quote followed by as many `#` as it started with: r#\"{{\"a\": 1}}\"#; it must fit on one line, so a closing quote on a later line does not count", "help: write the text on one line, or join lines with interpolation or `push_str`") }
+      if i >= n || src.byte(i) == 10 { report_error(src, ol, oc, "this raw string is not closed on its line", body - hashes - 2, 1, "a raw string ends with a quote followed by as many `#` as it started with: r#\"{{\"a\": 1}}\"#; it must fit on one line, so a closing quote on a later line does not count", "help: write the text on one line, or join lines with interpolation or `push_str`") }
       emit(tokpos, "Str:", src.slice(body, i))
       i = i + 1 + hashes
     }
@@ -252,13 +257,34 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
       if is_float || suffix == "f32" || suffix == "f64" {
         let row = "Float:{hex(core)}:{suffix}"; emit_row(tokpos, row)
       } else if radix != 10 {
-        var value = 0
+        // significant digits (no `_`, no leading zeros): more than 16 hex or 64 binary digits cannot be a UInt64
+        var significant = 0
+        var first_digit = 0
         var j = digits_start
         while j < integer_end {
           let d = hex_value(src.byte(j))
-          if d >= 0 { value = value * radix + d }
+          if d >= 0 {
+            if significant == 0 && d != 0 { first_digit = d }
+            if significant > 0 || d != 0 { significant = significant + 1 }
+          }
           j = j + 1
         }
+        var limit = 16
+        if radix == 2 { limit = 64 }
+        if significant > limit { report_error(src, ol, oc, "number too large (the largest is 18446744073709551615)", start, i - start, "", "") }
+        // up to 63 bits the value fits an Int; above that the row is the unsupported one
+        var fits = significant < limit || (radix == 16 && significant == 16 && first_digit < 8)
+        if radix == 2 && significant == 64 { fits = false }
+        if radix == 16 && significant == 16 && first_digit >= 8 { fits = false }
+        var value = 0
+        if fits {
+          j = digits_start
+          while j < integer_end {
+            let d = hex_value(src.byte(j))
+            if d >= 0 { value = value * radix + d }
+            j = j + 1
+          }
+        } else { value = -1 }
         if value >= 0 {
           if suffix.len() == 0 { let row = "Num:{value}"; emit_row(tokpos, row) }
           else { let row = "NumT:{value}:{suffix}"; emit_row(tokpos, row) }
@@ -272,7 +298,7 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
           let unsigned_max = String.from("18446744073709551615")
           if core.len() < unsigned_max.len() || (core.len() == unsigned_max.len() && core <= unsigned_max) {
             let row = "NumT:{core}:{suffix}"; emit_row(tokpos, row)
-          } else { emit(tokpos, "UnsupportedNumber:", raw) }
+          } else { report_error(src, ol, oc, "number too large (the largest is 18446744073709551615, written as UInt64)", start, i - start, "", "") }
         }
       }
     }
@@ -297,25 +323,26 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
             j = j + 1
           }
           if j < n { j = j + 1 }
-          if invalid_hex || value == 0 { report_error(src, "expected hexadecimal digits in \\u{{..}} escape", i, j - i, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
-          if value > 1114111 || (value >= 55296 && value <= 57343) { report_error(src, "this is not a valid Unicode scalar value", i, j - i, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+          if invalid_hex || value == 0 { report_error(src, ol, oc, "expected hexadecimal digits in \\u{{..}} escape", i, j - i, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+          if value > 1114111 || (value >= 55296 && value <= 57343) { report_error(src, ol, oc, "this is not a valid Unicode scalar value", i, j - i, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
         } else if e == 10 || e == 0 {
-          report_error(src, "unterminated character literal", i, 1, "", "")
+          report_error(src, ol, oc, "unterminated character literal", i, 1, "", "")
         } else {
-          report_error(src, "unknown escape in a character literal", i, (j + 1 - i).max(2), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "")
+          report_error(src, ol, oc, "unknown escape in a character literal", i, (j + 1 - i).max(2), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "")
         }
       } else {
-        if src.byte(j) == 39 { report_error(src, "empty character literal", i, 2, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
-        if src.byte(j) == 10 || src.byte(j) == 0 { report_error(src, "unterminated character literal", i, 1, "", "") }
+        if src.byte(j) == 39 { report_error(src, ol, oc, "empty character literal", i, 2, "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+        if src.byte(j) == 10 || src.byte(j) == 0 { report_error(src, ol, oc, "unterminated character literal", i, 1, "", "") }
         value = src.char_at(j).to_int()
         j = j + src.char_size(j)
       }
       if j < n && src.byte(j) == 39 { j = j + 1 }
-      else { report_error(src, "a character literal must contain exactly one character", i, (j - i).max(1), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
+      else { report_error(src, ol, oc, "a character literal must contain exactly one character", i, (j - i).max(1), "a Char literal holds exactly one Unicode character: 'a', 'é', '\\n', '\\u{{1F600}}'; use \"..\" for text", "") }
       let row = "Char:{value}"; emit_row(tokpos, row)
       i = j
     }
     else if b == 34 {
+      let quote = i
       i = i + 1
       var value = String.new()
       var parts = List<Part>.new()
@@ -332,14 +359,14 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
             let prefix = String.from("unknown escape sequence ")
             let first = String.concat(prefix, escaped)
             let message = String.concat(first, " in a string")
-            report_error(src, message, i, 2, "escapes: \\n (newline), \\t (tab), \\r, \\\" (quote), \\\\ (backslash); write {{{{ and }}}} for literal braces", "")
+            report_error(src, ol, oc, message, i, 2, "escapes: \\n (newline), \\t (tab), \\r, \\\" (quote), \\\\ (backslash); write {{{{ and }}}} for literal braces", "")
           }
           i = i + 2
         } else if (src.byte(i) == 123 || src.byte(i) == 125) && i + 1 < n && src.byte(i + 1) == src.byte(i) {
           value.push_byte(src.byte(i))
           i = i + 2
         } else if src.byte(i) == 125 {
-          report_error(src, "a lone `}}` in a string", i, 1, "write `}}}}` for a literal brace, or `{{name}}` to insert a value", "")
+          report_error(src, ol, oc, "a lone `}}` in a string", i, 1, "write `}}}}` for a literal brace, or `{{name}}` to insert a value", "")
         } else if src.byte(i) == 123 {
           var j = i + 1
           var scanning = true
@@ -355,32 +382,34 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
           }
           if j < n && src.byte(j) == 125 {
             let expression = src.slice(i + 1, j)
-            if expression.trim().len() == 0 { report_error(src, "empty `{{}}` in a string", i, 1, "write `{{}}` for literal braces, or put a value inside: \\\"x = {{x}}\\\"", "") }
+            if expression.trim().len() == 0 { report_error(src, ol, oc, "empty `{{}}` in a string", i, 1, "write `{{}}` for literal braces, or put a value inside: \\\"x = {{x}}\\\"", "") }
             if value.len() > 0 {
-              parts.push(Part { expr: false, text: move value })
+              parts.push(Part { expr: false, text: move value, line: 0, col: 0 })
               value = String.new()
             }
-            parts.push(Part { expr: true, text: move expression })
+            var expr_col = col_at(src, i + 1)
+            if line_at(src, i + 1) == 1 { expr_col = expr_col + oc - 1 }
+            parts.push(Part { expr: true, text: move expression, line: line_at(src, i + 1) + ol - 1, col: expr_col })
             interpolated = true
             i = j + 1
           } else {
-            report_error(src, "this `{{` in a string is never closed", i, 1, "string interpolation looks like \"x = {{x}}\"; the expression may contain string literals but must end with `}}` on the same line", "write `{{{{` for a literal brace")
+            report_error(src, ol, oc, "this `{{` in a string is never closed", i, 1, "string interpolation looks like \"x = {{x}}\"; the expression may contain string literals but must end with `}}` on the same line", "write `{{{{` for a literal brace")
           }
         } else {
           value.push_byte(src.byte(i))
           i = i + 1
         }
       }
-      if i < n && src.byte(i) == 34 { i = i + 1 }
+      if i >= n || src.byte(i) != 34 { report_error(src, ol, oc, "unterminated string", quote, 1, "", "") }
+      i = i + 1
       if interpolated {
-        if value.len() > 0 { parts.push(Part { expr: false, text: move value }) }
+        if value.len() > 0 { parts.push(Part { expr: false, text: move value, line: 0, col: 0 }) }
         emit_interp(parts, parts.len(), tokpos)
       } else { emit(tokpos, "Str:", value) }
     }
     else {
       if b >= 128 {
-        let row = "UnsupportedCharacter:{i}"; emit_row(tokpos, row)
-        i = i + src.char_size(i)
+        report_error(src, ol, oc, String.concat("unexpected character '", String.concat(src.slice(i, i + src.char_size(i)), "'")), i, 1, "", "")
       } else {
       var three = String.new()
       var two = String.new()
@@ -395,8 +424,7 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
         if one == "(" || one == ")" || one == "{{" || one == "}}" || one == "[" || one == "]" || one == "," || one == ":" || one == ";" || one == "=" || one == "<" || one == ">" || one == "+" || one == "-" || one == "*" || one == "/" || one == "%" || one == "!" || one == "." || one == "|" || one == "@" || one == "?" {
           emit(tokpos, "Sym:", one); i = i + 1
         } else {
-          let row = "UnsupportedCharacter:{i}"; emit_row(tokpos, row)
-          i = i + src.char_size(i)
+          report_error(src, ol, oc, String.concat("unexpected character '", String.concat(one, "'")), i, 1, "", "")
         }
       }
       }
