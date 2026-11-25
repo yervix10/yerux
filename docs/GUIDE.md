@@ -1,6 +1,6 @@
 # Yerux Guide
 
-A one-page tour of the Yerux language (v0.5, the version in `Cargo.toml`; `yerux --version`). For a progressive tutorial see [The Yerux Book](book/README.md). Every `yx` code block in this guide is a complete program: save it as `file.yx` and run `yerux run file.yx` (or `yerux run file.yx --native`). The programs were run on both backends and the comments show their real output.
+A one-page tour of the Yerux language (v0.9.0-rc1, the version in `Cargo.toml`; `yerux --version`). For a progressive tutorial see [The Yerux Book](book/README.md). Every `yx` code block in this guide is a complete program: save it as `file.yx` and run `yerux run file.yx` (or `yerux run file.yx --native`). The programs were run on both backends and the comments show their real output.
 
 ---
 
@@ -85,8 +85,8 @@ fn main() {
   var nums = List<Int>.new()
   for i in 0..=5 { nums.push(i * i) }   // inclusive range: 0 1 4 9 16 25
   let (a, b) = first_pair_with_sum(nums, 25)
-  print(a)  // 3
-  print(b)  // 4
+  print(a)  // 0  (0 + 25 is the first pair that sums to 25)
+  print(b)  // 5
 
   for k in 0..10 step 4 { print(k) }    // 0 4 8
   for x in nums {                       // borrows each element read-only
