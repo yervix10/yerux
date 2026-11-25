@@ -1,0 +1,20 @@
+0
+-1
+0
+-1
+0
+0
+-1
+0
+0
+0
+0
+1
+1
+err unclosed '[' at offset 0
+ok 0
+err nothing to repeat before the quantifier at offset 0
+err invalid repetition at offset 1: the maximum is smaller than the minimum
+err nested quantifier at offset 4: a repeated item cannot be repeated again (wrap it in a group)
+err repetition at offset 1 is too large (at most 100 copies)
+err an anchor cannot be repeated (offset 1)

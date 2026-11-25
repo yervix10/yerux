@@ -1,0 +1,30 @@
+// std.args.parse_with reports a valued option without a value (friction 65)
+import std.args
+
+fn main() {
+  var valued = List<String>.new()
+  valued.push("prefix")
+  valued.push("o")
+  var argv = List<String>.new()
+  argv.push("fsclient")
+  argv.push("ls")
+  argv.push("--prefix")
+  let p = args.parse_with(argv, valued, true)
+  print(p.errors.len())
+  for e in p.errors { print(e) }
+
+  var ok = List<String>.new()
+  ok.push("fsclient")
+  ok.push("ls")
+  ok.push("--prefix")
+  ok.push("a/")
+  let q = args.parse_with(ok, valued, true)
+  print(q.errors.len())
+  print(q.options.len())
+
+  var short = List<String>.new()
+  short.push("x")
+  short.push("-o")
+  let r = args.parse_with(short, valued, false)
+  for e in r.errors { print(e) }
+}

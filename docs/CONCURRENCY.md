@@ -299,7 +299,7 @@ scope {
   spawn move { while let Some(j) = rx.recv() { run(j) } }
 }
 ```
-- `Sender<T>` and `Receiver<T>` are owned, non-Copy values; `send(move x)` transfers ownership of `x` across threads (hence `T` must be thread-safe, section 6). `Sender` is `clone()`-able (multi-producer); `Receiver` is single consumer unless wrapped (`rx.share()` gives a multi-consumer handle).
+- `Sender<T>` and `Receiver<T>` are owned, non-Copy values; `send(move x)` transfers ownership of `x` across threads (hence `T` must be thread-safe, section 6). `Sender` is `clone()`-able (multi-producer); `Receiver` is single consumer and has no `share()`: to feed several workers, give each worker its own channel and deal the items round-robin (as `examples/real/pipeline` does), or use a pool from the library. A multi-consumer handle is not planned for 1.0.
 - `recv() -> Option<T>`: `None` when closed and drained. `try_recv`, `recv_timeout(ms)`. `send` returns `Result<(), Closed<T>>` giving the value back when the receiver is gone.
 - Bounded by default to give back-pressure. Unbounded: `Channel<T>.unbounded()` (explicit, because it hides memory growth).
 - Planned for the library on top of `Locked<Queue<T>>` + a futex-backed condition (section 12); it is not implemented yet.

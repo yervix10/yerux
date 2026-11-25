@@ -1,0 +1,6 @@
+fn main() {
+  let s = String.from("a b c")
+  print("x{"ab"}y")
+  print("n={s.split(" ").len()}")
+  print("e={"a\"b"}")
+}

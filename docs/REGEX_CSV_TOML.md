@@ -6,19 +6,20 @@
 |---|---|
 | `c` | the literal character `c` |
 | `.` | any one character |
-| `[abc]` `[a-z]` `[^abc]` | class, ranges, negation (a `]` closes the class; `[]` is an error) |
+| `[abc]` `[a-z]` `[^abc]` | class, ranges, negation (a `]` first in the class is a member, `[]]`; otherwise it closes the class; `[]` is an unclosed class) |
 | `(...)` | group, numbered by its `(`; may be repeated |
 | `a\|b` | alternation, at top level or inside a group (`^(north\|south)$`) |
 | `*` `+` `?` | repeat the previous atom or group (greedy) |
+| `{n}` `{n,}` `{n,m}` | counted repeat of the previous atom or group (greedy, at most 100 copies); a `{` that does not start a bound is a literal, so `x{` matches `x{`. Inside a string literal write the pattern raw (`r"a{2}"`) or double the braces |
 | `^` `$` | start and end of the text (anywhere in the pattern) |
 | `\n` `\t`, `\.` `\(` `\\` ... | escapes: newline, tab, escaped punctuation |
 
 Not supported, and rejected with an error instead of being matched silently: letter escapes such as `\d`,
-lazy quantifiers (`a+?`), counted repeats `{n,m}`. An invalid pattern is an error: `regex.check(pattern)` returns
+lazy quantifiers (`a+?`). An invalid pattern is an error: `regex.check(pattern)` returns
 `Result<Int, String>` (number of groups, or the message with the offset); every other function panics with
 `std.regex: invalid pattern '...': message`. Errors: unmatched `(` or `)`, empty alternative or group (`a||b`,
-`|a`, `a|`, `()`), unclosed or empty class, reversed range, quantifier with nothing to repeat (`*a`), nested
-quantifier (`a**`, `a+?`; write `(a*)*`), repeated anchor (`^*`), trailing backslash, letter escapes.
+`|a`, `a|`, `()`), unclosed or empty class, reversed range, quantifier or bound with nothing to repeat (`*a`, `{2}`), a maximum below the minimum (`a{3,2}`), more than 100 copies, nested
+quantifier (`a**`, `a{2}{3}`, `a+?`; write `(a*)*`), repeated anchor (`^*`), trailing backslash, letter escapes.
 
 `captures` returns the full match followed by every group in order of its `(` (a group that took no part, such as
 the other side of an alternation, is `""`). Free functions: `check`, `find(pattern, text)` (byte offset or -1),

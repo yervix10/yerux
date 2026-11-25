@@ -1,6 +1,6 @@
 // Bounded regular-expression search (backtracking VM, no external dependencies).
-// Syntax: literals, '.', classes [abc] [a-z] [^...], groups (...), alternation a|b, quantifiers * + ? on an atom
-// or a group, anchors ^ and $ (anywhere), and backslash escapes (\n, \t and escaped punctuation such as \. \( \\);
+// Syntax: literals, '.', classes [abc] [a-z] [^...], groups (...), alternation a|b, quantifiers * + ? and bounds {n} {n,} {n,m} (at most 100) on an atom
+// or a group, a ']' first in a class is a member, anchors ^ and $ (anywhere), and backslash escapes (\n, \t and escaped punctuation such as \. \( \\);
 // letter escapes such as \d are errors (use classes).
 // An invalid pattern is an error, never a silent mismatch: `check` returns it as a Result, and every other
 // function panics with the same message. Each attempted instruction consumes a step budget (20000 per start
@@ -20,6 +20,10 @@ fn atom(pattern: view String, pi: Int, c: Char) -> Bool {
   var negate = false
   if ch(pattern, i) == 94 { negate = true; i = i + 1 }
   var found = false
+  if ch(pattern, i) == 93 {
+    if c.to_int() == 93 { found = true }
+    i = i + 1
+  }
   while i < pattern.len() && ch(pattern, i) != 93 {
     if ch(pattern, i + 1) == 45 && i + 2 < pattern.len() && ch(pattern, i + 2) != 93 {
       if c.to_int() >= ch(pattern, i) && c.to_int() <= ch(pattern, i + 2) { found = true }
@@ -52,6 +56,7 @@ fn class_end(pat: view String, pos: Int, err: mut String) -> Int {
   var i = pos + 1
   if ch(pat, i) == 94 { i = i + 1 }
   let first = i
+  if ch(pat, i) == 93 { i = i + 1 }
   while i < pat.len() && ch(pat, i) != 93 {
     if ch(pat, i + 1) == 45 && i + 2 < pat.len() && ch(pat, i + 2) != 93 {
       if ch(pat, i + 2) < ch(pat, i) {
@@ -67,7 +72,7 @@ fn class_end(pat: view String, pos: Int, err: mut String) -> Int {
     err = "unclosed '[' at offset {pos}"
     return pos
   }
-  if i == first {
+  if i == first && ch(pat, first) != 93 {
     err = "empty character class at offset {pos}"
     return pos
   }
@@ -75,6 +80,45 @@ fn class_end(pat: view String, pos: Int, err: mut String) -> Int {
 }
 
 fn is_quant(c: Int) -> Bool { return c == 42 || c == 43 || c == 63 }
+
+fn is_digit(c: Int) -> Bool { return c >= 48 && c <= 57 }
+
+// `{n}`, `{n,}` or `{n,m}` at `pos`: the offset after the '}', with the bounds in `lo` and `hi` (-1 when open);
+// -1 when the text at `pos` is not a bound (a lone '{' stays a literal, as in other engines)
+fn parse_bound(pat: view String, pos: Int, lo: mut Int, hi: mut Int) -> Int {
+  if ch(pat, pos) != 123 { return -1 }
+  var i = pos + 1
+  var n = 0
+  var digits = 0
+  while is_digit(ch(pat, i)) && digits < 9 {
+    n = n * 10 + (ch(pat, i) - 48)
+    i = i + 1
+    digits = digits + 1
+  }
+  if digits == 0 { return -1 }
+  lo = n
+  hi = n
+  if ch(pat, i) == 44 {
+    i = i + 1
+    hi = -1
+    var m = 0
+    var md = 0
+    while is_digit(ch(pat, i)) && md < 9 {
+      m = m * 10 + (ch(pat, i) - 48)
+      i = i + 1
+      md = md + 1
+    }
+    if md > 0 { hi = m }
+  }
+  if ch(pat, i) != 125 { return -1 }
+  return i + 1
+}
+
+fn is_bound(pat: view String, pos: Int) -> Bool {
+  var lo = 0
+  var hi = 0
+  return parse_bound(pat, pos, lo, hi) >= 0
+}
 
 fn parse_atom(pat: view String, pos: mut Int, ng: mut Int, err: mut String) -> List<Int> {
   var f = List<Int>.new()
@@ -108,7 +152,7 @@ fn parse_atom(pat: view String, pos: mut Int, ng: mut Int, err: mut String) -> L
   } else if c == 36 {
     emit(f, 7, 0, 0)
     pos = pos + 1
-  } else if is_quant(c) {
+  } else if is_quant(c) || is_bound(pat, pos) {
     err = "nothing to repeat before the quantifier at offset {pos}"
   } else if c == 92 {
     if pos + 1 >= pat.len() {
@@ -159,7 +203,40 @@ fn parse_seq(pat: view String, pos: mut Int, ng: mut Int, err: mut String) -> Li
         emit(out, 3, 1, n + 1)
         append(out, a)
       }
-      if is_quant(ch(pat, pos)) {
+      if is_quant(ch(pat, pos)) || is_bound(pat, pos) {
+        err = "nested quantifier at offset {pos}: a repeated item cannot be repeated again (wrap it in a group)"
+        return out
+      }
+    } else if is_bound(pat, pos) {
+      var lo = 0
+      var hi = 0
+      let end = parse_bound(pat, pos, lo, hi)
+      if n == 1 && (a.get(0) == 6 || a.get(0) == 7) {
+        err = "an anchor cannot be repeated (offset {pos})"
+        return out
+      }
+      if hi >= 0 && hi < lo {
+        err = "invalid repetition at offset {pos}: the maximum is smaller than the minimum"
+        return out
+      }
+      if lo > 100 || hi > 100 || (lo + hi + 1) * n > 3000 {
+        err = "repetition at offset {pos} is too large (at most 100 copies)"
+        return out
+      }
+      pos = end
+      for k in 0..lo { append(out, a) }
+      if hi < 0 {
+        emit(out, 3, 1, n + 2)
+        append(out, a)
+        emit(out, 4, -(n + 1), 0)
+      } else {
+        let extra = hi - lo
+        for k in 0..extra {
+          emit(out, 3, 1, (extra - k) * (n + 1))
+          append(out, a)
+        }
+      }
+      if is_quant(ch(pat, pos)) || is_bound(pat, pos) {
         err = "nested quantifier at offset {pos}: a repeated item cannot be repeated again (wrap it in a group)"
         return out
       }

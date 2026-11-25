@@ -1,0 +1,2 @@
+const PAT: Text = "^a+$"
+fn main() { print(PAT) }
