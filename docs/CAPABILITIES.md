@@ -1,11 +1,29 @@
 # Capabilities for the standard library
 
-Status: **stage 3 of section 10 is implemented as a library** (`std.caps`, src/std/caps.yx); the manifest
-syntax (stage 1), the compile-time checks (stage 2) and `ffi` gating (stage 4) are still a proposal. Today
-`std.fs`, `std.net`, `std.process` and `std.env` (src/std/*.yx) remain callable from any module with no check:
-`std.caps` is an opt-in layer on top of them, so nothing existing changes. The v0.6 item in SPEC.md ("no
-network/disk access without permission") and the `ffi` / `threads` capabilities mentioned in docs/FFI.md and
-docs/CONCURRENCY.md are the places this design fits.
+Status (0.9.0-rc1): **only the library `std.caps` is implemented** (src/std/caps.yx): capability values
+with narrowing and **run-time** checks (stages 2, values only, and 3 of section 10). **There is no effect
+system and the compiler enforces no capability.** Sections 1-10 are the design; whatever they describe
+beyond section 0 is not implemented.
+
+| Piece | State |
+|---|---|
+| `Caps`/`Fs`/`Net`/`Process`/`Env` values, narrowing, run-time refusal | implemented, library only (tests/caps_grant.yx, tests/caps_deny.yx) |
+| Effect annotations or inference in function signatures | not implemented |
+| Compile-time rejection of stdlib calls without a capability | not implemented |
+| `[capabilities]` in `yerux.toml`, grants by the root, needs of a dependency | not implemented (the section is ignored without a warning) |
+| `Caps` as a parameter of `main` | not implemented (`main` takes no parameters) |
+| `ffi` gating of `extern`/`unsafe`; a `threads` capability | not implemented |
+
+So today:
+
+- `std.fs`, `std.net`, `std.process` and `std.env` are callable from any module of any package with no
+  check, and a dependency may declare `extern` blocks and use `unsafe`.
+- Any code can call `caps.all()`, so receiving a narrow value restricts only code that uses nothing else.
+- The reserved intrinsics (`__syscall` and the others, docs/STDLIB_IO.md) are also callable from user
+  code, without `unsafe` and without an import.
+
+`std.caps` therefore prevents mistakes in cooperating code. It is **not a security boundary** against
+untrusted dependencies.
 
 ## 0. What exists today (`std.caps`)
 
@@ -27,7 +45,7 @@ let text = data.read_to_string("notes.txt")?             // PermissionDenied for
   `require`, `vars`, `set`, `remove`, `current_dir`, `set_current_dir`, `current_exe`.
 - Tests: tests/caps_grant.yx (what a grant allows) and tests/caps_deny.yx (every refusal and its message).
 
-Corrections to the design that the implementation forced (the sections below are updated to match):
+Corrections to the design that the implementation forced:
 
 1. **No `canonicalize` in the stdlib**, so containment is *lexical* (`path.normalize` of root + path must stay
    under the root, `..` cannot climb out) **plus a refusal of any symbolic link on the way below the root**.
@@ -49,6 +67,8 @@ Corrections to the design that the implementation forced (the sections below are
 
 ## 1. Problem
 
+> Sections 1-10 are the design. Only what section 0 lists is implemented.
+
 A package can read any file, open any socket, run any program and read every environment
 variable that the application can. A third-party dependency therefore has the same authority
 as the application that imports it. The goal is to make authority explicit and checkable,
@@ -58,6 +78,9 @@ Memory safety is a separate concern (`unsafe`, docs/FFI.md section 7). Capabilit
 cover authority: what the program may ask the operating system to do.
 
 ## 2. What is granted
+
+(Design. `Fs` root and read-only, `Net` host lists, `Process` program lists and `Env` name lists are
+implemented in `std.caps`; write-only path sets and `canonicalize` are not.)
 
 Four capability families, one per stdlib module that touches the outside world:
 
@@ -85,6 +108,9 @@ Narrowing is a value, not a global flag, so the same process can hold a wide gra
 module and a narrow one for another.
 
 ## 3. How a grant is passed
+
+**Not implemented**: the manifest grants, the build error and the `main(caps: Caps)` entry point. Passing
+`Fs`/`Net`/`Process`/`Env` values as ordinary parameters works today with `std.caps`.
 
 There are two parts: who may grant, and how the grant travels.
 
@@ -122,7 +148,9 @@ for read-only use, `move` to hand it on, and a narrowed `Fs` is a new value made
 
 ## 4. Proposed API
 
-All names are provisional.
+Proposal. `narrow`, `read_only` and the four `restrict` methods exist in `std.caps` (section 0 is the
+reference); `main(caps: Caps)`, optional fields and a capability parameter on the existing `std`
+functions are not implemented.
 
 ```
 // the root receives all granted capabilities at once
@@ -140,33 +168,32 @@ Env.restrict(names: List<String>, write: Bool) -> Env
 Narrowing only ever reduces authority. `narrow` on a grant that is already narrower than the
 request returns `PermissionDenied`.
 
-The existing functions stay as they are, but gain a capability parameter in the proposed
-module form, for example `fs.read_to_string(f: view Fs, path: view String)`. The same check
+The existing functions stay as they are. The proposed module form would add a capability parameter, for example `fs.read_to_string(f: view Fs, path: view String)`. The same check
 can be expressed as a method call (`f.read_to_string(path)`) so that call sites read the same.
 
-Errors use the existing `IoErrorKind::PermissionDenied` (src/std/io.yx:13). The message names
+Errors use the existing `IoErrorKind.PermissionDenied` (src/std/io.yx). The message names
 the capability and the value that was refused, for example:
-`fs: path '/etc/passwd' is outside the root './data' granted in yerux.toml`.
+`fs: path '../x' is outside the root 'data'`.
 
 ## 5. Enforcement
 
 Two layers, both cheap because the checker already tracks ownership:
 
-1. **Compile time.** (Not implemented yet.) A call to a stdlib function that needs a capability is rejected if no
+1. **Compile time.** (Not implemented.) A call to a stdlib function that needs a capability is rejected if no
    `Fs`/`Net`/`Process`/`Env` value of the right kind is in scope. This catches a dependency
    that reaches for a file without being handed one.
-2. **Run time.** The narrowing checks (root containment, host list, program list, variable
+2. **Run time.** (Implemented in `std.caps`.) The narrowing checks (root containment, host list, program list, variable
    names) run inside the stdlib call. Compile time cannot know the actual path string, so this
    layer is required for the narrowed forms.
 
-Nothing is enforced for code compiled before this feature exists, see section 8.
+Code that does not use `std.caps` is not checked at all.
 
 ## 6. Interaction with `unsafe` and `extern`
 
-An `extern` call or a `Ptr` operation can make an `fs` or `net` syscall without going through
+**Not implemented.** An `extern` call, a `Ptr` operation or a reserved intrinsic can make an `fs` or `net` syscall without going through
 the stdlib. Therefore an `extern` block needs the `ffi` capability (docs/FFI.md section 7), and
-`unsafe` is still required for the call itself. A package with neither capability cannot reach
-the OS by any path.
+`unsafe` is still required for the call itself. For a package with neither capability to be unable to
+reach the OS, the reserved intrinsics (`__syscall` and the others) would have to be gated too.
 
 ## 7. stdin, stdout and stderr
 
@@ -176,6 +203,8 @@ here (a dependency that wants to exfiltrate data would use `net` or `fs`, which 
 is a deliberate exclusion and should be revisited only if a use case needs it.
 
 ## 8. Compatibility with existing code
+
+(Design for the unimplemented stages. There is no `--caps` flag.)
 
 - **Source compatibility.** Existing programs keep compiling in the first version only if the
   root has a default grant of "everything", which is what they get today. A flag such as
@@ -206,9 +235,10 @@ is a deliberate exclusion and should be revisited only if a use case needs it.
 ## 10. Staging
 
 1. Manifest syntax and the root grant table, with a build error for missing grants (no runtime
-   checks yet). *Not started.*
+   checks yet). *Not implemented.*
 2. Capability values (`Caps`, `Fs`, `Net`, `Process`, `Env`) and compile-time checks for the
-   stdlib entry points. *Values done (`std.caps`); compile-time checks not started.*
-3. Narrowing with runtime checks, starting with `fs.root` and `process` program lists. *Done, for all four
-   capabilities.*
-4. `ffi` gating for `extern` and `unsafe`, after the FFI work in docs/FFI.md lands.
+   stdlib entry points. *Values implemented (`std.caps`); compile-time checks not implemented.*
+3. Narrowing with runtime checks, starting with `fs.root` and `process` program lists. *Implemented for all
+   four capabilities.*
+4. `ffi` gating for `extern` and `unsafe` (and the reserved intrinsics). *Not implemented; FFI itself works
+   (docs/FFI.md).*

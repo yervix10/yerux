@@ -3,7 +3,7 @@
 > **Role of this document.** This is the structured specification: numbered sections, each claim
 > cited to a test in `tests/`, and the runnable examples of sections 1-4 checked as conformance programs
 > (section 11). The detailed feature-by-feature reference, including the range integer rules, the
-> `extern` declarations and the v0.4 wording, is [SPEC.md](../SPEC.md) at the repository root. The two
+> `extern` declarations, is [SPEC.md](../SPEC.md) at the repository root. The two
 > are kept side by side; contradictions between them are listed in
 > [COMPATIBILITY.md](COMPATIBILITY.md), section 10, and are not resolved silently. Stability levels:
 > [COMPATIBILITY.md](COMPATIBILITY.md), section 9.
@@ -920,8 +920,9 @@ listed in section 10.
   (tests/ffi_native.sh).
 - Native ELF output for x86-64 Linux has no executable-and-writable segment and marks the stack
   non-executable (tests/ffi_native.sh checks `GNU_STACK` as RW and two `LOAD` segments).
-- On the aarch64 and Windows native targets, any `extern "C"` declaration is rejected with
-  `extern C is not supported on the <target> target yet` (tests/ffi_native.sh).
+- The AArch64 Linux target builds `extern "C"` programs as dynamic executables (tests/ffi_native.sh).
+- The Windows target accepts only a Universal CRT subset (tests/pe_ffi.yx). A `link` library or another
+  C symbol is rejected with `... is not supported on the windows target` (tests/ffi_native.sh).
 
 ### 7.5 Not specified
 
@@ -1059,8 +1060,9 @@ unfixed point that no test pins down. The implemented behaviour in sections 1-9 
 
 1. **Concurrency surface.** CONCURRENCY.md sections 3-12 describe `spawn { }` without `move`,
    `Task<T>`, `Channel<T>.new`, `Locked.new_ordered`, `l.with(mut n => ...)`,
-   `Runtime.spawn_detached`, `parallel map`/`reduce`, `split_at_mut`/`chunks_mut`, actors, cancellation
-   and lint W-C1. The implemented forms are in section 5. The rest is pending.
+   `Runtime.spawn_detached`, `parallel map`/`reduce`, `chunks_mut`, actors, cancellation and lint W-C1.
+   None of these is implemented (`split_at_mut` exists for sequential code only). The implemented forms
+   are in section 5.
 2. **Capture diagnostics.** The error codes E-C1..E-C9 in CONCURRENCY.md are not printed by the
    compiler; diagnostics are plain messages (section 5.2). The full read/write capture matrix is pending.
 3. **Memory ordering.** Only sequential consistency is the stated design. No test distinguishes it
@@ -1072,7 +1074,8 @@ unfixed point that no test pins down. The implemented behaviour in sections 1-9 
    (section 7). The proposal is pending.
 6. **FFI safety and callbacks.** The `ffi` capability, `#![forbid(unsafe)]`, C-to-Yerux callbacks,
    and `Ptr` drop rules are pending (section 7.5).
-7. **FFI on other targets.** aarch64 and Windows reject `extern "C"` (section 7.4). Their ABIs are pending.
+7. **FFI on other targets.** AArch64 and the Windows CRT subset work (section 7.4). Their ABI contract is
+   not specified here.
 8. **Compile-time surface.** `comptime fn`, `comptime for`, `comptime if`, reflection, comptime
    allocators (COMPTIME.md part B) and serialised constants of other types are pending (section 8).
 9. **Compile-time budgets.** The compiler enforces a step budget of 20 000 000 (E-K2, tests/e1962_comptime_depth_1000.yx
@@ -1080,8 +1083,8 @@ unfixed point that no test pins down. The implemented behaviour in sections 1-9 
    not enforced yet. `examples/e53_comptime_budget.yx` (an endless loop) reaches that same E-K2 limit.
 10. **Module search order.** Whether `src/<name>.yx` or `src/lib.yx` is tried first for a package
     import (PACKAGES.md) is not tested. Pending.
-11. **Standard library coverage.** STDLIB.md lists APIs that no test calls, and `prelude_parallel.yx`
-    has no test that names `parallel map`/`reduce`. Those APIs are pending until tested.
+11. **Standard library coverage.** STDLIB.md lists APIs that no test calls; they are pending until tested.
+    `parallel map`/`reduce` are not implemented.
 
 ---
 

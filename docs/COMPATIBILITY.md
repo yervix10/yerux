@@ -40,6 +40,7 @@ A feature not mentioned in this document is **Experimental** by default.
 | FFI: `extern "C"`, `link`, variadic calls, `Ptr<T>` (SPEC 7) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx |
 | `const` items and `comptime` expressions (SPEC 8.1-8.2) | Stable-candidate | tests/comptime_basic.yx, tests/const_item_basic.yx |
 | `comptime fn`, `comptime for/if`, reflection, comptime allocators | Not yet available | SPEC 10 |
+| Effect system; manifest capabilities; compile-time capability checks; `ffi`/`threads` capabilities | Not yet available | [CAPABILITIES.md](CAPABILITIES.md) status table |
 | Module objects `.yxo` (`yerux obj`) | Experimental | tests/modobj.sh |
 
 Specific feature levels apply to their syntax. When a syntax form is promoted to Stable, add
@@ -83,6 +84,7 @@ Stable entries freeze public names, signatures and documented behavior for the t
 | `std.http.server` (HTTP/1.1 server, router, worker pool; Linux x86-64 native and C backend) | Experimental | docs/NET.md; tests/http_server/parse.yx, tests/http_server_loopback.yx, tests/http_server_fuzz.yx, examples/real/webkv |
 | `std.sync` | Experimental | spinning primitives, docs/STDLIB_SYNC.md; tests/std_sync.yx |
 | `std.log` | Stable-candidate | tests/std_log.yx |
+| `std.caps` (run-time capability values; advisory, not a security boundary) | Experimental | tests/caps_grant.yx, tests/caps_deny.yx; CAPABILITIES.md |
 | `std.kv` | Experimental | single-writer store, docs/STDLIB_KV.md; tests/std_kv.yx |
 | `std.compress` | Experimental | byte-oriented run-length encoding (see item 1 in section 7) |
 
@@ -220,7 +222,7 @@ library. M12 records the 1.0 release point. The Stable commitments in this docum
 
 ## 9. Features documented only in the root SPEC.md
 
-The root [SPEC.md](../SPEC.md) (v0.4 wording) is the detailed feature reference. The features below are
+The root [SPEC.md](../SPEC.md) is the detailed feature reference. The features below are
 described there and have no numbered section in [SPEC.md](SPEC.md) of this directory. Their level follows
 the rules of section 1; the tests are the evidence. A feature not covered by a test named here is
 Experimental.
@@ -236,7 +238,8 @@ Experimental.
 | Sized integers, checked conversions `to_int8()` etc., wrapping ops, Float semantics and shortest printing (Numbers) | Stable-candidate | tests/num_sized.yx, tests/num_float_basic.yx, tests/num_panic_conv.yx, tests/num_math.yx |
 | Generics by monomorphisation, inference, bounds, generic `impl` blocks (Generics) | Stable-candidate | tests/gen_basic.yx, tests/gen_owned.yx, tests/gen_traits.yx, tests/gen_methods.yx, tests/mod_ok/generic_impls, tests/derive_basic.yx |
 | Explicit type arguments on calls (`f<Int>(x)`) | Stable-candidate | tests/generic_explicit_args.yx, tests/e1518_explicit_type_args.yx |
-| Generic methods, default type arguments (Generics: "not yet") | Not yet available | listed as not implemented in SPEC.md |
+| Generic methods (type parameters of their own, in `impl` blocks) | Experimental | tests/generic_methods.yx, tests/e1519_generic_method_in_trait_impl.yx, tests/e1520_generic_method_errors.yx |
+| Generic trait methods, generic methods in trait impls, default type arguments, bounds on struct/enum parameters | Not yet available | listed as not implemented in SPEC.md |
 | Traits, `Box<dyn Trait>`, built-in traits `Equal`/`Ordered`/`Show`/`Hash`/`Copy` (Traits) | Stable-candidate | tests/dyn_shapes.yx, tests/dyn_handlers.yx, tests/dyn_call_order.yx, tests/mod_ok/dyn |
 | `Box<T>` and recursive types; iterative release of box chains (Box) | Stable-candidate | 27 tests use `Box<`; release of deep chains: tests/drop_flow.yx, tests/drop_generic.yx. Mutual recursion through `dyn` and join handles: Experimental (SPEC.md says not iterative) |
 | `match`: patterns, guards, ranges, or-patterns, exhaustiveness (Match, Enums and match) | Stable-candidate | tests/match_move_option_tuple.yx, tests/match_temp_text_arg.yx, tests/e772_range_match_not_exhaustive.yx, tests/e785_range_match_wildcard.yx |

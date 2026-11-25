@@ -1,14 +1,14 @@
-# Yerux — Specification v0.4
+# Yerux — Language reference (0.9.0-rc1)
 
-> **Role of this document.** This is the detailed reference of the language, organised by feature
-> (v0.4 wording). It is the source for the feature list, examples and error messages. The structured
+> **Role of this document.** This is the detailed reference of the language, organised by feature.
+> It is the source for the feature list, examples and error messages. The structured
 > 1.0 draft, with numbered sections, one test reference per claim and conformance programs for its
 > examples, is [docs/SPEC.md](docs/SPEC.md). Where the two disagree, the disagreement is listed in
 > [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md), section 10; neither document overrides the other silently.
 > Stability levels of each feature: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md), section 9.
 
 ## C declarations (experimental)
-Linux C-backend builds accept `extern "C" { fn name(arg: Type) -> Type }` declarations and `link "libname"` directives. Linux x86-64 native builds emit dynamically loaded ELF executables for these declarations and lower scalar integer, pointer, and floating-point arguments through SysV AMD64 registers and stack slots. Text literals passed to C are NUL terminated. `Ptr<T>` values may cross the ABI boundary and extern calls must be inside a lexical `unsafe { ... }` block. C variadic functions are declared with a trailing `...` after at least one fixed parameter (`fn snprintf(buf: Ptr<UInt8>, n: UInt64, fmt: Text, ...) -> Int32`); the fixed parameters are checked normally and each extra argument must be an integer, `Bool`, `Char`, `Float`, `Float32` (promoted to `Float`), `Text` or `Ptr<T>`, otherwise the checker reports an error. Pointers can be made without declaring `malloc`: `Ptr<T>.null()`, `Ptr<T>.alloc(n)` (room for `n` elements of `T`, which must be an integer, float or pointer type; needs `unsafe`), `p.is_null()` and `p.free()` (needs `unsafe`; null is a no-op). `Ptr<T>.alloc` memory belongs to the language's own allocator in every backend, so release it with `p.free()`, never with C's `free` (and a pointer from C's `malloc` is released with C's `free`, not `p.free()`). Test: `tests/ptr_construct.yx`. Dereference and arithmetic (Experimental, `unsafe` only, element types `Int`, `UInt64`, `UInt8` or `Ptr<..>`; offsets count elements): `p.read()`, `p.write(v)` (`v` has the element type; a null `p` panics with `null pointer dereference`), `p.add(n)`, `p.sub(n)`, `p.offset_from(q)` (elements between two `Ptr<T>`, `Int`), `p.addr()` (the address as `Int`) and `Ptr<T>.from_addr(a)`. The compiler does not check bounds, alignment or lifetime: that is the `unsafe` contract. Not implemented: `*p` sugar, struct field access through a pointer, 16/32-bit and float elements. Tests: `tests/ptr_rw.yx`, `tests/ptr_null_read.yx`, `tests/e1564_ptr_outside_unsafe.yx`, `tests/e1565_ptr_misuse.yx`. PE/aarch64 native builds reject extern declarations with an explicit target diagnostic; see [docs/FFI.md](docs/FFI.md).
+Linux C-backend builds accept `extern "C" { fn name(arg: Type) -> Type }` declarations and `link "libname"` directives. Linux x86-64 native builds emit dynamically loaded ELF executables for these declarations and lower scalar integer, pointer, and floating-point arguments through SysV AMD64 registers and stack slots. Text literals passed to C are NUL terminated. `Ptr<T>` values may cross the ABI boundary and extern calls must be inside a lexical `unsafe { ... }` block. C variadic functions are declared with a trailing `...` after at least one fixed parameter (`fn snprintf(buf: Ptr<UInt8>, n: UInt64, fmt: Text, ...) -> Int32`); the fixed parameters are checked normally and each extra argument must be an integer, `Bool`, `Char`, `Float`, `Float32` (promoted to `Float`), `Text` or `Ptr<T>`, otherwise the checker reports an error. Pointers can be made without declaring `malloc`: `Ptr<T>.null()`, `Ptr<T>.alloc(n)` (room for `n` elements of `T`, which must be an integer, float or pointer type; needs `unsafe`), `p.is_null()` and `p.free()` (needs `unsafe`; null is a no-op). `Ptr<T>.alloc` memory belongs to the language's own allocator in every backend, so release it with `p.free()`, never with C's `free` (and a pointer from C's `malloc` is released with C's `free`, not `p.free()`). Test: `tests/ptr_construct.yx`. Dereference and arithmetic (Experimental, `unsafe` only, element types `Int`, `UInt64`, `UInt8` or `Ptr<..>`; offsets count elements): `p.read()`, `p.write(v)` (`v` has the element type; a null `p` panics with `null pointer dereference`), `p.add(n)`, `p.sub(n)`, `p.offset_from(q)` (elements between two `Ptr<T>`, `Int`), `p.addr()` (the address as `Int`) and `Ptr<T>.from_addr(a)`. The compiler does not check bounds, alignment or lifetime: that is the `unsafe` contract. Not implemented: `*p` sugar, struct field access through a pointer, 16/32-bit and float elements. Tests: `tests/ptr_rw.yx`, `tests/ptr_null_read.yx`, `tests/e1564_ptr_outside_unsafe.yx`, `tests/e1565_ptr_misuse.yx`. Linux AArch64 native builds support scalar and variadic extern calls (AAPCS64; the program needs the AArch64 glibc loader). Windows PE builds accept only a small Universal CRT subset and reject `link` libraries and other C symbols with a diagnostic (`tests/ffi_native.sh`); see [docs/FFI.md](docs/FFI.md).
 
 File extension: `.yx` · Compiler: `yerux` · All keywords, identifiers and messages are in English.
 
@@ -30,7 +30,7 @@ File extension: `.yx` · Compiler: `yerux` · All keywords, identifiers and mess
 A compiled language as fast as Rust, safer by default, with a much gentler learning curve. Afterwards: a cross-platform UI framework with its own rendering engine.
 
 ## Pillars
-1. **Native performance.** Compiles to machine code (for now via C; later Cranelift/LLVM). No GC, no heavy runtime.
+1. **Native performance.** Compiles to machine code, through C (default backend) or with its own native backend (`--native`). No GC, no heavy runtime.
 2. **Memory safety without lifetimes.** One owner per value; borrows live only for the duration of a call.
 3. **No undefined behavior.** Indexing, overflow and division are checked (controlled panic, reported by join for a spawned worker and with exit code 101 for the initial thread).
 4. **Errors that teach.** Every error says what happened, where, and how to fix it.
@@ -202,7 +202,7 @@ m.remove(k) -> Bool                          m.take(k) -> V   (moves the value o
 - `get`/`get_or` copy the value, so they need `V: Copy`. For owned values use `let e = m.find(k)` and borrow with `m.vals.at(e)` (`m.vals.at(e).push(..)`), or `take` it. On a missing key, `get` panics with `Map.get key not found` and `take` panics with `Map.take key not found`.
 - **Iteration** is by entry number: `m.keys.at(i)`, `m.vals.at(i)` for `i` in `0 .. m.len()` (for a Set: `s.items.keys.at(i)`). Entries are in insertion order until something is removed: removal moves the last entry into the hole, so after a `remove`/`take` the order changes (deterministically, identically in every backend).
 - Implementation: dense `keys`/`vals`/`hashes` lists plus an open-addressing table of entry numbers (linear probing, load factor <= 3/5, backward-shift deletion, no tombstones). Hash functions are deterministic multiplicative hashes modulo the prime 2^31 - 1 (arithmetic is checked, so nothing may wrap). 1M Int inserts plus 1M lookups take about 0.18 s natively.
-- Planned collection features include a `for` loop over entries and closure-taking methods such as `get_or_insert_with` and `sort_by`.
+- Not implemented: a `for` loop over map entries and closure-taking methods such as `get_or_insert_with` and `l.sort_by` (for a custom order use `std.sort`).
 
 ### String API
 ```
@@ -308,8 +308,26 @@ on up to four workers and waits for completion. Captures and list elements
 are read-only. Use `Atomic` or `Locked` for coordinated mutation. Explicit
 `step` is rejected in `parallel for` (a sequential `for` accepts it), and so is mutable list iteration. Iteration
 order is unspecified. A panic in a parallel iteration remains process-fatal.
-The native Windows and aarch64 targets reject thread and atomic operations.
+The Linux AArch64 and Windows native targets also run workers, channels, locks and
+atomics, with the limits listed in [docs/BACKEND.md](docs/BACKEND.md) and
+[docs/WINDOWS.md](docs/WINDOWS.md). A worker that panics writes its message to stderr
+before `join` returns `Err`. The lock checks are direct only: waiting or locking inside
+`with` through a called function is not detected.
 See [docs/CONCURRENCY.md](docs/CONCURRENCY.md) for implementation status.
+
+## Effects and capabilities
+**There is no effect system.** Function types and signatures say nothing about what a function may
+do: no effect annotations, no inference or checking of effects, no `pure` keyword. Any module of any
+package may import `std.fs`, `std.net`, `std.process` and `std.env`, declare `extern` blocks and use
+`unsafe`. A `[capabilities]` section in `yerux.toml` is not read (it is ignored without a warning),
+and `main` takes no parameters.
+
+What exists is the library `std.caps`: values (`Caps`, `Fs`, `Net`, `Process`, `Env`) that wrap the
+standard modules, can only be narrowed, and refuse at **run time** with an `IoError` of kind
+`PermissionDenied` (`tests/caps_grant.yx`, `tests/caps_deny.yx`). It is advisory: any code can still
+call `caps.all()` or use the underlying modules and intrinsics, so it is not a security boundary
+against untrusted code. Manifest grants, compile-time checks and `ffi`/`threads` capabilities are
+not implemented: [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
 
 ## Traits
 A trait names a set of methods; a type opts in with an `impl`. Calls on concrete types or types with trait bounds use static dispatch.
@@ -387,7 +405,7 @@ The compiler embeds all 30 modules of `src/std/` (plain Yerux, `std.io` included
 ## Standard I/O (`import std.io`)
 A module of the standard library, embedded in the compiler: `import std.io` (used as `io.read_line()`, `io.read_file(path)`, `io.args()`, `io.exit(code)`, `io.monotonic_ns()`, `io.sleep_ms(ms)`, ...). Every failure is a value: operations return `Result<T, io.IoError>` where `IoError { kind: IoErrorKind, code: Int, message: String }` (and `?` works as usual); `String`s read from the outside are validated as UTF-8 (`InvalidData` otherwise). Full API, rules and tests: [docs/STDLIB_IO.md](docs/STDLIB_IO.md).
 
-It is written in Yerux over a small set of reserved intrinsics (`__syscall(nr, a1..a6)`, `__global(i)`, `__alloc`, `__free`, `__load8/64`, `__store8/64`, and the `String` methods `raw_addr()` / `push_raw(addr, n)`), all on plain `Int` addresses: no libc and no FFI on the native path. The native x86-64 Linux backend emits a `syscall` instruction; the C backend (oracle) calls libc `syscall()`. `--target windows` and `--target aarch64` reject a program that uses them with `native backend: ... is not supported on the <target> target yet`.
+It is written in Yerux over a small set of reserved intrinsics (`__syscall(nr, a1..a6)`, `__global(i)`, `__alloc`, `__free`, `__load8/64`, `__store8/64`, and the `String` methods `raw_addr()` / `push_raw(addr, n)`), all on plain `Int` addresses: no libc and no FFI on the native path. The native x86-64 Linux backend emits a `syscall` instruction; the C backend (oracle) calls libc `syscall()`. AArch64 and Windows support a documented part of this surface and report the unsupported operations at compile time: [docs/BACKEND.md](docs/BACKEND.md), [docs/WINDOWS.md](docs/WINDOWS.md). The reserved intrinsics are not access-controlled: user code can call them (see Effects and capabilities).
 
 ## Loops, `break` and `continue`
 ```
@@ -482,10 +500,10 @@ comptime assert(fact(5) == 120)       // statement: checked while compiling, the
 ```
 - `comptime e` is a prefix operator at the same level as `-` and `!`: `comptime f(3) + 1` is `(comptime f(3)) + 1`. Use parentheses for more.
 - It is ordinary Yerux, not a second language: the compiler runs the **checked** code, so the type and ownership rules are the usual ones and arithmetic is checked as at run time. Evaluation is left to right, as everywhere (`&&`/`||` short-circuit).
-- Allowed inside: `Int`, `Char`, `Bool` values, `let`/`var`, assignment to variables, `if`, `while`, `break`/`continue`, `return`, `assert`, `assert_eq`, and calls to your own functions whose parameters (owned) and result are scalars, including recursion. No new keyword on functions: any such function can be called at compile time.
-- Not allowed (compile error `E-K1` that says why): run-time variables from the surrounding function (only values defined inside the comptime code are known), `String`/`List`/structs/closures, `print`, I/O, library calls, `match`. A comptime expression itself must be an `Int`, `Char` or `Bool` (`E-K3`).
+- Allowed inside: `Int`, `Char`, `Bool` values (and fixed-size arrays of them), `let`/`var`, assignment to variables, `if`, `while`, `for`, `match` on an `Int` or `Char`, `break`/`continue`, `return`, `assert` (one argument), `assert_eq`, and calls to your own functions whose parameters (owned) and result are scalars, including recursion. No new keyword on functions: any such function can be called at compile time.
+- Not allowed (compile error `E-K1` that says why): run-time variables from the surrounding function (only values defined inside the comptime code are known), `String`/`List`/structs/closures, `print`, I/O, library calls, `match` on an enum. A comptime expression itself must be an `Int`, `Char` or `Bool` (`E-K3`).
 - Failure is a compile error with the call chain: a panic, failed `assert`, overflow or division by zero (`E-K6`); running out of the step budget of 20 million steps (`E-K2`, so a loop that never ends cannot hang the compiler); recursion deeper than 1000 calls.
-- Implementation: `src/comptime.rs` interprets the checked AST after the checker and replaces each marker by a literal, so the backends and the optimizer see plain constants. Planned next (docs/COMPTIME.md A2-A6): `const` items, aggregates through a virtual heap on the IR interpreter, `comptime` generics parameters.
+- Implementation: `src/comptime.rs` interprets the checked AST after the checker and replaces each marker by a literal, so the backends and the optimizer see plain constants. `const` items (see Fixed-size arrays) are folded separately and cannot call functions. Not implemented (design in docs/COMPTIME.md part A): `comptime fn`/`for`, reflection, `comptime` evaluation of `String`/`List`/structs, the virtual heap and IR interpreter, `comptime` type or value parameters beyond `const N: Int` array lengths.
 
 ## Arenas (region allocation)
 Long-term design: [docs/COMPTIME.md](docs/COMPTIME.md) (Part B). The first version is a library type, `Arena<T>`, in `src/prelude_arena.yx`; it needs no new syntax and no lifetimes.
@@ -500,10 +518,11 @@ a.reset()                              // releases everything at once; every ear
 - **Allocation** is a bump into one growing block (amortized O(1), no per-value `malloc`); **release** is one drop of the arena (or `reset`) and runs the drop glue of the owned values it holds (no leaks: `--native-debug-alloc` shows `live: 0`).
 - **No dangling references**: nothing ever points into the arena except borrows, which are second-class (they only exist during a call). The ticket `ArenaRef` is a slot number plus the arena's *epoch*; `reset` starts a new epoch, so a stale ticket panics with `stale arena reference` (exit 101) instead of reading freed memory. A ticket used on a different arena is memory-safe (the index is bounds-checked) but may reach another value: keep each ticket with its arena.
 - Ownership is the usual one: `alloc` takes its value by move, the arena owns it, and dropping the arena drops the values. A value cannot outlive its arena because it lives *in* it.
-- Not yet (docs/COMPTIME.md B2-B8): the `arena name { }` block with static pinning of values to the block (which would turn the stale-ticket panic into a compile error), `new_in` on `List`/`String`, `--debug-arena`, `FixedBuf`/`Pool`. The library API above is compatible with that design.
+- Types with a `Drop` impl are accepted in an arena; their destructors run on `reset` or when the arena is dropped.
+- Not implemented (docs/COMPTIME.md part B): the `arena name { }` block with static pinning of values to the block (which would turn the stale-ticket panic into a compile error), `new_in` on `List`/`String`, `--debug-arena`, `FixedBuf`/`Pool`. The library API above is compatible with that design.
 
 ## Panic
-`panic(message)` accepts Text or String, including an interpolated String. A recoverable worker panic produces `Err(ThreadPanic)` at join and skips explicit deferred statements. Other panics write `panic: `, the message and a newline to stderr, then exit with code 101. Built-in operations report their specific failure. Explicit `assert` and `assert_eq` failures report `assertion failed`.
+`panic(message)` accepts Text or String, including an interpolated String. A recoverable worker panic writes its message to stderr, produces `Err(ThreadPanic)` at join and skips explicit deferred statements. Other panics write `panic: `, the message and a newline to stderr, then exit with code 101. Built-in operations report their specific failure. Explicit `assert` and `assert_eq` failures report `assertion failed`.
 
 `Option` and `Result` provide consuming `unwrap()` and `expect(message)` methods. They return the success payload or panic on `None` or `Err`. A Result's error type must implement `Show` so the panic can include the error.
 
@@ -513,25 +532,28 @@ a.reset()                              // releases everything at once; every ear
 - Native backend (`--native`): supports the whole language, including `String` and `List<T>` for any `T`; output, exit codes and panic messages match the C backend (except "list too large"/"string too long", which surface as "out of memory" or an overflow panic; both exit 101).
 
 ## Prototype status (`yerux`)
-Lexer → parser → type + ownership checker → C generator → `cc -O2`.
+Lexer → parser → type + ownership checker → C generator → `cc -O2` (default), or IR → native backend (`--native`).
 - AddressSanitizer + UBSan: no leaks or invalid accesses on the examples (`yerux c f.yx > t.c && gcc -fsanitize=address,undefined t.c`).
 - 100M-iteration benchmark with overflow checks: ≈0.42 s (Rust with `overflow-checks`: ≈0.44 s).
 - Usage: `yerux check|c|build|run file.yx [-o output]`, `yerux fmt ...`, `yerux test ...`.
 
-## Roadmap
-- ~~v0.2~~ **Done:** `struct`, `enum` + `match`, `Text` literals, source split into modules (`syntax`, `check`, `cgen`).
-- ~~v0.3~~ **Done (C backend):** heap `String`, generic `List<T>` with owned elements, `at`/`pop` element access. Own native backend (replacing C) continues separately.
-- ~~`String`/`List<T>` in the native backend~~ **Done.**
-- ~~User generics + simple traits~~ **Done (v0.4, both backends):** generic functions/structs/enums by monomorphisation, traits with static dispatch, bounds, built-in `Equal`/`Ordered`/`Show`/`Copy`, method call syntax, `==`/`<` on any `Equal`/`Ordered` type.
-- **v0.4.x** generic `impl` blocks and methods; explicit type arguments on calls; default methods.
-- **Implemented** Owned enum payloads, recursive types through `Box<T>` and `List<T>`, and prelude `Option` and `Result` with `?`.
-- ~~Modules, `yerux fmt`, `yerux test`, `defer`~~ **Done** (see above).
-- ~~`for`, `break`/`continue`, tuples, `Char`, richer `match`~~ **Done** (see Loops, Tuples, Char, Match). Not yet: counting down ranges, `for (a, b) in`, string/Text patterns, `==` on tuples, `Iter` trait for user types.
-- **v0.5** `Option<T>` / `Result<T, E>` (plain generic enums), error handling with `?`.
-- **v0.6** Effects/capabilities system (no network/disk access without permission), range integers `Int<lo..hi>` to remove bounds checks (docs/RANGES.md), `comptime` and explicit allocators (docs/COMPTIME.md; first versions done: scalar `comptime`, `Arena<T>`), threads (docs/CONCURRENCY.md).
-- **v0.7** Tooling: LSP, package manager (formatter and test runner exist).
-- **Self-hosting** is milestone M7 in docs/ROADMAP.md (partial today); the 1.0 release is M12 there. The current version is 0.9.0-rc1, so the version lines above are the older plan, and docs/ROADMAP.md is authoritative.
-- **UI framework:** graphics layer (wgpu/Vulkan/Metal) → layout → widgets → reactivity (signals, docs/SIGNALS.md) → platforms.
+## Status and roadmap
+The current version is 0.9.0-rc1. [docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative roadmap:
+self-hosting is milestone M7 in docs/ROADMAP.md (partial today) and the 1.0 release is M12 there.
+
+Implemented and described in this document: `struct`, `enum`, `match`, `String`, `List<T>`, the C and
+native backends, generics with traits, default methods, generic `impl` blocks, generic methods and
+explicit type arguments, `Box<T>` and `dyn Trait`, `Option`/`Result` with `?`, modules, `yerux fmt`,
+`yerux test`, `defer`, loops, tuples, `Char`, closures, range integers `Int<lo..hi>`, scalar
+`comptime`, the library `Arena<T>`, threads, and the library `std.caps`. A language server
+(`yerux lsp`, docs/LSP.md) and path/Git packages (docs/PACKAGES.md) exist.
+
+Not implemented: an effect system and compiler-enforced capabilities; `comptime fn`/`for`, reflection and
+compile-time `String`/`List`/structs; `arena` blocks and `new_in`; counting-down ranges, `for (a, b) in`, string
+patterns, `==` on tuples; bounds on struct/enum type parameters, default type arguments, generic
+trait methods; a package registry.
+
+- **UI framework** (not implemented): graphics layer (wgpu/Vulkan/Metal) → layout → widgets → reactivity (signals, docs/SIGNALS.md) → platforms.
 
 ## Open decisions
 - ~~Concurrency~~ **Decided:** shared-memory threads with simple compile-time data-race rules; actors as a library (see docs/DESIGN.md and docs/CONCURRENCY.md).
