@@ -1,0 +1,3 @@
+fn name() -> Text { return "x" }
+fn show(s: view String) { print(s) }
+fn main() { show(name()) }

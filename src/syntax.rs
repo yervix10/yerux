@@ -115,7 +115,11 @@ pub fn render(d: &Diag, file: &str, src: &str) -> String {
 
 /// Short next steps for frequent errors that otherwise leave the user with only a description.
 fn diagnostic_hint(msg: &str) -> Option<String> {
-    let hint = if msg.starts_with("expected ") && msg.contains(" but this is ") {
+    let hint = if msg == "expected String but this is Text" {
+        "a Text is a string literal type and is not a String: make a String with `String.from(text)`"
+    } else if msg == "expected Text but this is String" {
+        "a String is not a Text: call the method on the String instead (`s.eq(t)` accepts a Text), or pass a literal"
+    } else if msg.starts_with("expected ") && msg.contains(" but this is ") {
         "check the value at this expression; convert it explicitly or change the expected type"
     } else if let Some(ty) = numeric_type_name(msg) {
         return Some(format!(

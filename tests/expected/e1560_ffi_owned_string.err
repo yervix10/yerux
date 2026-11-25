@@ -3,6 +3,6 @@ error: expected Text but this is String
   |
 7 |     unsafe { print(strlen(move owned)) }
   |                           ^^^^^^^^^^
-  = help: check the value at this expression; convert it explicitly or change the expected type
+  = help: a String is not a Text: call the method on the String instead (`s.eq(t)` accepts a Text), or pass a literal
 
 1 error(s). Nothing was generated.

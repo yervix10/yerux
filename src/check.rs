@@ -763,7 +763,7 @@ impl<'a> Checker<'a> {
                 }
             },
             EK::Field(base, f) => {
-                let b = if self.isp(base) {
+                let b = if self.isp(base) || matches!(base.k, EK::Payload(..)) {
                     self.place_inner(base, check_moved)?
                 } else {
                     // a field of a temporary (`pair().0`): fine while the temporary owns no memory
@@ -1676,6 +1676,14 @@ impl<'a> Checker<'a> {
                                     .note("help: `c.to_int()` gives its Unicode number and `Char.from_int(n)` turns a number back into a Char"),
                             );
                             Ty::Int
+                        } else if op == "+" && (ta == Ty::String || tb == Ty::String) && ta != Ty::Err && tb != Ty::Err {
+                            let at = if ta == Ty::String { a.pos } else { b.pos };
+                            self.err(
+                                diag("`+` joins strings only when the left side is a String variable", at)
+                                    .note("a String value that is not a variable (a call result such as `String.from(..)`) cannot start a `+` chain")
+                                    .note("help: store it first (`let s = String.from(..)` then `s + \"..\"`), or use interpolation: `\"{..}..\"`"),
+                            );
+                            Ty::Err
                         } else {
                             // a plain Int divisor that flow facts narrowed to include 0 is still just an Int
                             // (runtime-checked division); only declared range types promise a nonzero divisor
@@ -2639,7 +2647,7 @@ impl<'a> Checker<'a> {
     fn isp(&self, e: &Expr) -> bool {
         match &e.k {
             EK::Var(n, _) => self.lookup(n).is_some() || !self.types.consts.contains_key(n),
-            EK::Field(..) | EK::Payload(..) => true,
+            EK::Field(..) => true,
             EK::Method { recv, m, .. } if m == "at" => {
                 !matches!(self.peek_ty(recv), Some(Ty::Dyn(_)) | Some(Ty::Box(_)))
             }
@@ -6514,9 +6522,9 @@ fn drop_impls_overlap(types: &Types, a: &ImplDef, b: &ImplDef) -> bool {
     go(types, a.self_ty, b.self_ty, &vars, &mut sub, 0)
 }
 
-/// Does a pattern look inside a payload with a pattern more specific than a name or `_`?
+/// Does a pattern take a tuple payload apart (`Some((a, b))`)?
 fn pat_nests(p: &Pat) -> bool {
-    let inner = |q: &Pat| !matches!(q, Pat::Wild(_) | Pat::Bind(_, None, _));
+    let inner = |q: &Pat| matches!(q, Pat::Tuple(..));
     match p {
         Pat::Variant(_, subs, _) => subs.iter().any(inner),
         Pat::Or(alts, _) => alts.iter().any(pat_nests),

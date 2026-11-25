@@ -1,0 +1,4 @@
+fn main() {
+  let v = String.from("k") + "m"
+  print(v)
+}

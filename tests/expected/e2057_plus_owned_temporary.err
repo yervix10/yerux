@@ -1,0 +1,9 @@
+error: `+` joins strings only when the left side is a String variable
+ --> tests/e2057_plus_owned_temporary.yx:2:11
+  |
+2 |   let v = String.from("k") + "m"
+  |           ^^^^^^^^^^^^^^^^
+  = a String value that is not a variable (a call result such as `String.from(..)`) cannot start a `+` chain
+  = help: store it first (`let s = String.from(..)` then `s + ".."`), or use interpolation: `"{..}.."`
+
+1 error(s). Nothing was generated.

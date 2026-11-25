@@ -3,6 +3,6 @@ error: expected String but this is Text
   |
 3 |   let b: String = t
   |                   ^
-  = help: check the value at this expression; convert it explicitly or change the expected type
+  = help: a Text is a string literal type and is not a String: make a String with `String.from(text)`
 
 1 error(s). Nothing was generated.
