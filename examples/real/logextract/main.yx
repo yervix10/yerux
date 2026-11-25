@@ -1,0 +1,250 @@
+// logextract: extracts records from a mixed-format log with std.regex and reports them.
+//
+//   logextract   prints the report for the built-in 42-line log (no arguments, no input, no files; exit 0)
+//
+// Each format is a regex with captures. A matched line whose values fail validation (IPv4 octets, status, ISO
+// timestamp, duration) is rejected with a reason; a line matching no format is unmatched. Both keep line numbers.
+// The redacted listing masks emails and IPv4 addresses and normalizes whitespace.
+import std.fmt
+import std.regex
+
+fn access() -> String { return String.from("^([0-9.]+) - - \\[([0-9A-Za-z/:]+)\\] \"([A-Z]+) ([^ ]+) HTTP/1\\.1\" ([0-9]+) ([0-9]+) ([0-9.]+(ms|s))$") }
+fn syslog() -> String { return String.from("^([A-Z][a-z][a-z] [0-9][0-9]? [0-9:]+) ([a-z0-9-]+) ([a-z]+)\\[([0-9]+)\\]: (.*)$") }
+fn app() -> String { return String.from("^ts=([^ ]+) level=(INFO|WARN|ERROR) user=([a-z]+) dur=([0-9.]+(ms|s)) msg=([a-z]+)$") }
+fn frame() -> String { return String.from("^\\tat ([A-Za-z0-9_.$]+)\\(([A-Za-z0-9_]+\\.java):([0-9]+)\\)$") }
+fn trace() -> String { return String.from("^([a-z][a-z0-9_.]*\\.[A-Z][A-Za-z0-9_]*): (.*)$") }
+fn iso() -> String { return String.from("^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$") }
+fn duration() -> String { return String.from("^([0-9]+)(\\.[0-9]+)?(ms|s)$") }
+fn ipv4() -> String { return String.from("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+") }
+fn email() -> String { return String.from("[a-z.]+@[a-z.]+") }
+
+enum Format { Nginx, Syslog, App, Frame, Trace, Junk }
+
+struct AccessRec { line: Int, ip: String, method: String, path: String, status: Int, bytes: Int, ms: Int }
+struct SyslogRec { line: Int, time: String, host: String, proc: String, pid: Int, peer: String }
+struct AppRec { line: Int, ts: String, level: String, user: String, ms: Int, msg: String }
+struct FrameRec { line: Int, method: String, file: String, number: Int }
+struct TraceRec { line: Int, class: String, msg: String }
+struct Reject { line: Int, format: String, reason: String }
+struct Store { access: List<AccessRec>, syslog: List<SyslogRec>, app: List<AppRec>, frames: List<FrameRec>, traces: List<TraceRec>, rejects: List<Reject>, unmatched: List<String> }
+
+fn format_name(f: view Format) -> Text {
+  match f {
+    Nginx => { return "nginx" }
+    Syslog => { return "syslog" }
+    App => { return "app" }
+    Frame => { return "frame" }
+    Trace => { return "trace" }
+    Junk => { return "unmatched" }
+  }
+}
+
+fn detect(text: view String) -> Format {
+  if regex.is_match(access(), text) { return Format.Nginx }
+  if regex.is_match(syslog(), text) { return Format.Syslog }
+  if regex.is_match(app(), text) { return Format.App }
+  if regex.is_match(frame(), text) { return Format.Frame }
+  if regex.is_match(trace(), text) { return Format.Trace }
+  return Format.Junk
+}
+
+// The integer in `s`, or -1 when `s` is not a plain non-negative number.
+fn int_of(s: view String) -> Int {
+  var n = 0
+  if s.parse_int(n) { return n }
+  return -1
+}
+
+fn ipv4_ok(ip: view String) -> Bool {
+  let parts = ip.split(".")
+  if parts.len() != 4 { return false }
+  for i in 0..4 { if int_of(parts.at(i)) > 255 || int_of(parts.at(i)) < 0 { return false } }
+  return true
+}
+
+// "23ms" -> 23, "1.2s" -> 1200, "3.75s" -> 3750; -1 when the text is not a duration.
+fn to_ms(dur: view String) -> Int {
+  let c = regex.captures(duration(), dur)
+  if c.len() == 0 { return -1 }
+  let whole = int_of(c.at(1))
+  if c.at(3).eq("ms") { return whole }
+  let digits = c.at(2).replace(".", "")
+  let padded = digits + "000"
+  let frac = int_of(padded.slice(0, 3))
+  if whole < 0 || frac < 0 { return -1 }
+  return whole * 1000 + frac
+}
+
+fn iso_ok(ts: view String) -> Bool {
+  if !regex.is_match(iso(), ts) { return false }
+  let month = int_of(ts.slice(5, 7))
+  let day = int_of(ts.slice(8, 10))
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31 && int_of(ts.slice(11, 13)) <= 23 && int_of(ts.slice(14, 16)) <= 59 && int_of(ts.slice(17, 19)) <= 59
+}
+
+fn redact(s: view String) -> String {
+  let a = regex.replace(email(), s, "<email>")
+  let b = regex.replace(ipv4(), a, "x.x.x.x")
+  return regex.replace("[ \t]+", b, " ")
+}
+
+// Each parser stores its record and returns None, or returns Some(reason) when a captured value is invalid.
+fn parse_nginx(n: Int, text: view String, st: mut Store) -> Option<String> {
+  let c = regex.captures(access(), text)
+  if !ipv4_ok(c.at(1)) { return Some("invalid IPv4 address '{c.at(1)}'") }
+  let status = int_of(c.at(5))
+  if status < 100 || status > 599 { return Some("status {status} out of range") }
+  let ms = to_ms(c.at(7))
+  if ms < 0 { return Some("invalid duration '{c.at(7)}'") }
+  st.access.push(AccessRec { line: n, ip: String.from(c.at(1)), method: String.from(c.at(3)), path: String.from(c.at(4)), status: status, bytes: int_of(c.at(6)), ms: ms })
+  return None
+}
+
+fn parse_syslog(n: Int, text: view String, st: mut Store) -> Option<String> {
+  let c = regex.captures(syslog(), text)
+  let ips = regex.find_all(ipv4(), c.at(5))
+  if ips.len() > 0 && !ipv4_ok(ips.at(0)) { return Some("invalid IPv4 address '{ips.at(0)}'") }
+  let peer = if ips.len() > 0 { String.from(ips.at(0)) } else { String.from("-") }
+  st.syslog.push(SyslogRec { line: n, time: String.from(c.at(1)), host: String.from(c.at(2)), proc: String.from(c.at(3)), pid: int_of(c.at(4)), peer: move peer })
+  return None
+}
+
+fn parse_app(n: Int, text: view String, st: mut Store) -> Option<String> {
+  let c = regex.captures(app(), text)
+  if !iso_ok(c.at(1)) { return Some("invalid ISO timestamp '{c.at(1)}'") }
+  let ms = to_ms(c.at(4))
+  if ms < 0 { return Some("invalid duration '{c.at(4)}'") }
+  st.app.push(AppRec { line: n, ts: String.from(c.at(1)), level: String.from(c.at(2)), user: String.from(c.at(3)), ms: ms, msg: String.from(c.at(6)) })
+  return None
+}
+
+fn handle(n: Int, text: view String, st: mut Store) {
+  let f = detect(text)
+  let verdict = match f {
+    Nginx => { parse_nginx(n, text, st) }
+    Syslog => { parse_syslog(n, text, st) }
+    App => { parse_app(n, text, st) }
+    Frame => {
+      let c = regex.captures(frame(), text)
+      st.frames.push(FrameRec { line: n, method: String.from(c.at(1)), file: String.from(c.at(2)), number: int_of(c.at(3)) })
+      None
+    }
+    Trace => {
+      let c = regex.captures(trace(), text)
+      st.traces.push(TraceRec { line: n, class: String.from(c.at(1)), msg: String.from(c.at(2)) })
+      None
+    }
+    Junk => {
+      st.unmatched.push("  line {n}: {redact(text)}")
+      return
+    }
+  }
+  match move verdict {
+    Some(r) => { st.rejects.push(Reject { line: n, format: String.from(format_name(f)), reason: move r }) }
+    None => {}
+  }
+}
+
+fn main() {
+  let log = [
+    "10.0.0.5 - - [25/Nov/2026:10:00:01] \"GET /api/items HTTP/1.1\" 200 512 23ms",
+    "10.0.0.9 - - [25/Nov/2026:10:00:02] \"POST /api/items HTTP/1.1\" 201 96 1.2s",
+    "Nov 25 10:00:03 web-01 sshd[412]: Accepted publickey for deploy from 10.0.0.9 port 52114",
+    "ts=2026-11-25T10:00:04Z level=INFO user=ana dur=180ms msg=login",
+    "java.lang.IllegalStateException: pool exhausted",
+    "\tat com.acme.Pool.take(Pool.java:88)",
+    "\tat com.acme.Api.handle(Api.java:41)",
+    "### restart requested by ops, mail ops.lead@corp.example",
+    "10.0.0.5 - - [25/Nov/2026:10:00:05] \"GET /static/app.js HTTP/1.1\" 304 0 4ms",
+    "10.0.0.7 - - [25/Nov/2026:10:00:06] \"GET /login HTTP/1.1\" 500 0 0.5s",
+    "Nov 25 10:00:07 web-02 nginx[77]: worker process 3101 exited on signal 11",
+    "ts=2026-11-25T10:00:07Z level=WARN user=bob dur=2.5s msg=slow",
+    "java.io.IOException: broken pipe",
+    "\tat java.io.FileOutputStream.write(FileOutputStream.java:12)",
+    "\tat com.acme.Api.flush(Api.java:55)",
+    "--- end of batch ---",
+    "10.0.0.8 - - [25/Nov/2026:10:00:09] \"GET /api/items/42 HTTP/1.1\" 999 77 9ms",
+    "10.0.0.8 - - [25/Nov/2026:10:00:10] \"DELETE /api/items/42 HTTP/1.1\" 204 0 15ms",
+    "ts=2026-11-25T25:00:11Z level=ERROR user=eve dur=12ms msg=denied",
+    "Nov 25 10:00:12 web-01 cron[9]: (root) CMD (run-parts /etc/cron.hourly)",
+    "java.lang.NullPointerException: user is null",
+    "\tat com.acme.Users.find(Users.java:19)",
+    "10.0.0.9 - - [25/Nov/2026:10:00:13] \"GET / HTTP/1.1\" 200 1024 3ms",
+    "this line is not a log record at all",
+    "10.0.0.9 - - [25/Nov/2026:10:00:14] \"GET /api/items HTTP/1.1\" 200 512 abc",
+    "ts=2026-11-25T10:00:15Z level=INFO user=ana dur=35ms msg=logout",
+    "10.0.0.300 - - [25/Nov/2026:10:00:16] \"GET /x HTTP/1.1\" 200 1 1ms",
+    "Nov 25 10:00:17 db-01 postgres[1020]: checkpoint complete: wrote 312 buffers",
+    "ts=2026-11-25T10:00:18Z level=ERROR user=ana dur=3.75s msg=timeout",
+    "java.sql.SQLTimeoutException: query timed out",
+    "\tat com.acme.Db.query(Db.java:140)",
+    "\tat com.acme.Api.search(Api.java:77)",
+    "  mismatch   at   column   width",
+    "10.0.0.5 - - [25/Nov/2026:10:00:20] \"GET /api/items?q=a+b HTTP/1.1\" 200 88 17ms",
+    "Nov 25 10:00:21 web-01 sshd[413]: Failed password for root from 203.0.113.44 port 22",
+    "ts=2026-11-25T10:00:22Z level=INFO user=carl dur=9ms msg=ping",
+    "java.io.IOException: connection reset by peer",
+    "\tat com.acme.Cache.grow(Cache.java:203)",
+    "10.0.0.7 - - [25/Nov/2026:10:00:24] \"PUT /api/items/7 HTTP/1.1\" 200 130 42ms",
+    "contact support at support@acme.example for help",
+    "ts=2026-11-25T10:00:25Z level=INFO user=ana dur=7ms msg=ok",
+    "10.0.0.9 - - [25/Nov/2026:10:00:26] \"GET /favicon.ico HTTP/1.1\" 404 0 1ms",
+  ]
+  var st = Store { access: List<AccessRec>.new(), syslog: List<SyslogRec>.new(), app: List<AppRec>.new(), frames: List<FrameRec>.new(), traces: List<TraceRec>.new(), rejects: List<Reject>.new(), unmatched: List<String>.new() }
+  for i in 0..log.len() { handle(i + 1, String.from(log[i]), st) }
+  print("logextract: {log.len()} lines, {st.access.len() + st.syslog.len() + st.app.len() + st.frames.len() + st.traces.len()} parsed, {st.rejects.len()} rejected, {st.unmatched.len()} unmatched")
+
+  print("")
+  print("formats: nginx {st.access.len()}, syslog {st.syslog.len()}, app {st.app.len()}, frame {st.frames.len()}, trace {st.traces.len()}")
+  print("")
+  print("nginx records:")
+  print("  line  ip         method  status  bytes     ms  path")
+  for i in 0..st.access.len() {
+    let r = st.access.at(i)
+    let l = fmt.pad_left("{r.line}", 4, ' ')
+    let ip = fmt.pad_right(r.ip, 9, ' ')
+    let m = fmt.pad_right(r.method, 6, ' ')
+    let s = fmt.pad_left("{r.status}", 6, ' ')
+    let b = fmt.pad_left("{r.bytes}", 6, ' ')
+    let d = fmt.pad_left("{r.ms}", 6, ' ')
+    print("  {l}  {ip}  {m}  {s}  {b}  {d}  {r.path}")
+  }
+
+  print("")
+  print("syslog records:")
+  for i in 0..st.syslog.len() {
+    let r = st.syslog.at(i)
+    print("  {fmt.pad_left("{r.line}", 4, ' ')}  {r.time}  {r.host}  {r.proc}[{r.pid}]  peer={r.peer}")
+  }
+
+  print("")
+  print("app records:")
+  for i in 0..st.app.len() {
+    let r = st.app.at(i)
+    print("  {fmt.pad_left("{r.line}", 4, ' ')}  {r.ts}  {fmt.pad_right(r.level, 6, ' ')}{fmt.pad_right(r.user, 6, ' ')}{fmt.pad_left("{r.ms}", 6, ' ')} ms  {r.msg}")
+  }
+
+  print("exception classes ({st.traces.len()} headers, {st.frames.len()} frames):")
+  var hist = Map<String, Int>.new()
+  for i in 0..st.traces.len() {
+    let k = String.from(st.traces.at(i).class)
+    let e = hist.find(k)
+    if e < 0 { hist.insert(move k, 1) } else { hist.vals.set(e, hist.vals.at(e) + 1) }
+  }
+  var names = List<String>.new()
+  for i in 0..hist.len() { names.push(String.from(hist.keys.at(i))) }
+  names.sort()
+  for i in 0..names.len() {
+    let count = hist.vals.at(hist.find(names.at(i)))
+    print("  {fmt.pad_right(names.at(i), 34, ' ')}{fmt.pad_left("{count}", 3, ' ')}  {String.from("#").repeat(count)}")
+  }
+
+  print("")
+  print("unmatched lines (redacted):")
+  for i in 0..st.unmatched.len() { print(st.unmatched.at(i)) }
+  print("rejected lines:")
+  for i in 0..st.rejects.len() {
+    let r = st.rejects.at(i)
+    print("  line {r.line} [{r.format}] {r.reason}")
+  }
+}

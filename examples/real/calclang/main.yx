@@ -1,0 +1,86 @@
+// calclang: a small expression language. Usage: calclang (no arguments; runs the embedded script, exit 0).
+// The stages live in lexer.yx (tokens, errors), parser.yx (AST and parser), eval.yx (values and evaluation).
+// This file pretty-prints the AST with minimal parentheses, checks that parse(pretty(ast)) evaluates the same and
+// prints each program with its errors shown at line:column.
+import eval
+import lexer
+import parser
+
+// A left operand may bind as tightly as its operator, a right operand must bind strictly tighter. let/if bind loosest.
+fn show_expr(e: view parser.Expr, min: Int) -> String {
+  var body = String.new()
+  var prec = 7
+  match e {
+    parser.Expr.Num(n, _) => { body = "{n}" }
+    parser.Expr.Var(n, _) => { body = "{n}" }
+    parser.Expr.Neg(x, _) => {
+      prec = 6
+      body = "-{show_expr(x.get(), 6)}"
+    }
+    parser.Expr.Bin(op, l, r, _) => {
+      prec = parser.binop_prec(op)
+      body = "{show_expr(l.get(), prec)} {op} {show_expr(r.get(), prec + 1)}"
+    }
+    parser.Expr.Let(n, v, b, _) => {
+      prec = 0
+      body = "let {n} = {show_expr(v.get(), 0)} in {show_expr(b.get(), 0)}"
+    }
+    parser.Expr.If(c, t, f, _) => {
+      prec = 0
+      body = "if {show_expr(c.get(), 0)} then {show_expr(t.get(), 0)} else {show_expr(f.get(), 0)}"
+    }
+    parser.Expr.Call(n, args, _) => {
+      var parts = List<String>.new()
+      for a in args { parts.push(show_expr(a, 0)) }
+      body = "{n}({parts.join(", ")})"
+    }
+  }
+  if prec < min { return "({body})" }
+  return body
+}
+
+// Prints the source line of a failure with a caret under its column.
+fn report(src: view String, f: view lexer.Failure) {
+  var start = f.pos
+  while start > 0 && src.byte(start - 1) != 10 { start = start - 1 }
+  var end = f.pos
+  while end < src.len() && src.byte(end) != 10 { end = end + 1 }
+  var line = 1
+  for k in 0..start { if src.byte(k) == 10 { line = line + 1 } }
+  let col = f.pos - start + 1
+  print("    error {line}:{col}: {eval.describe(f.err)}")
+  print("      | {src.slice(start, end)}")
+  print("      | {String.from(" ").repeat(col - 1)}^")
+}
+
+fn run_program(idx: Int, src: view String) {
+  print("[{idx}] {src}")
+  match parser.parse_source(src) {
+    Err(f) => { report(src, f) }
+    Ok(ast) => {
+      let text = show_expr(ast, 0)
+      let first = eval.outcome(ast)
+      print("    pretty: {text}")
+      print("    value: {first}")
+      match parser.parse_source(text) {
+        Ok(again) => { print(if eval.outcome(again).eq(first) { "    roundtrip: same" } else { "    roundtrip: DIFFERENT" }) }
+        Err(_) => { print("    roundtrip: pretty output does not parse") }
+      }
+    }
+  }
+}
+
+fn main() {
+  let scripts = [
+    "1 + 2 * 3", "2 * (3 + 4) * -(1 + 1)", "let x = 6 in x * x - answer", "max(3, 9) - abs(-7) * 2",
+    "10 / 3 - -10 / 3", "-7 % 3 * 10 + 7 % -3", "let a = 2 in let b = a + 1 in a * b == 6 && 1 < 2",
+    "-9223372036854775807 - 1", "1 + (2 < 3)", "if 1 then 3 else 4", "unknown * 2",
+    "let big = 3037000500 in big * big", "10 / (5 - 5)", "max(1, 2, 3)", "let x = 1 x",
+    "9223372036854775808", "let x = 4 in\n  let y = x * x in\n  y - 1 + x / 0",
+  ]
+  var idx = 0
+  for src in scripts {
+    idx = idx + 1
+    run_program(idx, src)
+  }
+}

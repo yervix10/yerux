@@ -1,0 +1,47 @@
+logextract: 42 lines, 33 parsed, 3 rejected, 6 unmatched
+
+formats: nginx 9, syslog 5, app 6, frame 8, trace 5
+
+nginx records:
+  line  ip         method  status  bytes     ms  path
+     1  10.0.0.5   GET        200     512      23  /api/items
+     2  10.0.0.9   POST       201      96    1200  /api/items
+     9  10.0.0.5   GET        304       0       4  /static/app.js
+    10  10.0.0.7   GET        500       0     500  /login
+    18  10.0.0.8   DELETE     204       0      15  /api/items/42
+    23  10.0.0.9   GET        200    1024       3  /
+    34  10.0.0.5   GET        200      88      17  /api/items?q=a+b
+    39  10.0.0.7   PUT        200     130      42  /api/items/7
+    42  10.0.0.9   GET        404       0       1  /favicon.ico
+
+syslog records:
+     3  Nov 25 10:00:03  web-01  sshd[412]  peer=10.0.0.9
+    11  Nov 25 10:00:07  web-02  nginx[77]  peer=-
+    20  Nov 25 10:00:12  web-01  cron[9]  peer=-
+    28  Nov 25 10:00:17  db-01  postgres[1020]  peer=-
+    35  Nov 25 10:00:21  web-01  sshd[413]  peer=203.0.113.44
+
+app records:
+     4  2026-11-25T10:00:04Z  INFO  ana      180 ms  login
+    12  2026-11-25T10:00:07Z  WARN  bob     2500 ms  slow
+    26  2026-11-25T10:00:15Z  INFO  ana       35 ms  logout
+    29  2026-11-25T10:00:18Z  ERROR ana     3750 ms  timeout
+    36  2026-11-25T10:00:22Z  INFO  carl       9 ms  ping
+    41  2026-11-25T10:00:25Z  INFO  ana        7 ms  ok
+exception classes (5 headers, 8 frames):
+  java.io.IOException                 2  ##
+  java.lang.IllegalStateException     1  #
+  java.lang.NullPointerException      1  #
+  java.sql.SQLTimeoutException        1  #
+
+unmatched lines (redacted):
+  line 8: ### restart requested by ops, mail <email>
+  line 16: --- end of batch ---
+  line 24: this line is not a log record at all
+  line 25: x.x.x.x - - [25/Nov/2026:10:00:14] "GET /api/items HTTP/1.1" 200 512 abc
+  line 33:  mismatch at column width
+  line 40: contact support at <email> for help
+rejected lines:
+  line 17 [nginx] status 999 out of range
+  line 19 [app] invalid ISO timestamp '2026-11-25T25:00:11Z'
+  line 27 [nginx] invalid IPv4 address '10.0.0.300'

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# examples/real/<name>/main.yx (r11 programs): each one is built on both backends (C and native); its standard output
+# examples/real/<name>/main.yx (rounds 11 and 12): each one is built on both backends (C and native); its standard output
 # must equal examples/real/<name>/expected.out and its exit status must be 0 on both. Prints "FAIL real_programs: ..."
 # on failure. Nothing is written inside the repository.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT" || exit 2
 Y="${Y:-$ROOT/target/release/yerux}"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 fail=0
-for name in ledger logsum taskmgr httprouter warehouse; do
+for name in ledger logsum taskmgr httprouter warehouse logextract calclang fsclient pipeline; do
   D="examples/real/$name"
   exp="$D/expected.out"
   [ -f "$exp" ] || { echo "FAIL real_programs: $name has no expected.out"; fail=1; continue; }

@@ -1,0 +1,248 @@
+// fsclient: a CLI client for a directory-based file store, run over a fixed embedded session.
+//   put KEY FILE | get KEY OUT | ls [--prefix P] | rm KEY | sync SRCDIR | verify | --help
+// FILE, SRCDIR and OUT are relative to the work dir. A KEY is "/"-separated non-empty segments (no "." or "..",
+// upper case folds to lower case). `sync` writes a manifest of key, size and CRC-32; `verify` checks it.
+// Exit status: 0 success, 1 operation failed, 2 usage error. The program takes no arguments: main makes a
+// work directory under the temp dir, runs the session through the argument parser, and removes it again.
+import std.args
+import std.env
+import std.fmt
+import std.fs
+import std.hash
+import std.io
+import std.path
+import std.text
+
+struct Session { root: String, store: String, manifest: String }
+
+fn usage(cmd: Text) -> Result<Int, String> {
+  print("error: usage: fsclient {cmd}")
+  return Ok(2)
+}
+
+fn show_help() {
+  var help = args.help_line("fsclient", "COMMAND [ARGS]")
+  help.push_str("\n  put KEY FILE      copy FILE into the store as KEY\n  get KEY OUT       copy the stored KEY to OUT\n  ls [--prefix P]   list keys, only those starting with P\n  rm KEY            delete KEY\n  sync SRCDIR       store every file under SRCDIR and write the manifest\n  verify            check stored files against the manifest (size, CRC-32)\n  --help            show this help")
+  print(help)
+}
+
+// Lower-cased, validated key: "Docs/Readme.md" becomes "docs/readme.md".
+fn canonical_key(raw: view String) -> Result<String, String> {
+  var key = String.new()
+  for seg in raw.split("/") {
+    if seg.is_empty() || seg.eq(".") || seg.eq("..") || seg.contains(" ") {
+      return Err("invalid key '{raw}'")
+    }
+    if !key.is_empty() { key.push_byte(47) }
+    let low = seg.to_lower()
+    key.push_str(low)
+  }
+  return Ok(move key)
+}
+
+// Copy src to dst, creating the parent directories of dst first.
+fn store_file(src: view String, dst: view String) -> Result<Int, io.IoError> {
+  fs.create_dir_all(path.parent(dst))?
+  return fs.copy(src, dst)
+}
+
+// Every regular file under dir as a relative path ("a/b.txt"), appended to out.
+fn collect(dir: view String, rel: view String, out: mut List<String>) -> Result<Int, io.IoError> {
+  let entries = fs.read_dir_entries(dir)?
+  for e in entries {
+    var name = String.from(rel)
+    if !rel.is_empty() { name.push_byte(47) }
+    name.push_str(e.name)
+    if e.kind == fs.FileKind.Dir {
+      let sub = collect(path.join(dir, e.name), name, out)?
+    } else if e.kind == fs.FileKind.File {
+      out.push(move name)
+    }
+  }
+  return Ok(0)
+}
+
+fn cmd_put(s: view Session, pos: view List<String>) -> Result<Int, String> {
+  if pos.len() != 2 { return usage("put KEY FILE") }
+  let key = canonical_key(pos.at(0))?
+  let src = path.join(s.root, pos.at(1))
+  if !fs.is_file(src) { return Err("no such file: {pos.at(1)}") }
+  let n = store_file(src, path.join(s.store, key))?
+  print("stored {key}: {n} bytes")
+  return Ok(0)
+}
+
+fn cmd_get(s: view Session, pos: view List<String>) -> Result<Int, String> {
+  if pos.len() != 2 { return usage("get KEY OUT") }
+  let key = canonical_key(pos.at(0))?
+  let src = path.join(s.store, key)
+  if !fs.is_file(src) { return Err("not found: {key}") }
+  let n = store_file(src, path.join(s.root, pos.at(1)))?
+  print("got {key}: {n} bytes -> {pos.at(1)}")
+  return Ok(0)
+}
+
+fn cmd_ls(s: view Session, p: view args.Parsed) -> Result<Int, String> {
+  if args.positionals(p).len() != 0 { return usage("ls [--prefix P]") }
+  let prefix = args.option_or(p, "prefix", "")
+  var keys = List<String>.new()
+  collect(s.store, "", keys)?
+  keys.sort()
+  var shown = 0
+  for key in keys {
+    if key.starts_with(prefix) {
+      let n = fs.file_size(path.join(s.store, key))?
+      print("{key} {n}")
+      shown = shown + 1
+    }
+  }
+  print("{shown} keys")
+  return Ok(0)
+}
+
+fn cmd_rm(s: view Session, pos: view List<String>) -> Result<Int, String> {
+  if pos.len() != 1 { return usage("rm KEY") }
+  let key = canonical_key(pos.at(0))?
+  let target = path.join(s.store, key)
+  if !fs.is_file(target) { return Err("not found: {key}") }
+  fs.remove_file(target)?
+  print("removed {key}")
+  return Ok(0)
+}
+
+fn cmd_sync(s: view Session, pos: view List<String>) -> Result<Int, String> {
+  if pos.len() != 1 { return usage("sync SRCDIR") }
+  let src_root = path.join(s.root, pos.at(0))
+  var files = List<String>.new()
+  collect(src_root, "", files)?
+  files.sort()
+  var manifest = String.new()
+  var total = 0
+  for rel in files {
+    let key = canonical_key(rel)?
+    let src = path.join(src_root, rel)
+    let body = fs.read_to_string(src)?
+    store_file(src, path.join(s.store, key))?
+    manifest.push_str(key)
+    manifest.push_byte(9)
+    manifest.push_int(body.len())
+    manifest.push_byte(9)
+    manifest.push_str(fmt.hex_padded(hash.crc32(body), 8))
+    manifest.push_byte(10)
+    total = total + body.len()
+    print("  {rel} -> {key}")
+  }
+  fs.write(s.manifest, manifest)?
+  print("synced {files.len()} files, {total} bytes")
+  return Ok(0)
+}
+
+fn cmd_verify(s: view Session, pos: view List<String>) -> Result<Int, String> {
+  if pos.len() != 0 { return usage("verify") }
+  let text = fs.read_to_string(s.manifest)?
+  var checked = 0
+  var bad = 0
+  for line in text.lines() {
+    let cols = line.split("\t")
+    if cols.len() != 3 { return Err("bad manifest line: {line}") }
+    var want_size = 0
+    if !cols.at(1).parse_int(want_size) { return Err("bad size in manifest: {line}") }
+    let key = cols.at(0)
+    checked = checked + 1
+    let full = path.join(s.store, key)
+    if !fs.is_file(full) {
+      print("MISSING {key}")
+      bad = bad + 1
+      continue
+    }
+    let body = fs.read_to_string(full)?
+    let crc = fmt.hex_padded(hash.crc32(body), 8)
+    if body.len() != want_size || crc != cols.at(2) {
+      print("MISMATCH {key}: size {body.len()} crc {crc}, manifest size {want_size} crc {cols.at(2)}")
+      bad = bad + 1
+    } else { print("ok {key}") }
+  }
+  print("verified {checked} entries, {bad} bad")
+  return Ok(if bad == 0 { 0 } else { 1 })
+}
+
+fn dispatch(s: view Session, argv: view List<String>) -> Result<Int, String> {
+  var valued = List<String>.new()
+  valued.push(String.from("prefix"))
+  let p = args.parse_with(argv, valued, true)
+  if p.help {
+    show_help()
+    return Ok(0)
+  }
+  let pos = args.positionals(p)
+  if p.subcommand.eq("put") { return cmd_put(s, pos) }
+  if p.subcommand.eq("get") { return cmd_get(s, pos) }
+  if p.subcommand.eq("ls") { return cmd_ls(s, p) }
+  if p.subcommand.eq("rm") { return cmd_rm(s, pos) }
+  if p.subcommand.eq("sync") { return cmd_sync(s, pos) }
+  if p.subcommand.eq("verify") { return cmd_verify(s, pos) }
+  if p.subcommand.is_empty() {
+    print("error: no command given, try --help")
+    return Ok(2)
+  }
+  print("error: unknown command '{p.subcommand}'")
+  return Ok(2)
+}
+
+// Echo one command line, run it through the parser, print its exit code.
+fn run(s: view Session, line: view String) -> Int {
+  print("$ {line}")
+  let code = match dispatch(s, text.split_ws(line)) {
+    Ok(c) => c
+    Err(msg) => {
+      print("error: {msg}")
+      1
+    }
+  }
+  print("exit {code}")
+  return code
+}
+
+// Write a fixture file of the source tree, creating its directories.
+fn fixture(root: view String, rel: view String, body: view String) -> Result<Int, io.IoError> {
+  let full = path.join(root, rel)
+  fs.create_dir_all(path.parent(full))?
+  return fs.write(full, body)
+}
+
+fn main() {
+  let root = path.join(env.temp_dir(), "fsclient-{io.process_id()}")
+  let s = Session { root: String.from(root), store: path.join(root, "store"), manifest: path.join(root, "manifest.tsv") }
+  fixture(root, "src/app.toml", "name = \"fsclient\"\nversion = 3\n").unwrap()
+  fixture(root, "src/Docs/Readme.md", "# Readme\nstore demo\n").unwrap()
+  fixture(root, "src/data/records.csv", "id,name\n1,ann\n2,bob\n3,cy\n").unwrap()
+  fixture(root, "src/data/empty.txt", "").unwrap()
+
+  run(s, "fsclient --help")
+  run(s, "fsclient put Config/App.toml src/app.toml")
+  run(s, "fsclient put docs/Readme.md src/Docs/Readme.md")
+  run(s, "fsclient put notes/../secret src/app.toml")
+  run(s, "fsclient put only-one-arg")
+  run(s, "fsclient put data/missing.txt nope/nothere.txt")
+  run(s, "fsclient get config/app.toml exported/app.toml")
+  run(s, "fsclient get Config/Missing.toml out.txt")
+  run(s, "fsclient ls")
+  run(s, "fsclient ls --prefix docs/")
+  run(s, "fsclient sync src")
+  run(s, "fsclient verify")
+
+  // Bit rot: same length, different bytes. Only the CRC can see it.
+  let rec = path.join(s.store, "data/records.csv")
+  fs.write(rec, fs.read_to_string(rec).unwrap().replace("2,bob", "2,b0b")).unwrap()
+  print("(corrupted data/records.csv in place)")
+  run(s, "fsclient verify")
+  run(s, "fsclient rm docs/readme.md")
+  run(s, "fsclient rm docs/readme.md")
+  run(s, "fsclient verify")
+  run(s, "fsclient ls")
+  run(s, "fsclient frobnicate")
+  run(s, "fsclient")
+
+  fs.remove_dir_all(root).unwrap()
+  print("temp dir removed: {!fs.exists(root)}")
+}
