@@ -73,25 +73,29 @@ fn main() {
   scope {
     let greeting = String.from("owned result")
     let worker = spawn move { return move greeting }
-    let failed = spawn move { fail_worker() }
     let ordered = spawn move { check_worker_argument_order() }
-    let failed_set = spawn move { fail_during_set() }
-    let failed_move = spawn move { fail_during_move() }
-    let failed_mixed = spawn move { fail_with_mixed_arguments() }
-    let failed_index = spawn move { fail_with_borrowed_index() }
-    let failed_parent = spawn move { fail_with_child() }
+    let ignored = spawn move || String.from("implicitly joined and dropped")
+
+    // Join each panicking worker before starting the next so the stderr diff
+    // between backends does not depend on scheduling.
+    let failed = spawn move { fail_worker() }
+    print(failed.join().is_err())
     let checked = spawn move || -> Int {
       assert(false)
       return 1
     }
-    let ignored = spawn move || String.from("implicitly joined and dropped")
-    print(failed.join().is_err())
     print(checked.join().is_err())
+    let failed_parent = spawn move { fail_with_child() }
     print(failed_parent.join().is_err())
+    let failed_move = spawn move { fail_during_move() }
     print(failed_move.join().is_err())
+    let failed_mixed = spawn move { fail_with_mixed_arguments() }
     assert(failed_mixed.join().is_err())
+    let failed_index = spawn move { fail_with_borrowed_index() }
     assert(failed_index.join().is_err())
+    let failed_set = spawn move { fail_during_set() }
     assert(failed_set.join().is_err())
+
     assert(ordered.join().is_ok())
     let result = worker.join().unwrap()
     print(result)

@@ -887,13 +887,14 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.sys_write(2);
     a.ret();
 
-    // panic stubs: "panic: <msg>\n" to stderr, exit(101)
+    // Emit the panic message before a recoverable worker unwinds. Fatal panics exit(101).
     for (i, l) in l_panic.iter().enumerate() {
         a.bind(*l);
-        if let Some(rt) = &thread_runtime {
-            if !matches!(i, P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_DOUBLE_PANIC | P_THREAD_WAIT) {
-                rt.panic_probe(&mut a, l_panic[P_DOUBLE_PANIC]);
-            }
+        let worker = thread_runtime.as_ref().filter(|_| {
+            !matches!(i, P_OOM | P_DOUBLE_FREE | P_THREAD_START | P_DOUBLE_PANIC | P_THREAD_WAIT)
+        });
+        if let Some(rt) = worker {
+            rt.panic_double(&mut a, l_panic[P_DOUBLE_PANIC]);
         }
         a.lea_data(X1, D_PANIC);
         a.mov_imm(X2, 7);
@@ -904,6 +905,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.lea_data(X1, D_NL);
         a.mov_imm(X2, 1);
         a.bl(l_write2);
+        if let Some(rt) = worker {
+            rt.panic_recover(&mut a);
+        }
         if report && i != P_DOUBLE_PANIC {
             a.bl(l_at);
         }
@@ -948,7 +952,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     // range_panic: x9 = value, x10 = lo, x11 = hi. "panic: integer conversion out of range: V not in LO..HI", exit(101).
     a.bind(l_range_panic);
     if let Some(rt) = &thread_runtime {
-        rt.panic_probe(&mut a, l_panic[P_DOUBLE_PANIC]);
+        rt.panic_double(&mut a, l_panic[P_DOUBLE_PANIC]);
     }
     a.lea_data(X1, D_PANIC);
     a.mov_imm(X2, 7);
@@ -966,6 +970,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
     a.lea_data(X1, D_NL);
     a.mov_imm(X2, 1);
     a.bl(l_write2);
+    if let Some(rt) = &thread_runtime {
+        rt.panic_recover(&mut a);
+    }
     if report {
         a.bl(l_at);
     }
@@ -1110,7 +1117,7 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         let l_nl = a.label();
         a.bind(l_panic_bytes);
         if let Some(rt) = &thread_runtime {
-            rt.panic_probe(&mut a, l_panic[P_DOUBLE_PANIC]);
+            rt.panic_double(&mut a, l_panic[P_DOUBLE_PANIC]);
         }
         a.mov(X9, X1);
         a.mov(X10, X2);
@@ -1125,6 +1132,9 @@ pub fn compile(ir: &IrProgram, debug_alloc: bool) -> Vec<u8> {
         a.lea_data(X1, D_NL);
         a.mov_imm(X2, 1);
         a.bl(l_write2);
+        if let Some(rt) = &thread_runtime {
+            rt.panic_recover(&mut a);
+        }
         if report {
             a.bl(l_at);
         }

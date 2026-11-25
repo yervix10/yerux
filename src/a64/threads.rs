@@ -142,9 +142,12 @@ impl Runtime {
         }
     }
 
-    pub(super) fn panic_probe(&self, a: &mut Asm, double_panic: usize) {
+    pub(super) fn panic_double(&self, a: &mut Asm, double_panic: usize) {
         a.ldr_i(X15, X19, UNWINDING);
         a.cbnz(X15, double_panic);
+    }
+
+    pub(super) fn panic_recover(&self, a: &mut Asm) {
         a.ldr_i(X15, X19, RECOVERY);
         a.sub_imm(X15, X15, 1);
         a.cbz(X15, self.recover);

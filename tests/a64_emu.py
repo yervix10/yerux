@@ -44,6 +44,7 @@ THREADS = (
     "concurrency_mutex", "concurrency_nested_spawn", "concurrency_rwlock",
     "concurrency_thread_pool", "drop_double_panic", "drop_panic", "drop_worker",
     "net_drop", "net_loopback", "std_http_client", "std_sync", "thread_handles_list",
+    "thread_panic_message",
 )
 WORKER_TLS = "ffi_worker_tls"
 WORKER_TLS_FIXTURE = f"tests/a64/{WORKER_TLS}.yx"
