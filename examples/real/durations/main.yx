@@ -1,0 +1,130 @@
+// durations: evaluates small duration arithmetic expressions and formats the result.
+// A term is [N "*"] N unit { N unit } with units d, h, m, s, ms, us, ns; terms are
+// combined left to right with "+" and "-". Numbers are read with std.text.parse_int,
+// spans are std.time Durations, and the output uses std.time.format. Invalid input is
+// reported with its byte offset. No arguments; exit 0 (errors are printed).
+import std.text
+import std.time
+
+struct Parser { src: String, pos: Int }
+
+fn unit_ns(u: view String) -> Result<Int, String> {
+  if u.eq("d") { return Ok(86400000000000) }
+  if u.eq("h") { return Ok(3600000000000) }
+  if u.eq("m") { return Ok(60000000000) }
+  if u.eq("s") { return Ok(1000000000) }
+  if u.eq("ms") { return Ok(1000000) }
+  if u.eq("us") { return Ok(1000) }
+  if u.eq("ns") { return Ok(1) }
+  return Err("unknown unit '{u}'")
+}
+
+fn is_digit(b: Int) -> Bool { return b >= 48 && b <= 57 }
+
+fn is_alpha(b: Int) -> Bool { return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) }
+
+fn peek(p: view Parser) -> Int {
+  if p.pos >= p.src.len() { return -1 }
+  return p.src.byte(p.pos)
+}
+
+fn number(p: mut Parser) -> Result<Int, String> {
+  let start = p.pos
+  while is_digit(peek(p)) { p.pos = p.pos + 1 }
+  if p.pos == start { return Err("expected a number at byte {start}") }
+  match text.parse_int(p.src.slice(start, p.pos)) {
+    Ok(v) => { return Ok(v) }
+    Err(e) => { return Err(move e) }
+  }
+}
+
+fn unit(p: mut Parser) -> Result<String, String> {
+  let start = p.pos
+  while is_alpha(peek(p)) { p.pos = p.pos + 1 }
+  if p.pos == start { return Err("expected a unit at byte {start}") }
+  return Ok(p.src.slice(start, p.pos))
+}
+
+fn term(p: mut Parser) -> Result<Int, String> {
+  let first = number(p)?
+  var mult = 1
+  var total = 0
+  if peek(p) == 42 {
+    mult = first
+    p.pos = p.pos + 1
+    let n = number(p)?
+    let u = unit(p)?
+    total = n * unit_ns(u)?
+  } else {
+    let u = unit(p)?
+    total = first * unit_ns(u)?
+  }
+  while is_digit(peek(p)) {
+    let n = number(p)?
+    let u = unit(p)?
+    total = total + n * unit_ns(u)?
+  }
+  return Ok(total * mult)
+}
+
+fn evaluate(expr: view String) -> Result<Int, String> {
+  let compact = String.from(expr).replace(" ", "")
+  var p = Parser { src: move compact, pos: 0 }
+  var sign = 1
+  var total = term(p)?
+  while p.pos < p.src.len() {
+    let op = peek(p)
+    if op == 43 {
+      sign = 1
+    } else if op == 45 {
+      sign = -1
+    } else {
+      return Err("unexpected byte {op} at {p.pos}")
+    }
+    p.pos = p.pos + 1
+    total = total + sign * term(p)?
+  }
+  return Ok(total)
+}
+
+fn main() {
+  let exprs = [
+    "1h 30m + 45s",
+    "2h15m - 35m",
+    "3 * 12m30s",
+    "1d + 2h + 3m + 4s",
+    "250ms + 750ms",
+    "2h + 15x",
+    "5m +",
+  ]
+
+  var results = List<time.Duration>.new()
+  for expr in exprs {
+    let e = String.from(expr)
+    match evaluate(e) {
+      Ok(ns) => {
+        let d = time.nanos(ns)
+        results.push(d)
+        print("{e} = {time.format(d)}  [{time.as_secs(d)} s, {time.as_nanos(d)} ns]")
+      }
+      Err(msg) => {
+        print("{e} = error: {msg}")
+      }
+    }
+  }
+
+  var total = results.at(0)
+  var shortest = results.at(0)
+  var longest = results.at(0)
+  for i in 1..results.len() {
+    let d = results.at(i)
+    total = total.add(d)
+    shortest = shortest.min(d)
+    longest = longest.max(d)
+  }
+  print("---")
+  print("valid expressions: {results.len()}")
+  print("total: {time.format(total)}")
+  print("shortest: {time.format(shortest)}")
+  print("longest: {time.format(longest)}")
+}
