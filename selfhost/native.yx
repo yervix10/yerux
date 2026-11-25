@@ -40,6 +40,9 @@ struct Emitter {
   consts: List<Int>,
   enums: List<Int>,
   structs: List<Int>,
+  reserve: Int,
+  append_int: Int,
+  data_ptrs: List<Patch>,
 }
 
 fn unsupported(what: view String) {
@@ -187,6 +190,14 @@ fn slot_of(e: mut Emitter, id: Int) -> Int {
   return e.slots.at(id)
 }
 
+// List, or List<T> where T is a single word that needs no special treatment
+fn is_word_list(tree: view List<ast.AstNode>, e: view Emitter, kind: view String) -> Bool {
+  if kind == "List" { return true }
+  if !kind.starts_with("List<") || !kind.ends_with(">") { return false }
+  let element = kind.slice(5, kind.len() - 1)
+  return element == "Int" || element == "Bool" || element == "String" || find_struct(tree, e, element) >= 0
+}
+
 fn is_int_type(ty: view String) -> Bool { return ty == "Int" || ty.starts_with("Int<") }
 
 fn comparison_code(op: view String) -> Int {
@@ -221,6 +232,12 @@ fn expression(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
       expression(e, tree, ast.child(tree, found, 2))
       return
     }
+    load_slot(e, slot_of(e, id))
+    return
+  }
+  if tag == "Move" {
+    let id = e.bindings.at(node)
+    if id < 0 { unsupported("move of something that is not a local") }
     load_slot(e, slot_of(e, id))
     return
   }
@@ -293,8 +310,12 @@ fn expression(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   if tag == "Text" {
     // a text value is the address of its 8-byte length followed by its bytes
     let bytes = ast.decoded_name(tree, ast.child(tree, node, 0))
+    // header: length, capacity 0, address of the bytes (patched when the image is laid out); then the bytes
     let offset = e.data.len()
     for b in le_bytes(bytes.len(), 8) { e.data.push(b) }
+    for b in le_bytes(0, 8) { e.data.push(b) }
+    e.data_ptrs.push(Patch { at: e.data.len(), target: offset + 24 })
+    for b in le_bytes(0, 8) { e.data.push(b) }
     for i in 0..bytes.len() { e.data.push(bytes.byte(i)) }
     byte(e, 184)
     e.data_patches.push(Patch { at: e.code.len(), target: offset })
@@ -306,19 +327,115 @@ fn expression(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
     let recv = ast.child(tree, node, 0)
     var receiver = String.new()
     if tree.at(recv).tag == "Var" { receiver = ast.name_at(tree, recv, 0) }
-    if name == "from" && receiver == "String" && e.bindings.at(recv) < 0 {
-      let args = ast.child(tree, node, 2)
-      if args + 1 < tree.at(args).end && tree.at(args + 1).end == tree.at(args).end && tree.at(args + 1).tag == "Text" {
+    let args = ast.child(tree, node, 2)
+    let one = args + 1 < tree.at(args).end && tree.at(args + 1).end == tree.at(args).end
+    if receiver == "String" && e.bindings.at(recv) < 0 {
+      if name == "new" && args + 1 == tree.at(args).end {
+        emit_alloc(e, 24)
+        return
+      }
+      if name == "from" && one {
+        emit_alloc(e, 24)
+        push_rax(e)
         expression(e, tree, args + 1)
+        push_rax(e)
+        emit_append_text(e)
         return
       }
     }
-    let kind = String.from(e.expr_types.at(recv))
-    if name == "len" && (kind == "String" || kind == "view String") {
+    var kind = String.from(e.expr_types.at(recv))
+    if kind.starts_with("view ") { kind = kind.slice(5, kind.len()) }
+    if kind.starts_with("mut ") { kind = kind.slice(4, kind.len()) }
+    let one_arg = args + 1 < tree.at(args).end && tree.at(args + 1).end == tree.at(args).end
+    if name == "push_int" && kind == "String" && one_arg {
+      expression(e, tree, recv)
+      push_rax(e)
+      expression(e, tree, args + 1)
+      byte(e, 95)
+      call_function(e, e.append_int)
+      return
+    }
+    if name == "push_str" && kind == "String" && one_arg {
+      expression(e, tree, recv)
+      push_rax(e)
+      expression(e, tree, args + 1)
+      push_rax(e)
+      emit_append_text(e)
+      return
+    }
+    if is_word_list(tree, e, kind) {
+      if name == "push" && one_arg {
+        expression(e, tree, recv)
+        push_rax(e)
+        expression(e, tree, args + 1)
+        push_rax(e)
+        bytes4(e, 72, 139, 124, 36)
+        byte(e, 8)
+        emit_reserve_call(e, 8, 1)
+        pop_rax(e)
+        byte(e, 95)
+        bytes3(e, 72, 139, 15)
+        bytes4(e, 72, 139, 87, 16)
+        bytes4(e, 72, 137, 4, 202)
+        bytes3(e, 72, 255, 193)
+        bytes3(e, 72, 137, 15)
+        return
+      }
+      if name == "len" && args + 1 == tree.at(args).end {
+        expression(e, tree, recv)
+        bytes3(e, 72, 139, 0)
+        return
+      }
+      if name == "at" && one_arg {
+        expression(e, tree, recv)
+        push_rax(e)
+        expression(e, tree, args + 1)
+        mov_rcx_rax(e)
+        byte(e, 95)
+        // unsigned rcx < [rdi] or panic
+        bytes3(e, 72, 59, 15)
+        let inside = jump_forward(e, 130)
+        panic_with(e, "index out of range")
+        here(e, inside)
+        bytes4(e, 72, 139, 71, 16)
+        bytes4(e, 72, 139, 4, 200)
+        let produced = String.from(e.expr_types.at(node))
+        if find_struct(tree, e, produced) >= 0 { emit_copy(e, tree, produced) }
+        return
+      }
+    }
+    if name == "byte" && (kind == "String" || kind == "Text") && one_arg {
+      expression(e, tree, recv)
+      push_rax(e)
+      expression(e, tree, args + 1)
+      mov_rcx_rax(e)
+      byte(e, 95)
+      bytes3(e, 72, 59, 15)
+      let inside = jump_forward(e, 130)
+      panic_with(e, "index out of range")
+      here(e, inside)
+      bytes4(e, 72, 139, 71, 16)
+      bytes4(e, 72, 15, 182, 4)
+      byte(e, 8)
+      return
+    }
+    if name == "len" && (kind == "String" || kind == "Text") {
       expression(e, tree, recv)
       bytes3(e, 72, 139, 0)
       return
     }
+  }
+  if tag == "GenericMember" {
+    let item = ast.child(tree, node, 1)
+    var element = String.new()
+    if item + 1 < tree.at(item).end { element = ast.name_at(tree, item + 1, 0) }
+    let member = ast.name_at(tree, node, 2)
+    let owner = ast.name_at(tree, node, 0)
+    if owner == "List" && member == "new" && (element == "Int" || element == "Bool" || element == "String" || find_struct(tree, e, element) >= 0) {
+      emit_alloc(e, 24)
+      return
+    }
+    unsupported("{owner}<{element}>.{member}")
   }
   if tag == "Method" { unsupported("method {ast.name_at(tree, node, 1)}") }
   unsupported("expression {tag}")
@@ -360,6 +477,79 @@ fn field_count(tree: view List<ast.AstNode>, decl: Int) -> Int {
 }
 
 // rax = a fresh block of `size` bytes from the bump heap
+// call `reserve` for the header at [rsp+8] with the element size and the extra count given
+fn emit_reserve_call(e: mut Emitter, size: Int, extra: Int) {
+  byte(e, 190)
+  emit_le(e, size, 4)
+  byte(e, 186)
+  emit_le(e, extra, 4)
+  call_function(e, e.reserve)
+}
+
+// stack: [text, string]; appends the bytes of the text to the string, pops both, leaves the string in rax
+fn emit_append_text(e: mut Emitter) {
+  bytes4(e, 72, 139, 124, 36)
+  byte(e, 8)
+  bytes4(e, 72, 139, 4, 36)
+  bytes3(e, 72, 139, 16)
+  byte(e, 190)
+  emit_le(e, 1, 4)
+  call_function(e, e.reserve)
+  byte(e, 94)
+  byte(e, 95)
+  bytes3(e, 72, 139, 14)
+  bytes4(e, 72, 139, 118, 16)
+  bytes3(e, 72, 139, 7)
+  bytes4(e, 72, 139, 87, 16)
+  bytes3(e, 72, 1, 194)
+  bytes3(e, 72, 1, 15)
+  bytes3(e, 73, 137, 248)
+  bytes3(e, 72, 137, 215)
+  bytes2(e, 243, 164)
+  bytes3(e, 76, 137, 192)
+}
+
+// reserve: rdi = header (length, capacity, data), rsi = element size, rdx = extra elements; grows from the bump heap
+fn emit_reserve(e: mut Emitter) {
+  e.entries.set(e.reserve, e.code.len())
+  bytes3(e, 72, 139, 7)
+  bytes3(e, 72, 1, 208)
+  bytes4(e, 72, 139, 79, 8)
+  bytes3(e, 72, 57, 200)
+  byte(e, 15)
+  byte(e, 134)
+  let done = e.code.len()
+  emit_le(e, 0, 4)
+  bytes3(e, 72, 1, 201)
+  bytes3(e, 72, 57, 193)
+  bytes4(e, 72, 15, 66, 200)
+  byte(e, 184)
+  emit_le(e, 8, 4)
+  bytes3(e, 72, 57, 193)
+  bytes4(e, 72, 15, 66, 200)
+  bytes3(e, 73, 137, 200)
+  bytes4(e, 72, 15, 175, 206)
+  bytes4(e, 72, 139, 4, 37)
+  e.data_patches.push(Patch { at: e.code.len(), target: 0 })
+  emit_le(e, 0, 4)
+  bytes4(e, 76, 141, 12, 8)
+  bytes4(e, 76, 137, 12, 37)
+  e.data_patches.push(Patch { at: e.code.len(), target: 0 })
+  emit_le(e, 0, 4)
+  bytes3(e, 73, 137, 194)
+  bytes3(e, 72, 139, 15)
+  bytes4(e, 72, 15, 175, 206)
+  bytes4(e, 72, 139, 119, 16)
+  byte(e, 87)
+  bytes3(e, 72, 137, 199)
+  bytes2(e, 243, 164)
+  byte(e, 95)
+  bytes4(e, 76, 137, 87, 16)
+  bytes4(e, 76, 137, 71, 8)
+  here(e, done)
+  byte(e, 195)
+}
+
 fn emit_alloc(e: mut Emitter, size: Int) {
   bytes4(e, 72, 139, 12, 37)
   e.data_patches.push(Patch { at: e.code.len(), target: 0 })
@@ -676,8 +866,28 @@ fn mark_used(tree: view List<ast.AstNode>, e: mut Emitter, index: Int) {
 fn call(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   let name = ast.name_at(tree, node, 0)
   let args = ast.child(tree, node, 1)
-  if name == "print" {
+  if name == "print" || name == "std__print_owned" {
     print_statement(e, tree, args)
+    return
+  }
+  if name == "std__fmt_lit" || name == "std__fmt_val" {
+    // string interpolation: an accumulator String, then a piece of text or a value
+    let piece = args + 1
+    let next = tree.at(piece).end
+    let ty = String.from(e.expr_types.at(next))
+    if name == "std__fmt_val" && !is_int_type(ty) && ty != "String" && ty != "Text" { unsupported("interpolation of {ty}") }
+    expression(e, tree, piece)
+    push_rax(e)
+    expression(e, tree, next)
+    if name == "std__fmt_val" && is_int_type(ty) {
+      byte(e, 95)
+      byte(e, 87)
+      call_function(e, e.append_int)
+      pop_rax(e)
+      return
+    }
+    push_rax(e)
+    emit_append_text(e)
     return
   }
   let index = find_function(tree, e, name)
@@ -716,7 +926,7 @@ fn print_statement(e: mut Emitter, tree: view List<ast.AstNode>, args: Int) {
   if ty == "Text" || ty == "String" || ty == "view String" {
     expression(e, tree, value)
     bytes3(e, 72, 139, 16)
-    bytes4(e, 72, 141, 112, 8)
+    bytes4(e, 72, 139, 112, 16)
     write_stdout(e)
     let newline = add_data(e, "\n")
     load_string(e, newline, 1)
@@ -877,9 +1087,47 @@ fn while_statement(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   finish_loop(e, start)
 }
 
+// for x in list: the list pointer and the index live in hidden slots
+fn list_loop(e: mut Emitter, tree: view List<ast.AstNode>, node: Int, iter: Int) {
+  if tree.at(ast.child(tree, node, 2)).tag == "true" { unsupported("for mut") }
+  let item = slot_of(e, e.bindings.at(node))
+  e.frame = e.frame + 16
+  let list = 0 - (e.frame - 8)
+  let index = 0 - e.frame
+  expression(e, tree, iter)
+  store_slot(e, list)
+  mov_rax_imm(e, 0)
+  store_slot(e, index)
+  let start = e.code.len()
+  e.loops.push(LoopCtx { start: start, breaks: List<Int>.new(), continues: List<Int>.new() })
+  load_slot(e, list)
+  mov_rcx_rax(e)
+  load_slot(e, index)
+  // leave when index >= length
+  bytes3(e, 72, 59, 1)
+  let leave = jump_forward(e, 131)
+  bytes4(e, 72, 139, 81, 16)
+  bytes4(e, 72, 139, 4, 194)
+  store_slot(e, item)
+  block(e, tree, ast.child(tree, node, 5))
+  let step = e.code.len()
+  load_slot(e, index)
+  bytes4(e, 72, 131, 192, 1)
+  store_slot(e, index)
+  jump_back(e, start)
+  here(e, leave)
+  finish_loop(e, step)
+}
+
 // for i in a..b / a..=b: the bound is evaluated once into a hidden slot
 fn for_statement(e: mut Emitter, tree: view List<ast.AstNode>, node: Int) {
   let iter = ast.child(tree, node, 3)
+  var iter_type = String.from(e.expr_types.at(iter))
+  if iter_type.starts_with("view ") { iter_type = iter_type.slice(5, iter_type.len()) }
+  if tree.at(iter).tag != "IterRange" && is_word_list(tree, e, iter_type) && tree.at(ast.child(tree, node, 4)).tag == "_" {
+    list_loop(e, tree, node, iter)
+    return
+  }
   if tree.at(iter).tag != "IterRange" || tree.at(ast.child(tree, node, 4)).tag != "_" { unsupported("this kind of for loop") }
   if tree.at(ast.child(tree, node, 2)).tag == "true" { unsupported("for mut") }
   let inclusive = tree.at(ast.child(tree, iter, 2)).tag == "true"
@@ -923,7 +1171,8 @@ fn function(e: mut Emitter, tree: view List<ast.AstNode>, index: Int) {
     if tree.at(p).tag != "Param" { unsupported("methods") }
     let ty = ast.child(tree, p, 2)
     if tree.at(ty).tag != "Type" { unsupported("parameter types other than Int and Bool") }
-    if tree.at(ast.child(tree, p, 1)).tag == "Mut" && find_struct(tree, e, ast.name_at(tree, ty, 0)) < 0 {
+    let kind = ast.name_at(tree, ty, 0)
+    if tree.at(ast.child(tree, p, 1)).tag == "Mut" && find_struct(tree, e, kind) < 0 && kind != "List" && kind != "String" {
       unsupported("a mut parameter that is not a struct")
     }
     count = count + 1
@@ -951,13 +1200,14 @@ fn function(e: mut Emitter, tree: view List<ast.AstNode>, index: Int) {
 }
 
 // print_int: the Int in rax, written in decimal with a newline
-fn emit_print_int(e: mut Emitter) {
-  e.entries.set(e.print_int, e.code.len())
-  byte(e, 85)
-  bytes3(e, 72, 137, 229)
-  bytes4(e, 72, 131, 236, 32)
-  bytes4(e, 72, 141, 125, 255)
-  bytes3(e, 198, 7, 10)
+// the decimal digits of rax written backwards below rbp (with a trailing newline when asked): rsi = start, rdx = length
+fn emit_digits(e: mut Emitter, newline: Bool) {
+  if newline {
+    bytes4(e, 72, 141, 125, 255)
+    bytes3(e, 198, 7, 10)
+  } else {
+    bytes4(e, 72, 141, 125, 0)
+  }
   bytes3(e, 72, 137, 198)
   test_rax(e)
   let positive = jump_forward(e, 137)
@@ -983,11 +1233,46 @@ fn emit_print_int(e: mut Emitter) {
   bytes3(e, 72, 137, 234)
   bytes3(e, 72, 41, 250)
   bytes3(e, 72, 137, 254)
+}
+
+fn emit_print_int(e: mut Emitter) {
+  e.entries.set(e.print_int, e.code.len())
+  byte(e, 85)
+  bytes3(e, 72, 137, 229)
+  bytes4(e, 72, 131, 236, 32)
+  emit_digits(e, true)
   byte(e, 191)
   emit_le(e, 1, 4)
   byte(e, 184)
   emit_le(e, 1, 4)
   bytes2(e, 15, 5)
+  byte(e, 201)
+  byte(e, 195)
+}
+
+// append_int: rdi = string header, rax = value; appends its decimal digits
+fn emit_append_int(e: mut Emitter) {
+  e.entries.set(e.append_int, e.code.len())
+  byte(e, 85)
+  bytes3(e, 72, 137, 229)
+  bytes4(e, 72, 131, 236, 48)
+  bytes4(e, 72, 137, 125, 216)
+  bytes4(e, 72, 137, 69, 208)
+  byte(e, 190)
+  emit_le(e, 1, 4)
+  byte(e, 186)
+  emit_le(e, 20, 4)
+  call_function(e, e.reserve)
+  bytes4(e, 72, 139, 69, 208)
+  emit_digits(e, false)
+  bytes4(e, 72, 139, 125, 216)
+  bytes3(e, 72, 137, 209)
+  bytes3(e, 72, 139, 7)
+  bytes4(e, 76, 139, 79, 16)
+  bytes3(e, 73, 1, 193)
+  bytes3(e, 72, 1, 15)
+  bytes3(e, 76, 137, 207)
+  bytes2(e, 243, 164)
   byte(e, 201)
   byte(e, 195)
 }
@@ -1047,9 +1332,15 @@ fn write_elf(e: view Emitter, path: view String, entry: Int) {
   le_into(out, 4096, 8)
   for b in code { out.push(b.to_uint8()) }
   // the first data word is the heap pointer: the heap starts after the file image
+  var data = List<Int>.new()
+  for b in e.data { data.push(b) }
   let heap = le_bytes(base + total, 8)
-  for i in 0..8 { out.push(heap.at(i).to_uint8()) }
-  for i in 8..e.data.len() { out.push(e.data.at(i).to_uint8()) }
+  for i in 0..8 { data.set(i, heap.at(i)) }
+  for patch in e.data_ptrs {
+    let address = le_bytes(data_base + patch.target, 8)
+    for i in 0..8 { data.set(patch.at + i, address.at(i)) }
+  }
+  for b in data { out.push(b.to_uint8()) }
   match fs.write_bytes(path, out) {
     Err(failure) => {
       io.eprintln("native: {path}: {failure.message}")
@@ -1091,7 +1382,7 @@ fn main() {
         code: List<Int>.new(), data: List<Int>.new(), data_patches: List<Patch>.new(), call_patches: List<Patch>.new(),
         entries: List<Int>.new(), nodes: List<Int>.new(), slots: List<Int>.new(), frame: 0, loops: List<LoopCtx>.new(),
         expr_types: copy_types(checked.expressions), bindings: copy_ints(resolved.identities), print_int: 0, panic_exit: 0, used: List<Bool>.new(),
-        consts: List<Int>.new(), enums: List<Int>.new(), structs: List<Int>.new(),
+        consts: List<Int>.new(), enums: List<Int>.new(), structs: List<Int>.new(), reserve: 0, append_int: 0, data_ptrs: List<Patch>.new(),
       }
       for i in 0..8 { e.data.push(0) }
       for i in 0..resolved.bindings.len() { e.slots.push(UNSET) }
@@ -1099,6 +1390,10 @@ fn main() {
       var at = items + 1
       while at < file.nodes.at(items).end {
         let decl = ast.child(file.nodes, at, 2)
+        if file.nodes.at(decl).tag == "Impl" {
+          let implemented = ast.name_at(file.nodes, ast.child(file.nodes, decl, 1), 0)
+          if implemented == "Drop" { unsupported("impl Drop") }
+        }
         if file.nodes.at(decl).tag == "Const" { e.consts.push(decl) }
         if file.nodes.at(decl).tag == "Enum" { e.enums.push(decl) }
         if file.nodes.at(decl).tag == "Struct" { e.structs.push(decl) }
@@ -1129,6 +1424,10 @@ fn main() {
       // the two runtime routines come after the user functions in the table
       e.print_int = e.nodes.len()
       e.panic_exit = e.nodes.len() + 1
+      e.reserve = e.nodes.len() + 2
+      e.append_int = e.nodes.len() + 3
+      e.entries.push(-1)
+      e.entries.push(-1)
       e.entries.push(-1)
       e.entries.push(-1)
       for i in 0..e.nodes.len() {
@@ -1136,6 +1435,8 @@ fn main() {
       }
       emit_print_int(e)
       emit_panic_exit(e)
+      emit_reserve(e)
+      emit_append_int(e)
       for i in 0..e.call_patches.len() {
         let at = e.call_patches.at(i).at
         patch32(e, at, e.entries.at(e.call_patches.at(i).target) - (at + 4))

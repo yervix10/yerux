@@ -1,0 +1,14 @@
+fn main() {
+  var s = String.new()
+  s.push_str("hello")
+  s.push_str(", ")
+  s.push_str("world")
+  print(s)
+  print(s.len())
+  var t = String.from("ab")
+  for i in 0..20 { t.push_str("xyz") }
+  print(t.len())
+  print(t)
+  let u = String.from(s)
+  print(u)
+}

@@ -1,0 +1,21 @@
+struct Item { id: Int, price: Int }
+fn describe(i: view Item) -> String {
+  return "item {i.id} costs {i.price}"
+}
+fn main() {
+  var s = String.new()
+  s.push_int(0)
+  s.push_str(" ")
+  s.push_int(-42)
+  s.push_str(" ")
+  s.push_int(9223372036854775807)
+  s.push_str(" ")
+  s.push_int(0 - 9223372036854775807 - 1)
+  print(s)
+  let item = Item { id: 7, price: 1999 }
+  print(describe(item))
+  let n = 12
+  let line = "n={n} double={n * 2}"
+  print(line)
+  print(line.len())
+}

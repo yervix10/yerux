@@ -1,0 +1,25 @@
+fn sum(l: view List<Int>) -> Int {
+  var t = 0
+  for x in l { t = t + x }
+  return t
+}
+fn fill(l: mut List<Int>, n: Int) {
+  for i in 0..n { l.push(i * i) }
+}
+fn main() {
+  var l = List<Int>.new()
+  fill(l, 40)
+  print(l.len())
+  print(sum(l))
+  print(l.at(39))
+  var flags = List<Bool>.new()
+  for i in 0..5 { flags.push(i % 2 == 0) }
+  for f in flags { print(f) }
+  var i = 0
+  while i < l.len() {
+    if l.at(i) > 1000 { break }
+    i = i + 1
+  }
+  print(i)
+  print(l.at(40))
+}
