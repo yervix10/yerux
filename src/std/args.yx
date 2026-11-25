@@ -85,13 +85,20 @@ pub fn parse_with(argv: view List<String>, valued: view List<String>, with_subco
       var j = 1
       while j < a.len() {
         let f = a.slice(j, j + 1)
-        if is_valued(valued, f) && j + 1 == a.len() && i + 1 < argv.len() {
-          i = i + 1
-          out.options.push((move f, String.from(argv.at(i))))
-        } else {
-          if is_valued(valued, f) && j + 1 == a.len() { out.errors.push("option -{f} needs a value") }
-          out.flags.push(move f)
+        if is_valued(valued, f) {
+          if j + 1 < a.len() {
+            // GNU convention: the rest of the cluster is the value (`-n5`, `-ev` is `-e v`)
+            out.options.push((move f, a.slice(j + 1, a.len())))
+          } else if i + 1 < argv.len() {
+            i = i + 1
+            out.options.push((move f, String.from(argv.at(i))))
+          } else {
+            out.errors.push("option -{f} needs a value")
+            out.flags.push(move f)
+          }
+          break
         }
+        out.flags.push(move f)
         j = j + 1
       }
     } else {
@@ -146,6 +153,24 @@ pub fn positional(p: view Parsed, index: Int) -> Option<String> {
     return Some(String.from(p.positionals.at(index)))
   }
   return None
+}
+
+/// Every value given for an option, in command-line order (`-e a -e b` gives `["a", "b"]`); empty when it is missing.
+/// `option` keeps returning the last one.
+pub fn options_all(p: view Parsed, name: view String) -> List<String> {
+  var clean = String.from(name)
+  if clean.starts_with("--") {
+    clean = clean.slice(2, clean.len())
+  } else if clean.starts_with("-") {
+    clean = clean.slice(1, clean.len())
+  }
+  var out = List<String>.new()
+  var i = 0
+  while i < p.options.len() {
+    if p.options.at(i).0.eq(clean) { out.push(String.from(p.options.at(i).1)) }
+    i = i + 1
+  }
+  return out
 }
 
 pub fn option(p: view Parsed, name: view String) -> Option<String> {

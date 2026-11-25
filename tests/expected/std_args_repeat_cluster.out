@@ -1,0 +1,11 @@
+repeat: e=a e=b e=c | | | errors 0
+3
+a
+b
+c
+0
+c
+cluster: e=v | | pat | errors 0
+rest: n=5 e=x | v x | | errors 0
+missing: | v e | | errors 1
+flags: | a b c | | errors 0

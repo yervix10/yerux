@@ -839,10 +839,12 @@ the less-exercised standard modules `std.toml`, `std.csv` and `std.args` togethe
     Workaround: `.clone()`.
 82. **`args.option` returns only the last value of a repeated option.** `-e a -e b` with `valued = ["e"]`:
     `args.option(p, "e")` prints `b`. A `-e` list needs the `options` field read directly.
+    *Fixed:* `args.options_all(p, name)` returns every value in order (`tests/std_args_repeat_cluster.yx`).
 83. **`args.parse_with` accepts unknown long options silently.** `rg --bogus x` with an empty valued list gives
     `p.errors.len()` = `0`, and `has_flag(p, "bogus")` is `true`.
 84. **A valued short option that is not last in a cluster becomes a flag.** `-ev pat` with `valued = ["e"]` gives
     `errors` = 0, `has_flag(p, "e")` = `true`, one positional. GNU-style parsing would take `v` as the value of `-e`.
+    *Fixed:* a valued short option in a cluster takes the rest of the cluster as its value (`-ev pat` is `-e v` and a positional `pat`; `-n5` is `-n 5`), documented in `docs/STDLIB.md` (`tests/std_args_repeat_cluster.yx`).
 85. **`option_int_checked` always names the option with `--`.** `-m x` gives `--m: invalid digit at byte 0`; the
     message should use the name as written (`-m`).
 86. **A tuple field of a borrowed list element gets a misleading help.** With

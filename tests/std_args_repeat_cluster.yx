@@ -1,0 +1,56 @@
+// std.args: repeated options keep every value (options_all), and a valued short option inside a cluster takes the rest
+// of the cluster as its value (`-ev pat` is `-e v` and a positional `pat`; `-n5` is `-n 5`), as in GNU getopt.
+import std.args
+
+fn argv(words: view List<String>) -> List<String> {
+  var v = List<String>.new()
+  v.push("prog")
+  for w in words { v.push(String.from(w)) }
+  return v
+}
+
+fn show(label: view String, p: view args.Parsed) {
+  var line = String.from(label)
+  line.push_str(":")
+  for o in p.options { line.push_str(" {o.0}={o.1}") }
+  line.push_str(" |")
+  for f in p.flags { line.push_str(" {f}") }
+  line.push_str(" |")
+  for q in p.positionals { line.push_str(" {q}") }
+  line.push_str(" | errors {p.errors.len()}")
+  print(line)
+}
+
+fn main() {
+  var valued = List<String>.new()
+  valued.push("e")
+  valued.push("n")
+  var w1 = List<String>.new()
+  w1.push("-e")
+  w1.push("a")
+  w1.push("-e")
+  w1.push("b")
+  w1.push("--e=c")
+  let p1 = args.parse_with(argv(w1), valued, false)
+  show("repeat", p1)
+  print(args.options_all(p1, "e").len())
+  for v in args.options_all(p1, "-e") { print(v) }
+  print(args.options_all(p1, "zzz").len())
+  print(args.option(p1, "e").unwrap())
+
+  var w2 = List<String>.new()
+  w2.push("-ev")
+  w2.push("pat")
+  show("cluster", args.parse_with(argv(w2), valued, false))
+  var w3 = List<String>.new()
+  w3.push("-vn5")
+  w3.push("-xe")
+  w3.push("x")
+  show("rest", args.parse_with(argv(w3), valued, false))
+  var w4 = List<String>.new()
+  w4.push("-ve")
+  show("missing", args.parse_with(argv(w4), valued, false))
+  var w5 = List<String>.new()
+  w5.push("-abc")
+  show("flags", args.parse_with(argv(w5), valued, false))
+}
