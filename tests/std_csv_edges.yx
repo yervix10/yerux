@@ -1,0 +1,19 @@
+// std.csv edge cases: a lone empty quoted field is a row; parse_checked reports unclosed quotes, text after a quote and limits
+import std.csv
+fn n(s: view String) {
+  match csv.parse_checked(s) {
+    Ok(r) => { print("ok {r.len()}") }
+    Err(e) => { print(e) }
+  }
+}
+fn main() {
+  print(csv.parse("\"\"").len())
+  print(csv.parse("a,b\n\"\"").len())
+  n("a,b\n\"x\"y,z")
+  n("a\n\"unclosed")
+  n("\"ok\",\"\"\n")
+  n("")
+  var big = String.new()
+  for i in 0..100001 { big.push_str("x,") }
+  n(big)
+}

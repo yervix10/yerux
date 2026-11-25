@@ -1,0 +1,7 @@
+1
+2
+std.csv: line 2: text after a closing quote
+std.csv: line 2: unclosed quote
+ok 1
+ok 0
+std.csv: more than 100000 fields

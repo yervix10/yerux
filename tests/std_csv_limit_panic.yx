@@ -1,0 +1,8 @@
+// std.csv.parse never hides a limit: more than 100000 fields panics instead of returning no rows
+import std.csv
+
+fn main() {
+  var big = String.new()
+  for i in 0..100001 { big.push_str("x,") }
+  print(csv.parse(big).len())
+}

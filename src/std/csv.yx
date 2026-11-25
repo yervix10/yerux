@@ -1,10 +1,24 @@
 // RFC 4180 CSV. Records are lists of fields; a final CRLF is optional.
-pub fn parse(input: view String) -> List<List<String>> {
+// `parse` is lenient about malformed quoting (an unclosed quote runs to the end of the input, text after a closing quote
+// is kept) but never hides a limit: input over 16 MiB or over 100000 fields panics. `parse_checked` reports all of
+// these as an Err with a line number instead.
+fn line_of(input: view String, upto: Int) -> Int {
+  var line = 1
+  var k = 0
+  while k < upto && k < input.len() {
+    if input.byte(k) == 10 { line = line + 1 }
+    k = k + 1
+  }
+  return line
+}
+
+fn parse_impl(input: view String, strict: Bool) -> Result<List<List<String>>, String> {
   var rows = List<List<String>>.new()
-  if input.len() > 16777216 { return rows }
+  if input.len() > 16777216 { return Err(String.from("std.csv: input larger than 16 MiB")) }
   var row = List<String>.new()
   var field = String.new()
   var quoted = false
+  var was_quoted = false
   var cells = 0
   var i = 0
   while i < input.len() {
@@ -22,33 +36,51 @@ pub fn parse(input: view String) -> List<List<String>> {
       } else {
         field.push_byte(c)
       }
-    } else if c == 34 && field.len() == 0 {
+    } else if c == 34 && field.len() == 0 && !was_quoted {
       quoted = true
+      was_quoted = true
     } else if c == 44 {
       row.push(move field)
       cells = cells + 1
-      if cells > 100000 { return List<List<String>>.new() }
+      if cells > 100000 { return Err(String.from("std.csv: more than 100000 fields")) }
       field = String.new()
+      was_quoted = false
     } else if c == 10 || c == 13 {
       row.push(move field)
       cells = cells + 1
-      if cells > 100000 { return List<List<String>>.new() }
+      if cells > 100000 { return Err(String.from("std.csv: more than 100000 fields")) }
       field = String.new()
+      was_quoted = false
       rows.push(move row)
       row = List<String>.new()
       if c == 13 && i + 1 < input.len() && input.byte(i + 1) == 10 { i = i + 1 }
     } else {
+      if strict && was_quoted {
+        return Err("std.csv: line {line_of(input, i)}: text after a closing quote")
+      }
       field.push_byte(c)
     }
     i = i + 1
   }
-  if field.len() > 0 || row.len() > 0 {
+  if strict && quoted { return Err("std.csv: line {line_of(input, input.len())}: unclosed quote") }
+  if field.len() > 0 || row.len() > 0 || was_quoted {
     row.push(move field)
     cells = cells + 1
-    if cells > 100000 { return List<List<String>>.new() }
+    if cells > 100000 { return Err(String.from("std.csv: more than 100000 fields")) }
     rows.push(move row)
   }
-  return rows
+  return Ok(move rows)
+}
+
+pub fn parse(input: view String) -> List<List<String>> {
+  match parse_impl(input, false) {
+    Ok(rows) => { return rows }
+    Err(m) => { panic(m) }
+  }
+}
+
+pub fn parse_checked(input: view String) -> Result<List<List<String>>, String> {
+  return parse_impl(input, true)
 }
 
 pub fn write(rows: view List<List<String>>) -> String {
