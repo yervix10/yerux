@@ -1,8 +1,8 @@
 # User-defined destructors
 
 `Drop` is a built-in trait. A concrete user-defined struct can implement it once.
-C and Linux x86-64 native builds run its destructor automatically. The feature
-is experimental for 1.0 while overlapping implementations remain unresolved.
+C and Linux x86-64 native builds run its destructor automatically. A type has at
+most one destructor: overlapping implementations are rejected by `yerux check`.
 
 ```yerux
 struct Tag { id: Int }
@@ -97,17 +97,29 @@ also exercised with `tests/a64_emu.py --qemu`.
 
 ## Overlapping implementations
 
-The compiler accepts the following overlapping `Drop` implementations at
-`yerux check`. The C build fails with a redefinition of the destructor.
-The Linux x86-64 native build runs and prints `1`.
+Two `impl Drop` blocks overlap when some concrete type matches both self types.
+The checker unifies the type arguments of every pair of `Drop` impls for the same
+struct, treating the type parameters of both impls as variables, and rejects the
+later one (`src/check.rs`, `drop_impls_overlap`). Bounds are ignored, as in
+coherence checking in other languages, so `impl<T: Show> Drop for Tag<T>` still
+overlaps `impl Drop for Tag<Int>`. A repeated impl for one concrete type keeps its
+older diagnostic (`Drop is already implemented for ...`).
 
 ```yerux
 struct Tag<T> { value: T }
 impl<T> Drop for Tag<T> { fn drop(mut self) { print(1) } }
 impl Drop for Tag<Int> { fn drop(mut self) { print(2) } }
-fn main() { let tag = Tag<Int> { value: 1 } }
 ```
 
-Use one applicable destructor implementation per concrete type. The proposed
-checker rule is to diagnose overlapping `Drop` candidates before emitting
-destructor bodies. The example should then become a rejection fixture.
+```text
+error: `Drop` implementations overlap: `impl Drop for Tag<T>` and `impl Drop for Tag<Int>` both apply to some type
+```
+
+The overlap cases are covered by `tests/e2050_drop_overlap_generic_concrete.yx`
+(generic and concrete), `e2051` (two generic impls, different parameter names),
+`e2052` (`Pair<T, Int>` against `Pair<Int, T>`, which meet at `Pair<Int, Int>`),
+`e2053` (a bounded generic impl against a concrete one) and `e2054` (nested
+`Tag<List<T>>` against `Tag<List<Int>>`). Impls whose type arguments cannot meet
+are accepted and select one destructor per type on every backend:
+`tests/drop_disjoint_impls.yx` mixes `Tag<Int>`, `Tag<Bool>`, `Tag<List<T>>`,
+`Pair<T, Int>` and `Pair<T, Bool>`.

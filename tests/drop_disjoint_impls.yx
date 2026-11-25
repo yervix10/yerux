@@ -1,0 +1,14 @@
+struct Tag<T> { value: T }
+impl Drop for Tag<Int> { fn drop(mut self) { print(100 + self.value) } }
+impl Drop for Tag<Bool> { fn drop(mut self) { print(200) } }
+impl<T> Drop for Tag<List<T>> { fn drop(mut self) { print(300) } }
+struct Pair<A, B> { a: A, b: B }
+impl<T> Drop for Pair<T, Int> { fn drop(mut self) { print(400) } }
+impl<T> Drop for Pair<T, Bool> { fn drop(mut self) { print(500) } }
+fn main() {
+  let a = Tag<Int> { value: 1 }
+  let b = Tag<Bool> { value: true }
+  let c = Tag<List<Int>> { value: List<Int>.new() }
+  let d = Pair<Int, Int> { a: 1, b: 2 }
+  let e = Pair<Int, Bool> { a: 1, b: true }
+}

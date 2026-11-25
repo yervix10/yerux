@@ -6452,6 +6452,62 @@ impl<'a> Checker<'a> {
 
 /// Match a parameter type that mentions type parameters (`pids`) against a concrete type, recording
 /// what each type parameter stands for. `Err(prior)` reports a clash with an earlier binding.
+/// Do two `impl Drop` blocks apply to a common type? The type arguments of both self types are unified, treating the
+/// parameters of either impl as variables (bounds are ignored, as in coherence checking).
+fn drop_impls_overlap(types: &Types, a: &ImplDef, b: &ImplDef) -> bool {
+    fn resolve(t: Ty, vars: &[usize], sub: &HashMap<usize, Ty>) -> Ty {
+        let mut t = t;
+        for _ in 0..64 {
+            match t {
+                Ty::Param(p) if vars.contains(&p) => match sub.get(&p) {
+                    Some(n) => t = *n,
+                    None => return t,
+                },
+                _ => return t,
+            }
+        }
+        t
+    }
+    fn go(types: &Types, x: Ty, y: Ty, vars: &[usize], sub: &mut HashMap<usize, Ty>, depth: usize) -> bool {
+        if depth > 32 {
+            return true;
+        }
+        let (x, y) = (resolve(x, vars, sub), resolve(y, vars, sub));
+        if x == y {
+            return true;
+        }
+        if let Ty::Param(p) = x {
+            if vars.contains(&p) {
+                sub.insert(p, y);
+                return true;
+            }
+        }
+        if let Ty::Param(p) = y {
+            if vars.contains(&p) {
+                sub.insert(p, x);
+                return true;
+            }
+        }
+        match (x, y) {
+            (Ty::List(i), Ty::List(j)) => go(types, types.lists[i], types.lists[j], vars, sub, depth + 1),
+            (Ty::Struct(i), Ty::Struct(j)) => {
+                match (&types.structs[i].origin, &types.structs[j].origin) {
+                    (Some((n, xs)), Some((m, ys))) if n == m && xs.len() == ys.len() => {
+                        xs.iter().zip(ys).all(|(p, q)| go(types, *p, *q, vars, sub, depth + 1))
+                    }
+                    _ => false,
+                }
+            }
+            (Ty::Range(..), Ty::Int) | (Ty::Int, Ty::Range(..)) => false,
+            _ => false,
+        }
+    }
+    let mut vars = a.pids.clone();
+    vars.extend(&b.pids);
+    let mut sub = HashMap::new();
+    go(types, a.self_ty, b.self_ty, &vars, &mut sub, 0)
+}
+
 fn unify(
     types: &Types,
     pat: Ty,
@@ -8708,6 +8764,30 @@ impl<'a> Checker<'a> {
                         .note("each trait can be implemented once per type (built-in impls count)"),
                 );
                 continue;
+            }
+            if tn == "Drop" {
+                let me = &self.ps.impls[ii];
+                let other = self.ps.impls[..ii].iter().find(|o| {
+                    !o.prelude
+                        && o.trait_name.as_deref() == Some("Drop")
+                        && drop_impls_overlap(&self.types, o, me)
+                });
+                if let Some(o) = other {
+                    let (opos, oty) = (o.pos, o.self_ty);
+                    self.err(
+                        diag(
+                            format!(
+                                "`Drop` implementations overlap: `impl Drop for {}` and `impl Drop for {}` both apply to some type",
+                                self.tn(oty),
+                                tyn
+                            ),
+                            ipos,
+                        )
+                        .note(format!("the other implementation is at {}:{}", opos.line, opos.col))
+                        .note("a type has at most one destructor: make the type arguments of the two impls disjoint, or keep only the generic impl"),
+                    );
+                    continue;
+                }
             }
             let have: Vec<(String, usize, Pos)> = self.ps.impls[ii]
                 .methods

@@ -32,7 +32,7 @@ A feature not mentioned in this document is **Experimental** by default.
 | `Option`, `Result`, `?`, `defer`, `context` (SPEC 2.7, 4) | Stable | tests/spec_05_result_defer.yx, tests/spec_06_context.yx |
 | Function values and closures (SPEC 2.8) | Stable-candidate | tests/spec_03_closures.yx; closure fixtures `tests/e70*.yx` |
 | Ownership, moves and borrows (SPEC 3) | Stable | tests/spec_04_ownership.yx; error fixtures `tests/own_*.yx` |
-| User-defined destructors (`impl Drop`, SPEC 3.8) | Experimental | tests/drop_generic_single_owner.yx, tests/e1967_drop_generic_copy_bound.yx, tests/drop_panic.yx, tests/drop_worker.yx. See [DROP.md](DROP.md#overlapping-implementations) for the remaining backend disagreement. |
+| User-defined destructors (`impl Drop`, SPEC 3.8) | Stable-candidate | tests/drop_generic_single_owner.yx, tests/e1967_drop_generic_copy_bound.yx, tests/drop_panic.yx, tests/drop_worker.yx, tests/drop_disjoint_impls.yx, tests/e2050_drop_overlap_generic_concrete.yx. Overlapping impls are rejected ([DROP.md](DROP.md#overlapping-implementations)). |
 | Panics and exit code 101 (SPEC 4.4) | Stable | tests/spec_02_range_int.yx (`.code` 101) |
 | Modules, `import`, `pub`, packages (SPEC 6, PACKAGES.md) | Stable-candidate | tests/mod_ok, tests/mod_err, tests/packages.sh |
 | Concurrency: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, channels, pools (SPEC 5) | Experimental | tests/conc_*.yx, tests/concurrency*.yx |
@@ -269,7 +269,7 @@ corrected text now states).
    `fs.File` closes on drop (`tests/conf_drop_user_fd.yx`). A move transfers cleanup to the new owner
    (`tests/drop_generic_move_order.yx`). A main-task panic skips cleanup (`tests/drop_main_panic.yx`).
    The checker rejects copies when a generic `Drop` applies, including with only Copy fields.
-   `Drop` remains Experimental pending a diagnostic for [overlapping implementations](DROP.md#overlapping-implementations).
+   Overlapping `Drop` impls are now rejected with a diagnostic ([DROP.md](DROP.md#overlapping-implementations)), so `Drop` is promoted to Stable-candidate.
 2. **Const generics.** *Resolved.* `fn dot<const N: Int>(a: [Int; N], ...)` works. The root "Range integer
    types" list of unimplemented items no longer names const generics. Evidence: `tests/conf_const_generic_array.yx`
    (prints 32), `tests/arr_const.yx`, `tests/e1023_const_generic_lengths.yx`.

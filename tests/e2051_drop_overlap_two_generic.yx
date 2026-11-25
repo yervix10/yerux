@@ -1,0 +1,4 @@
+struct Tag<T> { value: T }
+impl<T> Drop for Tag<T> { fn drop(mut self) { print(1) } }
+impl<U> Drop for Tag<U> { fn drop(mut self) { print(2) } }
+fn main() { let tag = Tag<Int> { value: 1 } }

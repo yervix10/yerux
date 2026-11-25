@@ -64,7 +64,7 @@ Tests: `tests/generic_methods.yx`, `tests/option_result_methods.yx`, `tests/mute
 - `Ordered`/`Hash` cannot be derived.
 
 Generic `impl<T> Drop for Stack<T>` makes its applicable instantiations owned.
-See [DROP.md](DROP.md#overlapping-implementations) for the current overlap limit.
+Overlapping `Drop` impls are rejected; see [DROP.md](DROP.md#overlapping-implementations).
 - Bodies of never-instantiated generic impls are not type-checked; errors show per instantiation.
 - Bounds on struct/enum parameters and default type arguments. (Explicit type arguments on calls exist since the
   freeze rounds: `f<Int>(x)`, all parameters in order; `tests/generic_explicit_args.yx`.)

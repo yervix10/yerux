@@ -556,7 +556,7 @@ Copy fields. The checker rejects `derive Copy` on destructor-bearing types, as
 well as implicit copies in bindings, assignments, arguments and returns from
 borrows (`tests/e1967_drop_generic_copy_bound.yx` through
 `tests/e1969_drop_implicit_copy.yx`). Returning an owned local by name moves it.
-See [DROP.md](DROP.md#overlapping-implementations) for the remaining overlap limit.
+Overlapping `Drop` impls are rejected; see [DROP.md](DROP.md#overlapping-implementations).
 
 ---
 

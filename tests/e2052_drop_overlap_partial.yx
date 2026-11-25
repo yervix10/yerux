@@ -1,0 +1,4 @@
+struct Pair<A, B> { a: A, b: B }
+impl<T> Drop for Pair<T, Int> { fn drop(mut self) { print(1) } }
+impl<T> Drop for Pair<Int, T> { fn drop(mut self) { print(2) } }
+fn main() { let p = Pair<Int, Int> { a: 1, b: 2 } }

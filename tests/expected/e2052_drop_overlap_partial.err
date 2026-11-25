@@ -1,0 +1,9 @@
+error: `Drop` implementations overlap: `impl Drop for Pair<T, Int>` and `impl Drop for Pair<Int, T>` both apply to some type
+ --> tests/e2052_drop_overlap_partial.yx:3:1
+  |
+3 | impl<T> Drop for Pair<Int, T> { fn drop(mut self) { print(2) } }
+  | ^^^^
+  = the other implementation is at 2:1
+  = a type has at most one destructor: make the type arguments of the two impls disjoint, or keep only the generic impl
+
+1 error(s). Nothing was generated.
