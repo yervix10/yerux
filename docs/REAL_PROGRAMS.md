@@ -845,6 +845,7 @@ the less-exercised standard modules `std.toml`, `std.csv` and `std.args` togethe
     `errors` = 0, `has_flag(p, "e")` = `true`, one positional. GNU-style parsing would take `v` as the value of `-e`.
 85. **`option_int_checked` always names the option with `--`.** `-m x` gives `--m: invalid digit at byte 0`; the
     message should use the name as written (`-m`).
-86. **A tuple field moved out of a borrowed list element gets a misleading help.** `let t = l.at(0)` then
-    `let name = t.0`-style moves: `error: cannot move 'l.at(..).0' out of its struct`, with the help `let (a, b) = move t`,
-    which cannot apply to a borrowed element. The working form is `String.from(l.at(0).0)`.
+86. **A tuple field of a borrowed list element gets a misleading help.** With
+    `var l = List<(String, String)>.new()` and `let name = l.at(0).0`, the error is
+    `cannot move 'l.at(..).0' out of its struct`, and the help suggests `let (a, b) = move t`, which cannot apply to a
+    borrowed element. The working form is `let name = String.from(l.at(0).0)`.
