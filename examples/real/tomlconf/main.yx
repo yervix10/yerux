@@ -1,0 +1,250 @@
+// tomlconf: checks three service configuration documents against one schema,
+// read through the std.toml accessors (get_string, get_int, get_bool, get_array).
+// Every schema key is reported with its value and its source ("file", "default"
+// or "rejected" when the file value failed validation and the default applies),
+// and every validation error is printed with its key path. The valid document is
+// re-serialized into canonical TOML, read back and compared. Exit 0: errors are reported.
+import std.toml
+
+struct Field {
+  key: String,
+  value: String,
+  source: String,
+}
+
+struct Problem {
+  key: String,
+  message: String,
+}
+
+// the effective configuration: a rejected or absent value holds its default
+struct Config {
+  name: String,
+  host: String,
+  port: Int,
+  workers: Int,
+  level: String,
+  origins: List<String>,
+  tls: Bool,
+}
+
+// One document checked against the schema. The kind of a key is found by trying the
+// accessors in turn; "absent" covers a missing key and the values that read as empty
+// std.toml returns "" for a string, 0 for an integer, false for a boolean and [] for an
+// array, both when the key is missing and when the value is empty; there is no presence test.
+struct Loaded {
+  file: String,
+  doc: String,
+  config: Config,
+  fields: List<Field>,
+  problems: List<Problem>,
+}
+
+fn quoted(s: view String) -> String {
+  var out = String.from("\"")
+  for i in 0..s.len() {
+    let c = s.byte(i)
+    if c == 34 || c == 92 { out.push_byte(92) }
+    out.push_byte(c)
+  }
+  out.push_byte(34)
+  return out
+}
+
+fn allowed_text(allowed: view List<String>) -> String {
+  var parts = List<String>.new()
+  for a in allowed { parts.push(quoted(a)) }
+  return parts.join(", ")
+}
+
+impl Loaded {
+  fn kind(view self, key: view String) -> String {
+    if !toml.get_string(self.doc, key).is_empty() { return String.from("string") }
+    if toml.get_int(self.doc, key) != 0 { return String.from("integer") }
+    if toml.get_bool(self.doc, key) { return String.from("boolean") }
+    if !toml.get_array(self.doc, key).is_empty() { return String.from("array") }
+    return String.from("absent")
+  }
+
+  // records a key; the source is the file name unless `source` says otherwise
+  fn note(mut self, key: view String, value: view String, source: view String) {
+    self.fields.push(Field { key: String.from(key), value: String.from(value), source: String.from(source) })
+  }
+
+  fn fail(mut self, key: view String, message: view String) {
+    self.problems.push(Problem { key: String.from(key), message: String.from(message) })
+  }
+
+  fn from_file(mut self, key: view String, value: view String) {
+    self.fields.push(Field { key: String.from(key), value: String.from(value), source: String.from(self.file) })
+  }
+
+  fn text(mut self, key: view String, default: view String, required: Bool, allowed: view List<String>) -> String {
+    let k = self.kind(key)
+    if k.eq("absent") {
+      if required { self.fail(key, "required key is missing") }
+      self.note(key, quoted(default), "default")
+      return String.from(default)
+    }
+    if !k.eq("string") {
+      self.fail(key, "expected a string, found {k}")
+      self.note(key, quoted(default), "rejected")
+      return String.from(default)
+    }
+    let v = toml.get_string(self.doc, key)
+    if !allowed.is_empty() && !allowed.contains(v) {
+      self.fail(key, "{quoted(v)} is not one of {allowed_text(allowed)}")
+      self.note(key, quoted(default), "rejected")
+      return String.from(default)
+    }
+    self.from_file(key, quoted(v))
+    return v
+  }
+
+  fn int(mut self, key: view String, default: Int, lo: Int, hi: Int) -> Int {
+    let k = self.kind(key)
+    if k.eq("absent") {
+      self.note(key, "{default}", "default")
+      return default
+    }
+    if !k.eq("integer") {
+      self.fail(key, "expected an integer, found {k}")
+      self.note(key, "{default}", "rejected")
+      return default
+    }
+    let v = toml.get_int(self.doc, key)
+    if v < lo || v > hi {
+      self.fail(key, "{v} is outside {lo}..{hi}")
+      self.note(key, "{default}", "rejected")
+      return default
+    }
+    self.from_file(key, "{v}")
+    return v
+  }
+
+  fn flag(mut self, key: view String, default: Bool) -> Bool {
+    let k = self.kind(key)
+    if k.eq("absent") {
+      self.note(key, "{default}", "default")
+      return default
+    }
+    if !k.eq("boolean") {
+      self.fail(key, "expected a boolean, found {k}")
+      self.note(key, "{default}", "rejected")
+      return default
+    }
+    let v = toml.get_bool(self.doc, key)
+    self.from_file(key, "{v}")
+    return v
+  }
+
+  // every origin must be an https:// URL; one bad entry rejects the whole list
+  fn origins(mut self, key: view String) -> List<String> {
+    let k = self.kind(key)
+    if k.eq("absent") {
+      self.note(key, "[]", "default")
+      return List<String>.new()
+    }
+    if !k.eq("array") {
+      self.fail(key, "expected an array, found {k}")
+      self.note(key, "[]", "rejected")
+      return List<String>.new()
+    }
+    let items = toml.get_array(self.doc, key)
+    var ok = true
+    for i in 0..items.len() {
+      if !items.at(i).starts_with("https://") {
+        self.fail("{key}[{i}]", "{quoted(items.at(i))} must start with https://")
+        ok = false
+      }
+    }
+    if !ok {
+      self.note(key, "[]", "rejected")
+      return List<String>.new()
+    }
+    var shown = List<String>.new()
+    for item in items { shown.push(quoted(item)) }
+    self.from_file(key, "[{shown.join(", ")}]")
+    return items
+  }
+}
+
+// Reads one document into the schema. Every key is looked up, so the report is complete.
+fn load(file: view String, doc: view String) -> Loaded {
+  var l = Loaded {
+    file: String.from(file),
+    doc: String.from(doc),
+    config: Config { name: String.new(), host: String.new(), port: 0, workers: 0, level: String.new(), origins: List<String>.new(), tls: false },
+    fields: List<Field>.new(),
+    problems: List<Problem>.new(),
+  }
+  let none = List<String>.new()
+  var levels = List<String>.new()
+  levels.push(String.from("debug"))
+  levels.push(String.from("info"))
+  levels.push(String.from("warn"))
+  levels.push(String.from("error"))
+  let name = l.text("service.name", "", true, none)
+  let host = l.text("server.host", "0.0.0.0", false, none)
+  let port = l.int("server.port", 8080, 1, 65535)
+  let workers = l.int("server.workers", 4, 1, 64)
+  let level = l.text("logging.level", "info", false, levels)
+  let origins = l.origins("cors.allowed_origins")
+  let tls = l.flag("features.tls", false)
+  l.config = Config { name: move name, host: move host, port: port, workers: workers, level: move level, origins: move origins, tls: tls }
+  return l
+}
+
+fn report(title: view String, l: view Loaded) {
+  print("== {title} ==")
+  for f in l.fields { print("  {f.key} = {f.value}  ({f.source})") }
+  if l.problems.is_empty() { print("  errors: none") }
+  for p in l.problems { print("  error {p.key}: {p.message}") }
+}
+
+// the canonical text of a configuration: fixed section order, fixed spacing
+fn canonical(c: view Config) -> String {
+  var s = String.new()
+  s.push_str("[service]\n")
+  s.push_str("name = {quoted(c.name)}\n")
+  s.push_str("[server]\n")
+  s.push_str("host = {quoted(c.host)}\n")
+  s.push_str("port = {c.port}\n")
+  s.push_str("workers = {c.workers}\n")
+  s.push_str("[logging]\n")
+  s.push_str("level = {quoted(c.level)}\n")
+  var shown = List<String>.new()
+  for o in c.origins { shown.push(quoted(o)) }
+  s.push_str("[cors]\n")
+  s.push_str("allowed_origins = [{shown.join(", ")}]\n")
+  s.push_str("[features]\n")
+  s.push_str("tls = {c.tls}\n")
+  return s
+}
+
+fn main() {
+  let valid = "# billing service, all keys present\n[service]\nname = \"billing\"\n[server]\nhost = \"10.0.0.5\"\nport = 9_443\nworkers = 8\n[logging]\nlevel = \"warn\"\n[cors]\nallowed_origins = [\"https://app.example.com\", \"https://admin.example.com\"]\n[features]\ntls = true\n"
+  let typed = "[service]\nname = \"search\"\n[server]\nport = \"8080\"\nworkers = 100\n[logging]\nlevel = \"verbose\"\n[cors]\nallowed_origins = [\"https://ok.example.com\", \"ftp://files.example.com\"]\n"
+  let defaults = "# no name, no port, no level, no tls\n[server]\nhost = \"localhost\"\nworkers = 2\n[logging]\n"
+
+  let a = load("valid.toml", valid)
+  let b = load("typed.toml", typed)
+  let c = load("defaults.toml", defaults)
+  report("valid.toml", a)
+  report("typed.toml", b)
+  report("defaults.toml", c)
+
+  var total = 0
+  for l in [a.problems.len(), b.problems.len(), c.problems.len()] { total = total + l }
+  print("summary: {a.problems.len()} + {b.problems.len()} + {c.problems.len()} = {total} errors in 3 documents")
+
+  let text = canonical(a.config)
+  print("== canonical valid.toml ==")
+  print(text)
+  let again = load("canonical", text)
+  if again.problems.is_empty() && canonical(again.config).eq(text) {
+    print("round trip: identical, {text.len()} bytes")
+  } else {
+    print("round trip: differs")
+  }
+}

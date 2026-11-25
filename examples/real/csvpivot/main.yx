@@ -1,0 +1,250 @@
+// csvpivot: reads an embedded sales CSV (region,product,quarter,amount,note), reports malformed records with line
+// numbers, pivots the good rows (regions x quarters, amounts in cents) with totals, sorts the regions by total
+// (descending, ties by name), writes the pivot as CSV and checks that parsing it back gives the same table.
+// No arguments; exit 0.
+import std.csv
+import std.sort
+
+struct Record { line: Int, text: String }
+
+struct Sale { region: String, quarter: Int, cents: Int }
+
+fn copy_row(row: view List<String>) -> List<String> {
+  var out = List<String>.new()
+  for i in 0..row.len() {
+    out.push(row.at(i).clone())
+  }
+  return out
+}
+
+// Joins physical lines into records: a record ends where the quote count so far is even, so a newline inside
+// quotes stays in the record. An unterminated quote runs to the end.
+fn records(lines: view [Text]) -> List<Record> {
+  var out = List<Record>.new()
+  var cur = String.new()
+  var start = 0
+  var open = false
+  for i in 0..lines.len() {
+    let line = String.from(lines[i])
+    if open {
+      cur.push_str("\n")
+    } else {
+      cur = String.new()
+      start = i + 1
+    }
+    cur.push_str(line)
+    for k in 0..line.len() {
+      if line.byte(k) == 34 { open = !open }
+    }
+    if !open {
+      out.push(Record { line: start, text: cur.clone() })
+    }
+  }
+  if open {
+    out.push(Record { line: start, text: cur.clone() })
+  }
+  return out
+}
+
+fn parse_record(text: view String) -> Result<List<String>, String> {
+  match csv.parse_checked(text) {
+    Ok(rows) => {
+      if rows.len() != 1 { return Err(String.from("malformed record")) }
+      return Ok(copy_row(rows.at(0)))
+    }
+    Err(_) => { return Err(String.from("malformed quoting")) }
+  }
+}
+
+// "-12.50" -> -1250 (optional minus, one or more whole digits, exactly two decimals).
+fn parse_cents(s: view String) -> Result<Int, String> {
+  var i = 0
+  var neg = false
+  if s.starts_with("-") {
+    neg = true
+    i = 1
+  }
+  let dot = s.find(".")
+  if dot < i + 1 || s.len() != dot + 3 {
+    return Err("bad amount \"{s}\"")
+  }
+  var v = 0
+  var k = i
+  while k < s.len() {
+    if k != dot {
+      let b = s.byte(k)
+      if b < 48 || b > 57 { return Err("bad amount \"{s}\"") }
+      v = v * 10 + (b - 48)
+    }
+    k = k + 1
+  }
+  if neg { return Ok(0 - v) }
+  return Ok(v)
+}
+
+fn quarter_index(q: view String) -> Int {
+  if q.eq("Q1") { return 0 }
+  if q.eq("Q2") { return 1 }
+  if q.eq("Q3") { return 2 }
+  if q.eq("Q4") { return 3 }
+  return -1
+}
+
+fn parse_sale(text: view String) -> Result<Sale, String> {
+  let row = parse_record(text)?
+  if row.len() != 5 { return Err("expected 5 fields, found {row.len()}") }
+  if row.at(0).is_empty() { return Err(String.from("empty region")) }
+  let q = quarter_index(row.at(2))
+  if q < 0 { return Err("bad quarter \"{row.at(2)}\"") }
+  let cents = parse_cents(row.at(3))?
+  return Ok(Sale { region: String.from(row.at(0)), quarter: q, cents: cents })
+}
+
+// 1234 -> "12.34", -5 -> "-0.05".
+fn money(c: Int) -> String {
+  let a = if c < 0 { 0 - c } else { c }
+  let f = a % 100
+  let pad = if f < 10 { "0" } else { "" }
+  let s = "{a / 100}.{pad}{f}"
+  if c < 0 { return "-{s}" }
+  return s
+}
+
+// One pivot line: the name, the four quarter cells and the row total.
+fn pivot_row(name: view String, cells: view List<Int>, total: Int) -> List<String> {
+  var row = List<String>.new()
+  row.push(String.from(name))
+  for q in 0..4 {
+    row.push(money(cells.at(q)))
+  }
+  row.push(money(total))
+  return row
+}
+
+fn same_grid(a: view List<List<String>>, b: view List<List<String>>) -> Bool {
+  if a.len() != b.len() { return false }
+  for r in 0..a.len() {
+    if a.at(r).len() != b.at(r).len() { return false }
+    for c in 0..a.at(r).len() {
+      if !a.at(r).at(c).eq(b.at(r).at(c)) { return false }
+    }
+  }
+  return true
+}
+
+fn main() {
+  let lines = [
+    "region,product,quarter,amount,note",
+    "North,widgets,Q1,1200.50,plain",
+    "North,widgets,Q2,980.00,\"promo, spring\"",
+    "South,gadgets,Q1,430.25,",
+    "South,gadgets,Q2,515.75,\"said \"\"great\"\"\"",
+    "\"Great Lakes, North\",widgets,Q1,2210.10,\"first line",
+    "second line\"",
+    "West,gadgets,Q3,-75.00,refund",
+    "West,gadgets,Q3,300.00",
+    "\"Plains \"\"Central\"\"\",widgets,Q4,640.00,",
+    "North,widgets,Q4,12.5,bad amount",
+    "South,gadgets,Q3,1005.05,",
+    "\"Coast",
+    "West\",gadgets,Q4,88.88,",
+    "Plains \"Central\",widgets,Q1,3.10,",
+    "North,widgets,Q2,\"1,000.00\",x",
+    ",widgets,Q2,10.00,no region",
+    "Plains \"Central\",gadgets,Q2,-0.05,fix",
+    "East,widgets,Q5,10.00,",
+    "East,widgets,Q2,100.00,\"unterminated note",
+  ]
+  let recs = records(lines)
+
+  // Pass 1: validate each record after the header; regions in first-seen order.
+  var regions = List<String>.new()
+  var cells = List<Int>.new()
+  var bad = List<String>.new()
+  var accepted = 0
+  for i in 1..recs.len() {
+    let line = recs.at(i).line
+    match parse_sale(recs.at(i).text) {
+      Ok(s) => {
+        var r = regions.index_of(s.region)
+        if r < 0 {
+          r = regions.len()
+          regions.push(String.from(s.region))
+          for _ in 0..4 {
+            cells.push(0)
+          }
+        }
+        cells.set(r * 4 + s.quarter, cells.get(r * 4 + s.quarter) + s.cents)
+        accepted = accepted + 1
+      }
+      Err(msg) => {
+        bad.push("line {line}: {msg}")
+      }
+    }
+  }
+
+  let nreg = regions.len()
+  var rowtot = List<Int>.new()
+  var coltot = List<Int>.new()
+  for _ in 0..4 {
+    coltot.push(0)
+  }
+  var grand = 0
+  for r in 0..nreg {
+    var t = 0
+    for q in 0..4 {
+      let c = cells.get(r * 4 + q)
+      t = t + c
+      coltot.set(q, coltot.get(q) + c)
+    }
+    rowtot.push(t)
+    grand = grand + t
+  }
+
+  // Regions by total, descending; ties by name.
+  var order = List<Int>.new()
+  for r in 0..nreg {
+    order.push(r)
+  }
+  sort.stable_by(order, |a: view Int, b: view Int| -> Int {
+    if rowtot.at(a) != rowtot.at(b) {
+      if rowtot.at(a) > rowtot.at(b) { return -1 }
+      return 1
+    }
+    return regions.at(a).cmp(regions.at(b))
+  })
+
+  var grid = List<List<String>>.new()
+  var head = List<String>.new()
+  for h in ["region", "Q1", "Q2", "Q3", "Q4", "total"] { head.push(String.from(h)) }
+  grid.push(move head)
+  for k in 0..nreg {
+    let r = order.get(k)
+    let rc = cells.slice(r * 4, r * 4 + 4)
+    grid.push(pivot_row(regions.at(r), rc, rowtot.get(r)))
+  }
+  grid.push(pivot_row("total", coltot, grand))
+  let text = csv.write(grid)
+
+  // Round trip: the written CSV must parse back to the same table.
+  let ok = match csv.parse_checked(text) {
+    Ok(back) => same_grid(back, grid),
+    Err(_) => false,
+  }
+
+  print("accepted sales: {accepted}")
+  print("malformed records: {bad.len()}")
+  for i in 0..bad.len() {
+    print(bad.at(i))
+  }
+  print("pivot (regions by total, descending):")
+  print(text)
+  let top = order.get(0)
+  print("top region: {regions.at(top)} {money(rowtot.get(top))}")
+  print("grand total: {money(grand)}")
+  if ok {
+    print("PASS")
+  } else {
+    print("FAIL")
+  }
+}

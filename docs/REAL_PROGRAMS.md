@@ -792,3 +792,59 @@ of that name; test `tests/mod_ok/fn_value`). 69: could not be reproduced with un
 `does not exist` error appears); kept as `e2069` so it stays that way. 70: `pub` on a field is rejected with "a struct field takes no `pub`"
 (`e2070`). 71: `*x` on a non-Box says "cannot dereference a value of type T with `*`" (`e2071`). 72: the missing-module error suggests
 `std.rand` for `std.random` and similar common names (`e2072`).
+
+## Round 14: tomlconf, csvpivot, rgrep
+
+Three programs in `examples/real/<name>/`, each with `expected.out`, built on both backends (identical output, exit 0)
+and checked against an independent Python 3 model byte for byte (`tomllib`, Python's `csv`, Python `re`). They use
+the less-exercised standard modules `std.toml`, `std.csv` and `std.args` together with `std.regex`.
+
+- **tomlconf**: validates a service configuration read with the `std.toml` accessors (`get_string`, `get_int`,
+  `get_bool`, `get_array`): ranges, enums, defaults with their source, and a canonical re-serialization. 250 lines,
+  46 lines of output.
+- **csvpivot**: parses a CSV with quoted commas, embedded quotes and newlines, and malformed rows, builds a pivot table
+  in integer cents with `std.sort`, writes it back with `std.csv` quoting and checks the round trip. 250 lines,
+  22 lines of output.
+- **rgrep**: a grep-like filter with `std.args` options (`-i -n -c -v -o -m -e --`) and `std.regex` matching, over a
+  fixed session of argument vectors with exit statuses. 202 lines, 82 lines of output.
+
+`tests/real_programs.sh` runs sixteen programs (rounds 11 to 14).
+
+### Round 14 frictions (not changed; minimal repros)
+
+73. **`std.toml` cannot tell a missing key from a present zero, false or empty string.** With
+    `doc = "[server]\nport = 0\ntls = false\nname = \"\"\n"`, `toml.get_int(doc, "server.port")` and
+    `toml.get_int(doc, "server.gone")` both print `0`, and the `get_bool` and `get_string` pairs print `false` and `[]`.
+    Validation cannot distinguish them. Workaround: treat the empty value as absent (the program documents this).
+74. **`get_int` and `get_bool` return 0 or false for a string-typed value.** `port = "8080"` gives `get_int` = `0` and
+    `get_string` = `8080`, with no error. A type check needs four probes per key.
+75. **A table header with spaces inside the brackets hides its keys.** `doc = "[ server ]\nport = 8080\n"`;
+    `toml.get_int(doc, "server.port")` prints `0`. Valid TOML: `tomllib` reads `{'server': {'port': 8080}}`. The header
+    name is taken as `" server "` without trimming (`raw_value` in src/std/toml.yx).
+76. **A comma inside `[...]` in an interpolation is reported as two expressions.**
+    `let n = 3` then `print("{[n, 4][0]}")` gives "a `{}` in a string holds one expression". The splitter counts
+    `(`/`)` but not `[`/`]`. `print("{(n, 4).0}")` works.
+77. **A quote inside `{expr}` is still accepted** (see friction 58). `print("[{shown.join(", ")}]")` prints `[a]`.
+78. **`build --native` before the file name fails with an unclear message.**
+    `yerux build --native main.yx -o out` gives `could not read --native: No such file or directory`, exit 2. With the
+    flag after the file it works. `docs/CLI.md` lists the form `build FILE.yx [-o OUT] [--native]`.
+79. **`build -o NAME.c` writes an executable, not C source.** `yerux build main.yx -o out.c` reports `built: out.c` and
+    produces an ELF file. `yerux c main.yx` is the C emitter; the name suggests otherwise.
+80. **A move inside a loop guarded by a flag is rejected.** In `for i in 0..3`, `if open { cur.push_str("+") } else
+    { cur = String.new() }`, then `open = i == 1` and `if !open { out.push(move cur) }`:
+    `error: 'cur' is moved inside the loop and would be used again on the next iteration` at the `move`. The move and
+    the re-assignment are on the same `!open` path, but the checker does not correlate them with the flag.
+81. **Two moves under mutually exclusive flags are rejected.** `if !open { out.push(move cur) }` followed by
+    `if open { out.push(move cur) }` gives `cannot use 'cur': it was already moved`. The branches cannot both run.
+    Workaround: `.clone()`.
+82. **`args.option` returns only the last value of a repeated option.** `-e a -e b` with `valued = ["e"]`:
+    `args.option(p, "e")` prints `b`. A `-e` list needs the `options` field read directly.
+83. **`args.parse_with` accepts unknown long options silently.** `rg --bogus x` with an empty valued list gives
+    `p.errors.len()` = `0`, and `has_flag(p, "bogus")` is `true`.
+84. **A valued short option that is not last in a cluster becomes a flag.** `-ev pat` with `valued = ["e"]` gives
+    `errors` = 0, `has_flag(p, "e")` = `true`, one positional. GNU-style parsing would take `v` as the value of `-e`.
+85. **`option_int_checked` always names the option with `--`.** `-m x` gives `--m: invalid digit at byte 0`; the
+    message should use the name as written (`-m`).
+86. **A tuple field moved out of a borrowed list element gets a misleading help.** `let t = l.at(0)` then
+    `let name = t.0`-style moves: `error: cannot move 'l.at(..).0' out of its struct`, with the help `let (a, b) = move t`,
+    which cannot apply to a borrowed element. The working form is `String.from(l.at(0).0)`.

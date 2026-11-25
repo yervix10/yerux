@@ -1,0 +1,22 @@
+accepted sales: 11
+malformed records: 6
+line 9: expected 5 fields, found 4
+line 11: bad amount "12.5"
+line 16: bad amount "1,000.00"
+line 17: empty region
+line 19: bad quarter "Q5"
+line 20: malformed quoting
+pivot (regions by total, descending):
+region,Q1,Q2,Q3,Q4,total
+"Great Lakes, North",2210.10,0.00,0.00,0.00,2210.10
+North,1200.50,980.00,0.00,0.00,2180.50
+South,430.25,515.75,1005.05,0.00,1951.05
+"Plains ""Central""",3.10,-0.05,0.00,640.00,643.05
+"Coast
+West",0.00,0.00,0.00,88.88,88.88
+West,0.00,0.00,-75.00,0.00,-75.00
+total,3843.95,1495.70,930.05,728.88,6998.58
+
+top region: Great Lakes, North 2210.10
+grand total: 6998.58
+PASS

@@ -1,0 +1,46 @@
+== valid.toml ==
+  service.name = "billing"  (valid.toml)
+  server.host = "10.0.0.5"  (valid.toml)
+  server.port = 9443  (valid.toml)
+  server.workers = 8  (valid.toml)
+  logging.level = "warn"  (valid.toml)
+  cors.allowed_origins = ["https://app.example.com", "https://admin.example.com"]  (valid.toml)
+  features.tls = true  (valid.toml)
+  errors: none
+== typed.toml ==
+  service.name = "search"  (typed.toml)
+  server.host = "0.0.0.0"  (default)
+  server.port = 8080  (rejected)
+  server.workers = 4  (rejected)
+  logging.level = "info"  (rejected)
+  cors.allowed_origins = []  (rejected)
+  features.tls = false  (default)
+  error server.port: expected an integer, found string
+  error server.workers: 100 is outside 1..64
+  error logging.level: "verbose" is not one of "debug", "info", "warn", "error"
+  error cors.allowed_origins[1]: "ftp://files.example.com" must start with https://
+== defaults.toml ==
+  service.name = ""  (default)
+  server.host = "localhost"  (defaults.toml)
+  server.port = 8080  (default)
+  server.workers = 2  (defaults.toml)
+  logging.level = "info"  (default)
+  cors.allowed_origins = []  (default)
+  features.tls = false  (default)
+  error service.name: required key is missing
+summary: 0 + 4 + 1 = 5 errors in 3 documents
+== canonical valid.toml ==
+[service]
+name = "billing"
+[server]
+host = "10.0.0.5"
+port = 9443
+workers = 8
+[logging]
+level = "warn"
+[cors]
+allowed_origins = ["https://app.example.com", "https://admin.example.com"]
+[features]
+tls = true
+
+round trip: identical, 207 bytes

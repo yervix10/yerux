@@ -1,0 +1,82 @@
+$ rg error
+error: timeout after 30s
+exit 0
+$ rg -i error
+ERROR: disk full at 10:42
+error: timeout after 30s
+exit 0
+$ rg -n -i ERROR
+4:ERROR: disk full at 10:42
+5:error: timeout after 30s
+exit 0
+$ rg -c o
+6
+exit 0
+$ rg -v e
+ERROR: disk full at 10:42
+x = 7; y = 13
+-x-ray scan
+fox and hound
+exit 0
+$ rg -on [0-9]+
+1:42
+4:10
+4:42
+5:30
+8:7
+8:13
+exit 0
+$ rg -io err[a-z]*
+error
+error
+exit 0
+$ rg -m 2 e
+alpha beta 42
+Gamma delta
+exit 0
+$ rg -m 1 -c e
+1
+exit 0
+$ rg -m 0 e
+exit 1
+$ rg -e warn -e fox
+the quick brown fox
+warning: low memory
+fox and hound
+exit 0
+$ rg -n -e \(none\)
+11:(none) here
+exit 0
+$ rg -c -v -e [0-9]+
+7
+exit 0
+$ rg -o -e [A-Z][a-z]*
+Gamma
+E
+R
+R
+O
+R
+Beta
+exit 0
+$ rg -- -x
+-x-ray scan
+exit 0
+$ rg -m abc e
+rg: --m: invalid digit at byte 0
+exit 2
+$ rg -x e
+rg: unknown option 'x'
+exit 2
+$ rg -e
+rg: option -e needs a value
+exit 2
+$ rg -e a(b
+rg: invalid pattern 'a(b': missing ')' for the group opened at offset 1
+exit 2
+$ rg \d+
+rg: invalid pattern '\d+': unsupported escape at offset 0: only \n, \t and escaped punctuation are defined (use a class such as [0-9])
+exit 2
+$ rg error extra
+rg: unexpected operand 'extra'
+exit 2
