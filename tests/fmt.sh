@@ -21,8 +21,8 @@ mkdir "$TMP/copy" && cp -r examples tests "$TMP/copy/"
 # programs that must fail in the lexer (bad escapes / braces in strings) cannot be formatted either
 rm -f "$TMP"/copy/tests/e38_interp_unclosed.yx "$TMP"/copy/tests/e39_interp_lone_brace.yx "$TMP"/copy/tests/e40_bad_escape.yx \
   "$TMP"/copy/tests/e954_empty_char.yx "$TMP"/copy/tests/e955_char_two_chars.yx "$TMP"/copy/tests/e1020_char_escape_plus.yx "$TMP"/copy/tests/e1400_interp_unclosed_nested.yx "$TMP"/copy/tests/e1413_raw_unterminated.yx \
-  "$TMP"/copy/tests/e2020_*.yx "$TMP"/copy/tests/e2021_*.yx "$TMP"/copy/tests/e2022_*.yx "$TMP"/copy/tests/e2024_*.yx "$TMP"/copy/tests/e2025_*.yx "$TMP"/copy/tests/e2026_*.yx "$TMP"/copy/tests/e2028_*.yx "$TMP"/copy/tests/e2039_*.yx "$TMP"/copy/tests/e2063_*.yx
-( cd "$TMP/copy" && "$Y" fmt . >"$TMP/fmt1.log" 2>&1 ) || { note "FAIL fmt on the copy"; head -n 5 "$TMP/fmt1.log"; } "$TMP"/copy/tests/extra_modules/e2031_broken.yx
+  "$TMP"/copy/tests/e2020_*.yx "$TMP"/copy/tests/e2021_*.yx "$TMP"/copy/tests/e2022_*.yx "$TMP"/copy/tests/e2024_*.yx "$TMP"/copy/tests/e2025_*.yx "$TMP"/copy/tests/e2026_*.yx "$TMP"/copy/tests/e2028_*.yx "$TMP"/copy/tests/e2039_*.yx "$TMP"/copy/tests/e2063_*.yx "$TMP"/copy/tests/extra_modules/e2031_broken.yx
+( cd "$TMP/copy" && "$Y" fmt . >"$TMP/fmt1.log" 2>&1 ) || { note "FAIL fmt on the copy"; head -n 5 "$TMP/fmt1.log"; }
 ( cd "$TMP/copy" && "$Y" fmt --check . >"$TMP/fmt2.log" 2>&1 ) || { note "FAIL fmt is not idempotent"; head -n 10 "$TMP/fmt2.log"; }
 n=0
 # every program, including the multi-file projects of examples/real and the module trees under tests/
