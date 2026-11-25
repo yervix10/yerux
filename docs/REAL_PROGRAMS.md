@@ -589,3 +589,59 @@ against a joint insert. The golden comes from an independent Python model using 
     which prints `{3}`. Lifting the rule would be a language change and needs a decision.
 42. **`JoinHandle.join()` has no timeout.** tcpecho reports server results through a channel read with `recv_timeout`.
 43. **`IoError` fields are not `pub`.** A timeout is detected by matching `"timed out"` in the message. Repeat of friction 36.
+
+## Round 11: ledger, logsum, taskmgr, httprouter, warehouse
+
+Five programs of 165 to 250 lines in `examples/real/<name>/main.yx`, each with an `expected.out` golden. Each golden was
+produced by the program and checked byte for byte against an independent Python 3 model. C and `--native` are identical
+and exit 0. `tests/real_programs.sh` builds and runs all five on both backends (about 12 s); it is registered in
+`tests/run_all.sh` as `real_programs`.
+
+- **ledger**: CSV expense ledger (RFC 4180 quoting via `std.csv`), per-account balances, monthly outflows, budget checks.
+- **logsum**: HTTP access-log summary from a seeded generator: status counts, busiest paths, rejected records. It does
+  not use `std.regex`; fields are split by hand.
+- **taskmgr**: task manager whose store is JSON (`std.json` into structs and an enum), with a fixed command script,
+  error reporting and a report by status and tag.
+- **httprouter**: HTTP/1.1 request parser and router without sockets: path parameters, query strings with percent
+  decoding, a JSON body, 400/404/405/413 responses, a `Handler` trait with two implementations.
+- **warehouse**: stock simulator: `Priced` and `Weighted` traits, a generic `Backlog<T>`, 30 days of orders from an
+  in-program LCG, backorders, restocks, perishables discarded on expiry, PASS/FAIL checks at the end.
+
+### Round 11 frictions (not changed; minimal repros)
+
+44. **Compiler panic: a nested tuple pattern inside `Some` on an owned payload.** Found by ledger.
+    `match p { Some((x, y)) => ... }` with `p: Option<(String, String)>` gives
+    `panicked at src/cgen.rs:833:35: no entry found for key` (C, exit 101) and `src/ir.rs:940:64` (`--native`, exit 101).
+    `check` panics too. Repro: `let p: Option<(String, String)> = Some((String.from("a"), String.from("b")))` then
+    `match p { Some((x, y)) => { print(x) } None => { print("none") } }`. The same shape with `(Int, Int)` compiles.
+    Workaround: `Some(t)` and then index `t.0` / `t.1`, or `let (x, y) = move t`. This is the most serious item of the round.
+45. **Misleading diagnostic for `+` with an owned temporary on the left.** `let v = String.from("k") + "m"` gives
+    `expected Int but this is String` (at `String.from`). The real rule is that `+` needs a String variable on the left.
+    Workaround: `let s = ...` first, or interpolation.
+46. **Nested pattern on a call result says `match move`, though no `move` is written.**
+    `fn split(s: view String) -> Option<(String, String)>` then `match split("ab") { Some((x, y)) => ... }` gives
+    "cannot look inside an owned payload in `match move`", followed by "variable ... does not exist" (cascade).
+    Same family as friction 39. Workaround: `let` the result, then index.
+47. **A multi-line raw string gives "unterminated raw string".** SPEC requires a raw string on one line, so this is a
+    documented limit, but the message says "unterminated" when the literal is closed on the next line. Workaround: one long line.
+48. **A Text result cannot be passed to a `view String` parameter.** `show(name())` with `name() -> Text` and
+    `show(s: view String)` gives `expected String but this is Text`; the same for an element of a Text array (`show(a[0])`).
+    A Text variable is accepted (`let t = a[0]; show(t)`). Workaround: `String.from(...)`.
+49. **`Text.eq` rejects a String argument, and the help is wrong.** `t.eq(s)` with `s: String` gives
+    "'s' is a String and is not copied" with `help: use move s`; `t.eq(move s)` then gives "expected Text but this is String".
+    `String.eq(Text)` works. Workaround: compare with the String as receiver.
+50. **A quote inside `{expr}` gives "expected a variable or a field here".** `print("x {s.split(" ").at(0)}")` points at
+    `s.split(`. The real cause is the `"` inside the interpolation; the message does not mention quotes.
+    Workaround: store the value in a variable first.
+51. **`==` on a String call result needs a `let` first.** `print(if money(5) == "5" { "y" } else { "n" })` gives
+    "cannot use `==` here: the left side is a String value that is not a variable". The message is clear; the
+    restriction is awkward in expressions. Workaround: `let m = money(5)` then `m.eq("5")`.
+52. **`+=` is not in the language, and the diagnostic is generic.** `n += 2` gives `expected an expression` at the `+`.
+    SPEC does not mention `+=`. Workaround: `n = n + 2`. A message saying that `+=` is unsupported would help.
+53. **`String.concat` exists only in static form.** `String.concat(a, b)` works; `String.from("c").concat(u)` gives
+    "String has no method 'concat'". Reported by the ledger author; not re-run this round.
+54. **`==` on an enum without an `Equal` impl is accepted silently.** `enum Method { Get, Post }` with `m == Method.Get`
+    compiles and runs (it compares, with no derive and no impl). SPEC says that `==` on a variable calls the type's
+    `Equal` impl but does not say what happens without one. Either reject it or document the structural comparison.
+55. **Bounds on struct type parameters are rejected (documented).** `struct Box3<T: Show> { v: T }` gives
+    "type parameters of a struct or enum cannot have bounds". Workaround: bound the `impl` blocks instead (warehouse).
