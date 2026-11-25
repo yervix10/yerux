@@ -21,7 +21,7 @@ error: empty alternative or group at offset 0
 error: empty alternative or group at offset 2
 error: empty alternative or group at offset 1
 error: unclosed '[' at offset 0
-error: empty character class at offset 0
+error: unclosed '[' at offset 0
 error: invalid range in the character class that starts at offset 0
 error: nothing to repeat before the quantifier at offset 0
 error: nested quantifier at offset 2: a repeated item cannot be repeated again (wrap it in a group)
