@@ -1,0 +1,22 @@
+logsum: 400 records, 396 parsed, 4 rejected
+
+status  count  share  histogram
+   200   178   44%  #############
+   204    57   14%  ####
+   301    61   15%  ####
+   404    58   14%  ####
+   500    42   10%  ###
+
+busiest paths by bytes:
+  /api/items/42         55   144863
+  /logout               57   137194
+  /login                54   124156
+  /index.html           48   120172
+  /api/items            51   114464
+
+total bytes: 960149, mean per request: 2424
+rejected: 4
+  line 41: expected 4 fields, found 2
+  line 121: unknown method 'FETCH'
+  line 201: bad status '2OO'
+  line 312: expected 4 fields, found 2

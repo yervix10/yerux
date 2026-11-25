@@ -1,0 +1,191 @@
+// ledger: reads an expense ledger in CSV form, validates every row and prints a report: balances per account,
+// outflows per month and budget checks.
+//
+//   ledger        print the report for the embedded ledger (no arguments; exit 0)
+//
+// Row format: date,account,amount,memo   e.g.  2026-03-02,expenses:food,-12.50,"lunch, team"
+// The date is YYYY-MM-DD with a month 01..12; the account starts with assets:, expenses: or income:; the amount is
+// decimal with exactly two places (negative = money out of the account); the memo is required. A bad row is listed
+// in the report and does not stop the others.
+import std.csv
+import std.fmt
+import std.io
+import std.sort
+import std.text
+
+struct Entry { date: String, account: String, cents: Int, memo: String }
+
+fn all_digits(s: view String) -> Bool {
+  if s.is_empty() { return false }
+  for i in 0..s.len() {
+    let b = s.byte(i)
+    if b < 48 || b > 57 { return false }
+  }
+  return true
+}
+
+// "-12.50" -> -1250. Exactly two decimals, at most 12 whole digits.
+fn parse_cents(s: view String) -> Result<Int, String> {
+  let neg = s.starts_with("-")
+  var body = String.new()
+  if neg { body.push_slice(s, 1, s.len()) } else { body.push_str(s) }
+  let dot = body.find(".")
+  if dot < 0 { return Err("bad amount \"{s}\"") }
+  let whole = body.slice(0, dot)
+  let frac = body.slice(dot + 1, body.len())
+  if !all_digits(whole) || !all_digits(frac) || frac.len() != 2 || whole.len() > 12 {
+    return Err("bad amount \"{s}\"")
+  }
+  let c = text.parse_int(whole)? * 100 + text.parse_int(frac)?
+  if neg { return Ok(0 - c) }
+  return Ok(c)
+}
+
+fn valid_date(d: view String) -> Bool {
+  if d.len() != 10 || d.byte(4) != 45 || d.byte(7) != 45 { return false }
+  for i in 0..d.len() {
+    if i != 4 && i != 7 {
+      let b = d.byte(i)
+      if b < 48 || b > 57 { return false }
+    }
+  }
+  match text.parse_int(d.slice(5, 7)) {
+    Ok(m) => { return m >= 1 && m <= 12 }
+    Err(_) => { return false }
+  }
+}
+
+fn parse_row(line: view String) -> Result<Entry, String> {
+  let rows = csv.parse(line)
+  if rows.len() != 1 || rows.at(0).len() != 4 {
+    return Err(String.from("expected 4 fields"))
+  }
+  let row = rows.at(0)
+  if !valid_date(row.at(0)) {
+    return Err("bad date \"{row.at(0)}\"")
+  }
+  let account = String.from(row.at(1))
+  let known = ["assets:", "expenses:", "income:"]
+  var ok = false
+  for p in known {
+    if account.starts_with(p) { ok = true }
+  }
+  if !ok { return Err("unknown account \"{account}\"") }
+  let cents = parse_cents(row.at(2))?
+  if row.at(3).is_empty() { return Err(String.from("memo is required")) }
+  return Ok(Entry { date: String.from(row.at(0)), account: move account, cents: cents, memo: String.from(row.at(3)) })
+}
+
+// 1234567 -> "12,345.67" ; negatives get a leading minus.
+fn money(c: Int) -> String {
+  let a = if c < 0 { 0 - c } else { c }
+  let whole = fmt.group(a / 100, ",")
+  let frac = fmt.zero_pad(a % 100, 2)
+  let s = "{whole}.{frac}"
+  if c < 0 { return "-{s}" }
+  return s
+}
+
+fn sorted_keys(m: view Map<String, Int>) -> List<String> {
+  var keys = List<String>.new()
+  for i in 0..m.len() {
+    keys.push(String.from(m.keys.at(i)))
+  }
+  sort.stable(keys)
+  return keys
+}
+
+// The money spent on an account (a positive amount), or an error when the account has no entries.
+fn spent_on(spent: view Map<String, Int>, account: view String) -> Result<Int, String> {
+  if !spent.contains(account) { return Err("no entries for {account}") }
+  return Ok(spent.get(account))
+}
+
+fn budget_line(spent: view Map<String, Int>, account: view String, limit: Int) -> Result<String, String> {
+  let used = spent_on(spent, account)?
+  let state = if used > limit { "OVER" } else { "ok" }
+  let left = money(limit - used)
+  let name = fmt.pad_right(account, 18, ' ')
+  let used_s = money(used)
+  return Ok("{name} used {used_s} left {left} {state}")
+}
+
+fn main() {
+  let sample = [
+    "2026-01-03,income:salary,2450.00,January salary",
+    "2026-01-04,assets:checking,-1200.00,rent transfer",
+    "2026-01-05,expenses:rent,1200.00,\"rent, January\"",
+    "2026-01-09,expenses:food,-12.50,lunch",
+    "2026-01-14,expenses:food,-64.20,\"groceries, weekly\"",
+    "2026-01-20,expenses:transport,-35.00,bus pass",
+    "2026-02-02,income:salary,2450.00,February salary",
+    "2026-02-06,expenses:food,-8.75,coffee",
+    "2026-02-11,expenses:food,-95.10,groceries",
+    "2026-02-13,expenses:fun,-40,concert",
+    "2026-13-01,expenses:fun,-22.00,bowling",
+    "2026-03-01,cash,-5.00,vending",
+    "2026-03-03,expenses:transport,-35.00,\"taxi, airport\"",
+    "2026-03-05,expenses:food,-3.333,rounding",
+    "2026-03-07,expenses:fun,-18.00,",
+    "2026-03-08,expenses:food,-4.00",
+    "2026-03-09,expenses:transport,-6.40,tram",
+  ]
+  var raw = String.new()
+  for line in sample {
+    raw.push_str(line)
+    raw.push_str("\n")
+  }
+
+  var entries = List<Entry>.new()
+  var rejected = List<String>.new()
+  var lineno = 0
+  for line in raw.lines() {
+    lineno = lineno + 1
+    match parse_row(line) {
+      Ok(e) => { entries.push(move e) }
+      Err(msg) => { rejected.push("line {lineno}: {msg}") }
+    }
+  }
+
+  var balances = Map<String, Int>.new()
+  var outflow = Map<String, Int>.new()
+  var spent = Map<String, Int>.new()
+  var total = 0
+  for e in entries {
+    total = total + e.cents
+    balances.insert(String.from(e.account), balances.get_or(e.account, 0) + e.cents)
+    if e.cents < 0 {
+      let month = e.date.slice(0, 7)
+      outflow.insert(String.from(month), outflow.get_or(month, 0) - e.cents)
+      if e.account.starts_with("expenses:") {
+        spent.insert(String.from(e.account), spent.get_or(e.account, 0) - e.cents)
+      }
+    }
+  }
+
+  var out = String.new()
+  out.push_str("ledger: {entries.len()} valid, {rejected.len()} rejected\n")
+  for r in rejected {
+    out.push_str("  rejected {r}\n")
+  }
+  out.push_str("\nbalances\n")
+  for name in sorted_keys(balances) {
+    let c = balances.get(name)
+    out.push_str("  {fmt.pad_right(name, 18, ' ')}{fmt.pad_left(money(c), 12, ' ')}\n")
+  }
+  out.push_str("  net total {money(total)}\n")
+  out.push_str("\noutflow by month\n")
+  for month in sorted_keys(outflow) {
+    out.push_str("  {month} {fmt.pad_left(money(outflow.get(month)), 12, ' ')}\n")
+  }
+  out.push_str("\nbudgets\n")
+  let budgets = [("expenses:food", 15000), ("expenses:transport", 6000), ("expenses:fun", 5000)]
+  for b in budgets {
+    match budget_line(spent, b.0, b.1) {
+      Ok(line) => { out.push_str("  {line}\n") }
+      Err(msg) => { out.push_str("  error: {msg}\n") }
+    }
+  }
+  let _ = io.write_stdout(out)
+  io.exit(0)
+}
