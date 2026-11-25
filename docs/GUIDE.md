@@ -1309,7 +1309,7 @@ targets reject them at compile time.
 
 Beyond the prelude (`String`, `List`, `Map`, `Option`, `Iter`, ...), `import std.<name>` gives: `text`, `fmt`, `math`,
 `rand`, `sort`, `iter`, `collections`, `hash`, `hex`, `base64`, `regex`, `csv`, `toml`, `args`, `env`, `io`, `fs`, `path`,
-`process`, `time`, `net`, `http`, `log`, `kv`, `compress`, `unicode`, `sync` and `caps`.
+`process`, `time`, `net`, `http` (and `std.http.server`), `log`, `kv`, `compress`, `unicode`, `sync` and `caps`.
 
 `std.net` blocks on connect, read, write and accept after five seconds; `connect_timeout(addr, ms)`,
 `set_read_timeout(stream, ms)` and `set_write_timeout(stream, ms)` change one of them (milliseconds, `0` leaves the
