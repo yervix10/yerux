@@ -25,12 +25,13 @@ fn atom(pattern: view String, pi: Int, c: Char) -> Bool {
     i = i + 1
   }
   while i < pattern.len() && ch(pattern, i) != 93 {
-    if ch(pattern, i + 1) == 45 && i + 2 < pattern.len() && ch(pattern, i + 2) != 93 {
-      if c.to_int() >= ch(pattern, i) && c.to_int() <= ch(pattern, i + 2) { found = true }
-      i = i + 3
+    let n1 = i + pattern.char_size(i)
+    if ch(pattern, n1) == 45 && n1 + 1 < pattern.len() && ch(pattern, n1 + 1) != 93 {
+      if c.to_int() >= ch(pattern, i) && c.to_int() <= ch(pattern, n1 + 1) { found = true }
+      i = n1 + 1 + pattern.char_size(n1 + 1)
     } else {
       if c.to_int() == ch(pattern, i) { found = true }
-      i = i + pattern.char_size(i)
+      i = n1
     }
   }
   if negate { return !found }
@@ -58,14 +59,15 @@ fn class_end(pat: view String, pos: Int, err: mut String) -> Int {
   let first = i
   if ch(pat, i) == 93 { i = i + 1 }
   while i < pat.len() && ch(pat, i) != 93 {
-    if ch(pat, i + 1) == 45 && i + 2 < pat.len() && ch(pat, i + 2) != 93 {
-      if ch(pat, i + 2) < ch(pat, i) {
+    let n1 = i + pat.char_size(i)
+    if ch(pat, n1) == 45 && n1 + 1 < pat.len() && ch(pat, n1 + 1) != 93 {
+      if ch(pat, n1 + 1) < ch(pat, i) {
         err = "invalid range in the character class that starts at offset {pos}"
         return pos
       }
-      i = i + 3
+      i = n1 + 1 + pat.char_size(n1 + 1)
     } else {
-      i = i + pat.char_size(i)
+      i = n1
     }
   }
   if i >= pat.len() {
@@ -90,8 +92,8 @@ fn parse_bound(pat: view String, pos: Int, lo: mut Int, hi: mut Int) -> Int {
   var i = pos + 1
   var n = 0
   var digits = 0
-  while is_digit(ch(pat, i)) && digits < 9 {
-    n = n * 10 + (ch(pat, i) - 48)
+  while is_digit(ch(pat, i)) {
+    if n < 1000000000 { n = n * 10 + (ch(pat, i) - 48) }
     i = i + 1
     digits = digits + 1
   }
@@ -103,8 +105,8 @@ fn parse_bound(pat: view String, pos: Int, lo: mut Int, hi: mut Int) -> Int {
     hi = -1
     var m = 0
     var md = 0
-    while is_digit(ch(pat, i)) && md < 9 {
-      m = m * 10 + (ch(pat, i) - 48)
+    while is_digit(ch(pat, i)) {
+      if m < 1000000000 { m = m * 10 + (ch(pat, i) - 48) }
       i = i + 1
       md = md + 1
     }

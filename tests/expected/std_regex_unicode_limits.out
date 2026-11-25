@@ -1,0 +1,10 @@
+-1
+1
+0
+3
+0
+0
+-a-b-c-
+err invalid range in the character class that starts at offset 0
+err repetition at offset 1 is too large (at most 100 copies)
+err repetition at offset 1 is too large (at most 100 copies)

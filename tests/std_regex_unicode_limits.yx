@@ -1,0 +1,22 @@
+// std.regex: non-ASCII character class ranges (used to panic with "invalid UTF-8 sequence"), huge bounds are errors
+import std.regex
+
+fn show(r: view Result<Int, String>) {
+  match r {
+    Ok(n) => { print("ok {n}") }
+    Err(e) => { print("err {e}") }
+  }
+}
+
+fn main() {
+  print(regex.find("[é-ü]", "xß"))
+  print(regex.find("[é-ü]", "xê"))
+  print(regex.find("[^é-ü]+$", "èèab"))
+  print(regex.find("é+", "caféé!"))
+  print(regex.find("^.$", "😀"))
+  print(regex.find("", ""))
+  print(regex.replace("x*", "abc", "-"))
+  show(regex.check("[ü-é]"))
+  show(regex.check(r"a{1000000000000}"))
+  show(regex.check(r"a{1,99999999999999999999}"))
+}
