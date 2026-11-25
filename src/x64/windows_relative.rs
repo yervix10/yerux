@@ -23,7 +23,8 @@ const NT_DISPOSITION: i64 = API_BASE + 8;
 const NT_ERROR: i64 = API_BASE + 16;
 const NT_QUERY: i64 = API_BASE + 24;
 const WINE: i64 = API_BASE + 32;
-const _: () = assert!(WINE + 8 <= G_SIZE as i64);
+pub(super) const API_END: i64 = WINE + 8;
+const _: () = assert!(API_END <= G_SIZE as i64);
 
 fn call(a: &mut Asm, slot: i64) {
     a.gaddr(RAX, slot);

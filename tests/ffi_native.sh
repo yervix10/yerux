@@ -31,7 +31,11 @@ if "$Y" build tests/ffi_basic.yx --native --target windows -o "$TMP/unsupported"
   echo "ffi_native: expected Windows extern rejection" >&2
   exit 1
 fi
-grep -q "extern C is not supported on the windows target yet" "$TMP/unsupported.log"
+grep -Fq "extern C library 'libm.so.6' is not supported on the windows target" "$TMP/unsupported.log"
+
+for mode in --release --no-opt; do
+  "$Y" build tests/pe_ffi.yx --target windows "$mode" -o "$TMP/ffi.exe"
+done
 
 cat >"$TMP/write.yx" <<'EOF'
 extern "C" {
@@ -42,6 +46,11 @@ EOF
 "$Y" build "$TMP/write.yx" --native -o "$TMP/write"
 "$TMP/write" >"$TMP/out"
 test "$(cat "$TMP/out")" = "write-ok"
+if "$Y" build "$TMP/write.yx" --target windows -o "$TMP/unsupported" >"$TMP/unsupported.log" 2>&1; then
+  echo "ffi_native: expected Windows to reject an unavailable CRT symbol" >&2
+  exit 1
+fi
+grep -Fq "extern C symbol 'write' is not supported on the windows target" "$TMP/unsupported.log"
 
 cat >"$TMP/custom.c" <<'EOF'
 long ffi_roundtrip(long value, const char *text) {
@@ -150,9 +159,4 @@ cmp "$TMP/want" "$TMP/out_c"
 "$TMP/fv_c" >"$TMP/fv_c.out"
 "$TMP/fv_n" >"$TMP/fv_n.out"
 cmp "$TMP/fv_c.out" "$TMP/fv_n.out"
-if "$Y" build tests/ffi_variadic.yx --native --target windows -o "$TMP/unsupported" >"$TMP/unsupported.log" 2>&1; then
-  echo "ffi_native: expected Windows variadic extern rejection" >&2
-  exit 1
-fi
-grep -q "extern C is not supported on the windows target yet" "$TMP/unsupported.log"
 echo "ffi_native: libc/libm, custom shared library and variadic calls passed"

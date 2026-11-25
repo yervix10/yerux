@@ -247,13 +247,6 @@ fn native_build(
     target: &str,
     source_files: &[String],
 ) {
-    if !prog.externs.is_empty() && target == "windows" {
-        eprintln!(
-            "error: native backend: extern C is not supported on the {} target yet",
-            target
-        );
-        exit(1);
-    }
     let start = Instant::now();
     let dwarf = matches!(target, "" | "linux")
         && prog.externs.is_empty()
