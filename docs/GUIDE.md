@@ -85,8 +85,8 @@ fn main() {
   var nums = List<Int>.new()
   for i in 0..=5 { nums.push(i * i) }   // inclusive range: 0 1 4 9 16 25
   let (a, b) = first_pair_with_sum(nums, 25)
-  print(a)  // 3
-  print(b)  // 4
+  print(a)  // 0  (0 + 25 is the first pair that sums to 25)
+  print(b)  // 5
 
   for k in 0..10 step 4 { print(k) }    // 0 4 8
   for x in nums {                       // borrows each element read-only
