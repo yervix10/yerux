@@ -199,7 +199,7 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool) {
       i = i + 1
       let body = i
       while i < n && src.byte(i) != 10 && !raw_closes(src, i, hashes) { i = i + 1 }
-      if i >= n || src.byte(i) == 10 { report_error(src, "unterminated raw string", body - hashes - 2, 1, "a raw string ends with a quote followed by as many `#` as it started with: r#\"{{\"a\": 1}}\"#; it must fit on one line", "") }
+      if i >= n || src.byte(i) == 10 { report_error(src, "this raw string is not closed on its line", body - hashes - 2, 1, "a raw string ends with a quote followed by as many `#` as it started with: r#\"{{\"a\": 1}}\"#; it must fit on one line, so a closing quote on a later line does not count", "help: write the text on one line, or join lines with interpolation or `push_str`") }
       emit(tokpos, "Str:", src.slice(body, i))
       i = i + 1 + hashes
     }
