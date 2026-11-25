@@ -1,0 +1,64 @@
+backpressure: bounded(1) 20 items in order: true
+progress: 58 of 58 jobs
+ id  words  uniq   top word   n checksum
+  0      9     8        the   2 972517228
+  1     13    10          a   2 977884126
+  2     10     6        the   3 471518782
+  3      9     8        ada   2 142077415
+  4      8     7       pass   2 742247700
+  5      7     3        red   3 35070645
+  6     10    10      eight   1 891136996
+  7      6     6       code   1 253618984
+  8      6     6    between   1 934780240
+  9      6     6    atomics   1 625351946
+ 10      7     7         by   1 709419388
+ 11      8     8       fast   1 558582100
+ 12      8     8        all   1 936021561
+ 13      6     5      bread   2 643786205
+ 14      6     6    collide   1 24385977
+ 15      9     8        the   2 691315065
+ 16      7     5    numbers   3 607814452
+ 17      0     0              0 737219374
+ 18      8     8         at   1 123578885
+ 19      8     7         at   2 316141697
+ 20      6     6        and   1 874241855
+ 21      7     7  brightest   1 296234669
+ 22      6     6        and   1 483493209
+ 23      7     7        and   1 570186591
+ 24      7     7   captains   1 444284413
+ 25      8     8        and   1 80807285
+ 26      9     3     engine   3 326620166
+ 27      8     8        and   1 14723338
+ 28      7     7     brings   1 585710923
+ 29      7     7     arrive   1 884532414
+ 30      6     6     clocks   1 165477107
+ 31      8     7    breathe   2 395985594
+ 32      7     7      banks   1 295306510
+ 33      7     7        and   1 718231125
+ 34      8     8        and   1 70277750
+ 35      7     7        and   1 205160594
+ 36      9     9        and   1 370224066
+ 37      8     8      earth   1 360198829
+ 38     10     9         by   2 612976513
+ 39      7     7        and   1 680536243
+ 40 error: doc 40: empty document rejected
+ 41      6     6        ash   1 98453696
+ 42      7     7         at   1 227469309
+ 43      8     8        and   1 483342385
+ 44      6     6   assemble   1 397051644
+ 45      6     6        and   1 92272793
+ 46      9     8        the   2 721019977
+ 47      7     7     before   1 20938005
+ 48      7     7     cellos   1 303512075
+ 49      8     8     around   1 102250761
+ 50      6     5   practice   2 709377836
+ 51      7     7      carve   1 819868440
+ 52      6     6         at   1 388809158
+ 53      7     7      boils   1 116943536
+ 54      7     7      green   1 899157012
+ 55      7     7        and   1 802649797
+ 56     10     7        the   3 113972453
+ 57      8     7        the   2 576303136
+summary: docs=58 ok=57 rejected=1 words=422 unique_sum=389
+combined checksum: 380721811
+peak repetition: doc 2, top word 3 times

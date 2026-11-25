@@ -1,0 +1,89 @@
+$ fsclient --help
+Usage: fsclient COMMAND [ARGS]
+  put KEY FILE      copy FILE into the store as KEY
+  get KEY OUT       copy the stored KEY to OUT
+  ls [--prefix P]   list keys, only those starting with P
+  rm KEY            delete KEY
+  sync SRCDIR       store every file under SRCDIR and write the manifest
+  verify            check stored files against the manifest (size, CRC-32)
+  --help            show this help
+exit 0
+$ fsclient put Config/App.toml src/app.toml
+stored config/app.toml: 30 bytes
+exit 0
+$ fsclient put docs/Readme.md src/Docs/Readme.md
+stored docs/readme.md: 20 bytes
+exit 0
+$ fsclient put notes/../secret src/app.toml
+error: invalid key 'notes/../secret'
+exit 1
+$ fsclient put only-one-arg
+error: usage: fsclient put KEY FILE
+exit 2
+$ fsclient put data/missing.txt nope/nothere.txt
+error: no such file: nope/nothere.txt
+exit 1
+$ fsclient get config/app.toml exported/app.toml
+got config/app.toml: 30 bytes -> exported/app.toml
+exit 0
+$ fsclient get Config/Missing.toml out.txt
+error: not found: config/missing.toml
+exit 1
+$ fsclient ls
+config/app.toml 30
+docs/readme.md 20
+2 keys
+exit 0
+$ fsclient ls --prefix docs/
+docs/readme.md 20
+1 keys
+exit 0
+$ fsclient sync src
+  Docs/Readme.md -> docs/readme.md
+  app.toml -> app.toml
+  data/empty.txt -> data/empty.txt
+  data/records.csv -> data/records.csv
+synced 4 files, 75 bytes
+exit 0
+$ fsclient verify
+ok docs/readme.md
+ok app.toml
+ok data/empty.txt
+ok data/records.csv
+verified 4 entries, 0 bad
+exit 0
+(corrupted data/records.csv in place)
+$ fsclient verify
+ok docs/readme.md
+ok app.toml
+ok data/empty.txt
+MISMATCH data/records.csv: size 25 crc e8bf0506, manifest size 25 crc 64b9e46c
+verified 4 entries, 1 bad
+exit 1
+$ fsclient rm docs/readme.md
+removed docs/readme.md
+exit 0
+$ fsclient rm docs/readme.md
+error: not found: docs/readme.md
+exit 1
+$ fsclient verify
+MISSING docs/readme.md
+ok app.toml
+ok data/empty.txt
+MISMATCH data/records.csv: size 25 crc e8bf0506, manifest size 25 crc 64b9e46c
+verified 4 entries, 2 bad
+exit 1
+$ fsclient ls
+app.toml 30
+config/app.toml 30
+data/empty.txt 0
+data/records.csv 25
+4 keys
+exit 0
+$ fsclient frobnicate
+error: unknown command 'frobnicate'
+exit 2
+$ fsclient
+error: no command given, try --help
+exit 2
+temp dir removed: true

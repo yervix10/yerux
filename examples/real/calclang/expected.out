@@ -1,0 +1,70 @@
+[1] 1 + 2 * 3
+    pretty: 1 + 2 * 3
+    value: = 7
+    roundtrip: same
+[2] 2 * (3 + 4) * -(1 + 1)
+    pretty: 2 * (3 + 4) * -(1 + 1)
+    value: = -28
+    roundtrip: same
+[3] let x = 6 in x * x - answer
+    pretty: let x = 6 in x * x - answer
+    value: = -6
+    roundtrip: same
+[4] max(3, 9) - abs(-7) * 2
+    pretty: max(3, 9) - abs(-7) * 2
+    value: = -5
+    roundtrip: same
+[5] 10 / 3 - -10 / 3
+    pretty: 10 / 3 - -10 / 3
+    value: = 6
+    roundtrip: same
+[6] -7 % 3 * 10 + 7 % -3
+    pretty: -7 % 3 * 10 + 7 % -3
+    value: = -9
+    roundtrip: same
+[7] let a = 2 in let b = a + 1 in a * b == 6 && 1 < 2
+    pretty: let a = 2 in let b = a + 1 in a * b == 6 && 1 < 2
+    value: = true
+    roundtrip: same
+[8] -9223372036854775807 - 1
+    pretty: -9223372036854775807 - 1
+    value: = -9223372036854775808
+    roundtrip: same
+[9] 1 + (2 < 3)
+    pretty: 1 + (2 < 3)
+    value: ! type error: expected Int, found Bool
+    roundtrip: same
+[10] if 1 then 3 else 4
+    pretty: if 1 then 3 else 4
+    value: ! type error: expected Bool, found Int
+    roundtrip: same
+[11] unknown * 2
+    pretty: unknown * 2
+    value: ! unknown variable 'unknown'
+    roundtrip: same
+[12] let big = 3037000500 in big * big
+    pretty: let big = 3037000500 in big * big
+    value: ! integer overflow in multiplication
+    roundtrip: same
+[13] 10 / (5 - 5)
+    pretty: 10 / (5 - 5)
+    value: ! division by zero
+    roundtrip: same
+[14] max(1, 2, 3)
+    pretty: max(1, 2, 3)
+    value: ! max takes 2 argument(s), got 3
+    roundtrip: same
+[15] let x = 1 x
+    error 1:11: syntax error: expected 'in', found 'x'
+      | let x = 1 x
+      |           ^
+[16] 9223372036854775808
+    error 1:1: syntax error: bad integer '9223372036854775808'
+      | 9223372036854775808
+      | ^
+[17] let x = 4 in
+  let y = x * x in
+  y - 1 + x / 0
+    pretty: let x = 4 in let y = x * x in y - 1 + x / 0
+    value: ! division by zero
+    roundtrip: same
