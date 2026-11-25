@@ -671,11 +671,11 @@ fn main() {
 - `impl Type { ... }` adds plain methods to your own struct or enum.
 - Dispatch is static for generics. For run-time dispatch box the value as a trait object, `Box<dyn Trait>` (see the book, chapter 8, and `tests/dyn_shapes.yx`); a `view dyn Trait` parameter borrows one.
 - Functions, structs and enums can be generic. They are **monomorphised**: each distinct use compiles to a specialised copy, with zero run-time cost.
-- Type arguments of function calls are **inferred** (never written). Struct and enum values infer them from field values or the expected type; otherwise write them (`Maybe<Int>.None`).
+- Type arguments of function calls are **inferred**; write them (`first<Int>(l)`, `empty<Text>()`) only when inference cannot fix them. Struct and enum values infer theirs from field values or the expected type; otherwise write them (`Maybe<Int>.None`).
 - A generic body is checked once against its bounds: inside, `T` is *moved* unless `T: Copy` is declared.
 - Built-in traits: `Copy`, `Equal` (`==`), `Ordered` (`<`, `>`), `Show` (`show()`, `"{x}"`), `Hash` (for `Map`/`Set` keys).
 - Generic `impl` blocks work for your own types (`impl<T> Stack<T> { .. }`, `impl<T: Show> Show for Pair<T>`, with `Stack<Int>.new()` for functions without `self`); see docs/GENERICS.md.
-- Not yet: explicit type arguments on function calls, bounds on struct/enum parameters, and generic *methods* (`fn map<U>(..)` inside an impl).
+- Generic *methods* work too (`impl<T> P<T> { fn conv<U>(view self, x: U) -> U }`). Not yet: bounds on struct/enum parameters — put the bound on the functions that use the type.
 
 ---
 
