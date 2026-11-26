@@ -30,7 +30,7 @@ grep -q 'a &lt; b &amp; c' "$T/html/doc_sample.html" || note "FAIL html escaping
 grep -q '<a href="doc_sample.html">' "$T/html/index.html" || note "FAIL html index link"
 
 # A directory produces one page per module.
-"$Y" doc src/std -o "$T/std" | grep -q 'in 30 modules' || note "FAIL src/std should give 30 modules"
+"$Y" doc src/std -o "$T/std" | grep -q 'in 31 modules' || note "FAIL src/std should give 31 modules"
 grep -q '^| \[`path`\](path.md) | std.path' "$T/std/index.md" || note "FAIL std.path row"
 
 # project mode: no arguments documents src/
