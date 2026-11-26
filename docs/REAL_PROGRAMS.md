@@ -914,6 +914,7 @@ on LF and CRLF input, and compact/pretty round trips), each with a golden
      either `quote` should escape/replace bad bytes or the panic should say which
      std.json entry point hit it. Found while probing std.json edge cases for
      `tests/std_json_escapes.yx`.
+     *Fixed:* the writers put U+FFFD for each ill-formed sequence (`docs/STDLIB.md`, `tests/std_json_invalid_utf8.yx`).
 ## Round 16: tablefmt, durations
 
 Two small programs in `examples/real/<name>/`, each with `expected.out`, built on both backends (C and `--native`
