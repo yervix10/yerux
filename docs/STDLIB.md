@@ -262,6 +262,8 @@ All numeric types are `Copy`, `Equal`, `Ordered`, `Show`. Sized integers: `Int8`
 | `to_float()` `to_float32()` | `x.to_float()` |
 | `floor_int()` `ceil_int()` `round_int()` (Float → Int, checked) | `f.floor_int()` |
 | `wrapping_add` `wrapping_sub` `wrapping_mul` (never panic, two's complement) | `x.wrapping_add(y)` |
+| `checked_add` `checked_sub` `checked_mul` (`Int` only; `Option<Int>`, `None` when the result does not fit) | `a.checked_mul(b)` |
+| `saturating_add` `saturating_sub` `saturating_mul` (`Int` only; the maximum or minimum `Int` when the result does not fit) | `a.saturating_add(b)` |
 | `truncate_int8()` … `truncate_int32()`, `truncate_int()`, `truncate_uint8()` … `truncate_uint64()` (keep low bits, reinterpret) | `x.truncate_uint8()` |
 
 ### Float-Specific Methods

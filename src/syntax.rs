@@ -1689,6 +1689,7 @@ pub struct ImplMethod {
     pub name: String,
     pub tok: usize,
     pub parsed: bool, // false: parsed on first use (built-in impls), so unused ones cost nothing
+    pub has_self: bool, // false: an associated function, called as `Type.name(..)`
     pub pos: Pos,
 }
 
@@ -1717,7 +1718,7 @@ pub struct Parser {
     surface: Option<surface::Surface>, // only used by ast-file, before module loading
     t: Vec<Token>,
     i: usize,
-    names: HashMap<String, Ty>, // user type names (collected in a pre-scan so order does not matter)
+    pub(crate) names: HashMap<String, Ty>, // user type names (collected in a pre-scan so order does not matter)
     pub types: Types,
     gtypes: HashMap<String, GenType>,
     pub gfns: Vec<GenFn>,
@@ -3225,14 +3226,6 @@ impl Parser {
                 })();
                 self.self_ty = saved;
                 let (h2, body) = r?;
-                if trait_name.is_none() && h2.params.first().map_or(true, |p| p.name != "self") {
-                    return Err(diag(
-                        format!("function '{}' in this `impl` has no `self` parameter, so nothing can call it", h2.name),
-                        h2.pos,
-                    )
-                    .note("a plain struct has no `Type.name()` associated functions")
-                    .note(format!("help: write a free function (`fn {}(..) -> ..`) outside the `impl`, or add `view self` / `mut self` / `self`", h2.name)));
-                }
                 let name = impl_fn_name(&self.types, trait_name.as_deref(), self_ty, &h2.name);
                 funcs.push(Func {
                     name,
@@ -3242,8 +3235,10 @@ impl Parser {
                     pos: h2.pos,
                 });
             }
+            let has_self = h.params.first().is_some_and(|p| p.name == "self");
             methods.push(ImplMethod {
                 name: h.name,
+                has_self,
                 tok,
                 parsed: !lazy,
                 pos: h.pos,
@@ -3289,7 +3284,7 @@ impl Parser {
                         pos: h.pos,
                     });
                 }
-                self.impls[ii].methods.push(ImplMethod { name, tok, parsed: !lazy, pos: ipos });
+                self.impls[ii].methods.push(ImplMethod { name, tok, parsed: !lazy, has_self: true, pos: ipos });
             }
         }
         Ok(())

@@ -914,3 +914,62 @@ impl Clone for UInt32 { fn clone(view self) -> UInt32 { return self } }
 impl Clone for UInt64 { fn clone(view self) -> UInt64 { return self } }
 impl Clone for Float32 { fn clone(view self) -> Float32 { return self } }
 impl Clone for Float { fn clone(view self) -> Float { return self } }
+
+// ───────── overflow-aware Int arithmetic: x.checked_add(y), x.saturating_add(y), ... ─────────
+// The wrapped result overflowed when its sign disagrees with what the operands allow.
+fn m__checked_add_i64(a: Int, b: Int) -> Option<Int> {
+    let r = a.wrapping_add(b)
+    if (a >= 0) == (b >= 0) && (r >= 0) != (a >= 0) { return None }
+    return Some(r)
+}
+
+fn m__checked_sub_i64(a: Int, b: Int) -> Option<Int> {
+    let r = a.wrapping_sub(b)
+    if (a >= 0) != (b >= 0) && (r >= 0) != (a >= 0) { return None }
+    return Some(r)
+}
+
+// A product that wrapped does not divide back. -1 is apart: MIN / -1 would itself overflow.
+fn m__checked_mul_i64(a: Int, b: Int) -> Option<Int> {
+    let min = -9223372036854775807 - 1
+    if a == 0 || b == 0 { return Some(0) }
+    if a == -1 {
+        if b == min { return None }
+        return Some(0 - b)
+    }
+    if b == -1 {
+        if a == min { return None }
+        return Some(0 - a)
+    }
+    let r = a.wrapping_mul(b)
+    if r / b != a { return None }
+    return Some(r)
+}
+
+// The Int nearest to a result that does not fit: the maximum when it is positive, else the minimum.
+fn m__clamp_i64(positive: Bool) -> Int {
+    if positive { return 9223372036854775807 }
+    return -9223372036854775807 - 1
+}
+
+fn m__saturating_add_i64(a: Int, b: Int) -> Int {
+    match m__checked_add_i64(a, b) {
+        Some(r) => { return r }
+        None => { return m__clamp_i64(a >= 0) }
+    }
+}
+
+fn m__saturating_sub_i64(a: Int, b: Int) -> Int {
+    match m__checked_sub_i64(a, b) {
+        Some(r) => { return r }
+        None => { return m__clamp_i64(a >= 0) }
+    }
+}
+
+fn m__saturating_mul_i64(a: Int, b: Int) -> Int {
+    match m__checked_mul_i64(a, b) {
+        Some(r) => { return r }
+        None => { return m__clamp_i64((a > 0) == (b > 0)) }
+    }
+}
+

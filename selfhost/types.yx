@@ -919,6 +919,34 @@ fn variant_index(shape: view Shape, name: view String) -> Int {
   return -1
 }
 
+// `x.checked_add(y)`, `x.saturating_mul(y)`, ...
+pub fn overflow_aware(name: view String) -> Bool {
+  for operation in ["add", "sub", "mul"] {
+    if name == "checked_{operation}" || name == "saturating_{operation}" { return true }
+  }
+  return false
+}
+
+// Is there a function `name` without `self` in an impl of this type (`Type.name(..)`)?
+fn associated(types: view Types, owner: view String, name: view String) -> Bool {
+  let base = type_terms.base(owner)
+  for i in 0..types.signatures.len() {
+    if types.signatures.at(i).name == name && types.signatures.at(i).receiver == "" &&
+        types.signatures.at(i).required_trait == "" && types.signatures.at(i).owner != "" &&
+        base.eq(type_terms.base(types.signatures.at(i).owner)) { return true }
+  }
+  return false
+}
+
+fn has_method(types: view Types, owner: view String, name: view String) -> Bool {
+  let base = type_terms.base(owner)
+  for i in 0..types.signatures.len() {
+    if types.signatures.at(i).name == name && types.signatures.at(i).receiver != "" &&
+        base.eq(type_terms.base(types.signatures.at(i).owner)) { return true }
+  }
+  return false
+}
+
 fn nominal_constructor(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     name: view String, args: Int, hint: view String) -> String {
   let shape = shape_index(types, owner)
@@ -1150,6 +1178,24 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
       return number
     }
   }
+  if receiver >= 0 && (owner == "Int" || owner.starts_with("Int<")) && overflow_aware(name) {
+    if child_count(tree, args) != 1 {
+      issue(types, "'{name}' expects 1 argument")
+      return unknown()
+    }
+    let operand = String.from("Int")
+    expect_type(types, operand, infer(types, tree, args + 1, operand))
+    if name.starts_with("checked_") { return String.from("Option<Int>") }
+    return String.from("Int")
+  }
+  if receiver >= 0 && overflow_aware(name) && integer(numeric_type(owner)) {
+    issue(types, "'{name}' is for Int, not {owner}")
+    return unknown()
+  }
+  if receiver >= 0 && associated(types, owner, name) && !has_method(types, owner, name) {
+    issue(types, "'{name}' of {owner} takes no `self`: it cannot be called on a value")
+    return unknown()
+  }
   if receiver >= 0 && name == "cmp" {
     let number = numeric_type(owner)
     if integer(number) || floating(number) {
@@ -1161,7 +1207,14 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
       return String.from("Int")
     }
   }
-  if receiver < 0 && shape >= 0 && types.shapes.at(shape).is_enum {
+  if receiver < 0 && !owner.contains("<") && shape >= 0 && types.shapes.at(shape).generics.len() == 0 &&
+      has_method(types, owner, name) && !associated(types, owner, name) &&
+      (!types.shapes.at(shape).is_enum || variant_index(types.shapes.at(shape), name) < 0) {
+    issue(types, "'{name}' of {owner} takes `self`: call it on a value")
+    return unknown()
+  }
+  if receiver < 0 && shape >= 0 && types.shapes.at(shape).is_enum &&
+      (variant_index(types.shapes.at(shape), name) >= 0 || !associated(types, owner, name)) {
     return nominal_constructor(types, tree, owner, name, args, hint)
   }
   var method_owner = String.from(owner)
@@ -1289,9 +1342,24 @@ fn sequence_member(types: mut Types, tree: view List<ast.AstNode>, owner: view S
   return unit()
 }
 
+fn is_constant(tree: view List<ast.AstNode>, name: view String) -> Bool {
+  let items = ast.child(tree, 0, 0)
+  var at = items + 1
+  while at < tree.at(items).end {
+    let item = ast.child(tree, at, 2)
+    if tree.at(item).tag == "Const" {
+      let declared = ast.name_at(tree, item, 0)
+      if declared.eq(name) { return true }
+    }
+    at = tree.at(at).end
+  }
+  return false
+}
+
 fn static_owner(types: view Types, tree: view List<ast.AstNode>, index: Int) -> String {
   if tree.at(index).tag == "Var" && types.identities.at(index) < 0 {
-    return ast.name_at(tree, index, 0)
+    let name = ast.name_at(tree, index, 0)
+    if !is_constant(tree, name) { return move name }
   }
   return unknown()
 }

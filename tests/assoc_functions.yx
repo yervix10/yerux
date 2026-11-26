@@ -1,0 +1,39 @@
+// Friction 137: a function without `self` in the impl of a plain struct or enum is called as `Type.name(..)`.
+struct S { x: Int, name: String }
+impl S {
+  fn new() -> S { return S { x: 1, name: String.from("a") } }
+  fn with(x: Int, name: String) -> S { return S { x: x, name: move name } }
+  fn get(view self) -> Int { return self.x }
+  fn at(i: Int) -> S { return S.with(i, "at {i}") }
+  fn bump(n: mut Int) { n = n + 1 }
+  fn parse(t: view String) -> Result<S, String> {
+    if t.len() == 0 { return Err(String.from("empty")) }
+    return Ok(S.with(t.len(), String.from(t)))
+  }
+}
+enum Colour { Red, Green }
+impl Colour {
+  fn default() -> Colour { return Colour.Green }
+  fn is_red(view self) -> Bool { match self { Red => { return true } Green => { return false } } }
+}
+fn run() -> Result<Int, String> {
+  let p = S.parse(String.from("abc"))?
+  return Ok(p.x)
+}
+fn main() {
+  let s = S.new()
+  print(s.get())
+  print(S.new().get())
+  print(S.at(7).name)
+  var n = 4
+  S.bump(n)
+  print(n)
+  print(run().unwrap())
+  let c = Colour.default()
+  print(c.is_red())
+  let f = || S.new().x + 1
+  print(f())
+  var l = List<S>.new()
+  for i in 0..3 { l.push(S.with(i, String.from("e"))) }
+  print(l.len())
+}

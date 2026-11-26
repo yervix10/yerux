@@ -1,0 +1,15 @@
+error: 'get' of S takes `self`: call it on a value
+ --> tests/e2162_method_through_type.yx:7:9
+  |
+7 |   print(S.get(s))
+  |         ^^^^^^^^
+  = help: write `value.get(..)`; `S.name(..)` calls the functions without `self`
+
+error: 'red' of C takes `self`: call it on a value
+ --> tests/e2162_method_through_type.yx:9:9
+  |
+9 |   print(C.red(c))
+  |         ^^^^^^^^
+  = help: write `value.red(..)`; `C.name(..)` calls the functions without `self`
+
+2 error(s). Nothing was generated.

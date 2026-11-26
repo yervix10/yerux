@@ -29,6 +29,15 @@ const MATH1: &[&str] = &[
 ];
 const MATH2: &[&str] = &["atan2", "pow", "min", "max", "copysign"];
 const WRAPPING: &[&str] = &["wrapping_add", "wrapping_sub", "wrapping_mul"];
+/// `x.checked_add(y) -> Option<Int>` and the clamping forms: ordinary Yerux in prelude_num.yx.
+const OVERFLOW_AWARE: &[&str] = &[
+    "checked_add",
+    "checked_sub",
+    "checked_mul",
+    "saturating_add",
+    "saturating_sub",
+    "saturating_mul",
+];
 
 fn is_math(m: &str) -> bool {
     MATH1.contains(&m) || MATH2.contains(&m)
@@ -436,8 +445,10 @@ impl<'a> Checker<'a> {
             }
             EK::Method { recv, m, .. } if m != "at" => {
                 let m = m.clone();
-                let builtin =
-                    is_math(&m) || WRAPPING.contains(&m.as_str()) || conv_target(&m).is_some();
+                let builtin = is_math(&m)
+                    || WRAPPING.contains(&m.as_str())
+                    || OVERFLOW_AWARE.contains(&m.as_str())
+                    || conv_target(&m).is_some();
                 if !builtin {
                     return None;
                 }
@@ -536,6 +547,27 @@ impl<'a> Checker<'a> {
             let b = args.pop().unwrap();
             e.k = EK::Bin(op, Box::new(recv), Box::new(b));
             return rt;
+        }
+        if OVERFLOW_AWARE.contains(&m) {
+            if !matches!(rt, Ty::Int | Ty::Range(..)) {
+                let n = self.tn(rt);
+                let d = diag(format!("'{}' is for Int, not {}", m, n), pos)
+                    .note("help: convert with `x.to_int()` and test the result against the range you need");
+                return self.fail(e, d);
+            }
+            if args.len() != 1 {
+                return self.fail(e, diag(format!("'{}' expects 1 argument", m), pos));
+            }
+            self.hint = Some(Ty::Int);
+            let t = self.expr(&mut args[0]);
+            self.expect(t, Ty::Int, args[0].pos);
+            let fname = format!("m__{}_i64", m);
+            let Some(sig) = self.prelude_fn(&fname) else {
+                return self.fail_quiet(e);
+            };
+            let b = args.pop().unwrap();
+            e.k = EK::Call(fname, vec![recv, b]);
+            return sig.ret;
         }
         let mut all = vec![recv];
         all.append(&mut args);

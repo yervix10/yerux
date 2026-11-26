@@ -662,6 +662,7 @@ const PURE_PREFIXES: &[&str] = &[
     "truncate_",
     "wrapping_",
     "saturating_",
+    "checked_",
     "floor",
     "ceil",
     "round",

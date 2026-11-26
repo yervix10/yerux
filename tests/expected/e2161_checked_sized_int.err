@@ -1,0 +1,8 @@
+error: 'checked_add' is for Int, not UInt8
+ --> tests/e2161_checked_sized_int.yx:3:11
+  |
+3 |   let y = x.checked_add(1u8)
+  |           ^^^^^^^^^^^^^^^^^^
+  = help: convert with `x.to_int()` and test the result against the range you need
+
+1 error(s). Nothing was generated.
