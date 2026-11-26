@@ -1,0 +1,79 @@
+// std.csv errors with position: text after a closing quote and an unclosed
+// quote report the line number of the offending byte; multi-line inputs count
+// LF; CR-only records do not advance the count; the 16 MiB and 100000-field
+// limits are reported without a line number.
+import std.csv
+
+fn show(s: view String) {
+  match csv.parse_checked(s) {
+    Ok(r) => { print("ok rows={r.len()}") }
+    Err(e) => { print(e) }
+  }
+}
+
+fn main() {
+  show("\"ab\"cd")
+  show("\"ab\"cd\n\"ef\"gh")
+  show("a,b\nx,\"y\"z")
+  show("a,b\r\nx,\"y\"z")
+  // CR-only: the error is on record 3 but line_of counts only LF
+  show("a\rb\r\"unclosed")
+  show("a\r\"bad\"x")
+  // unclosed quote at end of input
+  show("\"unclosed")
+  show("ok\nfine\n\"open")
+  show("\"\"")
+  show("\"a\"")
+  // clean input still Ok
+  show("a,b\nc,d")
+  show("\"a\",\"b\"")
+  // 16 MiB limit: no line number
+  var big = String.new()
+  var n = 0
+  while n < 16777217 {
+    big.push_char(Char.from_int(97))
+    n = n + 1
+  }
+  show(big)
+  var ok_size = String.new()
+  n = 0
+  while n < 16777216 {
+    ok_size.push_char(Char.from_int(97))
+    n = n + 1
+  }
+  match csv.parse_checked(ok_size) {
+    Ok(r) => { print("16MiB ok rows={r.len()}") }
+    Err(e) => { print(e) }
+  }
+  // field limit: 100000 cells is ok, 100001 errors with no line number
+  var fields_ok = String.new()
+  n = 0
+  while n < 99999 {
+    fields_ok.push_str("x,")
+    n = n + 1
+  }
+  fields_ok.push_str("x")
+  match csv.parse_checked(fields_ok) {
+    Ok(r) => { print("100k ok rows={r.len()} f0={r.at(0).len()}") }
+    Err(e) => { print(e) }
+  }
+  var fields_bad = String.new()
+  n = 0
+  while n < 100000 {
+    fields_bad.push_str("x,")
+    n = n + 1
+  }
+  fields_bad.push_str("x")
+  show(fields_bad)
+  // newline-split rows count toward the same limit
+  var lines_ok = String.new()
+  n = 0
+  while n < 100000 {
+    lines_ok.push_str("x\n")
+    n = n + 1
+  }
+  match csv.parse_checked(lines_ok) {
+    Ok(r) => { print("100k lines ok rows={r.len()}") }
+    Err(e) => { print(e) }
+  }
+}

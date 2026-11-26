@@ -1,0 +1,66 @@
+// std.csv line-ending edges: LF, CRLF and lone CR all end a record, a final
+// newline is optional, blank lines become a row with one empty field, CR/LF
+// inside a quoted field stay data, and csv.write always emits CRLF so
+// parse(write(rows)) is row-identical for every ending.
+import std.csv
+
+fn dump(rows: view List<List<String>>) {
+  var i = 0
+  while i < rows.len() {
+    var line = String.from("r{i}=")
+    var j = 0
+    while j < rows.at(i).len() {
+      if j > 0 { line.push_str("|") }
+      line.push_str(String.from("[{rows.at(i).at(j)}]"))
+      j = j + 1
+    }
+    print(line)
+    i = i + 1
+  }
+}
+
+fn main() {
+  dump(csv.parse("a,b\r\nc,d"))
+  dump(csv.parse("a,b\r\nc,d\r\n"))
+  dump(csv.parse("a,b\nc,d\n"))
+  dump(csv.parse("a,b\nc,d"))
+  dump(csv.parse("a\rb"))
+  dump(csv.parse("a\r\nb"))
+  dump(csv.parse("a\r\rb"))
+  dump(csv.parse("a\r\n\r\nb"))
+  dump(csv.parse("a\n\n"))
+  dump(csv.parse("\r"))
+  dump(csv.parse("\r\n"))
+  dump(csv.parse("\n"))
+  // embedded newlines and CR inside a quoted field survive
+  dump(csv.parse("\"x\ny\""))
+  dump(csv.parse("\"x\r\ny\"\r\n"))
+  dump(csv.parse("\"x\ry\""))
+  // no trailing newline after a quoted field
+  dump(csv.parse("\"q\""))
+  // write always CRLF: bytes of a two-row write
+  var rows = List<List<String>>.new()
+  var r1 = List<String>.new()
+  r1.push("a")
+  rows.push(move r1)
+  var r2 = List<String>.new()
+  r2.push("b")
+  rows.push(move r2)
+  let w = csv.write(rows)
+  var bytes = String.new()
+  var k = 0
+  while k < w.len() {
+    bytes.push_str(String.from("{w.byte(k)} "))
+    k = k + 1
+  }
+  print(bytes)
+  // round trip keeps embedded CR/LF fields and row count
+  var rows2 = List<List<String>>.new()
+  var r3 = List<String>.new()
+  r3.push("l1\nl2")
+  r3.push("c1\rc2")
+  rows2.push(move r3)
+  let w2 = csv.write(rows2)
+  let back = csv.parse(w2)
+  print("rows={back.len()} f0={back.at(0).at(0).len()} f1={back.at(0).at(1).len()}")
+}

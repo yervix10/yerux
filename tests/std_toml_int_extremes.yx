@@ -1,0 +1,57 @@
+// std.toml integer extremes: i64 min/max, values past the ends of i64,
+// hex/oct/bin with underscores, signs on decimals (radix forms reject the
+// sign), leading zeros, and has/get_int_opt disagreement on overflow.
+import std.toml
+
+fn get_int(doc: view String, key: view String) -> Int {
+  match toml.get_int_opt(doc, key) {
+    Some(v) => { return v }
+    None => { return -999 }
+  }
+}
+
+fn opt(doc: view String, key: view String) -> Int {
+  match toml.get_int_opt(doc, key) {
+    Some(_) => { return 1 }
+    None => { return 0 }
+  }
+}
+
+fn main() {
+  print(get_int("a = 9223372036854775807", "a"))
+  print(get_int("a = -9223372036854775808", "a"))
+  print(opt("a = 9223372036854775808", "a"))
+  print(toml.has("a = 9223372036854775808", "a"))
+  print(opt("a = -9223372036854775809", "a"))
+  print(toml.has("a = -9223372036854775809", "a"))
+  print(get_int("a = 0", "a"))
+  print(get_int("a = -0", "a"))
+  print(get_int("a = +7", "a"))
+  print(get_int("a = 007", "a"))
+  print(get_int("a = 0x7FFFFFFFFFFFFFFF", "a"))
+  print(opt("a = 0x8000000000000000", "a"))
+  print(get_int("a = -0x8000000000000000", "a"))
+  print(get_int("a = 0o777777777777777777777", "a"))
+  print(opt("a = 0o1000000000000000000000", "a"))
+  print(get_int("a = 0b111111111111111111111111111111111111111111111111111111111111111", "a"))
+  print(get_int("a = 1_000_000", "a"))
+  print(opt("a = 1_", "a"))
+  print(opt("a = 1__0", "a"))
+  print(opt("a = _1", "a"))
+  print(opt("a = 0x", "a"))
+  print(opt("a = xyz", "a"))
+  print(opt("a = 12abc", "a"))
+  print(opt("a = 9223372036854775807x", "a"))
+  // signed radix is rejected (sign not stripped before the prefix check)
+  print(get_int("a = -0x10", "a"))
+  print(opt("a = -0x10", "a"))
+  print(get_int("a = +0o17", "a"))
+  print(get_int("a = -16", "a"))
+  print(get_int("a = +16", "a"))
+  // get_int maps a present-but-not-integer value to 0, not to a sentinel
+  print(get_int("a = xyz", "a"))
+  print(get_int("a = true", "a"))
+  print(get_int("a = \"9\"", "a"))
+  print(toml.has("a = 0", "a"))
+  print(toml.has("a = false", "a"))
+}

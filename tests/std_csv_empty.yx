@@ -1,0 +1,61 @@
+// std.csv empties: empty input, empty fields, rows made only of separators,
+// a whitespace field kept verbatim, and the write side of empty rows (an empty
+// row serialises to a bare CRLF and parses back as one empty field).
+import std.csv
+
+fn dump(rows: view List<List<String>>) {
+  var i = 0
+  while i < rows.len() {
+    var line = String.from("r{i}=")
+    var j = 0
+    while j < rows.at(i).len() {
+      if j > 0 { line.push_str("|") }
+      line.push_str(String.from("[{rows.at(i).at(j)}]"))
+      j = j + 1
+    }
+    print(line)
+    i = i + 1
+  }
+}
+
+fn main() {
+  print(csv.parse("").len())
+  dump(csv.parse(""))
+  dump(csv.parse(","))
+  dump(csv.parse(",,"))
+  dump(csv.parse("a,"))
+  dump(csv.parse(",a"))
+  dump(csv.parse("a,,b"))
+  dump(csv.parse(" , "))
+  dump(csv.parse(" "))
+  dump(csv.parse("\"\""))
+  dump(csv.parse("\n"))
+  dump(csv.parse("\r\n"))
+  // checked accepts all of these
+  match csv.parse_checked("") { Ok(r) => { print("empty ok {r.len()}") } Err(e) => { print(e) } }
+  match csv.parse_checked(",,") { Ok(r) => { print("commas ok {r.len()}") } Err(e) => { print(e) } }
+  match csv.parse_checked("\"\",\"\"") { Ok(r) => { print("quoted ok {r.len()}") } Err(e) => { print(e) } }
+  // numbers and words are opaque text: no coercion, leading zeros kept
+  let nums = csv.parse("9223372036854775808,-0,1e308,000123")
+  print(nums.at(0).at(0))
+  print(nums.at(0).at(1))
+  print(nums.at(0).at(2))
+  print(nums.at(0).at(3))
+  // write of rows whose fields are all empty
+  var rows = List<List<String>>.new()
+  var r1 = List<String>.new()
+  r1.push("")
+  r1.push("")
+  rows.push(move r1)
+  var r2 = List<String>.new()
+  r2.push("")
+  rows.push(move r2)
+  let w = csv.write(rows)
+  print("wlen={w.len()}")
+  dump(csv.parse(w))
+  // a row with no fields at all becomes one empty field after a round trip
+  var only = List<List<String>>.new()
+  var none = List<String>.new()
+  only.push(move none)
+  dump(csv.parse(csv.write(only)))
+}

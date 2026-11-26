@@ -1,0 +1,55 @@
+// std.toml empties and silent failures: empty document, whitespace-only and
+// comment-only input, bare values reading as "", empty arrays, absent keys,
+// empty vs malformed table headers, and the absence of any error position
+// (malformed input is indistinguishable from a missing key).
+import std.toml
+
+fn main() {
+  // empty / blank / comment-only documents
+  print(toml.has("", "a"))
+  print(toml.has("   ", "a"))
+  print(toml.has("# only a comment", "a"))
+  print(toml.get_string("", "a").len())
+  print(toml.get_int("", "a"))
+  print(toml.get_bool("", "a"))
+  print(toml.get_array("", "a").len())
+  print(toml.get_string_opt("", "a").is_some())
+  print(toml.get_int_opt("", "a").is_some())
+  print(toml.get_bool_opt("", "a").is_some())
+  // present key, empty value
+  print(toml.has("a = \"\"", "a"))
+  print(toml.get_string("a = \"\"", "a").len())
+  print(toml.get_string_opt("a = \"\"", "a").is_some())
+  // empty array
+  let empty_arr = toml.get_array("a = []", "a")
+  print(empty_arr.len())
+  print(toml.has("a = []", "a"))
+  // bare value: has is true, get_string reads ""
+  print(toml.has("a = xyz", "a"))
+  print(toml.get_string("a = xyz", "a").len())
+  print(toml.get_string_opt("a = xyz", "a").is_some())
+  // absent keys
+  print(toml.has("b = 1", "a"))
+  print(toml.get_int("b = 1", "a"))
+  print(toml.get_string_opt("b = 1", "a").is_some())
+  // empty table header name: `[ ]` trims to "" and acts as root scope
+  print(toml.has("[ ]\nk = 3", "k"))
+  print(toml.get_int("[ ]\nk = 3", "k"))
+  // `[]` (len < 3) aborts the whole lookup: keys after it are unreachable
+  print(toml.has("[]\nk = 3", "k"))
+  print(toml.get_int("x = 9\n[]\nk = 3", "x"))
+  print(toml.get_int("[]\nx = 9", "x"))
+  // malformed table header aborts: no line, no offset, just "not found"
+  print(toml.has("[bad\ny = 1", "y"))
+  print(toml.get_int("[bad\ny = 1", "y"))
+  print(toml.get_int("x = 9\n[bad\ny = 1", "x"))
+  print(toml.get_int("[bad\ny = 1", "x"))
+  // keys before the bad header are still reachable
+  print(toml.get_int("x = 9\n[bad\ny = 1", "x"))
+  // unterminated multi-line array swallows following lines into the value
+  let unter = toml.get_array("a = [1,\n 2\nb = 3", "a")
+  print(unter.len())
+  print(unter.at(0))
+  print(unter.at(1))
+  print(toml.get_int("a = [1,\n 2\nb = 3", "b"))
+}

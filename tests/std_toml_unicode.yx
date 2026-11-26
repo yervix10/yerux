@@ -1,0 +1,33 @@
+// std.toml unicode: UTF-8 in values, keys and comments; \uXXXX and \UXXXXXXXX
+// escapes resolve to scalars; invalid escapes are accepted silently with the
+// backslash dropped (\q -> q, truncated \u00, lone surrogate \uD800).
+import std.toml
+
+fn main() {
+  print(toml.get_string("a = \"café\"", "a"))
+  print(toml.get_string("a = \"日本語\"", "a"))
+  print(toml.get_string("a = \"emoji 😀\"", "a"))
+  print(toml.get_string("a = \"\\u00e9\"", "a"))
+  print(toml.get_string("a = \"\\U0001F600\"", "a"))
+  print(toml.get_string("a = \"\\u4e2d\\u6587\"", "a"))
+  // invalid escapes: backslash dropped, no error
+  print(toml.get_string("a = \"x\\qy\"", "a"))
+  print(toml.get_string("a = \"\\u00\"", "a"))
+  print(toml.get_string("a = \"\\uD800\"", "a"))
+  print(toml.get_string("a = \"\\U00110000\"", "a"))
+  print(toml.get_string("a = \"trailing\\\"", "a"))
+  // unicode key and table name
+  print(toml.has("\"café\" = 1", "café"))
+  print(toml.get_int("\"café\" = 1", "café"))
+  print(toml.has("[mesa]\ncafé = 2", "mesa.café"))
+  print(toml.get_int("[mesa]\ncafé = 2", "mesa.café"))
+  // unicode in a comment is ignored
+  print(toml.has("a = 1 # héllo 😀", "a"))
+  // unicode in an array element
+  let arr = toml.get_array("a = [\"ñ\", \"日\"]", "a")
+  print(arr.len())
+  print(arr.at(0))
+  print(arr.at(1))
+  // literal string with unicode and a backslash kept as data
+  print(toml.get_string("a = 'café \\d'", "a"))
+}

@@ -1,0 +1,63 @@
+// std.toml quote edges: basic strings with escapes, literal strings, unterminated
+// strings, quoted keys (unquoted on lookup) vs quoted table headers (quotes kept),
+// '#' inside strings is data, and arrays whose elements carry quotes.
+import std.toml
+
+fn main() {
+  // basic string escapes
+  print(toml.get_string("a = \"x\\ty\"", "a"))
+  print(toml.get_string("a = \"x\\ny\"", "a"))
+  print(toml.get_string("a = \"x\\\"y\"", "a"))
+  print(toml.get_string("a = \"x\\\\y\"", "a"))
+  print(toml.get_string("a = \"\"", "a"))
+  print(toml.get_string("a = \"with # hash\"", "a"))
+  print(toml.get_string("a = \"with = eq\"", "a"))
+  // literal string keeps backslashes
+  print(toml.get_string("a = 'x\\ty'", "a"))
+  print(toml.get_string("a = 'no \"escapes\"'", "a"))
+  // unterminated strings
+  print(toml.get_string("a = \"open", "a"))
+  print(toml.get_string("a = 'open", "a"))
+  print(toml.get_string("a = \"x\\", "a"))
+  // quoted key is unquoted on lookup
+  print(toml.has("\"key\" = 1", "key"))
+  print(toml.get_int("\"key\" = 1", "key"))
+  print(toml.has("key = 1", "\"key\""))
+  // quoted table header keeps its quotes: lookup by bare name fails
+  print(toml.has("[\"srv\"]\nport = 8080", "srv.port"))
+  print(toml.has("[srv]\nport = 8080", "srv.port"))
+  // comment vs string: '#' inside a quoted value is data
+  print(toml.get_string("a = \"# not comment\" # comment", "a"))
+  print(toml.has("a = \"# not comment\" # comment", "a"))
+  // arrays: quotes protect ',', ']' and '#'
+  let arr = toml.get_array("a = [\"x,y\", \"z]w\", \"v#w\"]", "a")
+  print(arr.len())
+  print(arr.at(0))
+  print(arr.at(1))
+  print(arr.at(2))
+  let lit = toml.get_array("a = ['x,y', 'z]w']", "a")
+  print(lit.len())
+  print(lit.at(0))
+  print(lit.at(1))
+  // comment stripped outside quotes, kept inside
+  let mixed = toml.get_array("a = [1, 2 # two\n]", "a")
+  print(mixed.len())
+  print(mixed.at(0))
+  print(mixed.at(1))
+  // ']' inside a single-quoted literal on the first line of a multi-line
+  // array: scan_brackets tracks only '"', so the depth closes early and the
+  // continuation line is dropped (tomllib keeps both elements)
+  let litml = toml.get_array("a = [']',\n 2]", "a")
+  print(litml.len())
+  print(litml.at(0))
+  // the same shape with double quotes survives
+  let dqml = toml.get_array("a = [\"]x\",\n 2]", "a")
+  print(dqml.len())
+  print(dqml.at(0))
+  print(dqml.at(1))
+  // text after the matching ']' is read as more elements
+  let trail = toml.get_array("a = [1] trailing", "a")
+  print(trail.len())
+  print(trail.at(0))
+  print(trail.at(1))
+}
