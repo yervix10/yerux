@@ -1,6 +1,6 @@
 # Yerux Guide
 
-A one-page tour of the Yerux language (v0.9.0-rc1, the version in `Cargo.toml`; `yerux --version`). For a progressive tutorial see [The Yerux Book](book/README.md). Every `yx` code block in this guide is a complete program: save it as `file.yx` and run `yerux run file.yx` (or `yerux run file.yx --native`). The programs were run on both backends and the comments show their real output.
+A one-page tour of the Yerux language (v1.0.0, the version in `Cargo.toml`; `yerux --version`). For a progressive tutorial see [The Yerux Book](book/README.md). Every `yx` code block in this guide is a complete program: save it as `first.yx` (the name section 1 uses) and run `yerux run first.yx` (or `yerux run first.yx --native`). The programs were run on both backends and the comments show their real output.
 
 ---
 
@@ -1216,7 +1216,7 @@ fn main() {
 ## 23. Running the Compiler
 
 ```bash
-yerux --version                      # yerux 0.9.0-rc1
+yerux --version                      # yerux 1.0.0
 yerux doctor                         # C compiler, wine, both backends: what this installation can do
 yerux check file.yx                  # type-check only
 yerux c file.yx                      # emit C code to stdout

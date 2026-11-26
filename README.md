@@ -10,21 +10,27 @@ backend that writes x86-64 Linux ELF files by itself, plus Linux AArch64 and Win
 
 ## Install and run
 
-```sh
-cargo build --release                 # target/release/yerux
-export PATH="$PWD/target/release:$PATH"
-yerux doctor                          # what this installation can do (C compiler, wine, both backends)
-```
-
-Install the latest stable release on Linux x86-64 or AArch64:
+Install the latest stable release (Linux x86-64 or AArch64):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yervix10/yerux/main/install.sh | sh
 ```
 
-The installer verifies the archive's SHA-256 and puts `yerux` in `~/.local/bin`. The
-standard library is built into the binary. See [Releasing Yerux](docs/RELEASING.md)
-for pinned and offline installs.
+The installer verifies the archive's SHA-256 and puts `yerux` in `~/.local/bin` (add it to your `PATH`);
+`sh install.sh --prefix DIR` installs elsewhere. The standard library is built into the binary.
+See [Releasing Yerux](docs/RELEASING.md) for pinned and offline installs.
+
+Or build the compiler from source (Rust 1.89 or newer; the default backend also needs a C compiler):
+
+```sh
+git clone https://github.com/yervix10/yerux && cd yerux
+cargo build --release                 # target/release/yerux
+export PATH="$PWD/target/release:$PATH"
+yerux doctor                          # what this installation can do (C compiler, wine, both backends)
+```
+
+The commands below run the programs of this repository, so they need that checkout: `examples/` is not
+installed with the binary (`yerux new app` + `yerux run` and `yerux test` work from any directory):
 
 ```sh
 yerux run examples/01_lists.yx            # through C (needs cc)
@@ -32,10 +38,15 @@ yerux run examples/01_lists.yx --native   # native backend, no C compiler
 yerux check examples/01_lists.yx          # type and ownership check only
 yerux build examples/01_lists.yx --native -o lists
 yerux new app && cd app && yerux run      # a project: yerux.toml + src/main.yx
-yerux test                                # run `test "name" { .. }` blocks
-yerux fmt --check .                       # formatter
-yerux lsp                                 # language server (VS Code extension in editors/vscode)
+yerux test tests/test_cmd/pass.yx         # the `test "name" { .. }` blocks of one file (no FILE: the project's)
+yerux fmt --check .                       # the files the formatter would rewrite
+yerux lsp                                 # language server on stdin/stdout, started by your editor
 ```
+
+`yerux fmt --check .` lists every file whose formatting would change, and this repository is not written in
+that canonical style yet (the deliberately broken `tests/e*.yx` fixtures cannot be formatted at all), so expect
+a long list and exit status 1; `yerux fmt --stdout file.yx` shows one file's canonical text without writing it.
+The VS Code extension lives in `editors/vscode`.
 
 `--target aarch64` and `--target windows` select the cross targets (native backend, console programs; see
 [docs/WINDOWS.md](docs/WINDOWS.md) for what is verified and what is rejected).
