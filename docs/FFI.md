@@ -1,6 +1,15 @@
 # Yerux FFI and dynamic linking
 
-Status: experimental. `Ptr<T>` can be read, written and offset inside `unsafe` (`p.read()`, `p.write(v)`, `p.add(n)`, `p.sub(n)`, `p.offset_from(q)`, `p.addr()`, `Ptr<T>.from_addr(a)`; element types `Int`, `UInt64`, `UInt8`, `Ptr<..>`; null read/write panics; no bounds or alignment checks; no `*p` sugar or struct field access through a pointer yet), so C buffers can be filled and inspected without helper C code (`tests/ptr_rw.yx`). `extern "C" { fn ... }` declarations, `link "..."`, C scalar prototypes and direct calls work through the C backend. Linux native builds use eager ELF imports and pass scalar integers, pointers and floats through SysV on x86-64 and AAPCS64 on AArch64. An extern parameter declared as `Text` receives a pointer to NUL-terminated UTF-8 bytes for either a literal or a typed `Text` value. `Ptr<T>` is accepted as a raw C ABI parameter or result, and extern calls require a lexical `unsafe { ... }` block. The dynamic ELF writer maps code and read-only literals RX and loader metadata/GOT/runtime state RW in separate page-aligned `PT_LOAD`s, with a non-executable RW stack. Variadic declarations/calls (section 6.1) work on both native Linux targets and the C backend. AArch64 imports require the corresponding glibc loader and shared libraries. AArch64 executables with both C imports and Yerux workers use pthreads so workers have libc TLS. Windows PE supports a small [Universal CRT subset](WINDOWS.md#current-cross-build-audit-and-wine-verification). A first-class `CString` helper remains unimplemented.
+Status: experimental. Sections 1-5, 8 and 10 are design and research notes; section 6.1, section 7 (where marked) and the table below say what the compiler does (0.9.0-rc1).
+
+| Implemented | Not implemented |
+|---|---|
+| `extern "C" { fn .. }`, `link ".."`, variadic declarations | `from <os> "lib"`, `optional` libraries, `@link_name` |
+| sized integers, `Float`/`Float32`, `Ptr<T>`, lexical `unsafe` blocks | `CInt`/`CChar`/`USize` aliases, `Ptr<Void>`, `RawFn`, `Never`, `CStr`/`c".."` |
+| C backend; native Linux x86-64 and AArch64; Windows PE with a Universal CRT subset | `@c struct`, struct by value, `view`/`mut` extern parameters |
+| | callbacks (`extern "C" fn` with a body), `#![forbid(unsafe)]`, the `ffi` capability, binding generator |
+
+`Ptr<T>` can be read, written and offset inside `unsafe` (`p.read()`, `p.write(v)`, `p.add(n)`, `p.sub(n)`, `p.offset_from(q)`, `p.addr()`, `Ptr<T>.from_addr(a)`; element types `Int`, `UInt64`, `UInt8`, `Ptr<..>`; null read/write panics; no bounds or alignment checks; no `*p` sugar or struct field access through a pointer yet), so C buffers can be filled and inspected without helper C code (`tests/ptr_rw.yx`). `extern "C" { fn ... }` declarations, `link "..."`, C scalar prototypes and direct calls work through the C backend. Linux native builds use eager ELF imports and pass scalar integers, pointers and floats through SysV on x86-64 and AAPCS64 on AArch64. An extern parameter declared as `Text` receives a pointer to NUL-terminated UTF-8 bytes for either a literal or a typed `Text` value. `Ptr<T>` is accepted as a raw C ABI parameter or result, and extern calls require a lexical `unsafe { ... }` block. The dynamic ELF writer maps code and read-only literals RX and loader metadata/GOT/runtime state RW in separate page-aligned `PT_LOAD`s, with a non-executable RW stack. Variadic declarations/calls (section 6.1) work on both native Linux targets and the C backend. AArch64 imports require the corresponding glibc loader and shared libraries. AArch64 executables with both C imports and Yerux workers use pthreads so workers have libc TLS. Windows PE supports a small [Universal CRT subset](WINDOWS.md#current-cross-build-audit-and-wine-verification). A first-class `CString` helper remains unimplemented.
 
 ## 0. Conclusions up front
 
@@ -8,7 +17,7 @@ Status: experimental. `Ptr<T>` can be read, written and offset inside `unsafe` (
 2. **macOS, iOS and Windows cannot be libc-free.** Their stable ABI is the system-library ABI, not the syscall ABI. Every windowed program there links dynamically. So a dynamic-linking-capable object writer (PE, Mach-O) is a hard requirement for any non-Linux platform; this is not optional polish.
 3. The minimal Linux dynamic ELF is **small** (about 4.2 KB file, 4 program headers, 9 dynamic entries, no PLT, no hash table, no section headers). Section 9 gives the exact bytes and `docs/examples/mk_dyn_hello.py` generates it; it was run on glibc here and prints `hello`.
 4. Recommended shape: **one DT_NEEDED (`libc.so.6`)** for `dlopen`/`dlsym`, everything else (Vulkan, Wayland client libs if ever wanted, libxkbcommon...) loaded lazily at run time so a missing GPU library degrades to the software path instead of failing at process start.
-5. Safety: two independent gates. `unsafe` (memory soundness, local, lexical) and a `ffi` capability (authority, per package, fits the planned v0.5 effects system).
+5. Safety: the design has two independent gates, `unsafe` (memory soundness, local, lexical; implemented) and an `ffi` capability (authority, per package; **not implemented**: there is no effect system and no capability enforcement, see CAPABILITIES.md).
 
 ## 1. ELF dynamic linking basics
 
@@ -70,7 +79,7 @@ Two build modes therefore coexist: `--static` (today's output: syscalls only, th
 
 Sources for the Win64 column: Microsoft's x64 calling convention page. SysV and AAPCS64 columns are from the psABI documents and Apple's arm64 notes (author knowledge, not re-fetched in this session; the SysV psABI PDF host refused the fetch).
 
-**Consequences for the Yerux backend**
+**Consequences for the Yerux backend** (notes written before the FFI work; the backend has since gained sized integers, floats, a register allocator and the SysV/AAPCS64 call paths for scalar arguments. Struct by value and callbacks are still missing.)
 
 - **Register allocation (N2).** Model every call as clobbering the caller-saved set of the *callee's* convention. Today every vreg lives in memory so this is trivially safe; it becomes a real constraint the day linear scan lands. Design the allocator with a per-call-site `clobber_mask` from the start.
 - **Frame layout.** Compute the frame so `rsp` is 16-aligned at every `call`; today that is only coincidentally right for our own runtime routines, which is the first bug FFI will expose (SSE `movaps` inside libc crashes on a misaligned stack, with a confusing SIGSEGV).
@@ -107,7 +116,10 @@ Sources for the Win64 column: Microsoft's x64 calling convention page. SysV and 
 
 ## 6. Proposed Yerux syntax
 
-Today `Int` is the only integer. New primitives first: `Int8 Int16 Int32 Int64 UInt8 UInt16 UInt32 UInt64 USize Float32 Float64 CInt CChar` aliases, `Ptr<T>`, `RawFn(...) -> ...` function pointer type, and `#[repr(C)]`-style `struct` layout attribute (`@c struct`).
+**Proposal, mostly not implemented**: the block below does not compile. The implemented form is
+`link "lib"` plus `extern "C" { fn name(a: Int32, p: Ptr<UInt8>) -> Int32 }`, called inside `unsafe { .. }`.
+Sized integers (`Int8`..`UInt64`), `Float`, `Float32` and `Ptr<T>` exist; `USize`, `CInt`, `CChar`,
+`RawFn` and `@c struct` do not.
 
 ```
 // Declaration block: where the symbols live, and how they are loaded.
@@ -139,7 +151,7 @@ Design points:
 - **`Ptr<T>`** is the only pointer type in the language. It has no borrow semantics, can be null, can be cast, and its dereference exists only inside `unsafe`. It cannot be stored where the ownership model would require a drop (a `Ptr` has no drop glue). This keeps rule 3 (borrows are second-class, no lifetimes) intact: safe code never sees a pointer; `view`/`mut` parameters lower to `Ptr` only at the call into `extern`.
 - **Ownership across the boundary:** passing `view T` / `mut T` of a `@c struct` to an extern function lends a pointer for the call only. `move`-ing a Yerux value into C is only allowed through an explicit `Handle` wrapper whose drop calls the library's destroy function (e.g. `vkDestroyDevice`), written by the binding author with `unsafe`.
 - **Strings:** A proposed `CStr` type (literal `c"..."`) and an allocating `to_cstr` would cover owned C string buffers.
-- **Errors:** extern calls return raw codes. Safe wrappers convert `VkResult` etc. into `Result<T, E>` (v0.4).
+- **Errors:** extern calls return raw codes. Safe wrappers written in Yerux can convert `VkResult` etc. into `Result<T, E>`.
 
 ### 6.1 Variadic calls (implemented)
 
@@ -159,16 +171,26 @@ extern "C" {
 
 ## 7. Safety model
 
-Two orthogonal checks; both are cheap to implement because Yerux already has a checker pass.
+The design has two orthogonal checks. Only the first exists.
 
-1. **`unsafe` block** (memory safety): required to call any `extern` function, dereference `Ptr`, cast integers to pointers, or transmute. Everything else keeps the language's no-UB promise. A package may say `#![forbid(unsafe)]`. The point: unsafe code is a short audited layer (`yerux.vulkan`, `yerux.wayland`), the UI framework above it is safe.
-2. **`ffi` capability** (authority; aligns with SPEC v0.5 effects): a package can only declare `extern` blocks or call `unsafe` if its manifest grants the `ffi` capability *and* the root application allows it. Third-party widgets then cannot silently `dlopen` or issue syscalls. Syscall-level capabilities (`net`, `fs`) subdivide this later (`write` to fd 1 is an `io` effect, `socket` is `net`).
+1. **`unsafe` block** (memory safety). *Implemented* for calls to `extern` functions and for the `Ptr<T>`
+   operations that touch memory or build an address (`alloc`, `free`, `read`, `write`, arithmetic,
+   `addr`, `from_addr`; `tests/e1564_ptr_outside_unsafe.yx`). `Ptr<T>.null()` and `is_null()` need no `unsafe`, and a
+   `Ptr` can be stored in a struct or moved into a task: the compiler checks nothing about what it points to.
+   `#![forbid(unsafe)]` is **not implemented**. The reserved `__` intrinsics (docs/STDLIB_IO.md) bypass
+   this gate: user code can call them without `unsafe`.
+2. **`ffi` capability** (authority). **Not implemented.** The idea: a package may declare `extern` blocks or
+   use `unsafe` only if its manifest requests `ffi` and the root application grants it, so third-party code
+   cannot silently `dlopen` or issue syscalls; syscall-level capabilities (`net`, `fs`) would subdivide it.
+   Today any dependency can declare `extern` blocks and use `unsafe`, and a `[capabilities]` manifest
+   section is ignored. See CAPABILITIES.md.
 
-A fully memory-safe FFI is not possible (C is not checkable); the honest guarantee is "all unsafety is lexically marked and capability-gated".
+A fully memory-safe FFI is not possible (C is not checkable); today the guarantee is only that `extern`
+calls and raw-pointer accesses are lexically marked with `unsafe`.
 
 ## 8. Staged plan and effort
 
-Estimates are person-weeks for one experienced compiler engineer who already wrote `x64.rs`; elapsed time is 1.3-2x with learning and testing.
+Estimates are person-weeks for one experienced compiler engineer who already wrote `x64.rs`; elapsed time is 1.3-2x with learning and testing. State today: **F0** and **F1** are implemented (F1 also on AArch64); **F5** and **F6** exist in part (PE writer with a Universal CRT subset and no `LoadLibrary` surface in the language; AArch64 backend with the limits in BACKEND.md); **F2, F3, F4, F7, F8 and F9** are not implemented.
 
 | Stage | Deliverable | Depends on | Effort |
 |---|---|---|---|

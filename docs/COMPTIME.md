@@ -1,6 +1,23 @@
 # Yerux compile-time execution and explicit allocators
 
-Status: design spec. Implemented so far: scalar `comptime` (src/comptime.rs) and the library `Arena<T>` (src/prelude_arena.yx); see SPEC.md. The rest is still design. Two features that share one idea: *the program decides, in ordinary Yerux, things other languages hide in macros and global runtime state.* `comptime` runs Yerux code during compilation; **allocators** make "where does this memory come from" an explicit, checkable choice (needed by the renderer's per-frame arena).
+Status (0.9.0-rc1): design spec, of which a small part is implemented. Anything not listed as implemented
+here is **not implemented**; the reference for what works is [../SPEC.md](../SPEC.md) (Comptime, Arenas, `const` items).
+
+| Implemented | Evidence |
+|---|---|
+| `comptime expr` with an `Int`, `Char` or `Bool` result, and `comptime assert(cond)` inside functions (src/comptime.rs, which interprets the checked AST) | tests/comptime_basic.yx |
+| calls to ordinary functions with scalar parameters; `if`, `while`, `for`, `match` on `Int`/`Char`, fixed-size arrays | tests/comptime_arrays.yx |
+| errors E-K1 (not allowed), E-K2 (20 000 000 steps), E-K3 (result type), E-K6 (panic, failed assert, depth 1000) | tests/e1962_comptime_depth_1000.yx |
+| `const` items (`Int`, `Int<lo..hi>`, `Bool`, `Char`) folded from literals, earlier consts and operators; no calls | tests/const_item_basic.yx |
+| `const N: Int` generic parameters, inferred from array lengths | tests/e1023_const_generic_lengths.yx |
+| the library `Arena<T>` with `ArenaRef` tickets (src/prelude_arena.yx) | tests/arena_basic.yx, tests/arena_stale.yx |
+
+Not implemented: everything else in this document, including `comptime fn`/`for`, `comptime note`/`embed`,
+two-argument `assert`, constants of `List`/`String`/structs, constants computed by calls, reflection, E-K4,
+E-K5 and E-K7, the IR interpreter and virtual heap, result caching, `arena name { }` blocks, `new_in`/`clone_in`,
+pinning and E-A1..E-A3, `FixedBuf`/`Pool`/`Counting`/`--debug-arena`, and any effect or capability system.
+
+Two features that share one idea: *the program decides, in ordinary Yerux, things other languages hide in macros and global runtime state.* `comptime` runs Yerux code during compilation; **allocators** make "where does this memory come from" an explicit, checkable choice (needed by the renderer's per-frame arena).
 
 ## Part A. `comptime`
 
@@ -10,6 +27,7 @@ Status: design spec. Implemented so far: scalar `comptime` (src/comptime.rs) and
 - Zig showed that one language for both removes the need for macros and templates. Yerux has no macro language and will not get one.
 
 ### A2. Syntax
+The design; the block below does not compile today (see the table above).
 ```
 comptime fn crc_table() -> List<Int> {               // may only be called at compile time or from comptime
   var t = List.new()
@@ -23,24 +41,29 @@ comptime assert(N % 8 == 0, "N must be a multiple of 8")
 
 fn alloc_ring<const CAP: Int>() -> Ring<CAP> { ... } // comptime parameters (section A5)
 ```
-- `const NAME: T = expr`: global immutable value, `expr` evaluated at compile time. The value is a *constant*, stored read-only, **not** owned in the usual sense (no drop, can be `view`-borrowed everywhere, shared between threads as `readable`/`xfer` freely: it is immutable and static).
+- `const NAME: T = expr`: global immutable value, `expr` evaluated at compile time (today only scalar types and no calls). The value is a *constant*, stored read-only, **not** owned in the usual sense (no drop, can be `view`-borrowed everywhere, shared between threads as `readable`/`xfer` freely: it is immutable and static).
 - `comptime fn` (not implemented: `comptime fn` is a parse error today, tests/e1960_comptime_fn_keyword.yx; plain functions are evaluated by `comptime f(..)`): a function that can be evaluated by the interpreter. Ordinary (non-`comptime`) functions are also callable at compile time **if** they are pure enough (section A3); the keyword is an *assertion and a documentation*, and makes the compiler report why a function is not eligible. (Rule: `comptime fn` = checked for eligibility at its definition.)
 - `comptime expr` forces compile-time evaluation of an expression in a runtime function; failure is a compile error with the call stack.
-- `comptime assert(cond, msg)`: compile error when false.
+- `comptime assert(cond, msg)`: compile error when false (today `assert` takes only the condition, and the statement must be inside a function).
 - `comptime for` / `comptime if` unroll/prune at compile time (A5), with conditions on constants and comptime parameters only. Not implemented: `comptime for` is a parse error today (tests/e1963_comptime_for_keyword.yx), and `comptime if { .. }` is read as a comptime expression, so it needs an `else`.
 
 ### A3. Semantics: what may run at compile time
+Today only the subset in the table above runs at compile time: no `List`, `String`, structs, enum values,
+closures, library calls or intrinsics (E-K1). The paragraphs below describe the full design.
 The compile-time evaluator is **the same language semantics** as runtime: checked arithmetic (overflow panics become compile errors "this overflows while evaluating the constant"), bounds checks, `List`/`String` with ownership. No second semantics.
 Allowed: arithmetic, control flow, structs/enums/match, `List`, `String`, calls to eligible functions, `comptime`-time allocators (A6: the compiler provides a compile-time heap).
-Not allowed (compile error E-K1 with explanation): `print` (can be made a compile-time *note* with `comptime note(x)`), file/network/clock/random/environment access, threads (CONCURRENCY.md), calls to `extern` functions, `unsafe` raw-pointer operations except those the evaluator implements (none initially), any function that needs a capability (effects, v0.5). Reading a file at compile time is possible only through an explicit `comptime embed("font.ttf") -> List<Int>` builtin that records the file as a build dependency (hash in the build cache; reproducible builds preserved).
+Not allowed (compile error E-K1 with explanation): `print` (can be made a compile-time *note* with `comptime note(x)`), file/network/clock/random/environment access, threads (CONCURRENCY.md), calls to `extern` functions, `unsafe` raw-pointer operations except those the evaluator implements (none initially), any function that needs a capability (not implemented: there is no effect or capability system). Reading a file at compile time is possible only through an explicit `comptime embed("font.ttf") -> List<Int>` builtin that records the file as a build dependency (hash in the build cache; reproducible builds preserved).
 Termination: a **step budget** of 20 000 000 interpreter steps (enforced today, E-K2, examples/e53_comptime_budget.yx) and a call depth limit of 1000 nested calls (E-K6, tests/e1962_comptime_depth_1000.yx). The **256 MiB memory budget** described here is design only: the compiler does not enforce it yet. A `--comptime-steps=N` flag is not implemented. No halting-problem solution is attempted.
 Determinism: evaluation is deterministic (no hash-iteration order, no addresses observable: pointers do not exist at this level), so builds are reproducible.
 
 ### A4. Which values may leave compile time
+Not implemented beyond `Int`, `Char` and `Bool`.
 A `const` or comptime-parameter value must be **serialisable**: Int, Bool, Text, enums, structs and `List<T>`/`String` of serialisable values, nested arbitrarily. The compiler emits them to a data section: a `List<Int>` becomes a read-only block with the same layout a runtime list has *and a sentinel capacity marking "static, never free"*. `Drop` on a static block is a no-op (drop glue checks `cap == STATIC`, or, better, the type system never lets the value be owned: a `const List` is only reachable as `view List`; to get an owned copy call `CRC.clone()`).
 Things that cannot leave: closures, handles, `Shared/Locked`, allocator objects. Error E-K3 explains.
 
 ### A5. Comptime and generics
+Implemented: type parameters (monomorphised) and `const N: Int` inferred from array lengths. Explicit value
+arguments (`f<4>()`), reflection, `comptime for/if` generation and the instance limits are not implemented.
 Yerux generics are monomorphised (SPEC: `List<T>` C backend instantiation; plan item 1). Comptime extends that:
 - **Type parameters** `fn f<T>(x: T)` and **value parameters** `fn g<const N: Int>(...)`. Instantiation key = (function, type args, const values). Const values must be comptime-known at the call site: literals, `const`s, other const parameters, comptime expressions. Mismatch: E-K4 "N must be known at compile time here; `n` is a runtime variable".
 - Typing is **after substitution** for values (as with `Int<0..N-1>`: bounds are evaluated when the instance is created) but **checked once generically for type parameters** (interfaces/traits constrain `T`; no C++-style duck typing errors at instantiation: if the generic body compiles for the declared constraints it compiles for every `T` satisfying them. Value parameters add the exception that arithmetic on `N` is checked at instantiation, with the instance name in the message).
@@ -49,6 +72,7 @@ Yerux generics are monomorphised (SPEC: `List<T>` C backend instantiation; plan 
 - **Instantiation limits**: depth 64 and 10 000 instances per program (E-K5) to stop runaway recursion like `f<N>` calling `f<N+1>`.
 
 ### A6. The IR interpreter
+Not implemented. The current evaluator (src/comptime.rs) interprets the checked AST.
 Comptime evaluation runs on the **compiler's own IR**, not on the AST, so semantics are identical to the backends and nothing is implemented twice:
 1. Pipeline for a comptime request: AST -> check (type + ownership) -> **IR for the called function and everything it reaches** (the same `ir.rs` lowering used for codegen; `opt.rs` may run, optionally, with `--comptime-opt`) -> `interp.rs`.
 2. `interp.rs`: a straightforward interpreter over `IrFunc` blocks: a frame per call with `Vec<i64>` vregs, a `Vec<u8>` byte-addressed **virtual heap** (separate address space, addresses are offsets: no host pointers, so memory-safety bugs in comptime code cannot crash the compiler, and `Alloc/Free/Load/Store/MemCpy/Load8/Store8/ListPush/...` are bounds-checked against the virtual heap). All checked ops, `Check`, `CheckNonEmpty`, drop flags and drop glue behave as in native code; panics produce a compile error E-K6 with the Yerux-level backtrace (the IR keeps source spans per instruction; functions record call sites).
@@ -59,20 +83,23 @@ Comptime evaluation runs on the **compiler's own IR**, not on the AST, so semant
 7. **Caching**: results of `const`/comptime calls are cached by (function IR hash, arguments); incremental builds skip unchanged constants.
 
 ### A7. Typing and ownership rules for comptime
+Design: owned constants and comptime parameters other than array lengths do not exist yet.
 - Inside comptime evaluation, ownership rules are identical (single owner, `move`, second-class borrows): the checker runs once, comptime code is not "unchecked".
 - A `const` of owned type is **borrow-only** (A4). `let mut_copy = CRC.clone()` makes a runtime-owned copy.
 - A comptime parameter is a value, never an owner: it is copied into each instance.
 - Comptime-known facts feed the optimiser: a `const` Int becomes `Const` vregs, `CRC.at(i)` with a constant list length gets `Check(i, 256)` with a known `n` (`rangeopt`), and `Int<0..255>` indices (RANGES.md) remove it entirely.
 
 ### A8. Interaction with other features
+Design notes. Signals and hot reload do not exist yet.
 - **Ranges**: `Int<0..N-1>`; `type Hour = Int<0..HOURS-1>`; conversions at comptime fail at compile time. Interval typing itself needs no comptime (pure compiler arithmetic), but bound expressions do.
 - **Concurrency**: `const` data are free to share across tasks (`readable`/`xfer`); comptime code cannot spawn.
 - **Signals**: no interaction except that static widget trees (a `const` layout description) may be built at comptime and `Shared` at runtime.
 - **Hot reload**: a changed comptime function invalidates every use (dependency edges `const -> users` recorded in the incremental cache), forcing the patchable-module path to treat those functions as changed (it cannot patch data that other code already inlined).
-- **Modules** (v0.4): comptime evaluation order across modules is by dependency (acyclic, as with imports); cyclic `const` dependencies: E-K7 listing the cycle.
-- **Effects/capabilities** (v0.5): comptime functions are by definition effect-free; the capability checker uses `comptime fn` as the "pure" marker.
+- **Modules**: `pub const` items are used across modules and a const sees only consts defined before it, so a cycle is a "used before its definition" error (tests/mod_err/const_cycle). A dedicated E-K7 listing the cycle is not implemented.
+- **Effects/capabilities**: not implemented. The idea is that comptime functions are effect-free and a future capability checker uses `comptime fn` as the "pure" marker; neither exists.
 
 ### A9. Error messages
+Illustrative. The compiler prints E-K1, E-K2, E-K3 and E-K6 with its own wording.
 ```
 error[E-K2]: compile-time evaluation ran too long (more than 20000000 steps) [E-K2]
   --> tables.yx:7:3
@@ -89,6 +116,10 @@ error[E-K6]: the constant `INV` panics while it is being computed: division by z
 ```
 
 ## Part B. Explicit allocators
+
+**Only the library `Arena<T>` is implemented** (`new`, `alloc`, `slot`, `get`/`set`, `len`, `is_live`,
+`reset`). Types with a `Drop` impl are accepted in it and their destructors run on `reset` or when the arena
+is dropped. Staleness is a run-time panic. B2-B8 below are design and **not implemented**.
 
 ### B1. Motivation
 - The renderer builds thousands of short-lived objects per frame (display-list ops, path points, layout results). `malloc/free` per object is slow and fragmenting; the natural strategy is a **per-frame arena**: bump-allocate, drop everything at once when the frame ends (RENDERING.md 2.7/2.8).
@@ -170,6 +201,10 @@ fn frame_build(app: mut App, a: arena) -> List<DrawOp> {   // returning an arena
 - Optimiser: bump allocation is a normal IR sequence (`load ptr; add; cmp limit; store`): inlinable, no impure op needed beyond the existing `Alloc` flavour; allocation sites with a non-escaping arena could be stack-allocated (future).
 
 ## Part C. Tests, plan, risks
+
+C1 and C2 are the plan. Of C2, only a restricted K0 and part of K1 (scalars, on the AST rather than the IR)
+exist; K2-K4 and A0-A3 are not implemented. The test files named in C1 are mostly not written (see the table
+at the top for the tests that exist).
 
 ### C1. Test plan
 1. `tests/comptime_*.yx`: CRC table equals runtime-computed table; const embedded and `.rodata`-resident (check via `yerux ir`/ELF section dump); `comptime assert` pass/fail; generics with `const N` instantiate to separate functions (`yerux ir` lists `f<4>`, `f<8>`); caching (second build reuses).

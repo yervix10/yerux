@@ -1,6 +1,10 @@
 # Yerux concurrency: threads without data races
 
-Status: design spec, written ahead of the implementation. Decided with the project owner: **shared-memory OS threads** for maximum performance, **data-race freedom checked at compile time** with rules simple enough to explain in five lines, **no `Send`/`Sync` vocabulary, no lifetimes**, structured concurrency by default, actors as a library on top. Prerequisites: closures (ROADMAP M5), generics, `Option/Result` (M2).
+Status (0.9.0-rc1): part of this design is implemented. "Runtime implementation status" and "Current APIs"
+say what the compiler does; everything else is design, and **not implemented** unless those sections list it.
+There is **no effect system or capability check** behind any thread operation.
+
+Decided with the project owner: **shared-memory OS threads** for maximum performance, **data-race freedom checked at compile time** with rules simple enough to explain in five lines, **no `Send`/`Sync` vocabulary, no lifetimes**, structured concurrency by default, actors as a library on top. Prerequisites: closures (ROADMAP M5), generics, `Option/Result` (M2).
 
 ## Runtime implementation status
 
@@ -32,8 +36,9 @@ operations.
 
 These intrinsics are part of the reserved raw runtime surface described in
 [STDLIB_IO.md](STDLIB_IO.md). Both native Linux targets support them.
-The AArch64 implementation is tested under QEMU. Native Windows rejects
-these intrinsics with a target-specific diagnostic. The structured API uses `scope { ... }`, `spawn move` and
+The AArch64 implementation is tested under QEMU. Windows PE implements workers
+with `CreateThread` and contended locks with `WaitOnAddress` (limits in
+[WINDOWS.md](WINDOWS.md)). The structured API uses `scope { ... }`, `spawn move` and
 `JoinHandle<T>.join() -> Result<T, ThreadPanic>`. Owned captures are moved,
 and scalar captures are copied. Borrow captures into spawned workers are
 rejected, including borrowed scalar parameters. Handles join when dropped.
@@ -44,8 +49,8 @@ The checker rejects structural transfers of `@thread_bound` data, handles,
 function values and erased trait objects. `ThreadDone` represents successful
 completion of a worker without a return value.
 
-Recoverable worker panics return `Err(ThreadPanic)` without printing a
-panic message. The runtime walks registered owned locals before returning to
+Recoverable worker panics write `panic: ` and the message to stderr and make
+`join` return `Err(ThreadPanic)`. The runtime walks registered owned locals before returning to
 the worker trampoline and dropping its capture environment. This also joins
 live child handles. User `defer` actions are skipped on panic. Raw workers,
 parallel iterations and panics in the initial thread still terminate the
@@ -62,8 +67,10 @@ Native and C `print` calls serialize complete lines.
 `parallel for` supports integer ranges and read-only list iteration. It runs
 up to four interleaved lanes with OS workers joined before the loop returns.
 Each iteration can read ordinary data and mutate shared state through
-`Atomic` or `Locked`. Work stealing, pooled workers, explicit steps and
-disjoint mutable slicing remain planned.
+`Atomic` or `Locked`. Work stealing, a shared pool for `parallel for`, explicit
+steps and disjoint mutable access from parallel tasks are not implemented
+(`split_at_mut` and `for mut c in xs.chunks(k)` split an array sequentially;
+the halves cannot be captured by `spawn`).
 
 The prelude also exposes `Mutex<T>` as a named facade over `Locked<T>`.
 `mutex_update(lock, f)` runs a mutating callback; `mutex_with(lock, f)` and
@@ -74,7 +81,7 @@ same exclusive futex mutex and scoped-borrow restrictions as `Locked`.
 Readers increment a shared count, so multiple readers can proceed together;
 writers claim an exclusive flag and wait for active readers. Acquisition is
 spin-based and does not guarantee fairness. A panic inside a callback can
-leave the lock held; recoverable panic-safe release is future work.
+leave the lock held; panic-safe release for `RwLock` is not implemented.
 The prelude atomics remain `Atomic<Int>` and `Atomic<Bool>` with sequentially
 consistent operations. `Sender<T>.bounded(capacity)` and
 `Sender<T>.unbounded()` create typed MPSC endpoints. `send`, `recv` and `close`
@@ -90,7 +97,14 @@ joins all workers. Pool shutdown must be explicit. The `scope`/`spawn` path and
 each `parallel for` still create their own workers.
 `scope` and `spawn` provide structured worker lifetimes, and each
 `parallel for` creates and joins its own workers rather than reusing a pool.
-The actor/channel examples below describe APIs beyond this release.
+The actor examples and the `Channel<T>` examples below describe APIs that are
+not implemented.
+
+The checks inside `with` are direct only: a `with` closure that calls `recv`,
+`join` or another lock directly is rejected (`cannot wait or acquire a lock
+inside a with closure`), but the same operation inside a called function is
+accepted. There is no per-function "blocks" analysis. Diagnostics carry no
+`E-C` codes.
 
 ## Current APIs and runnable examples
 
@@ -167,7 +181,7 @@ task, `spawn move { ... }` returns `JoinHandle<T>` and `join()` yields
 joined before the block exits.
 
 ```yerux
-let pool = thread_pool_new(4)
+var pool = thread_pool_new(4)
 pool.parallel_for(0, 100, |i| { print(i) })
 pool.close()
 ```
@@ -191,7 +205,8 @@ atomic update workloads with serial expected results.
 > without `move`, `Locked.new_ordered`, `try_with`, `Runtime.spawn_detached`, `lock x { }` are **not**
 > implemented and not part of the frozen surface.
 
-> **Status of sections 1-12.** These sections are the original design. What the compiler does today,
+> **Status of sections 1-12.** These sections are the original design, kept for its reasons; their code
+> blocks are not runnable examples. What the compiler does today,
 > checked by tests/spec_conformance.sh: `spawn { }` without `move` is an error ("spawn requires a
 > move closure"); `Channel<T>.new(capacity: n)` is a parse error (use `Sender<T>.bounded(n)`); `Task<T>` is an
 > unknown type (use `JoinHandle<T>`); `parallel for` rejects `step`. The implemented forms are in
@@ -236,7 +251,7 @@ fn sum_halves(data: view List) -> Int {
 - `spawn { body }` is shorthand for `spawn fn() { body }`, a zero-argument closure. `spawn move { ... }` moves every captured variable that is used by value; explicit form: `spawn { use(move s) }`.
 - `Task<T>.join() -> T` consumes the handle. If the task panicked, `join` re-raises the panic in the joiner (exit 101 as usual, message gains the line `(in task started at f.yx:7)`).
 - `parallel for i in 0..n { ... }` (section 8) and `parallel map`, `parallel reduce` are library/sugar on top of `scope` + `spawn`.
-- Detached tasks (outliving their scope) are only available via `Runtime.spawn_detached(move f)`, whose closure may capture **only moved-in** values and `Shared/Locked/Atomic` handles (see 5.3). It requires the `threads` capability (v0.5 effects).
+- Detached tasks (outliving their scope) are only available via `Runtime.spawn_detached(move f)`, whose closure may capture **only moved-in** values and `Shared/Locked/Atomic` handles (see 5.3). The design gates it with a `threads` capability. Neither exists (not implemented).
 
 ## 4. Closures and capture (needed by this spec)
 
@@ -280,10 +295,10 @@ print(counter.with(n => n))
 ```
 - `Locked<T>` pairs a mutex with an owned `T`. The *only* access is the scoped method `l.with(f)`, where `f` is a **second-class closure that receives the content as a parameter** (`view T` or `mut T`). The lock is released when `f` returns. Because borrows are second-class, the content reference cannot leak out of `f`, so no guard objects, no `MutexGuard<'a>`, no forgetting to unlock, no lock held across `.await`-like points by accident.
 - `with` returns whatever `f` returns (it must be an owned value: `Int`, `String`, a moved value). Returning the borrowed parameter is already an error by the existing "cannot return a borrow" rule.
-- `l.with_view(f)` currently also takes the exclusive lock. A reader-writer lock and fairness guarantee are future work.
+- `l.with_view(f)` also takes the exclusive lock. Shared reads use `RwLock`, which exists; a fairness guarantee is not implemented.
 - Inside `f` the closure may not call `with` on the same `Locked` (self-deadlock; detected statically in the simple case, see section 11) and may not `spawn`/`join`/block on a channel (error E-C6, "do not wait while holding a lock").
 - `Locked.take(move self) -> T` consumes the lock when you hold the only handle (after the scope).
-- Lock poisoning does not exist: if a task panics while holding a lock the process ends (exit 101). Panics are not recoverable, so no state can be observed half-updated.
+- Design text, superseded: worker panics are recoverable today, so a `Locked` held by a panicking worker is **poisoned** and a later access panics.
 
 ### 5.3 `Atomic<Int>`
 
@@ -342,7 +357,7 @@ scope {
   spawn { fill(hi, 2) }
 }
 ```
-`split_at_mut`, `chunks_mut(n)` (an iterator of disjoint `mut` slices) are implemented with `unsafe` inside the library, exactly once. Second-class slices (`view [T]`/`mut [T]`, docs/ARRAYS.md) now exist, but these splitting helpers do not yet; until then `parallel for` over indices of **disjoint writes** uses `Parallel.fill(mut out, f)`.
+Today `split_at_mut` and `for mut c in xs.chunks(k)` exist for sequential code (docs/ARRAYS.md), but their slices cannot be captured by `spawn`. `chunks_mut`, the parallel use shown above and `Parallel.fill` are not implemented: share results through `Atomic`, `Locked` or `thread_pool_map`.
 
 ## 7. Typing rules summarised
 
@@ -378,7 +393,7 @@ parallel for i in 0..n { lock.with(mut l => l.push(i)) }    // Locked
 ## 9. Structured concurrency, cancellation and panics
 
 - **No task outlives its scope.** This is a typing property, not a convention, and is why captured borrows are safe.
-- **Panic**: any panic ends the whole process with exit 101 after the panicking task prints its message (consistent with "no unwinding" in Yerux). Other tasks are stopped by the runtime at their next safe point (the process exits immediately; destructors do not run). Documented consequence: drop-based cleanup cannot depend on panics.
+- **Panic** (design text, superseded): today a panic in a `spawn move` worker is recoverable (message on stderr, `Err(ThreadPanic)` from `join`, live owned values dropped); panics in the initial thread, raw workers and `parallel for` iterations end the process with exit 101.
 - **Cancellation**: cooperative. `scope` provides `Cancel` token: `scope c { spawn { while !c.is_cancelled() { ... } } ... c.cancel() }`; blocking library calls (`recv`, `sleep`, `join`) have `_or_cancel` variants. Not required in v1.
 - **Timeouts** are library: `recv_timeout`, `Locked.try_with(ms, f)`.
 - **Return/`?` out of a scope**: leaving a scope early (via `return`, `?`) first cancels and joins every task. A task that does not poll cancellation therefore delays the early return; documented.
@@ -398,7 +413,7 @@ Data races are impossible (statically). **Deadlock and livelock are not**, as in
 2. **Static check for the common self-deadlock**: within one `with` closure, a second `with` on the same `Locked` variable (or alias obtained from the same `Shared` clone) is error E-C4.
 3. **Lock order**: `Locked.new_ordered(level: 1, x)` (optional integer level). The runtime in debug builds asserts that locks are taken in increasing level order per thread and reports both lock sites. Release builds omit the check. Library types (`Channel`) use levels internally.
 4. **Debug-build deadlock detector**: on a lock wait that exceeds 2 s, build the wait-for graph (lock owner table + per-thread "waiting on" slot); if a cycle exists print it with source locations and exit 101.
-5. **`with` may not block** (E-C6): no `recv`, `join`, `sleep`, nested `scope`, or file/network syscalls inside it (an effect annotation computed per function: `blocks`, propagated through calls; the effects system of v0.5 is the natural home. Until then, the direct-call check only).
+5. **`with` may not block** (E-C6): no `recv`, `join`, `sleep`, nested `scope`, or file/network syscalls inside it (the design is an effect annotation computed per function, `blocks`, propagated through calls. **Not implemented**: there is no effect system, only the direct-call check for waiting and locking).
 6. Priority inversion/unbounded waits: documented, not solved.
 
 ## 12. Actors (library, on top)
@@ -458,7 +473,7 @@ error[E-C9]: `image` is moved into the task and used afterwards
 - **Evaluation order**: unchanged inside a task. Between tasks there is no defined order except at joins, channel operations, lock acquisitions and atomic operations (all sequentially consistent, a total order that every thread agrees on). `print` is line-atomic (the runtime locks stdout per call; interleaving is by whole `print` calls).
 - **Generics/monomorphisation**: `xfer`/`readable` are computed per instance; error messages name the field path (`Job.window: Window is bound to the UI thread`).
 - **Checked arithmetic / bounds checks**: unaffected; `Atomic.add` keeps overflow semantics. Range analysis (opt.rs) is per function and per thread; values read from a `Shared`/`Locked`/`Atomic` are unknown (load value numbering must **not** merge loads across a `with`/atomic op or a call; it already refuses across calls and stores, so the new runtime-call IR ops must be marked as barriers). A `List` read through `Shared<List>` has a stable length (immutable), so `Check`s remain eliminable inside loops; through `Locked` it does not outlive the `with`.
-- **Effects v0.5**: `threads` capability gates `spawn_detached` and pool creation; `parallel` inside `scope` needs `threads` too but is allowed in `main` by default.
+- **Effects and capabilities** (not implemented): the design is a `threads` capability gating `spawn_detached` and pool creation.
 - **`defer`** runs at scope exit in the task that owns the scope.
 
 ## 15. Backend and runtime implications
@@ -489,6 +504,10 @@ error[E-C9]: `image` is moved into the task and used afterwards
 
 ## 17. Incremental implementation plan
 
+The original plan. State: C0 and C7 implemented; C1-C4 and C6 implemented in part (see "Runtime
+implementation status"; no `E-C` codes, deadlock detector or `try_with`); C5 only `parallel for`; C8 only
+`@thread_bound`; C9 not implemented.
+
 | Step | Content | Needs | Done when |
 |---|---|---|---|
 | C0 | Closures with capture modes (view/mut/move), second-class closure values | M5 language work | closure tests pass in both backends |
@@ -500,7 +519,7 @@ error[E-C9]: `image` is moved into the task and used afterwards
 | C6 | Windows port (CreateThread, WaitOnAddress) | WINDOWS.md work | positive tests under wine |
 | C7 | AArch64: atomics (acquire loads and LL/SC), clone, futex | a64/threads.rs | QEMU fixtures in `tests/a64_all.sh --threads`. Physical hardware testing remains open. |
 | C8 | `actor` sugar + framework `UiPort`, `@thread_bound`, lint W-C1 | C4, F work | framework demo with background image load |
-| C9 | Lock levels, effect `blocks`, cancellation tokens | v0.5 effects | E-C6 becomes transitive |
+| C9 | Lock levels, effect `blocks`, cancellation tokens | an effect system (does not exist) | E-C6 becomes transitive |
 
 Rough effort: C1-C3 3-4 pm, C4-C5 2 pm, C6-C7 2 pm, C8-C9 1.5 pm.
 
