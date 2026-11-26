@@ -993,3 +993,28 @@ and registered in `tests/real_programs.sh`.
 138. **`derive Clone` does not reach through `Box`** (documented limit in `docs/CLONE.md`), so every recursive syntax
     tree needs its `impl Clone` written variant by variant.
 
+## Round 18: wordcount, prodpipeline
+
+Two small threaded programs in `examples/real/<name>/`, each with `expected.out`, built on both backends (C and
+`--native` identical, exit 0, repeated runs identical) and registered in `tests/real_programs.sh` (now twenty-two
+programs).
+
+- **wordcount**: four embedded paragraphs, one spawned worker per paragraph, each sending a `Count` over one
+  unbounded channel; the collector sums words and letters by chunk index, so the varying arrival order never reaches
+  the output. 77 lines.
+- **prodpipeline**: a producer thread feeds a `bounded(3)` job channel to a transformer thread, which forwards
+  `Done` values over an unbounded channel to the collector in `main`; the single producer/consumer pair preserves
+  sequence order, and the report checks the order, the range, the sums and that the results channel closes. 77 lines.
+
+### Round 18 frictions (200 repeated; 201 open)
+
+200. **`Sender.close()` closes the channel for every clone.** With one `tx` cloned into four workers, calling
+    `tx.close()` in the parent before collecting makes the very first `rx.recv()` return `None`, and `unwrap()`
+    panics; no message is sent. This is friction 90 again (documented in `docs/CONCURRENCY.md`), but the natural
+    "spawn the workers, then close the producer end" idiom is still the wrong one. The safe forms are to close only
+    after the expected number of receives or to let the last clone drop. Workaround used in wordcount: do not close
+    the original sender at all; the workers' clones drop after their single send.
+201. **A closed channel and an exhausted one are the same `None`.** `recv() -> Option<T>` gives no reason, and
+    `unwrap()` panics with `called Option.unwrap() on a None value` plus the source line, which does not say that a
+    sibling sender closed the channel. The failure is quick to reproduce but slow to attribute; the programs handle
+    `None` explicitly and, in prodpipeline, assert the final `None` only after both handles are joined.

@@ -1,0 +1,77 @@
+// prodpipeline: a producer thread feeds a bounded channel to a transformer thread,
+// which forwards results over an unbounded channel to the collector in main. The
+// bounded(3) job channel applies backpressure; the single producer and consumer keep
+// the sequence order, so every figure is deterministic. No arguments; exit 0.
+import std.text
+
+struct Item { seq: Int, value: Int }
+
+struct Done { seq: Int, value: Int, squared: Int }
+
+fn value_of(seq: Int) -> Int {
+  return (seq * 37 + 11) % 101
+}
+
+fn produce(out: Sender<Item>, n: Int) -> Int {
+  for seq in 0..n {
+    out.send(Item { seq: seq, value: value_of(seq) })
+  }
+  out.close()
+  return n
+}
+
+fn transform(input: Receiver<Item>, out: Sender<Done>) -> Int {
+  var done = 0
+  while true {
+    match input.recv() {
+      Some(item) => {
+        out.send(Done { seq: item.seq, value: item.value, squared: item.value * item.value })
+        done = done + 1
+      }
+      None => { break }
+    }
+  }
+  out.close()
+  return done
+}
+
+fn main() {
+  let n = 40
+  let (jobs_tx, jobs_rx) = Sender<Item>.bounded(3)
+  let (done_tx, done_rx) = Sender<Done>.unbounded()
+  var produced = 0
+  var transformed = 0
+  var in_order = true
+  var next = 0
+  var sum = 0
+  var sum_sq = 0
+  var min_v = value_of(0)
+  var max_v = value_of(0)
+
+  scope {
+    let p = spawn move { return produce(move jobs_tx, n) }
+    let w = spawn move { return transform(move jobs_rx, move done_tx) }
+    for _ in 0..n {
+      let d = done_rx.recv().unwrap()
+      if d.seq != next { in_order = false }
+      next = next + 1
+      if d.value < min_v { min_v = d.value }
+      if d.value > max_v { max_v = d.value }
+      sum = sum + d.value
+      sum_sq = sum_sq + d.squared
+    }
+    produced = p.join().unwrap()
+    transformed = w.join().unwrap()
+  }
+
+  print("pipeline: producer -> bounded(3) -> transformer -> collector")
+  print("items produced: {produced}")
+  print("items transformed: {transformed}")
+  print("items collected: {next}")
+  print("in order: {in_order}")
+  print("value sum: {sum}")
+  print("square sum: {sum_sq}")
+  print("value range: {min_v}..{max_v}")
+  print("all accounted for: {produced == transformed && transformed == next}")
+  print("results channel closed: {done_rx.recv().is_none()}")
+}

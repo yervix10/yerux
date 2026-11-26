@@ -1,0 +1,9 @@
+chunks: 4, workers: 4, results: 4
+  chunk 0: 9 words
+  chunk 1: 13 words
+  chunk 2: 10 words
+  chunk 3: 10 words
+total words: 42
+total letters: 153
+average word length x100: 364
+all chunks reported once: true

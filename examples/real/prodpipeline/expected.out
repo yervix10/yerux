@@ -1,0 +1,10 @@
+pipeline: producer -> bounded(3) -> transformer -> collector
+items produced: 40
+items transformed: 40
+items collected: 40
+in order: true
+value sum: 1929
+square sum: 127035
+value range: 0..98
+all accounted for: true
+results channel closed: true
