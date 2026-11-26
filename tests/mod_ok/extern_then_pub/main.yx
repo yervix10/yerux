@@ -1,0 +1,19 @@
+import cmath
+
+extern "C" {
+  fn labs(x: Int) -> Int
+}
+
+// the entry file's own items after an extern block are scanned too
+fn helper(n: Int) -> Int { return n + 1 }
+
+pub fn exported(n: Int) -> Int { return helper(n) }
+
+fn main() {
+  print(cmath.magnitude(0 - 4))
+  print(cmath.roots(64.0))
+  let p: cmath.Pair = cmath.pair()
+  print(p.a + p.b)
+  unsafe { print(labs(0 - 7)) }
+  print(exported(1))
+}

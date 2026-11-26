@@ -20,7 +20,7 @@ fn check_endpoints(listener: view net.TcpListener, expected: Text) {
   assert_eq(server_peer.port, client_local.port)
 }
 
-fn check_timeouts(listener: view net.TcpListener) {
+fn check_timeouts(listener: view net.TcpListener) { unsafe {
   let remote = net.listener_local_addr(listener).unwrap()
   match net.connect_timeout(remote, -1) {
     Ok(s) => { panic("negative connect timeout accepted") }
@@ -59,9 +59,9 @@ fn check_timeouts(listener: view net.TcpListener) {
     Err(e) => { assert_eq(e.code, 110) }
   }
   assert_eq(net.set_write_timeout(client, 0).unwrap(), 0)
-}
+} }
 
-fn check_connect_timeout(ip: view net.SocketAddr) {
+fn check_connect_timeout(ip: view net.SocketAddr) { unsafe {
   let listener = net.listen(ip).unwrap()
   let bound = net.listener_local_addr(listener).unwrap()
   // On Linux a zero backlog holds one completed connection.
@@ -84,7 +84,7 @@ fn check_connect_timeout(ip: view net.SocketAddr) {
   assert(time.monotonic_ns() - start >= 10000000)
   let accepted = net.accept(listener).unwrap()
   let connected = net.connect_timeout(bound, 1000).unwrap()
-}
+} }
 
 fn main() {
   let ipv4 = net.address("127.0.0.1", 0).unwrap()

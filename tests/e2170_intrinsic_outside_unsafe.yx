@@ -1,0 +1,5 @@
+// A raw intrinsic outside the standard library needs an unsafe block.
+fn main() {
+  let pid = __syscall(39, 0, 0, 0, 0, 0, 0)
+  print(pid)
+}

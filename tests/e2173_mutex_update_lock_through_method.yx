@@ -1,0 +1,22 @@
+// The closures of a `Mutex` hold a lock too: a method that takes another lock is rejected there.
+struct Counter {
+  hits: Mutex<Int>,
+}
+
+impl Counter {
+  fn record(view self) {
+    self.hits.update(|n| {
+      n = n + 1
+    })
+  }
+}
+
+fn main() {
+  let counter = Counter { hits: Mutex<Int>.new(0) }
+  let guard = Mutex<Int>.new(0)
+  guard.update(|n| {
+    counter.record()
+    n = n + 1
+  })
+  print(1)
+}

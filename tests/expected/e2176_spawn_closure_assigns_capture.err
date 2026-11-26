@@ -1,0 +1,19 @@
+error: cannot change 'sum' inside spawn: the worker has its own copy
+  --> tests/e2176_spawn_closure_assigns_capture.yx:11:12
+   |
+11 |       each(|v| {
+   |            ^
+   = why: 'sum' is copied into the worker when it starts, so the change would be lost
+   = help: return the new value from the worker and read it with `join()`
+   = help: share a counter with `Shared.new(Atomic<Int>.new(0))`, or work on a local `var` inside the worker
+
+error: cannot change 'seen' inside spawn: the worker has its own copy
+  --> tests/e2176_spawn_closure_assigns_capture.yx:14:7
+   |
+14 |       seen[0] = 1
+   |       ^^^^^^^
+   = why: 'seen' is copied into the worker when it starts, so the change would be lost
+   = help: return the new value from the worker and read it with `join()`
+   = help: share a counter with `Shared.new(Atomic<Int>.new(0))`, or work on a local `var` inside the worker
+
+2 error(s). Nothing was generated.

@@ -1372,7 +1372,7 @@ fn main() {
     Ok(source) => {
       let file = ast.decode_linked(move source)
       let resolved = locals.resolve(file.nodes)
-      let checked = types.check_file(file.nodes, resolved, true, false)
+      let checked = types.check_file(file.nodes, resolved, true, false, 0)
       if checked.errors > 0 {
         for row in checked.messages { io.eprintln(row) }
         env.exit(1)

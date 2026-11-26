@@ -1,17 +1,17 @@
-fn advance(state: Int) {
+fn advance(state: Int) { unsafe {
   while __atomic_load(state) != 1 {}
   __atomic_store(state, 2)
-}
+} }
 
-fn leave_early(state: Int) {
+fn leave_early(state: Int) { unsafe {
   scope {
     spawn move { advance(state) }
     __atomic_store(state, 1)
     return
   }
-}
+} }
 
-fn main() {
+fn main() { unsafe {
   let state = __alloc(8)
   __atomic_store(state, 0)
   scope {
@@ -24,4 +24,4 @@ fn main() {
   leave_early(state)
   print(__atomic_load(state))
   __free(state)
-}
+} }

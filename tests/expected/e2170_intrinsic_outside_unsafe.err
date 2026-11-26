@@ -1,0 +1,9 @@
+error: call to intrinsic '__syscall' requires an unsafe block
+ --> tests/e2170_intrinsic_outside_unsafe.yx:3:13
+  |
+3 |   let pid = __syscall(39, 0, 0, 0, 0, 0, 0)
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = why: raw intrinsics bypass memory safety and authority checks; they are the building blocks of the standard library
+  = help: use a std module (std.io, std.fs, std.process, std.sync), or wrap the call in `unsafe { ... }`
+
+1 error(s). Nothing was generated.

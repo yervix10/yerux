@@ -40,7 +40,8 @@ The AArch64 implementation is tested under QEMU. Windows PE implements workers
 with `CreateThread` and contended locks with `WaitOnAddress` (limits in
 [WINDOWS.md](WINDOWS.md)). The structured API uses `scope { ... }`, `spawn move` and
 `JoinHandle<T>.join() -> Result<T, ThreadPanic>`. Owned captures are moved,
-and scalar captures are copied. Borrow captures into spawned workers are
+and scalar captures are copied (changing such a copy inside the worker is a compile error). Waiting or locking
+inside a `with` closure is rejected also through function calls. Borrow captures into spawned workers are
 rejected, including borrowed scalar parameters. Handles join when dropped.
 A `List<JoinHandle<T>>` collects the workers of a loop (`handles.push(move h)`, then `remove`/`pop` + `join`);
 a handle declared in a loop body and still owned at the end of the iteration is a compile error, because

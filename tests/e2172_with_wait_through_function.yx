@@ -1,0 +1,23 @@
+// Waiting inside `with` is rejected through any chain of calls.
+fn first(rx: view Receiver<Int>) -> Int {
+  match rx.recv() {
+    Some(v) => {
+      return v
+    }
+    None => {
+      return 0
+    }
+  }
+}
+
+fn total(rx: view Receiver<Int>) -> Int {
+  return first(rx) + 1
+}
+
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let lock = Locked.new(0)
+  let sum = lock.with(|value| value + total(rx))
+  print(sum)
+  tx.close()
+}

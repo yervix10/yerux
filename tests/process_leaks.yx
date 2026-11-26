@@ -11,9 +11,9 @@ fn open_fds() -> Int {
 }
 
 // -10 (ECHILD) means: no child left, running or zombie
-fn children_left() -> Int {
+fn children_left() -> Int { unsafe {
   return __syscall(61, -1, 0, 1, 0, 0, 0)
-}
+} }
 
 fn drop_unwaited() {
   var c = process.command("/bin/true")

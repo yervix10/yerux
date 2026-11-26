@@ -1,0 +1,10 @@
+error: cannot change 'total' inside spawn: the worker has its own copy
+  --> tests/e2175_spawn_lend_capture.yx:10:12
+   |
+10 |       bump(total)
+   |            ^^^^^
+   = why: 'total' is copied into the worker when it starts, so the change would be lost
+   = help: return the new value from the worker and read it with `join()`
+   = help: share a counter with `Shared.new(Atomic<Int>.new(0))`, or work on a local `var` inside the worker
+
+1 error(s). Nothing was generated.

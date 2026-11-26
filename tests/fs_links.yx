@@ -24,7 +24,7 @@ fn mode_of(p: view String) -> Int {
   }
 }
 
-fn main() {
+fn main() { unsafe {
   let dir = "/tmp/yerux_fs_links_{io.process_id()}"
   report("mkdir", fs.create_dir(dir))
   let file = "{dir}/data.txt"
@@ -114,4 +114,4 @@ fn main() {
   report("remove_dir_all", fs.remove_dir_all(dir))
   print(fs.exists("{outside}/keep.txt"))
   report("remove outside", fs.remove_dir_all(outside))
-}
+} }

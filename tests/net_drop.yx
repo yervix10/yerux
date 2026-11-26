@@ -9,7 +9,7 @@ fn open_fds() -> Int {
   return entries.len()
 }
 
-fn bound_port(listener: view net.TcpListener) -> Int {
+fn bound_port(listener: view net.TcpListener) -> Int { unsafe {
   // Read the port assigned by the kernel after binding to port 0.
   let address = __alloc(16)
   let length = __alloc(4)
@@ -23,7 +23,7 @@ fn bound_port(listener: view net.TcpListener) -> Int {
   __free(length)
   __free(address)
   return port
-}
+} }
 
 fn early_return(local: view net.SocketAddr, remote: view net.SocketAddr, before: Int) -> Result<Int, io.IoError> {
   let listener = net.listen(local)?
@@ -63,7 +63,7 @@ fn conditional_move(addr: view net.SocketAddr, take: Bool, before: Int) {
   assert_eq(open_fds(), before)
 }
 
-fn explicit_close(local: view net.SocketAddr, remote: view net.SocketAddr, before: Int) {
+fn explicit_close(local: view net.SocketAddr, remote: view net.SocketAddr, before: Int) { unsafe {
   let listener = net.listen(local).unwrap()
   let stream = net.connect(remote).unwrap()
   assert_eq(open_fds(), before + 2)
@@ -79,7 +79,7 @@ fn explicit_close(local: view net.SocketAddr, remote: view net.SocketAddr, befor
     Err(error) => { assert_eq(error.code, 9) }
   }
   assert_eq(open_fds(), before)
-}
+} }
 
 fn worker_panic(local: view net.SocketAddr, remote: view net.SocketAddr, before: Int) {
   let addr = net.address("127.0.0.1", remote.port).unwrap()

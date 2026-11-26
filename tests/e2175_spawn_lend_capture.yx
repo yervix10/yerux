@@ -1,0 +1,16 @@
+// Lending a captured copy as `mut` changes it too.
+fn bump(x: mut Int) {
+  x = x + 1
+}
+
+fn main() {
+  var total = 0
+  scope {
+    let h = spawn move {
+      bump(total)
+      return 0
+    }
+    print(h.join().unwrap())
+  }
+  print(total)
+}

@@ -282,6 +282,9 @@ A handle cannot escape through a return, an assignment, or a closure capture.
 A `List<JoinHandle<T>>` is allowed (push with `move`, take out with `remove`/`pop`; handles left in it are joined when it is dropped), which is how to start N workers in a loop. A handle owned by a loop body and still unjoined at the end of the iteration is an error (`e1414`), since dropping it would wait for its worker.
 A worker can copy or take ownership of thread-transferable values, including
 ordinary data and explicit sharing handles. It cannot capture a borrow.
+Changing a captured copy inside the worker (assigning it, a field or an element,
+or lending it as `mut`) is an error, since the change would be lost: return the
+value, share it, or work on a local `var`.
 `@thread_bound` on a struct or enum excludes it and containers that hold it
 from thread transfers. Functions and erased trait objects are conservatively
 excluded from transfers.
@@ -292,8 +295,12 @@ of the contents that borrow their receiver can also be called on the
 `Shared` handle. `Locked.new(value)` protects an owned value. Use
 `with(|value| { ... })` to access it exclusively, `with_view(|value| ...)`
 to borrow it for reading under the same mutex, and `take()` to consume a
-directly owned lock and recover its value. Inside a `with` closure, direct
-calls to wait or acquire another lock are rejected. If a worker panics while
+directly owned lock and recover its value. Inside a `with` closure (of a
+`Locked` or a `Mutex`) waiting or acquiring another lock is rejected, also
+through any chain of function and method calls (`join`, `recv`, `spawn`,
+`std.io` file and line reads and writes, sleeping). Calls through stored function
+values or trait objects, destructors, a bounded `send` and `RwLock` closures are
+not followed. If a worker panics while
 holding a lock, the lock is poisoned and wakes its waiters. Subsequent access
 panics, so partial updates cannot be observed through the lock.
 

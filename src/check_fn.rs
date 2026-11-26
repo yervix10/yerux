@@ -868,6 +868,9 @@ impl<'a> Checker<'a> {
             if c.by_ref {
                 if c.mode == Mode::Mut {
                     self.ev_escape.push(c.outer);
+                    if sc.assigned.contains(&c.name) {
+                        self.spawn_write(c.outer, pos);
+                    }
                 }
                 if self.place(&mut v).is_some() && c.mode == Mode::Mut {
                     self.frozen_check(&v, true, pos);
@@ -956,6 +959,9 @@ impl<'a> Checker<'a> {
             if capture.mode != Mode::Own {
                 self.capture_ids.insert(*id);
             }
+            if spawning && !self.types.owned(capture.ty) {
+                self.spawn_copies.insert(*id);
+            }
         }
         self.closure_depth += 1;
         let saved_pending = std::mem::take(&mut self.pending_bare);
@@ -971,6 +977,9 @@ impl<'a> Checker<'a> {
         }
         self.pending_bare = saved_pending;
         self.closure_depth -= 1;
+        for id in &inner {
+            self.spawn_copies.remove(id);
+        }
         let mut ret_ty = if self.ret_free { Ty::Unit } else { self.ret };
         if (spawning || locking) && ret_ty == Ty::Unit {
             let done = self

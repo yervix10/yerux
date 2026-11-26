@@ -1196,7 +1196,7 @@ def concurrent_program(seed):
     rng = random.Random(seed)
     workers = rng.randint(2, 8)
     lines = [
-        "fn worker(counter: Int, rounds: Int, step: Int) -> Int {",
+        "fn worker(counter: Int, rounds: Int, step: Int) -> Int { unsafe {",
         "  var sum = 0",
         "  for i in 0..rounds {",
         "    var scratch = List<Int>.new()",
@@ -1205,8 +1205,8 @@ def concurrent_program(seed):
         "    __atomic_fetch_add(counter, step)",
         "  }",
         "  return sum",
-        "}",
-        "fn main() {",
+        "} }",
+        "fn main() { unsafe {",
         "  let counter = __alloc(8)",
         "  __atomic_store(counter, 0)",
     ]
@@ -1222,7 +1222,7 @@ def concurrent_program(seed):
         lines.append(f"  let result{i} = __thread_wait(worker{i})")
         lines.append(f"  assert(result{i} == ({result}))")
         lines.append(f"  print(result{i})")
-    lines += [f"  assert(__atomic_load(counter) == ({total}))", "  __free(counter)", "}"]
+    lines += [f"  assert(__atomic_load(counter) == ({total}))", "  __free(counter)", "} }"]
     return lines
 
 

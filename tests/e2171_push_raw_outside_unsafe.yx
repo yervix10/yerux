@@ -1,0 +1,10 @@
+// `push_raw` copies from an arbitrary address: it is an intrinsic too.
+fn main() {
+  let source = String.from("hello")
+  var copy = String.new()
+  unsafe {
+    copy.push_raw(source.raw_addr(), 2)
+  }
+  copy.push_raw(source.raw_addr(), 2)
+  print(copy)
+}

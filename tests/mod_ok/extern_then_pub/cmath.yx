@@ -1,0 +1,31 @@
+// items written after `link` and `extern "C"` blocks still belong to the module
+link "libm.so.6"
+
+extern "C" {
+  fn abs(x: Int32) -> Int32
+  fn sqrt(x: Float) -> Float
+}
+
+const SCALE: Int = 10
+
+fn helper(n: Int) -> Int { return n * SCALE }
+
+pub struct Pair { a: Int, b: Int }
+
+pub fn magnitude(n: Int) -> Int {
+  var r = 0
+  unsafe { r = abs(n.to_int32()).to_int() }
+  return helper(r)
+}
+
+extern "C" {
+  fn cbrt(x: Float) -> Float
+}
+
+pub fn roots(x: Float) -> Float {
+  var r = 0.0
+  unsafe { r = sqrt(x) + cbrt(x) }
+  return r
+}
+
+pub fn pair() -> Pair { return Pair { a: helper(1), b: helper(2) } }

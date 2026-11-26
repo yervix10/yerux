@@ -39,7 +39,7 @@ if ! "$Y" build tests/native_linux_memory.yx --native --no-opt --target aarch64 
 fi
 cat >"$TMP/dynamic.yx" <<'EOF'
 fn call(nr: Int) -> Int {
-  return __syscall(nr, 0, 0, 0, 0, 0, 0)
+  unsafe { return __syscall(nr, 0, 0, 0, 0, 0, 0) }
 }
 fn main() {
   print(call(39))
