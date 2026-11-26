@@ -2,6 +2,12 @@
 
 Compiler versions match `VERSION` and the release tag. The language roadmap is in `docs/ROADMAP.md`.
 
+## Unreleased
+
+- Project-aware module resolution now applies to `check` and LSP files even when `yerux.toml` has no dependencies.
+- Self-import diagnostics explain when a test file's name resolves to itself and suggest renaming the file.
+- `std.io` now names common network errno values, including `EADDRINUSE`, instead of reporting `Unknown error`.
+
 ## 1.1.0
 
 Additions on top of 1.0.0; nothing that was Stable changed.

@@ -1374,3 +1374,18 @@ The harness records each original source and its raw diagnostics.
      fn f(n: Int) -> Int { return 1 + f(n - 1) }
      fn main() { let c = comptime f(999) }
      ```
+261. **Project-aware import resolution was skipped for projects without dependencies.**
+     `yerux check src/main.yx` and LSP diagnostics treated `src/main.yx` like a standalone file when
+     `yerux.toml` had an empty `[dependencies]` table, so `import models.task` searched beside
+     `src/main.yx` instead of under `src/models/task.yx`. Project detection now activates whenever
+     `yerux.toml` exists; check, build, run, test and LSP use the same project graph. Golden
+     integration test: `tests/project_r25.sh`.
+262. **A test file importing a same-named module can resolve to itself.** For example,
+     `tests/almacen.yx` containing `import almacen` without a project manifest reported a bare
+     cycle through `tests/almacen.yx`. The diagnostic now explains that the entry file imports
+     itself and suggests renaming the test file or importing the intended source module. Golden:
+     `tests/expected/project_self_import.err`.
+263. **`std.io` rendered common network errno values as “Unknown error”.** A bind failure with
+     `EADDRINUSE` (98) hid the actual cause; common address, unreachable, aborted, reset and refused
+     network errors also lacked names. `errno_text` now maps these values, and 98 has the
+     `AlreadyExists` kind. Golden: `tests/expected/std_io_internal_compat.out`.

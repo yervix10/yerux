@@ -1,0 +1,9 @@
+error: import cycle: almacen -> almacen
+ --> tests/almacen.yx:1:1
+  |
+1 | import almacen
+  | ^^^^^^^^^^^^^^
+  = modules cannot import each other, directly or through others
+  = help: this entry file imports itself because its name matches the module; rename the test file or import the intended source module
+
+1 error(s). Nothing was generated.

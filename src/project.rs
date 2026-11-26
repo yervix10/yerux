@@ -54,9 +54,6 @@ pub fn for_entry(entry: &str) -> Result<Option<Graph>, String> {
     else {
         return Ok(None);
     };
-    if Manifest::read(root)?.dependencies.is_empty() {
-        return Ok(None);
-    }
     load(&canonical(root)?, Mode::Reuse).map(Some)
 }
 

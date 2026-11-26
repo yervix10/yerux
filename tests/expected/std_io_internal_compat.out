@@ -3,6 +3,14 @@ name
 true
 2
 bad data
+bind '127.0.0.1:8080': Address already in use (os error 98)
+true
+connect 'host': Cannot assign requested address (os error 99)
+connect 'host': Network is unreachable (os error 101)
+connect 'host': Software caused connection abort (os error 103)
+connect 'host': Connection reset by peer (os error 104)
+connect 'host': Connection refused (os error 111)
+connect 'host': No route to host (os error 113)
 false
 ?
 true

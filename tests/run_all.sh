@@ -167,6 +167,7 @@ AUX=(
   "tool_doc|bash tests/tool_doc.sh"
   "tool_add|bash tests/tool_add.sh"
   "packages|bash tests/packages.sh"
+  "project_r25|bash tests/project_r25.sh"
   "run_args|bash tests/run_args.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"
