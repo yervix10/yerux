@@ -1,0 +1,10 @@
+error: cannot wait or acquire a lock inside a with closure
+  --> tests/e2173_mutex_update_lock_through_method.yx:18:5
+   |
+18 |     counter.record()
+   |     ^^^^^^^^^^^^^^^^
+   = 'Counter.record' may wait: Counter.record -> Mutex.update
+   = why: waiting while a lock is held can deadlock every thread that needs the lock
+   = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.

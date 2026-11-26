@@ -1,0 +1,10 @@
+error: cannot wait or acquire a lock inside a with closure
+  --> tests/e2172_with_wait_through_function.yx:20:39
+   |
+20 |   let sum = lock.with(|value| value + total(rx))
+   |                                       ^^^^^^^^^
+   = 'total' may wait: total -> first -> Receiver.recv
+   = why: waiting while a lock is held can deadlock every thread that needs the lock
+   = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.

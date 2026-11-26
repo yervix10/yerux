@@ -1,8 +1,8 @@
-fn launch(message: view String) -> Int {
+fn launch(message: view String) -> Int { unsafe {
   return __thread_start(move || message.len())
-}
+} }
 
-fn main() {
+fn main() { unsafe {
   let message = String.from("hello")
   print(__thread_wait(launch(message)))
-}
+} }

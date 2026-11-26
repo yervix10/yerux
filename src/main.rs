@@ -15,6 +15,7 @@ mod dwarf;
 mod ir;
 mod json;
 mod layout;
+mod lockwait;
 mod loopopt;
 mod lsp;
 mod memopt;
@@ -66,6 +67,7 @@ fn checked_frontend(
     let mut loaded = loaded_result?;
     let start = Instant::now();
     let mut ps = Parser::new(std::mem::take(&mut loaded.toks));
+    ps.std_files = loaded.std_files();
     let parse_result = ps.program();
     profile_stage("parse", start);
     profile_result("parse", parse_result.is_ok());

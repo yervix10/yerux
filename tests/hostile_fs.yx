@@ -11,7 +11,7 @@ fn invalid_input(r: Result<Int, io.IoError>) -> Bool {
   }
 }
 
-fn main() {
+fn main() { unsafe {
   assert(invalid_input(fs.remove_dir_all("/")))
   assert(invalid_input(fs.remove_dir_all(".")))
   let cwd = env.current_dir()
@@ -48,4 +48,4 @@ fn main() {
   }
   assert(!fs.exists(dir))
   print("hostile fs paths: ok")
-}
+} }

@@ -3907,12 +3907,12 @@ fn main() {
     Ok(source) => {
       let file = ast.decode_linked(move source)
       let bindings = locals.resolve(file.nodes)
-      let checked = types.check_file(file.nodes, bindings, true, false)
+      var limit = 0
+      if args.len() == 4 && !args.at(3).parse_int(limit) { limit = 0 }
+      let checked = types.check_file(file.nodes, bindings, true, false, limit)
       if checked.errors > 0 {
         var shown = String.new()
         if args.len() == 4 { shown = read_source(args.at(2)) }
-        var limit = 0
-        if args.len() == 4 && !args.at(3).parse_int(limit) { limit = 0 }
         for row in checked.messages {
           if row.starts_with("span:") {
             let drawn = draw_span(args.at(2), shown, limit, row.slice(5, row.len()))

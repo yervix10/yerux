@@ -169,7 +169,7 @@ compatibility. The stability guarantees for the public I/O API exclude these hel
 
 ## The intrinsic mechanism
 
-The module is written in Yerux over eight builtin functions and two `String` methods. They are the whole unsafe surface; the compiler accepts them anywhere (there is no `unsafe` block yet, see FFI.md section 7), but they are reserved for the standard library: their names start with `__` and they may change.
+The module is written in Yerux over eight builtin functions and two `String` methods. They are the whole unsafe surface and are reserved for the standard library: their names start with `__` and they may change. Outside the standard library (and the built-in prelude) a call to `__syscall`, `__global`, `__alloc`, `__free`, `__load*`, `__store*`, `__atomic_*`, `__futex_*`, `__thread_*` or `push_raw` must be inside an `unsafe { .. }` block (`raw_addr` only reads an address and needs none).
 
 | Intrinsic | Meaning |
 |---|---|

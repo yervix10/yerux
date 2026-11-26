@@ -1,0 +1,7 @@
+extern "C" {
+  fn abs(x: Int32) -> Int32
+}
+
+fn secret() -> Int { return 1 }
+
+pub fn open() -> Int { return secret() }

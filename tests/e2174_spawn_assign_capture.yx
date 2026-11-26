@@ -1,0 +1,12 @@
+// A worker gets its own copy of a captured scalar: assigning it would be lost.
+fn main() {
+  var count = 0
+  scope {
+    let h = spawn move {
+      count = count + 1
+      return count
+    }
+    print(h.join().unwrap())
+  }
+  print(count)
+}

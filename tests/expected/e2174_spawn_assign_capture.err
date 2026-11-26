@@ -1,0 +1,10 @@
+error: cannot change 'count' inside spawn: the worker has its own copy
+ --> tests/e2174_spawn_assign_capture.yx:6:7
+  |
+6 |       count = count + 1
+  |       ^^^^^
+  = why: 'count' is copied into the worker when it starts, so the change would be lost
+  = help: return the new value from the worker and read it with `join()`
+  = help: share a counter with `Shared.new(Atomic<Int>.new(0))`, or work on a local `var` inside the worker
+
+1 error(s). Nothing was generated.

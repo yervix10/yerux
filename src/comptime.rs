@@ -403,9 +403,9 @@ impl<'a> Interp<'a> {
 
 // ---- traversal: find and replace the markers ----
 
-type Visit<'f> = &'f mut dyn FnMut(&mut Expr) -> R<bool>;
+pub(crate) type Visit<'f> = &'f mut dyn FnMut(&mut Expr) -> R<bool>;
 
-fn walk_stmts(b: &mut [Stmt], f: Visit) -> R<()> {
+pub(crate) fn walk_stmts(b: &mut [Stmt], f: Visit) -> R<()> {
     for s in b.iter_mut() {
         walk_stmt(s, f)?;
     }

@@ -55,6 +55,10 @@ struct Types {
   borrowed_closures: List<Bool>,
   box_places: List<Bool>,
   messages: List<String>,
+  // inside a `spawn` body: the captured bindings that are plain copies
+  spawn_copies: List<Int>,
+  // the function being checked belongs to the standard library or to the prelude (raw intrinsics allowed)
+  trusted: Bool,
 }
 pub struct Checked {
   bindings: List<String>, expressions: List<String>, messages: List<String>, borrowed_closures: List<Bool>, errors: Int,
@@ -259,6 +263,12 @@ fn inside_unsafe(tree: view List<ast.AstNode>, node: Int) -> Bool {
     i = i + 1
   }
   return false
+}
+
+fn require_unsafe_intrinsic(types: mut Types, tree: view List<ast.AstNode>, node: Int, name: view String) {
+  if !types.trusted && !inside_unsafe(tree, node) {
+    issue(types, "call to intrinsic '{name}' requires an unsafe block")
+  }
 }
 
 // Does the subtree at `node` name `Self` as a type?
@@ -647,6 +657,12 @@ fn immutable_reason(types: view Types, tree: view List<ast.AstNode>, id: Int) ->
   return String.new()
 }
 
+// A captured copy is about to change inside `spawn`: the change would be lost with the worker
+fn spawn_write(types: mut Types, tree: view List<ast.AstNode>, id: Int) {
+  let name = binding_name(types, tree, id)
+  issue(types, "cannot change '{name}' inside spawn: the worker has its own copy")
+}
+
 fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<ownership.Loan>,
     node: Int, mode: view String, ty: view String, receiver: Bool) {
   if !types.verify_ownership { return }
@@ -690,6 +706,10 @@ fn record_loan(types: mut Types, tree: view List<ast.AstNode>, loans: mut List<o
   if id < 0 { return }
   let name = place_name(tree, root)
   if implicit { move_binding(types, id, name) }
+  if mode == "Mut" && types.spawn_copies.contains(id) {
+    spawn_write(types, tree, id)
+    return
+  }
   if mode == "Mut" {
     var why = immutable_reason(types, tree, id)
     // a lock hands out its value to `view` holders: `lock.locked_value()` is mutable interior state
@@ -1205,6 +1225,10 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     if family == "Locked" && (name == "with" || name == "with_view") {
       let lock_fn = signature_index(types, "__locked_{name}", false)
       if lock_fn >= 0 {
+        if !types.trusted && child_count(tree, args) == 1 && tree.at(args + 1).tag == "Closure" &&
+            waits_directly(tree, args + 1) {
+          issue(types, String.from("cannot wait or acquire a lock inside a with closure"))
+        }
         types.lead = receiver
         types.lead_type = String.from(owner)
         return call_args(types, tree, args, name, lock_fn, "?", -1)
@@ -1488,6 +1512,20 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   let parallel_body = tree.at(ast.child(tree, index, 2)).tag == "true"
   var captures = List<Int>.new()
   var modes = List<String>.new()
+  // a closure that keeps its own copy of a variable may change it; a borrowing one still changes the worker's
+  let outer_copies = copy_ids(types.spawn_copies)
+  if !borrowing || parallel_body {
+    let own = locals.capture_ids(types.captures, index)
+    types.spawn_copies.clear()
+    for id in outer_copies {
+      if !own.contains(id) { types.spawn_copies.push(id) }
+    }
+    if worker {
+      for id in own {
+        if !owns_value(types, types.bindings.at(id)) { types.spawn_copies.push(id) }
+      }
+    }
+  }
   if types.verify_ownership && (!borrowing || parallel_body) {
     captures = locals.capture_ids(types.captures, index)
     for id in captures {
@@ -1527,6 +1565,7 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
     state.inferred = move actual
   } else { let exits = check_body(types, state, tree, body) }
   types.moved = move before
+  types.spawn_copies = move outer_copies
   for i in 0..captures.len() {
     let id = captures.at(i)
     types.modes.set(id, String.from(modes.at(i)))
@@ -2047,6 +2086,9 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     if id < 0 && types.externs.contains(n) && !inside_unsafe(tree, index) {
       issue(types, "call to extern function '{n}' requires an unsafe block")
     }
+    if id < 0 && (raw_arity(n) > 0 || n == "__thread_start" || n == "__thread_start_recover") {
+      require_unsafe_intrinsic(types, tree, index, n)
+    }
     if id < 0 && n == "unchecked" && !inside_unsafe(tree, index) {
       issue(types, String.from("`unchecked(x)` is only allowed in an `unsafe` block"))
     }
@@ -2122,6 +2164,7 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     if name == "get" && receiver.starts_with("Box<") && shape_index(types, receiver) < 0 {
       types.box_places.set(index, true)
     }
+    if name == "push_raw" && receiver == "String" { require_unsafe_intrinsic(types, tree, index, name) }
     let shape = shape_index(types, receiver)
     if shape >= 0 && !types.shapes.at(shape).is_enum && name != "at" && root_place(types, tree, node) >= 0 {
       let field = field_index(types.shapes.at(shape), name)
@@ -2187,6 +2230,10 @@ fn check_assignment(types: mut Types, tree: view List<ast.AstNode>, index: Int) 
   let value = ast.child(tree, index, 1)
   let right = infer(types, tree, value, left)
   require_value(types, tree, value, right)
+  if id >= 0 && types.spawn_copies.contains(id) {
+    spawn_write(types, tree, id)
+    return
+  }
   if id >= 0 && (target == root || types.verify_ownership) {
     let name = place_name(tree, target)
     if types.verify_ownership { check_frozen(types, id, name, true) }
@@ -2439,7 +2486,11 @@ fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNo
     id = types.identities.at(root)
     if id >= 0 && mutable {
       mode = String.from("Mut")
-      let why = immutable_reason(types, tree, id)
+      var why = immutable_reason(types, tree, id)
+      if types.spawn_copies.contains(id) {
+        spawn_write(types, tree, id)
+        why = String.new()
+      }
       if why != "" {
         let name = place_name(tree, scrutinee)
         issue(types, "cannot `match mut` on '{name}': {why}")
@@ -3172,8 +3223,208 @@ fn declare_trait(types: mut Types, tree: view List<ast.AstNode>, node: Int) {
   types.generics = List<String>.new()
 }
 
+fn copy_ids(ids: view List<Int>) -> List<Int> {
+  var out = List<Int>.new()
+  for id in ids { out.push(id) }
+  return out
+}
+
+// `function`, or `Type.method`
+fn function_key(types: view Types, signature: Int) -> String {
+  let name = String.from(types.signatures.at(signature).name)
+  if types.signatures.at(signature).owner == "" { return name }
+  return "{type_terms.base(types.signatures.at(signature).owner)}.{name}"
+}
+
+// The prelude follows the user's lines; module and std items have mangled names (`module__item`)
+fn in_prelude(tree: view List<ast.AstNode>, node: Int, key: view String, user_lines: Int) -> Bool {
+  if key.contains("__") && !key.starts_with("__") { return false }
+  var at = node + 1
+  while at < tree.at(node).end {
+    if tree.at(at).tag == "Pos" {
+      var line = 0
+      return tree.at(at + 1).tag.parse_int(line) && line > user_lines
+    }
+    at = at + 1
+  }
+  return false
+}
+
+// ── no waiting while a lock is held ──
+
+fn takes_lock(key: view String) -> Bool {
+  return key == "Locked.with" || key == "Locked.with_view" || key == "__locked_with" || key == "__locked_with_view" ||
+    key == "Mutex.with" || key == "Mutex.with_view" || key == "Mutex.update" || key == "mutex_with" ||
+    key == "mutex_with_view" || key == "mutex_update"
+}
+
+// The primitives that wait or acquire a lock
+fn waits(key: view String) -> Bool {
+  return takes_lock(key) || key == "__spawn_owned" || key == "__parallel_range" || key == "__parallel_list" ||
+    key == "__thread_wait" || key == "__thread_start" || key == "__thread_start_recover" || key == "__futex_park" ||
+    key == "thread_pool_map" || key == "select2" || key == "JoinHandle.join" || key == "Receiver.recv" ||
+    key == "Receiver.recv_timeout" || key == "ThreadPool.parallel_for" || key == "ThreadPool.close" ||
+    key == "std__io__read_line" || key == "std__io__read_file" || key == "std__io__write_file" ||
+    key == "std__io__sleep_ms" || key == "std__io__sleep_ns"
+}
+
+// The direct check of a `Locked.with` closure goes by name
+fn waits_directly(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  var at = node + 1
+  while at < tree.at(node).end {
+    let tag = String.from(tree.at(at).tag)
+    if tag == "Call" || tag == "Var" {
+      let name = ast.name_at(tree, at, 0)
+      if name == "__spawn_owned" || name == "__thread_wait" || name == "__thread_start" || name == "__futex_park" ||
+          name == "__locked_with" || name == "__locked_with_view" || name == "__parallel_range" ||
+          name == "__parallel_list" { return true }
+    } else if tag == "Method" {
+      let name = ast.name_at(tree, at, 1)
+      if name == "with" || name == "with_view" || name == "join" || name == "recv" || name == "sleep_ms" ||
+          name == "read_line" || name == "read_file" || name == "write_file" { return true }
+    }
+    at = at + 1
+  }
+  return false
+}
+
+// The calls under `node`. A closure counts where it is handed to a call or called, not where it is only stored.
+// `bodies` collects what is run while holding a lock: closure nodes, and the names of functions passed as such.
+struct LockWalk { calls: List<String>, closures: List<Int>, functions: List<String> }
+
+fn lock_closure(tree: view List<ast.AstNode>, types: view Types, node: Int) -> Int {
+  let id = types.identities.at(node)
+  if id < 0 { return -1 }
+  let decl = types.declarations.at(id)
+  if tree.at(decl).tag != "Let" { return -1 }
+  let value = ast.child(tree, decl, 2)
+  if tree.at(value).tag != "Closure" { return -1 }
+  return value
+}
+
+fn lock_call(types: view Types, tree: view List<ast.AstNode>, key: view String, args: Int, walk: mut LockWalk) {
+  walk.calls.push(String.from(key))
+  let locking = takes_lock(key)
+  var at = args + 1
+  while at < tree.at(args).end {
+    if tree.at(at).tag == "Closure" {
+      if locking { walk.closures.push(at) }
+      walk_closure(types, tree, at, walk)
+    } else if tree.at(at).tag == "Var" && types.identities.at(at) < 0 {
+      let name = ast.name_at(tree, at, 0)
+      if signature_index(types, name, false) >= 0 {
+        if locking { walk.functions.push(String.from(name)) }
+        walk.calls.push(move name)
+      }
+    } else { walk_calls(types, tree, at, walk) }
+    at = tree.at(at).end
+  }
+}
+
+fn walk_closure(types: view Types, tree: view List<ast.AstNode>, node: Int, walk: mut LockWalk) {
+  walk_calls(types, tree, ast.child(tree, node, 6), walk)
+}
+
+fn walk_calls(types: view Types, tree: view List<ast.AstNode>, node: Int, walk: mut LockWalk) {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Closure" { return }
+  if tag == "Call" {
+    let name = ast.name_at(tree, node, 0)
+    if types.identities.at(node) >= 0 {
+      let body = lock_closure(tree, types, node)
+      if body >= 0 { walk_closure(types, tree, body, walk) }
+      lock_call(types, tree, String.new(), ast.child(tree, node, 1), walk)
+    } else { lock_call(types, tree, name, ast.child(tree, node, 1), walk) }
+    return
+  }
+  if tag == "CallFn" {
+    let callee = ast.child(tree, node, 0)
+    if tree.at(callee).tag == "Closure" { walk_closure(types, tree, callee, walk) }
+    else { walk_calls(types, tree, callee, walk) }
+    lock_call(types, tree, String.new(), ast.child(tree, node, 1), walk)
+    return
+  }
+  if tag == "Method" {
+    let receiver = ast.child(tree, node, 0)
+    let name = ast.name_at(tree, node, 1)
+    var owner = String.new()
+    if tree.at(receiver).tag == "Var" && types.identities.at(receiver) < 0 {
+      owner = ast.name_at(tree, receiver, 0)
+    } else if types.expressions.at(receiver) != "?" {
+      var ty = String.from(types.expressions.at(receiver))
+      let family = type_terms.base(ty)
+      if family == "Shared" && name != "clone" && name != "get" { ty = type_terms.first_argument(ty) }
+      owner = type_terms.base(ty)
+      walk_calls(types, tree, receiver, walk)
+    } else { walk_calls(types, tree, receiver, walk) }
+    lock_call(types, tree, "{owner}.{name}", ast.child(tree, node, 2), walk)
+    return
+  }
+  if tag == "GenericMember" {
+    let owner = ast.name_at(tree, node, 0)
+    let name = ast.name_at(tree, node, 2)
+    lock_call(types, tree, "{owner}.{name}", ast.child(tree, node, 3), walk)
+    return
+  }
+  var at = node + 1
+  while at < tree.at(node).end {
+    walk_calls(types, tree, at, walk)
+    at = tree.at(at).end
+  }
+}
+
+fn new_walk() -> LockWalk {
+  return LockWalk { calls: List<String>.new(), closures: List<Int>.new(), functions: List<String>.new() }
+}
+
+fn any_waits(calls: view List<String>, waiting: view List<String>) -> Bool {
+  for call in calls {
+    if waits(call) || waiting.contains(call) { return true }
+  }
+  return false
+}
+
+// A closure that runs under a lock must not reach a wait or another lock through any chain of calls
+fn check_lock_waits(types: mut Types, tree: view List<ast.AstNode>, functions: view List<Function>,
+    prelude: view List<Bool>) {
+  var walks = List<LockWalk>.new()
+  var keys = List<String>.new()
+  for i in 0..functions.len() {
+    var walk = new_walk()
+    if !prelude.at(i) { walk_calls(types, tree, ast.child(tree, functions.at(i).node, 4), walk) }
+    walks.push(move walk)
+    keys.push(function_key(types, functions.at(i).signature))
+  }
+  var waiting = List<String>.new()
+  var changed = true
+  while changed {
+    changed = false
+    for i in 0..walks.len() {
+      if !waiting.contains(keys.at(i)) && any_waits(walks.at(i).calls, waiting) {
+        waiting.push(String.from(keys.at(i)))
+        changed = true
+      }
+    }
+  }
+  for i in 0..walks.len() {
+    for closure in walks.at(i).closures {
+      var inner = new_walk()
+      walk_closure(types, tree, closure, inner)
+      if any_waits(inner.calls, waiting) {
+        issue(types, String.from("cannot wait or acquire a lock inside a with closure"))
+        return
+      }
+    }
+    if any_waits(walks.at(i).functions, waiting) {
+      issue(types, String.from("cannot wait or acquire a lock inside a with closure"))
+      return
+    }
+  }
+}
+
+// `user_lines`: the lines the entry file has before the linked prelude starts
 pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, verify_ownership: Bool,
-    trace: Bool) -> Checked {
+    trace: Bool, user_lines: Int) -> Checked {
   var types = Types {
     identities: List<Int>.new(), declarations: List<Int>.new(), captures: List<locals.Capture>.new(),
     bindings: List<String>.new(), shapes: List<Shape>.new(),
@@ -3184,7 +3435,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(), thread_bound: List<String>.new(), externs: List<String>.new(), in_drop: false, operand: false,
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
-    borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(),
+    borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(), spawn_copies: List<Int>.new(), trusted: false,
   }
   for i in 0..tree.len() { types.box_places.push(false) }
   if !trace {
@@ -3314,7 +3565,11 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     }
     constant = tree.at(constant).end
   }
+  var prelude = List<Bool>.new()
   for fun in functions {
+    let key = function_key(types, fun.signature)
+    prelude.push(in_prelude(tree, fun.node, key, user_lines))
+    types.trusted = prelude.at(prelude.len() - 1) || key.starts_with("std__")
     types.function_params = ast.child(tree, fun.node, 1)
     types.impl_params = fun.impl_params
     types.generics = copy_names(types.signatures.at(fun.signature).generics)
@@ -3328,6 +3583,8 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     let exits = check_body(types, state, tree, ast.child(tree, fun.node, 4))
     types.in_drop = false
   }
+  // calls are only resolved in a program that checks
+  if types.errors == 0 && !trace { check_lock_waits(types, tree, functions, prelude) }
   var borrowed_closures = List<Bool>.new()
   for borrowing in types.borrowed_closures { borrowed_closures.push(borrowing) }
   return Checked {
@@ -3351,7 +3608,8 @@ fn main() {
       if args.at(1) == "locals" {
         for row in bindings.rows { print(row) }
       } else {
-        let checked = check_file(file.nodes, bindings, args.at(1) == "ownership", true)
+        // a single file: no prelude follows it
+        let checked = check_file(file.nodes, bindings, args.at(1) == "ownership", true, 1000000000)
         for row in checked.messages { print(row) }
         if checked.errors > 0 { env.exit(1) }
       }

@@ -594,6 +594,8 @@ struct Checker<'a> {
     unit_ret: bool,
     closure_depth: usize,
     capture_ids: HashSet<usize>, // variables that are captures inside a closure body
+    /// inside a `spawn` body: the captures that are plain copies (changing one would be lost)
+    spawn_copies: HashSet<usize>,
     closure_borrow_pos: HashSet<(usize, usize)>, // positions of closure literals that borrow variables
     ret_free: bool,        // checking a closure whose result type is not known yet
     explicit_targs: Option<Vec<Ty>>, // type arguments written at the call being checked (`f<Int>(x)`)
@@ -965,6 +967,29 @@ impl<'a> Checker<'a> {
             self.frozen_check(e, false, e.pos);
         }
         r
+    }
+
+    /// The variable `root` is about to change: inside `spawn` a captured copy would take the change with it.
+    fn spawn_write(&mut self, root: usize, pos: Pos) {
+        if !self.spawn_copies.contains(&root) || pos.line >= PRELUDE_LINE {
+            return;
+        }
+        let n = self.vars[root].name.clone();
+        self.err(
+            diag(
+                format!(
+                    "cannot change '{}' inside spawn: the worker has its own copy",
+                    n
+                ),
+                pos,
+            )
+            .note(format!(
+                "why: '{}' is copied into the worker when it starts, so the change would be lost",
+                n
+            ))
+            .note("help: return the new value from the worker and read it with `join()`")
+            .note("help: share a counter with `Shared.new(Atomic<Int>.new(0))`, or work on a local `var` inside the worker"),
+        );
     }
 
     /// A list or string that a `for` loop is iterating must not change while the loop borrows it (and
@@ -2703,6 +2728,7 @@ impl<'a> Checker<'a> {
 
     fn need_mut(&mut self, p: PlaceInfo, recv: &Expr, pos: Pos) {
         self.frozen_check(recv, true, pos);
+        self.spawn_write(p.root, pos);
         if !p.mutable {
             let n = place_str(recv);
             let why = self.immutable_reason(p.root_mode);
@@ -3164,6 +3190,7 @@ impl<'a> Checker<'a> {
         if mode == Mode::Mut {
             self.frozen_check(place, true, apos);
             self.ev_escape.push(p.root);
+            self.spawn_write(p.root, apos);
         }
         loans.push((p.root, if mode == Mode::Mut { 1 } else { 0 }, apos));
         if let Some(ls) = self.closure_loans.get(&p.root).cloned() {
@@ -3285,6 +3312,9 @@ impl<'a> Checker<'a> {
                 return Ty::Err;
             }
         };
+        if m == "push_raw" {
+            self.require_unsafe_intrinsic(m, pos);
+        }
         if args.len() != nargs {
             self.err(diag(format!("'{}' expects {} argument(s)", m, nargs), pos));
             return ret;
@@ -3473,6 +3503,23 @@ impl<'a> Checker<'a> {
         ty
     }
 
+    /// The raw intrinsics read and write any address, make system calls and start threads, so outside the prelude
+    /// and the standard library they need `unsafe`, like an extern call.
+    fn require_unsafe_intrinsic(&mut self, name: &str, pos: Pos) {
+        if self.unsafe_depth > 0
+            || pos.line >= PRELUDE_LINE
+            || self
+                .ps
+                .std_files
+                .contains(&crate::modules::file_of(pos.line))
+        {
+            return;
+        }
+        self.err(diag(format!("call to intrinsic '{}' requires an unsafe block", name), pos)
+            .note("why: raw intrinsics bypass memory safety and authority checks; they are the building blocks of the standard library")
+            .note("help: use a std module (std.io, std.fs, std.process, std.sync), or wrap the call in `unsafe { ... }`"));
+    }
+
     fn call(&mut self, name: &str, args: &mut Vec<Expr>, pos: Pos) -> Ty {
         if self.extern_names.contains(name) && self.unsafe_depth == 0 {
             self.err(diag(format!("call to extern function '{}' requires an unsafe block", name), pos)
@@ -3609,6 +3656,7 @@ impl<'a> Checker<'a> {
                 return Ty::Err;
             }
             "__thread_start" | "__thread_start_recover" | "__thread_wait" => {
+                self.require_unsafe_intrinsic(name, pos);
                 if args.len() != 1 {
                     self.err(diag(format!("{} expects exactly 1 argument", name), pos));
                     return Ty::Int;
@@ -3643,6 +3691,7 @@ impl<'a> Checker<'a> {
                     "__free" => (1, Ty::Unit),
                     _ => (2, Ty::Unit),
                 };
+                self.require_unsafe_intrinsic(name, pos);
                 if args.len() != want {
                     self.err(diag(
                         format!("{} expects {} Int argument(s)", name, want),
@@ -3913,6 +3962,7 @@ impl<'a> Checker<'a> {
                     if mode == Mode::Mut {
                         self.frozen_check(arg, true, apos);
                         self.ev_escape.push(p.root);
+                        self.spawn_write(p.root, apos);
                     }
                     loans.push((p.root, if mode == Mode::Mut { 1 } else { 0 }, apos));
                     if let Some(ls) = self.closure_loans.get(&p.root).cloned() {
@@ -4397,6 +4447,7 @@ impl<'a> Checker<'a> {
                         return;
                     }
                     self.ev_assign.push(p.root);
+                    self.spawn_write(p.root, pos);
                     self.frozen_check(target, true, pos);
                     if !p.mutable {
                         let n = place_str(target);
@@ -4618,6 +4669,7 @@ impl<'a> Checker<'a> {
                             }
                             if *mode == Mode::Mut {
                                 self.ev_escape.push(p.root);
+                                self.spawn_write(p.root, pos);
                             }
                             self.types.intern_slice(e)
                         }
@@ -4651,6 +4703,7 @@ impl<'a> Checker<'a> {
                         }
                         if *mode == Mode::Mut {
                             self.ev_escape.push(p.root);
+                            self.spawn_write(p.root, pos);
                         }
                         p.ty
                     }
@@ -5357,6 +5410,7 @@ impl<'a> Checker<'a> {
                 if let Some(p) = self.place(&mut probe) {
                     if m == Mode::Mut {
                         self.ev_escape.push(p.root);
+                        self.spawn_write(p.root, sp);
                     }
                     if m == Mode::Mut && !p.mutable {
                         let n = place_str(&scrut);
@@ -8632,6 +8686,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         unit_ret: false,
         closure_depth: 0,
         capture_ids: HashSet::new(),
+        spawn_copies: HashSet::new(),
         closure_borrow_pos: HashSet::new(),
         ret_free: false,
         pending_bare: 0,
@@ -8698,6 +8753,10 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
     p.types = std::mem::take(&mut ck.types);
     let sigs = std::mem::take(&mut ck.sigs);
     let mut errs = std::mem::take(&mut ck.errs);
+    // calls are only resolved in a program that checks
+    if errs.is_empty() {
+        errs = crate::lockwait::check(&mut p.funcs);
+    }
     for id in ck.drop_cycles {
         let def = &p.types.structs[id];
         errs.push(diag(

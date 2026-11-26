@@ -1723,6 +1723,8 @@ pub struct Parser {
     pub gfns: Vec<GenFn>,
     pub traits: Vec<TraitDef>,
     pub impls: Vec<ImplDef>,
+    /// files (module load order) of the standard library, set by the driver for the checker
+    pub std_files: HashSet<usize>,
     tparams: HashMap<String, Ty>, // type parameters in scope while (re-)parsing a generic definition
     const_names: HashSet<String>, // `const N: Int` parameters of the generic header being read first
     self_ty: Option<Ty>,          // `Self` inside an impl or a trait
@@ -1864,6 +1866,7 @@ impl Parser {
             gfns: vec![],
             traits: vec![],
             impls: vec![],
+            std_files: Default::default(),
             tparams: HashMap::new(),
             const_names: HashSet::new(),
             in_extern: false,

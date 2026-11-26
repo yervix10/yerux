@@ -269,8 +269,8 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
   while scanned < end {
     let decl = ast.child(tree, scanned, 2)
     let tag = String.from(tree.at(decl).tag)
-    if tag == "Derive" {
-      // Derives generate methods but do not introduce module symbols.
+    if tag == "Derive" || ((tag == "Extern" || tag == "Link") && tree.at(ast.child(tree, scanned, 0)).tag != "true") {
+      // Derives generate methods, and `extern` / `link` declare C symbols: none introduces a module symbol.
     } else if tag == "Test" {
       if tree.at(ast.child(tree, scanned, 0)).tag == "true" {
         issue(resolver, ctx.module_id, String.from("public-test"))

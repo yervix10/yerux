@@ -1040,7 +1040,7 @@ impl Loader<'_> {
                 // blocks are looked up by type, so their names stay as written
                 let methods_here = toks
                     .first()
-                    .is_some_and(|f| is_id(f, "impl") || is_id(f, "trait"));
+                    .is_some_and(|f| is_id(f, "impl") || is_id(f, "trait") || is_id(f, "extern"));
                 if prev_fn && methods_here {
                     out.push(t.clone());
                     j += 1;
@@ -1085,6 +1085,25 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
             i += 2;
         }
         let Some(item) = toks.get(i) else { break };
+        // `extern "C" { .. }` and `link "name"` declare C symbols: they add no item of the module, but the items
+        // written after them are still the module's own
+        if !public
+            && is_id(item, "link")
+            && matches!(toks.get(i + 1).map(|t| &t.t), Some(Tok::Str(_)))
+        {
+            v.push(Span {
+                start: s,
+                end: i + 2,
+                public,
+                head,
+                name: None,
+                kind: Kind::Func,
+                test: None,
+                bench: false,
+            });
+            i += 2;
+            continue;
+        }
         let mut bench = false;
         let (kind, name, test) = match &item.t {
             Tok::Id(w) if w == "fn" || w == "struct" || w == "enum" || w == "trait" => {
@@ -1109,6 +1128,13 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
                 (Kind::Func, None, Some(n))
             }
             Tok::Id(w) if w == "impl" => (Kind::Func, None, None),
+            Tok::Id(w)
+                if !public
+                    && w == "extern"
+                    && matches!(toks.get(i + 1).map(|t| &t.t), Some(Tok::Str(_))) =>
+            {
+                (Kind::Func, None, None)
+            }
             // `const NAME[: T] = expr` and `type NAME = T`: one declaration on one line (no body)
             Tok::Id(w) if (w == "const" || w == "type") && toks.get(i + 1).and_then(id_of).is_some() => {
                 let line = item.pos.line;
@@ -1173,7 +1199,23 @@ fn scan_items(toks: &[Token], start: usize) -> Vec<Span> {
     v
 }
 
+/// The file of a token of the merged program (not meaningful for the prelude's, tagged with `PRELUDE_LINE`).
+pub fn file_of(line: usize) -> usize {
+    line >> FILE_SHIFT
+}
+
 impl Loaded {
+    /// The files that are embedded standard-library modules: besides the prelude, only they may use the raw
+    /// intrinsics outside `unsafe`.
+    pub fn std_files(&self) -> std::collections::HashSet<usize> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.path.starts_with("<std>/"))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// Render a diagnostic of the merged program: pick the file, decode the line, show names as written.
     pub fn render(&self, d: &Diag) -> String {
         if d.pos.line & PRELUDE_LINE != 0 {

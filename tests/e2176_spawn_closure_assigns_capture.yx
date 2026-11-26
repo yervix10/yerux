@@ -1,0 +1,20 @@
+// A closure inside the worker that assigns a captured copy is rejected as well.
+fn each(f: mut fn(Int)) {
+  f(1)
+}
+
+fn main() {
+  var seen = [0, 0]
+  var sum = 0
+  scope {
+    let h = spawn move {
+      each(|v| {
+        sum = sum + v
+      })
+      seen[0] = 1
+      return 0
+    }
+    print(h.join().unwrap())
+  }
+  print(sum + seen[0])
+}

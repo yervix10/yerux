@@ -759,6 +759,7 @@ fn analyze(path: &str, docs: &HashMap<String, Doc>, uri_paths: &HashMap<String, 
             Err(errs) => return (parse_rendered(&errs), None),
         };
         let mut ps = syntax::Parser::new(loaded.toks.clone());
+        ps.std_files = loaded.std_files();
         let mut prog = match ps.program() {
             Ok(p) => p,
             Err(d) => return (parse_rendered(&[loaded.render(&d)]), None),
