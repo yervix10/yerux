@@ -1,0 +1,9 @@
+error: a string cannot be a pattern
+ --> tests/e2134_string_pattern_help.yx:4:5
+  |
+4 |     "a" => { print("a") }
+  |     ^^^
+  = patterns match enum variants, tuples, Int, Char and Bool
+  = help: compare strings with `if s.eq("a") { .. } else if s.eq("b") { .. }`
+
+1 error(s). Nothing was generated.

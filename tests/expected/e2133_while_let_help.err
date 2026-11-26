@@ -1,0 +1,9 @@
+error: unexpected keyword 'let' here
+ --> tests/e2133_while_let_help.yx:3:9
+  |
+3 |   while let Some(x) = o { o = None }
+  |         ^^^
+  = there is no `if let` or `while let`
+  = help: use `match value { Some(x) => { .. } None => {} }` (in a loop: `while true` with `None => { break }`)
+
+1 error(s). Nothing was generated.

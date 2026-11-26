@@ -1,0 +1,76 @@
+== disjoint edits: 0 conflict(s)
+  A
+  b
+  c
+  d
+  E
+== same edit: 0 conflict(s)
+  a
+  x
+  c
+== conflict: 1 conflict(s)
+  a
+  <<<<<<< ours
+  ours
+  ||||||| base
+  b
+  =======
+  theirs
+  >>>>>>> theirs
+  c
+== delete against edit: 1 conflict(s)
+  a
+  <<<<<<< ours
+  ||||||| base
+  b
+  =======
+  B
+  >>>>>>> theirs
+  c
+  d
+== insert at both ends: 0 conflict(s)
+  top
+  m
+  bottom
+== both insert here: 1 conflict(s)
+  a
+  <<<<<<< ours
+  one
+  ||||||| base
+  =======
+  two
+  >>>>>>> theirs
+  z
+== adjacent edits: 1 conflict(s)
+  a
+  <<<<<<< ours
+  B
+  c
+  ||||||| base
+  b
+  c
+  =======
+  b
+  C
+  >>>>>>> theirs
+  d
+== empty base: 0 conflict(s)
+  x
+== two regions: 1 conflict(s)
+  1
+  two
+  3
+  4
+  5
+  <<<<<<< ours
+  six
+  ||||||| base
+  6
+  =======
+  SIX
+  >>>>>>> theirs
+  7
+words: 0 conflict(s): the slow brown fox sleeps
+words: 1 conflict(s): set port <<<<<<< ours 8080 ||||||| base 80 ======= 443 >>>>>>> theirs on host
+generated: 400 rounds, 455 edit blocks, total cost 663, 147 with conflicts, 0 failures
+generated: 400 rounds, 465 edit blocks, total cost 685, 138 with conflicts, 0 failures

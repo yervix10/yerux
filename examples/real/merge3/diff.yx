@@ -1,0 +1,116 @@
+// Myers' O(ND) diff over any list of comparable items.
+
+// base[a0..a1] is replaced by other[b0..b1]; blocks are in order and never touch each other.
+pub struct Block { a0: Int, a1: Int, b0: Int, b1: Int }
+derive Clone for Block
+
+pub fn blocks<T: Equal>(a: view List<T>, b: view List<T>) -> List<Block> {
+    let n = a.len()
+    let m = b.len()
+    let max_d = n + m
+    // v[k + max_d] is the furthest x reached on diagonal k; one copy per step is kept for the walk back
+    var v = List<Int>.new()
+    for _ in 0..(2 * max_d + 2) { v.push(0) }
+    var trace = List<List<Int>>.new()
+    var found = false
+    var d = 0
+    while !found {
+        trace.push(v.clone())
+        var k = -d
+        while k <= d {
+            var x = 0
+            if k == -d || (k != d && v.get(k - 1 + max_d) < v.get(k + 1 + max_d)) {
+                x = if k + 1 + max_d < v.len() { v.get(k + 1 + max_d) } else { 0 }
+            } else {
+                x = v.get(k - 1 + max_d) + 1
+            }
+            var y = x - k
+            while x < n && y < m && a.at(x) == b.at(y) {
+                x = x + 1
+                y = y + 1
+            }
+            v.set(k + max_d, x)
+            if x >= n && y >= m {
+                found = true
+                break
+            }
+            k = k + 2
+        }
+        if !found { d = d + 1 }
+    }
+    // walk back, collecting one-item steps from the end
+    var steps = List<Block>.new()
+    var x = n
+    var y = m
+    while d > 0 {
+        let prev = trace.at(d)
+        let k = x - y
+        let down = k == -d || (k != d && prev.get(k - 1 + max_d) < prev.get(k + 1 + max_d))
+        let pk = if down { k + 1 } else { k - 1 }
+        let px = prev.get(pk + max_d)
+        let py = px - pk
+        if down {
+            steps.push(Block { a0: px, a1: px, b0: py, b1: py + 1 })
+        } else {
+            steps.push(Block { a0: px, a1: px + 1, b0: py, b1: py })
+        }
+        x = px
+        y = py
+        d = d - 1
+    }
+    steps.reverse()
+    var out = List<Block>.new()
+    for s in steps {
+        if out.len() > 0 {
+            let last = out.len() - 1
+            if out.at(last).a1 == s.a0 && out.at(last).b1 == s.b0 {
+                out.at(last).a1 = s.a1
+                out.at(last).b1 = s.b1
+                continue
+            }
+        }
+        out.push(s.clone())
+    }
+    return out
+}
+
+pub fn cost(script: view List<Block>) -> Int {
+    var total = 0
+    for s in script { total = total + (s.a1 - s.a0) + (s.b1 - s.b0) }
+    return total
+}
+
+pub fn append<T: Clone>(out: mut List<T>, from: view List<T>, lo: Int, hi: Int) {
+    for i in lo..hi { out.push(from.at(i).clone()) }
+}
+
+pub fn apply<T: Clone>(a: view List<T>, b: view List<T>, script: view List<Block>) -> List<T> {
+    var out = List<T>.new()
+    var at = 0
+    for s in script {
+        append(out, a, at, s.a0)
+        append(out, b, s.b0, s.b1)
+        at = s.a1
+    }
+    append(out, a, at, a.len())
+    return out
+}
+
+// The textbook table, as an independent check of the script length.
+pub fn lcs_length<T: Equal>(a: view List<T>, b: view List<T>) -> Int {
+    var row = List<Int>.new()
+    for _ in 0..(b.len() + 1) { row.push(0) }
+    for i in 0..a.len() {
+        var diagonal = 0
+        for j in 0..b.len() {
+            let above = row.get(j + 1)
+            if a.at(i) == b.at(j) {
+                row.set(j + 1, diagonal + 1)
+            } else {
+                row.set(j + 1, max(above, row.get(j)))
+            }
+            diagonal = above
+        }
+    }
+    return row.get(b.len())
+}

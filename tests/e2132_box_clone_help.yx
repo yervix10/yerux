@@ -1,0 +1,5 @@
+fn main() {
+  let a = Box.new(String.from("x"))
+  let b = a.clone()
+  print("{b}")
+}

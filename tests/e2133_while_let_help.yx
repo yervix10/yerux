@@ -1,0 +1,4 @@
+fn main() {
+  var o = Some(1)
+  while let Some(x) = o { o = None }
+}

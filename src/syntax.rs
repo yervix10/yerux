@@ -3992,6 +3992,9 @@ impl Parser {
                 }
                 Ok(Pat::Bind(name, None, np))
             }
+            Tok::Str(_) => Err(diag("a string cannot be a pattern", pos)
+                .note("patterns match enum variants, tuples, Int, Char and Bool")
+                .note("help: compare strings with `if s.eq(\"a\") { .. } else if s.eq(\"b\") { .. }`")),
             _ => Err(diag("expected a pattern", pos).note("patterns: `Variant(x)`, `_`, a name, `1`, `1..=9`, `'a'`, `true`, `(a, b)`, `A | B`, `n @ 1..=9`")),
         }
     }
@@ -4418,7 +4421,13 @@ impl Parser {
                     Ok(mk(EK::Move(n, 0), span(pos, p)))
                 }
                 _ if KW.contains(&x.as_str()) => {
-                    Err(diag(format!("unexpected keyword '{}' here", x), pos))
+                    let mut d = diag(format!("unexpected keyword '{}' here", x), pos);
+                    let prev = self.t.iter().position(|t| t.pos == pos).and_then(|k| k.checked_sub(1)).map(|k| &self.t[k].t);
+                    if x == "let" && matches!(prev, Some(Tok::Id(p)) if p == "if" || p == "while") {
+                        d = d.note("there is no `if let` or `while let`");
+                        d = d.note("help: use `match value { Some(x) => { .. } None => {} }` (in a loop: `while true` with `None => { break }`)");
+                    }
+                    Err(d)
                 }
                 _ => self.after_name(x, pos),
             },

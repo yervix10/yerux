@@ -1,0 +1,7 @@
+fn main() {
+  let s = String.from("a")
+  match s.as_str() {
+    "a" => { print("a") }
+    _ => {}
+  }
+}

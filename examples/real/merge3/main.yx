@@ -1,0 +1,131 @@
+// merge3: a three-way merge. A Myers diff, generic over the item type, gives the edit blocks from the base to each
+// side; the blocks are combined into stable and changed regions. Non-overlapping changes merge, identical changes
+// collapse, and the rest become conflicts (with diff3 markers), first by lines and then by words inside a line.
+// Hand-written cases are followed by generated ones that check the algebra of the merge.
+//   yerux run examples/real/merge3/main.yx   |  yerux build examples/real/merge3/main.yx [--native] -o BIN
+import diff
+import merge
+import std.text
+
+fn lines_of(s: view String) -> List<String> {
+    if s.len() == 0 { return List<String>.new() }
+    return s.split("|")
+}
+
+fn show_case(title: view String, base: view String, ours: view String, theirs: view String) {
+    let b = lines_of(base)
+    let o = lines_of(ours)
+    let t = lines_of(theirs)
+    let result = merge.three_way(b, o, t)
+    print("== {title}: {result.conflicts} conflict(s)")
+    let text = merge.render(result)
+    for line in text { print("  {line}") }
+}
+
+// Retries the single-line conflicts at word granularity.
+fn word_merge(base: view String, ours: view String, theirs: view String) {
+    let b = text.split_ws(base)
+    let o = text.split_ws(ours)
+    let t = text.split_ws(theirs)
+    let result = merge.three_way(b, o, t)
+    let flat = merge.render(result)
+    let joined = flat.join(" ")
+    print("words: {result.conflicts} conflict(s): {joined}")
+}
+
+fn rand(state: mut Int, bound: Int) -> Int {
+    state = (state * 1103515245 + 12345) % 2147483648
+    return (state / 65536) % bound
+}
+
+fn random_list(state: mut Int, n: Int) -> List<Int> {
+    var out = List<Int>.new()
+    for _ in 0..n { out.push(rand(state, 6)) }
+    return out
+}
+
+// A copy of `base` with a few random insertions, deletions and replacements.
+fn mutate(state: mut Int, base: view List<Int>) -> List<Int> {
+    var out = base.clone()
+    for _ in 0..rand(state, 4) {
+        let kind = rand(state, 3)
+        if kind == 0 {
+            let at = rand(state, out.len() + 1)
+            out.insert(at, rand(state, 6))
+        } else if out.len() > 0 {
+            let at = rand(state, out.len())
+            if kind == 1 {
+                let _ = out.remove(at)
+            } else {
+                out.set(at, 10 + rand(state, 6))
+            }
+        }
+    }
+    return out
+}
+
+fn same(a: view List<Int>, b: view List<Int>) -> Bool {
+    if a.len() != b.len() { return false }
+    for i in 0..a.len() {
+        if a.get(i) != b.get(i) { return false }
+    }
+    return true
+}
+
+// The merged list when there is no conflict.
+fn clean(r: view merge.Merged<Int>) -> Option<List<Int>> {
+    if r.conflicts > 0 { return None }
+    return Some(r.take_side(true))
+}
+
+fn properties(rounds: Int, seed: Int) {
+    var state = seed
+    var failures = 0
+    var conflicted = 0
+    var edits = 0
+    var script_length = 0
+    for _ in 0..rounds {
+        let n = rand(state, 14)
+        let base = random_list(state, n)
+        let a = mutate(state, base)
+        let b = mutate(state, base)
+        // the edit blocks rebuild the other side, and the script is as short as the LCS says
+        let blocks = diff.blocks(base, a)
+        if !same(diff.apply(base, a, blocks), a) { failures = failures + 1 }
+        let cost = diff.cost(blocks)
+        if cost != base.len() + a.len() - 2 * diff.lcs_length(base, a) { failures = failures + 1 }
+        script_length = script_length + cost
+        edits = edits + blocks.len()
+        // one unchanged side gives the other side; two equal sides give that side
+        for trio in [0, 1, 2] {
+            let r = if trio == 0 { merge.three_way(base, a, base) } else if trio == 1 { merge.three_way(base, base, a) } else { merge.three_way(base, a, a) }
+            match clean(r) {
+                Some(out) => { if !same(out, a) { failures = failures + 1 } }
+                None => { failures = failures + 1 }
+            }
+        }
+        // swapping the sides swaps the two readings of the result
+        let ab = merge.three_way(base, a, b)
+        let ba = merge.three_way(base, b, a)
+        if ab.conflicts != ba.conflicts { failures = failures + 1 }
+        if !same(ab.take_side(true), ba.take_side(false)) { failures = failures + 1 }
+        if ab.conflicts > 0 { conflicted = conflicted + 1 }
+    }
+    print("generated: {rounds} rounds, {edits} edit blocks, total cost {script_length}, {conflicted} with conflicts, {failures} failures")
+}
+
+fn main() {
+    show_case("disjoint edits", "a|b|c|d|e", "A|b|c|d|e", "a|b|c|d|E")
+    show_case("same edit", "a|b|c", "a|x|c", "a|x|c")
+    show_case("conflict", "a|b|c", "a|ours|c", "a|theirs|c")
+    show_case("delete against edit", "a|b|c|d", "a|c|d", "a|B|c|d")
+    show_case("insert at both ends", "m", "top|m", "m|bottom")
+    show_case("both insert here", "a|z", "a|one|z", "a|two|z")
+    show_case("adjacent edits", "a|b|c|d", "a|B|c|d", "a|b|C|d")
+    show_case("empty base", "", "x", "x")
+    show_case("two regions", "1|2|3|4|5|6|7", "1|two|3|4|5|six|7", "1|2|3|4|5|SIX|7")
+    word_merge("the quick brown fox jumps", "the slow brown fox jumps", "the quick brown fox sleeps")
+    word_merge("set port 80 on host", "set port 8080 on host", "set port 443 on host")
+    properties(400, 7)
+    properties(400, 99)
+}

@@ -1,0 +1,283 @@
+// The sheet: cell contents, the dependency graph and recalculation.
+import formula
+
+pub enum Value {
+    Empty,
+    Number(Int),
+    Label(String),
+    Error(String),
+}
+derive Clone for Value
+
+pub enum Content {
+    Blank,
+    Literal(Value),
+    Formula(formula.Expr),
+}
+derive Clone for Content
+
+pub struct Cell { content: Content, value: Value, reads: List<Int> }
+derive Clone for Cell
+
+// Map values that own memory cannot be borrowed from a Map, so the map holds indexes into a list.
+pub struct Sheet { slot: Map<Int, Int>, cells: List<Cell>, ids: List<Int> }
+derive Clone for Sheet
+
+// Who reads each cell.
+struct Graph { slot: Map<Int, Int>, lists: List<List<Int>> }
+
+impl Graph {
+    fn link(mut self, from: Int, to: Int) {
+        if !self.slot.contains(from) {
+            self.slot.insert(from, self.lists.len())
+            self.lists.push(List<Int>.new())
+        }
+        let k = self.slot.get(from)
+        self.lists.at(k).push(to)
+    }
+    fn from(view self, from: Int) -> List<Int> {
+        if !self.slot.contains(from) { return List<Int>.new() }
+        return self.lists.at(self.slot.get(from)).clone()
+    }
+}
+
+fn new_graph() -> Graph { return Graph { slot: Map<Int, Int>.new(), lists: List<List<Int>>.new() } }
+
+
+// An argument of a function: ranges contribute only their numeric cells.
+struct Numbers { items: List<Int> }
+
+pub fn new_sheet() -> Sheet { return Sheet { slot: Map<Int, Int>.new(), cells: List<Cell>.new(), ids: List<Int>.new() } }
+
+impl Sheet {
+    fn value(view self, at: Int) -> Value {
+        if !self.slot.contains(at) { return Value.Empty }
+        return self.cells.at(self.slot.get(at)).value.clone()
+    }
+
+    fn display(view self, at: Int) -> String {
+        match self.value(at) {
+            Empty => { return String.new() }
+            Number(n) => { return "{n}" }
+            Label(s) => { return String.from(s) }
+            Error(e) => { return "#{e}" }
+        }
+    }
+
+    fn used(view self) -> List<Int> {
+        var out = self.ids.clone()
+        out.sort()
+        return out
+    }
+
+    // Sets a cell from its input text and returns the cells recalculated, in order.
+    fn set(mut self, at: Int, input: view String) -> Result<List<Int>, String> {
+        var content = Content.Blank
+        var reads = List<Int>.new()
+        if input.len() > 0 && input.byte(0) == 61 {
+            let body = input.slice(1, input.len())
+            let e = formula.parse(body)?
+            formula.refs(e, reads)
+            content = Content.Formula(move e)
+        } else if input.len() > 0 {
+            var n = 0
+            if input.parse_int(n) {
+                content = Content.Literal(Value.Number(n))
+            } else {
+                content = Content.Literal(Value.Label(String.from(input)))
+            }
+        }
+        let cell = Cell { content: move content, value: Value.Empty, reads: move reads }
+        if self.slot.contains(at) {
+            self.cells.set(self.slot.get(at), move cell)
+        } else {
+            self.slot.insert(at, self.cells.len())
+            self.ids.push(at)
+            self.cells.push(move cell)
+        }
+        var seeds = List<Int>.new()
+        seeds.push(at)
+        let dirty = self.dependents(seeds)
+        return Ok(self.recalc(dirty))
+    }
+
+    // The seeds and every cell that reads one of them, directly or through other cells.
+    fn dependents(view self, seeds: view List<Int>) -> List<Int> {
+        var readers = new_graph()
+        for at in self.used() {
+            let k = self.slot.get(at)
+            for r in self.cells.at(k).reads { readers.link(r, at) }
+        }
+        var seen = Set<Int>.new()
+        var queue = List<Int>.new()
+        for s in seeds {
+            seen.insert(s)
+            queue.push(s)
+        }
+        var head = 0
+        while head < queue.len() {
+            let at = queue.get(head)
+            head = head + 1
+            for next in readers.from(at) {
+                if seen.contains(next) { continue }
+                seen.insert(next)
+                queue.push(next)
+            }
+        }
+        queue.sort()
+        return queue
+    }
+
+    // Kahn's algorithm over the dirty cells; whatever never becomes ready is on a cycle or reads one.
+    fn recalc(mut self, dirty: view List<Int>) -> List<Int> {
+        var waiting = Map<Int, Int>.new()
+        for at in dirty { waiting.insert(at, 0) }
+        var readers = new_graph()
+        for at in dirty {
+            var count = 0
+            let k = self.slot.get(at)
+            for r in self.cells.at(k).reads {
+                if !waiting.contains(r) { continue }
+                count = count + 1
+                readers.link(r, at)
+            }
+            waiting.insert(at, count)
+        }
+        var order = List<Int>.new()
+        for at in dirty {
+            if waiting.get(at) == 0 { order.push(at) }
+        }
+        var head = 0
+        while head < order.len() {
+            let at = order.get(head)
+            head = head + 1
+            let v = self.compute(at)
+            let k = self.slot.get(at)
+            self.cells.at(k).value = move v
+            for next in readers.from(at) {
+                let left = waiting.get(next) - 1
+                waiting.insert(next, left)
+                if left == 0 { order.push(next) }
+            }
+        }
+        for at in dirty {
+            if waiting.get(at) > 0 {
+                let k = self.slot.get(at)
+                self.cells.at(k).value = Value.Error(String.from("CYCLE"))
+            }
+        }
+        return order
+    }
+
+    fn recalc_all(mut self) {
+        let all = self.used()
+        for k in 0..self.cells.len() { self.cells.at(k).value = Value.Empty }
+        let _ = self.recalc(all)
+    }
+
+    fn compute(view self, at: Int) -> Value {
+        let k = self.slot.get(at)
+        match self.cells.at(k).content {
+            Blank => { return Value.Empty }
+            Literal(v) => { return v.clone() }
+            Formula(e) => {
+                match self.eval(e) {
+                    Ok(n) => { return Value.Number(n) }
+                    Err(code) => { return Value.Error(move code) }
+                }
+            }
+        }
+    }
+
+    // An empty cell counts as 0; text in arithmetic is an error; an error propagates unchanged.
+    fn number(view self, at: Int) -> Result<Int, String> {
+        match self.value(at) {
+            Empty => { return Ok(0) }
+            Number(n) => { return Ok(n) }
+            Label(_) => { return Err(String.from("TEXT")) }
+            Error(e) => { return Err(String.from(e)) }
+        }
+    }
+
+    fn eval(view self, e: view formula.Expr) -> Result<Int, String> {
+        match e {
+            Num(n) => { return Ok(n) }
+            Ref(at) => { return self.number(at) }
+            Range(_, _) => { return Err(String.from("RANGE")) }
+            Neg(x) => {
+                let v = self.eval(*x)?
+                return apply('-', 0, v)
+            }
+            Bin(op, l, r) => {
+                let a = self.eval(*l)?
+                let b = self.eval(*r)?
+                return apply(op, a, b)
+            }
+            Call(func, args) => { return self.call(func, args) }
+        }
+    }
+
+    fn call(view self, func: view formula.Func, args: view List<formula.Expr>) -> Result<Int, String> {
+        var nums = Numbers { items: List<Int>.new() }
+        for a in args {
+            match a {
+                Range(x, y) => {
+                    for at in formula.range_cells(x, y) {
+                        match self.value(at) {
+                            Number(n) => { nums.items.push(n) }
+                            Error(code) => { return Err(String.from(code)) }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => { nums.items.push(self.eval(a)?) }
+            }
+        }
+        let n = nums.items.len()
+        if func == formula.Func.Count { return Ok(n) }
+        var total = 0
+        for v in nums.items { total = apply('+', total, v)? }
+        if func == formula.Func.Sum { return Ok(total) }
+        if n == 0 { return Err(String.from("EMPTY")) }
+        if func == formula.Func.Avg { return Ok(total / n) }
+        var best = nums.items.get(0)
+        for v in nums.items {
+            if func == formula.Func.Min { best = min(best, v) } else { best = max(best, v) }
+        }
+        return Ok(best)
+    }
+}
+
+const MAX: Int = 9223372036854775807
+const MIN: Int = -9223372036854775807 - 1
+
+// Whether a * b does not fit.
+fn mul_overflows(a: Int, b: Int) -> Bool {
+    if a == 0 || b == 0 { return false }
+    if a > 0 {
+        if b > 0 { return a > MAX / b }
+        return b < MIN / a
+    }
+    if b > 0 { return a < MIN / b }
+    return b < MAX / a
+}
+
+// Int has no checked operations, so the range is tested before each one (the plain operators panic on overflow).
+fn apply(op: Char, a: Int, b: Int) -> Result<Int, String> {
+    let over = String.from("OVERFLOW")
+    if op == '+' {
+        if (b > 0 && a > MAX - b) || (b < 0 && a < MIN - b) { return Err(move over) }
+        return Ok(a + b)
+    }
+    if op == '-' {
+        if (b < 0 && a > MAX + b) || (b > 0 && a < MIN + b) { return Err(move over) }
+        return Ok(a - b)
+    }
+    if op == '*' {
+        if mul_overflows(a, b) { return Err(move over) }
+        return Ok(a * b)
+    }
+    if b == 0 { return Err(String.from("DIV0")) }
+    if a == MIN && b == -1 { return Err(move over) }
+    return Ok(a / b)
+}

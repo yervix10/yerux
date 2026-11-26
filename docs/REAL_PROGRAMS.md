@@ -955,4 +955,40 @@ joins paths with `std.path`, and reports every pair with equal size and content.
 153. **Directory entries expose kind but no recursive walk helper.** `std.fs.read_dir_entries(dir)` requires a manual
     recursive function, plus a relative-path accumulator built with `path.join` and `/`. This is clear but adds boilerplate
     compared with a built-in `walk` API.
+## Round 16: queuesim, sheet, merge3
+
+Three programs in `examples/real/<name>/`, each with `expected.out`, identical on the C and `--native` backends (exit 0)
+and registered in `tests/real_programs.sh`.
+
+- **queuesim**: a discrete event simulation of a service centre. A generic binary heap (`impl<T: Before> Heap<T>`) orders
+  the events, the waiting line is a `Box<dyn Line>` with three policies, and a generic `Tally<K>` collects waiting times.
+- **sheet**: a spreadsheet engine (`formula.yx`, `engine.yx`): formula parser into a recursive `Box` tree, dependency
+  graph, incremental recalculation in topological order, cycle detection, checked arithmetic. After every edit the result
+  is compared with a full recalculation.
+- **merge3**: a three-way merge on a Myers diff, generic over the item type (lines, words, integers), with diff3 conflict
+  markers. 800 generated cases check the script length against an LCS table, patch application, identity merges and the
+  symmetry of the two sides. It compiled and passed without any compiler friction.
+
+### Round 16 frictions (132-135 fixed; 136-138 open)
+
+132. **The help for `clone` on a `Box` asks for something impossible.** `Box.new(x).clone()` said "write
+    `impl Clone for Box<String> { .. }`", but methods cannot be added to a built-in type. The same help appeared for
+    `derive Clone` on a recursive enum with `Box` payloads. *Fixed:* the help gives `Box.new((*b).clone())` and says to
+    write the recursive `impl Clone` by hand (`tests/e2132_box_clone_help.yx`).
+133. **`if let` and `while let` only say "unexpected keyword 'let' here".** *Fixed:* the error says that they do not
+    exist and shows the `match` form (`tests/e2133_while_let_help.yx`).
+134. **A string literal as a `match` pattern only says "expected a pattern".** *Fixed:* it says that a string cannot be
+    a pattern and suggests `s.eq(..)` (`tests/e2134_string_pattern_help.yx`).
+135. **`Map.get_mut` and `Map.keys` suggest `impl Point`.** A `Map` whose values own memory has no in-place access, and
+    the help showed how to add a method to a user struct. *Fixed:* `get_mut` suggests `take`, change, `insert`; `keys`
+    suggests `collections.map_for_each` or a key list (`tests/e2135_map_get_mut_help.yx`). The missing access itself is
+    unchanged: sheet and its dependency graph keep a `Map<Int, Int>` of indexes into a `List`.
+136. **`Int` has no checked arithmetic.** There are `wrapping_*` forms but nothing that reports overflow, so a program
+    that must not panic on user input writes the range tests by hand (`apply` in `sheet/engine.yx`; `bcvm/vm.yx` does the
+    same).
+137. **`Type.new()` works on a generic struct but not on a plain one.** `impl<T> Heap<T> { fn new() .. }` can be called
+    as `Heap<Int>.new()`; `impl Sheet { fn new() -> Sheet .. }` is rejected ("no `self` parameter, so nothing can call
+    it"). The plain struct needs a free function.
+138. **`derive Clone` does not reach through `Box`** (documented limit in `docs/CLONE.md`), so every recursive syntax
+    tree needs its `impl Clone` written variant by variant.
 

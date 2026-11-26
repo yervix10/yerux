@@ -1,0 +1,5 @@
+fn main() {
+  var m = Map<Int, List<Int>>.new()
+  m.insert(1, List<Int>.new())
+  m.get_mut(1).push(2)
+}
