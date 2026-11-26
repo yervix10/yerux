@@ -1,0 +1,8 @@
+error: expected Text but this is String
+ --> tests/e2330_string_where_text.yx:8:13
+  |
+8 |   print(tag("{n}"))
+  |             ^^^^^
+  = help: a String is not a Text: take the parameter as `view String` (a Text literal is lent to it as a String), or call the method on the String (`s.eq(t)` accepts a Text)
+
+1 error(s). Nothing was generated.

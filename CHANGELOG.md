@@ -7,6 +7,14 @@ Compiler versions match `VERSION` and the release tag. The language roadmap is i
 - Project-aware module resolution now applies to `check` and LSP files even when `yerux.toml` has no dependencies.
 - Self-import diagnostics explain when a test file's name resolves to itself and suggest renaming the file.
 - `std.io` now names common network errno values, including `EADDRINUSE`, instead of reporting `Unknown error`.
+- `const NAME: Text = ".."` (and `: String`) is accepted: a text constant holds a literal or another text
+  constant above it, a use behaves like the literal (prints, compares, is lent to a `view String`) and the
+  `String` form builds a fresh owned value at each use (friction 264, `tests/const_text.yx`).
+- `f(x) == "text"` is accepted: a `String` call result on the left of `==`/`!=` is stored in a hidden variable
+  first, so the comparison borrows a place like any other variable (friction 267, `tests/string_temp_compare.yx`).
+- Diagnostics: passing a `String` where a `Text` is expected names `view String` as the parameter type that
+  accepts both (265), and a nested pattern inside an owned payload of `match move` offers a nested `match`, a
+  helper function and a borrowing `match` (266).
 
 ## 1.1.0
 

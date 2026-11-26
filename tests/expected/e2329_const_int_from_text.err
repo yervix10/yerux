@@ -1,0 +1,8 @@
+error: expected Int but this is Text
+ --> tests/e2329_const_int_from_text.yx:2:16
+  |
+2 | const N: Int = "text"
+  |                ^^^^^^
+  = help: a text constant is `const NAME: Text = ".."` (or `: String` for an owned copy at each use)
+
+1 error(s). Nothing was generated.

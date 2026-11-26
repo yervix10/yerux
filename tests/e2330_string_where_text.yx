@@ -1,0 +1,9 @@
+// An interpolated string is a String, not a Text; the help names `view String` (friction 265).
+fn tag(s: Text) -> Text {
+  return s
+}
+
+fn main() {
+  let n = 7
+  print(tag("{n}"))
+}

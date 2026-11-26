@@ -1,9 +1,0 @@
-error: cannot use `==` here: the left side is a String value that is not a variable
- --> tests/e1410_eq_on_temporary.yx:4:10
-  |
-4 |   return text.to_upper(s) == "HEY"
-  |          ^^^^^^^^^^^^^^^^
-  = `==` on String calls `eq`, which borrows its left side
-  = help: store the value with `let` first, then compare the variable (or write `value.eq(other)`)
-
-1 error(s). Nothing was generated.

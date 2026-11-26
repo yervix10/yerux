@@ -1,0 +1,31 @@
+// `const NAME: Text = ".."` and `const NAME: String = ".."` (friction 264). A Text constant is the literal
+// itself (it prints, compares and is lent to a `view String`); a String constant builds a fresh String per use.
+const GREETING: Text = "hello"
+const COPY: Text = GREETING
+const OWNED: String = "owned"
+
+fn width(s: view String) -> Int {
+  return s.len()
+}
+
+fn label(t: Text) -> Text {
+  return t
+}
+
+fn main() {
+  print(GREETING)
+  print(COPY)
+  print(label(GREETING))
+  print(width(GREETING))
+  print(GREETING == COPY)
+  print(GREETING.eq(COPY))
+
+  // every use of a String const is a separate, owned String
+  var a = OWNED
+  a.push_str(" one")
+  var b = OWNED
+  b.push_str(" two")
+  print(a)
+  print(b)
+  print(OWNED.len())
+}

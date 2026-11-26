@@ -408,7 +408,7 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
   `yerux run file.yx [flags] -- a b` passes them (`tests/run_args.sh`).
 - **`==` on a call result gave a misleading error.** `text.to_upper(s) == "HEY"` said "cannot compare values of type
   String" (Strings are comparable) and then blamed the other operand. It now says that the left side is a String value
-  that is not a variable, and suggests `let` first or `.eq` (test `e1410_eq_on_temporary`), like `<` already did.
+  that is not a variable, and suggests `let` first or `.eq` (test `eq_on_temporary` (was `e1410_eq_on_temporary`, an error test until `f(x) == ".."` was accepted in round 25b)), like `<` already did.
 
 ## Open in round 2 (minimal cases)
 
@@ -434,7 +434,7 @@ Written as `examples/real/md2html.yx`, `minidb.yx` and `apiserver.yx` (about 400
 8. **Fixed: `list.remove(i)` / `list.pop()` as a statement drop the element** (test `list_discard`). Was: A removed list element must be used. `list.remove(i)` as a statement is "a String is created and immediately
    discarded (memory leak)"; write `let gone = list.remove(i)`. Same for `list.pop()`, which also returns the element
    itself rather than an `Option` (an empty list panics).
-9. **Fixed: no cascade after the `==` error** (test `e1504_eq_no_cascade`). Was: The cascade after the `==` error. The fixed message is followed by a second error about the right operand
+9. **Fixed: no cascade after the `==` error** (test `eq_temp_no_cascade` (was `e1504_eq_no_cascade`, an error test until round 25b)). Was: The cascade after the `==` error. The fixed message is followed by a second error about the right operand
     ("'word' is a String and is not copied") that is a consequence of the first.
 
 

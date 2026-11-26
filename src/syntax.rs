@@ -149,7 +149,7 @@ fn diagnostic_hint(msg: &str) -> Option<String> {
     let hint = if msg == "expected String but this is Text" {
         "a Text is a string literal type and is not a String: make a String with `String.from(text)`"
     } else if msg == "expected Text but this is String" {
-        "a String is not a Text: call the method on the String instead (`s.eq(t)` accepts a Text), or pass a literal"
+        "a String is not a Text: take the parameter as `view String` (a Text literal is lent to it as a String), or call the method on the String (`s.eq(t)` accepts a Text)"
     } else if msg.starts_with("expected ") && msg.contains(" but this is ") {
         "check the value at this expression; convert it explicitly or change the expected type"
     } else if let Some(ty) = numeric_type_name(msg) {
@@ -894,6 +894,9 @@ pub struct Types {
     pub slices: HashSet<usize>,
     /// `const NAME: T = expr` items (Int, Bool or Char), folded by the parser: value (Bool 0/1, Char code), type.
     pub consts: HashMap<String, (i64, Ty)>,
+    /// `const NAME: Text = ".."` and `const NAME: String = ".."`: the text and whether a use needs a fresh
+    /// owned `String` (every use of a String const builds one with `String.from`; a Text const is a literal).
+    pub text_consts: HashMap<String, (String, Ty)>,
     /// Structs with a user `impl Drop`: struct id -> name of the `drop` function (run before the fields drop).
     pub user_drop: HashMap<usize, String>,
 }
@@ -2465,6 +2468,23 @@ impl Parser {
         if self.types.consts.contains_key(&name) {
             return Err(diag(format!("const '{}' is defined twice", name), npos));
         }
+        if let Some(value) = self.const_text(&e) {
+            let t = match ty {
+                None => Ty::Text,
+                Some(t @ Ty::Text) => t,
+                Some(Ty::String) => Ty::String,
+                Some(want) => {
+                    return Err(diag(
+                        format!("expected {} but this is Text", self.types.name(want)),
+                        e.pos,
+                    )
+                    .note("help: a text constant is `const NAME: Text = \"..\"` (or `: String` for an owned copy at each use)"))
+                }
+            };
+            self.types.consts.insert(name.clone(), (0, t));
+            self.types.text_consts.insert(name, (value, t));
+            return Ok(());
+        }
         let (v, t) = self.fold_const(&e)?;
         let t = match ty {
             None => t,
@@ -2482,7 +2502,7 @@ impl Parser {
                 }
                 Ty::Range(lo, hi)
             }
-            Some(want) if matches!(want, Ty::Int | Ty::Bool | Ty::Char) => {
+            Some(want) if matches!(want, Ty::Int | Ty::Bool | Ty::Char | Ty::Text | Ty::String) => {
                 return Err(diag(
                     format!(
                         "expected {} but this is {}",
@@ -2506,6 +2526,15 @@ impl Parser {
         self.types.consts.insert(name, (v, t));
         Ok(())
     }
+    /// The text of a const expression: a `Text` literal, or a text const defined above it.
+    fn const_text(&self, e: &Expr) -> Option<String> {
+        match &e.k {
+            EK::Text(s) => Some(s.clone()),
+            EK::Var(n, _) => self.types.text_consts.get(n).map(|(s, _)| s.clone()),
+            _ => None,
+        }
+    }
+
     /// The value of a const expression: literals, earlier consts, arithmetic, comparisons and logic.
     fn fold_const(&self, e: &Expr) -> PR<(i64, Ty)> {
         let ovf = || {
@@ -2578,8 +2607,9 @@ impl Parser {
                 (r.ok_or_else(ovf)?, Ty::Int)
             }
             EK::Text(_) => {
-                return Err(diag("a const holds a number, Bool or Char: a Text constant is not supported", e.pos)
-                    .note("help: write the text where it is used, or return it from a function: `fn pattern() -> Text { return \"..\" }`"))
+                return Err(diag("this Text is used where the constant needs a number, a Bool or a Char", e.pos)
+                    .note("help: a text constant is written on its own (`const NAME: Text = \"..\"`); a number or a flag cannot be computed from text")
+                    .note("if the text is a pattern, return it from a function: `fn pattern() -> Text { return \"..\" }`"))
             }
             _ => {
                 return Err(diag(
@@ -2654,7 +2684,7 @@ impl Parser {
         }
         let placeholder = match ty {
             Some(t @ Ty::Range(lo, _)) => (lo, t),
-            Some(t @ (Ty::Bool | Ty::Char)) => (0, t),
+            Some(t @ (Ty::Bool | Ty::Char | Ty::Text | Ty::String)) => (0, t),
             _ => (1, Ty::Int),
         };
         self.types.consts.entry(name).or_insert(placeholder);
