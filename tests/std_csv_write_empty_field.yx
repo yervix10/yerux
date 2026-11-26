@@ -1,0 +1,39 @@
+// csv.write of a record whose only field is empty. Written as an empty line it is, to Python's csv module and most
+// tools, a record with NO fields; RFC 4180 spells one empty field as "". `parse` reads both forms as one empty field.
+import std.csv
+
+fn dump(rows: view List<List<String>>) {
+  for i in 0..rows.len() {
+    var line = String.from("r")
+    line.push_int(i)
+    line.push_str("=")
+    let r = rows.at(i)
+    for j in 0..r.len() {
+      if j > 0 { line.push_str("|") }
+      line.push_str("[")
+      line.push_str(r.at(j))
+      line.push_str("]")
+    }
+    print(line)
+  }
+}
+
+fn main() {
+  var rows = List<List<String>>.new()
+  var r = List<String>.new()
+  r.push("")
+  rows.push(move r)
+  let w = csv.write(rows)
+  print("w=[{w}] len={w.len()}")
+  dump(csv.parse(w))
+
+  // the old spelling (an empty line) still reads back as one empty field
+  dump(csv.parse("\r\n"))
+  // a two-field record keeps the plain empty field
+  var pair = List<String>.new()
+  pair.push("")
+  pair.push("a")
+  var rows2 = List<List<String>>.new()
+  rows2.push(move pair)
+  print("pair=[{csv.write(rows2)}]")
+}
