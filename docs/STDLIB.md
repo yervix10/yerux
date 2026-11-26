@@ -551,7 +551,7 @@ struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
   for either a literal or a typed `Text` value. C string operations stop at the first NUL.
   `String` has no implicit conversion to this ABI. For APIs accepting a raw buffer, declare
   the pointer as `Ptr<T>` and follow the foreign API's length and lifetime requirements.
-  See [SPEC.md](SPEC.md#71-declarations-and-calls).
+  See [SPEC.md](SPEC.md#c-declarations-experimental).
 
 ---
 
