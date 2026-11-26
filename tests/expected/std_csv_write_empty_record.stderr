@@ -1,1 +1,2 @@
 panic: std.csv: write: record 1 has no fields (CSV cannot express an empty record)
+  at <std>/csv.yx:95:32
