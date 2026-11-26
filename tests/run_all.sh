@@ -110,6 +110,7 @@ AUX=(
   "lsp_cargo|cargo test -q --test lsp"
   "modules|bash tests/modules.sh"
   "selfhost_native|bash tests/selfhost_native.sh"
+  "selfhost_diagnostics|bash tests/selfhost_diagnostics.sh"
   "conv_panic_wording|bash tests/conv_panic_wording.sh"
   "webkv|bash tests/webkv.sh"
   "http_server|bash tests/http_server.sh"

@@ -1,0 +1,8 @@
+error: this is nested more than 2000 levels deep
+ --> tests/e2344_nesting_parentheses.yx:2:2017
+  |
+2 | ...((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((...
+  |                                                                                    ^
+  = no real program needs this much nesting; split the inner part into its own function or a `let`
+
+1 error(s). Nothing was generated.

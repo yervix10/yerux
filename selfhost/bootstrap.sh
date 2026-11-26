@@ -34,13 +34,14 @@ compile_selfhost() {
     if [[ -n $reference ]]; then
       cmp "$reference/$stage.c" "$output/$stage.c"
     fi
-    if ! "${YERUX_CC:-cc}" -std=gnu11 -O0 -I src "$output/$stage.c" -o "$output/$stage" -pthread -lm 2>"$output/cc.err"; then
+    if ! "${YERUX_CC:-cc}" -std=gnu11 -O0 -I src -Dmain=sc_stage_main "$output/$stage.c" src/c_selfhost_stage.c \
+        -o "$output/$stage" -pthread -lm 2>"$output/cc.err"; then
       printf 'selfhost bootstrap: C compilation failed for %s\n' "$source" >&2
       head -n 20 "$output/cc.err" >&2
       return 1
     fi
   done
-  cp src/c_runtime.h src/c_selfhost_*.h src/prelude_{atomic,parallel}.yx "$output/runtime/"
+  cp src/c_runtime.h src/c_selfhost_*.[ch] src/prelude_{atomic,parallel}.yx "$output/runtime/"
   cp -R src/std "$output/runtime/"
   { printf 'trait Hash { fn hash(view self) -> Int }\n'; cat src/prelude_map.yx; } >"$output/runtime/prelude_map.yx"
   cp src/prelude_arena.yx src/prelude_iter.yx src/prelude_error.yx selfhost/prelude_spawn.yx "$output/runtime/"

@@ -1,0 +1,8 @@
+error: both ends of a range pattern must be the same kind
+ --> tests/e2340_pattern_range_mixed.yx:4:5
+  |
+4 |     1..='a' => {}
+  |     ^
+  = write numbers on both sides (`1..=9`) or characters on both sides (`'a'..='z'`)
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,5 @@
+// an error inside `{..}` of a string points at its column
+fn main() {
+  let n = 1
+  print("total: {n n}")
+}

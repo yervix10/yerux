@@ -1,0 +1,3 @@
+// a stray item at the end of the file is reported at its last token
+fn main() {}
+struct Empty

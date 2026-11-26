@@ -1,0 +1,3 @@
+// a generic list needs a parameter
+fn first<>(x: Int) -> Int { return x }
+fn main() {}

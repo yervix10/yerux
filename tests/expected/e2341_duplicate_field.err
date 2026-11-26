@@ -1,0 +1,8 @@
+error: duplicate field 'x'
+ --> tests/e2341_duplicate_field.yx:4:3
+  |
+4 |   x: Int,
+  |   ^
+  = help: rename or remove the repeated declaration
+
+1 error(s). Nothing was generated.

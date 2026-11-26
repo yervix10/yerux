@@ -14,7 +14,14 @@ struct Parser {
   legacy: Bool,
   build: Bool,
   depth: Int,
-  bare_line: Int,
+  // the first bare `match` arm of the statement being read (token index + 1; 0: none)
+  bare_at: Int,
+  // the first diagnostic of the parse, worded like the Rust compiler (build mode prints it)
+  message: String,
+  notes: List<String>,
+  err_line: Int,
+  err_col: Int,
+  err_len: Int,
 }
 
 fn hex(s: view String) -> String {
@@ -94,17 +101,52 @@ fn eat_kw(p: mut Parser, s: Text) -> Bool {
   return true
 }
 
+// Length of token `at` for the underline; 0 leaves literals for the driver to measure in the source.
+fn token_len(p: view Parser, at: Int) -> Int {
+  let k = p.tokens.at(at).kind.slice(0, p.tokens.at(at).kind.len())
+  if k == "Id" || k == "Sym" { return p.tokens.at(at).text.len() }
+  if k == "Eof" { return 1 }
+  return 0
+}
+
+// Fail at token `at` with `message`. Only the first failure counts (true when this one is it).
+fn fail_at(p: mut Parser, at: Int, message: view String) -> Bool {
+  if p.failed { return false }
+  p.failed = true
+  p.message = String.from(message)
+  // the end of the file is reported at its last token, like the Rust compiler
+  var shown = at
+  if shown > 0 && p.tokens.at(shown).kind == "Eof" { shown = shown - 1 }
+  p.err_line = p.tokens.at(shown).line
+  p.err_col = p.tokens.at(shown).col
+  p.err_len = token_len(p, shown)
+  return true
+}
+
+fn fail(p: mut Parser, message: view String) -> Bool { return fail_at(p, p.i, message) }
+
+// `fail_at` with a span from token `from` to token `to`
+fn fail_span(p: mut Parser, from: Int, to: Int, message: view String) -> Bool {
+  if !fail_at(p, from, message) { return false }
+  if p.tokens.at(from).line == p.tokens.at(to).line && p.tokens.at(to).col >= p.tokens.at(from).col {
+    p.err_len = p.tokens.at(to).col + token_len(p, to) - p.tokens.at(from).col
+  }
+  return true
+}
+
+fn note(p: mut Parser, text: view String) { p.notes.push(String.from(text)) }
+
 fn expect(p: mut Parser, s: Text) {
-  if !eat(p, s) { p.failed = true }
+  if !eat(p, s) { let first = fail(p, "expected '{s}'") }
 }
 
 fn ident(p: mut Parser) -> String {
-  if !is_name(p, 0) { p.failed = true; return String.new() }
+  if !is_name(p, 0) { let first = fail(p, "expected a name"); return String.new() }
   return bump(p)
 }
 
-fn at_close(p: mut Parser, close: Text) -> Bool {
-  if kind(p, "Eof") { p.failed = true }
+// Whether a list ends here. At the end of the file the next element is read anyway and reports what it expected.
+fn at_close(p: view Parser, close: Text) -> Bool {
   return p.failed || sym(p, close)
 }
 
@@ -183,6 +225,12 @@ fn length(p: mut Parser) -> String {
   return node1("Var", first)
 }
 
+fn bad_bound(p: mut Parser) {
+  if fail(p, "range bounds must be integer constants") {
+    note(p, "help: write the bounds as literals, e.g. `Int<0..255>`; the bounds are inclusive")
+  }
+}
+
 fn int_bound(p: mut Parser) -> String {
   let neg = eat(p, "-")
   var value = String.new()
@@ -190,13 +238,15 @@ fn int_bound(p: mut Parser) -> String {
   else if kind(p, "NumT") {
     let raw = bump(p)
     if raw.byte(raw.len() - 1) == 58 { value = raw.slice(0, raw.len() - 1) }
-    else { p.failed = true }
-  } else { p.failed = true }
+    else { p.i = p.i - 1; bad_bound(p) }
+  } else { bad_bound(p) }
   if neg { return "-{value}" }
   return value
 }
 
 fn type_args(p: mut Parser, name: view String) -> String {
+  var name_at = p.i
+  if name_at > 0 { name_at = name_at - 1 }
   if !eat(p, "<") { return empty_list() }
   if name == "496e74" {
     var lo = missing()
@@ -205,6 +255,13 @@ fn type_args(p: mut Parser, name: view String) -> String {
     expect(p, "..")
     if !sym(p, ">") { hi = int_bound(p) }
     expect(p, ">")
+    var low = 0
+    var high = 0
+    if p.build && lo.parse_int(low) && hi.parse_int(high) && low > high {
+      if fail_at(p, name_at, "empty integer range {low}..{high}") {
+        note(p, "the bounds of `Int<lo..hi>` are inclusive and `lo` must not exceed `hi`")
+      }
+    }
     return "[Range({lo},{hi})]"
   }
   return types(p, ">")
@@ -235,11 +292,14 @@ fn tuple_name(p: mut Parser, count: Int) -> String {
 }
 
 fn tuple_type(p: mut Parser) -> String {
+  let open = p.i - 1
   var count = 0
   let items = counted_types(p, ")", count)
   if !p.build { return node1("TupleType", items) }
   if count < 2 || count > 6 {
-    p.failed = true
+    if fail_span(p, open, p.i - 1, "a tuple type has 2 to 6 elements, this one has {count}") {
+      note(p, "help: for more elements, define a struct with named fields")
+    }
     return String.new()
   }
   let name = tuple_name(p, count)
@@ -277,6 +337,9 @@ fn type_inner(p: mut Parser) -> String {
     let item = parse_type(p)
     var len = missing()
     if eat(p, ";") { len = length(p) }
+    else if !sym(p, "]") && fail(p, "expected `;` or `]` in an array type") {
+      note(p, "help: `[Int; 4]` is an array of 4 Ints, `view [Int]` a slice parameter")
+    }
     expect(p, "]")
     return node2("BracketType", item, len)
   }
@@ -358,6 +421,8 @@ fn after_name(p: mut Parser, name: view String) -> String {
       p.i = angle
       p.failed = false
       p.error_line = 0
+      p.message.clear()
+      p.notes.clear()
       generic = missing()
     }
   }
@@ -386,6 +451,7 @@ fn after_name(p: mut Parser, name: view String) -> String {
 }
 
 fn tuple_or_group(p: mut Parser) -> String {
+  let open = p.i - 1
   let line = p.tokens.at(p.i - 1).line
   let first = parse_expr(p)
   if !sym(p, ",") {
@@ -401,7 +467,17 @@ fn tuple_or_group(p: mut Parser) -> String {
     n = n + 1
   }
   expect(p, ")")
-  if !p.failed && (n < 2 || n > 6) { p.failed = true; p.error_line = line }
+  if !p.failed && n < 2 {
+    p.error_line = line
+    if fail_span(p, open, p.i - 1, "a tuple needs at least two elements") {
+      note(p, "help: write the value itself, without parentheses and comma")
+    }
+  } else if !p.failed && n > 6 {
+    p.error_line = line
+    if fail_span(p, open, p.i - 1, "a tuple has at most 6 elements, this one has {n}") {
+      note(p, "help: for more elements, define a struct with named fields")
+    }
+  }
   finish(out)
   let name = tuple_name(p, n)
   return node3("StructLit", name, missing(), out)
@@ -440,10 +516,13 @@ fn closure(p: mut Parser, moved: Bool, worker: Bool) -> String {
     var names = List<String>.new()
     while !at_close(p, "|") {
       let line = p.tokens.at(p.i).line
+      let at = p.i
       let name = ident(p)
-      if names.contains(name) {
-        p.failed = true
+      if !p.failed && names.contains(name) {
         p.error_line = line
+        if fail_at(p, at, "duplicate closure parameter '{p.tokens.at(at).text}'") {
+          note(p, "help: rename or remove the repeated declaration")
+        }
         break
       }
       names.push(String.from(name))
@@ -453,6 +532,9 @@ fn closure(p: mut Parser, moved: Bool, worker: Bool) -> String {
       append(params, node3("Param", name, m, t))
       if !eat(p, ",") { break }
     }
+    if !sym(p, "|") && fail(p, "expected `|` to end the closure parameters") {
+      note(p, "help: closures are written `|x, y| x + y`, or `|x: Int| {{ .. }}` for a block body")
+    }
     expect(p, "|")
   }
   finish(params)
@@ -460,7 +542,9 @@ fn closure(p: mut Parser, moved: Bool, worker: Bool) -> String {
   let expr_body = !sym(p, "{{")
   var body = String.new()
   if expr_body {
-    if ret != "_" { p.failed = true }
+    if ret != "_" && fail(p, "a closure with `-> Type` needs a block body") {
+      note(p, "help: write `|x| -> Int {{ return x + 1 }}`, or drop the return type: `|x| x + 1`")
+    }
     let value = parse_expr(p)
     let statement = assignment_or_expr(p, value, false)
     body = "Block([{statement}])"
@@ -513,7 +597,7 @@ fn primary(p: mut Parser) -> String {
     return node1("Move", ident(p))
   }
   if eat_kw(p, "spawn") {
-    if !eat_kw(p, "move") { p.failed = true; return String.new() }
+    if !eat_kw(p, "move") { let first = fail(p, "spawn requires a move closure"); return String.new() }
     var worker = String.new()
     if sym(p, "{{") {
       let body = block(p)
@@ -527,8 +611,32 @@ fn primary(p: mut Parser) -> String {
     let name = ident(p)
     return after_name(p, name)
   }
-  p.failed = true
+  no_expression(p)
   return String.new()
+}
+
+fn no_expression(p: mut Parser) {
+  if kind(p, "Id") && reserved(p.tokens.at(p.i).text) {
+    let word = String.from(p.tokens.at(p.i).text)
+    if fail(p, "unexpected keyword '{word}' here") && word == "let" && p.i > 0 &&
+        (p.tokens.at(p.i - 1).text == "if" || p.tokens.at(p.i - 1).text == "while") {
+      note(p, "there is no `if let` or `while let`")
+      note(p, "help: use `match value {{ Some(x) => {{ .. }} None => {{}} }}` (in a loop: `while true` with `None => {{ break }}`)")
+    }
+    return
+  }
+  if sym(p, "=") && p.i > 0 && p.tokens.at(p.i - 1).line == p.tokens.at(p.i).line &&
+      p.tokens.at(p.i - 1).col + 1 == p.tokens.at(p.i).col {
+    let at = p.i - 1
+    let op = String.from(p.tokens.at(at).text)
+    if p.tokens.at(at).kind == "Sym" && (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") {
+      if fail_at(p, at, "`{op}=` does not exist: assignment has no compound form") {
+        note(p, "help: write the operation out: `n = n + 2`")
+      }
+      return
+    }
+  }
+  let first = fail(p, "expected an expression")
 }
 
 fn postfix(p: mut Parser, base: String, first: Int) -> String {
@@ -576,7 +684,9 @@ fn enter(p: mut Parser) -> Bool {
   p.depth = p.depth + 1
   if p.depth > 2000 {
     p.depth = p.depth - 1
-    p.failed = true
+    if fail(p, "this is nested more than 2000 levels deep") {
+      note(p, "no real program needs this much nesting; split the inner part into its own function or a `let`")
+    }
     return false
   }
   return true
@@ -648,34 +758,43 @@ fn pattern_bound(p: mut Parser, value: mut Int, char: mut Bool) -> Bool {
   return true
 }
 
-fn pat_range(p: mut Parser, lower: view String, is_char: Bool, inclusive: Bool) -> String {
+fn missing_bound(p: mut Parser) {
+  let first = fail(p, "expected a number or a character after `..=`")
+}
+
+fn pat_range(p: mut Parser, at: Int, lower: view String, is_char: Bool, inclusive: Bool) -> String {
   var hi = 0
   var char = false
   var upper = missing()
   var range_char = is_char
   if pattern_bound(p, hi, char) {
     if lower == "_" { range_char = char }
-    else if char != is_char { p.failed = true }
+    else if char != is_char && fail_at(p, at, "both ends of a range pattern must be the same kind") {
+      note(p, "write numbers on both sides (`1..=9`) or characters on both sides (`'a'..='z'`)")
+    }
     if !inclusive {
-      if hi == -9223372036854775807 - 1 { p.failed = true }
+      if hi == -9223372036854775807 - 1 { let first = fail_at(p, at, "this range is empty") }
       else { hi = hi - 1 }
     }
     var lo = 0
-    if lower.parse_int(lo) && lo > hi { p.failed = true }
+    if lower.parse_int(lo) && lo > hi && fail_at(p, at, "this range pattern is empty: the start is after the end") {
+      note(p, "help: write the smaller value first, e.g. `1..=9`")
+    }
     upper = "{hi}"
-  } else if inclusive { p.failed = true }
+  } else if inclusive { missing_bound(p) }
   return "PatRange({range_char},{lower},{upper})"
 }
 
 fn pattern_atom(p: mut Parser) -> String {
   if p.failed { return String.new() }
-  if eat(p, "..=") { return pat_range(p, missing(), false, true) }
+  let at = p.i
+  if eat(p, "..=") { return pat_range(p, at, missing(), false, true) }
   var number = 0
   var char = false
   if pattern_bound(p, number, char) {
     let value = "{number}"
-    if eat(p, "..=") { return pat_range(p, value, char, true) }
-    if eat(p, "..") { return pat_range(p, value, char, false) }
+    if eat(p, "..=") { return pat_range(p, at, value, char, true) }
+    if eat(p, "..") { return pat_range(p, at, value, char, false) }
     if char { return node1("Char", value) }
     return node1("Int", value)
   }
@@ -693,13 +812,14 @@ fn pattern_atom(p: mut Parser) -> String {
       count = count + 1
     }
     expect(p, ")")
-    if count < 2 || count > 6 { p.failed = true }
+    if count < 2 || count > 6 { let first = fail_span(p, at, p.i - 1, "a tuple pattern has 2 to 6 elements") }
     finish(out)
     return node1("TuplePat", out)
   }
   if eat_kw(p, "true") { return String.from("Bool(true)") }
   if eat_kw(p, "false") { return String.from("Bool(false)") }
   if eat_kw(p, "_") { return String.from("Wild()") }
+  if !is_name(p, 0) { no_pattern(p); return String.new() }
   let upper = uppercase(p.tokens.at(p.i).text)
   var name = ident(p)
   if eat(p, "@") { return node2("Bind", name, pattern_atom(p)) }
@@ -723,6 +843,17 @@ fn pattern_atom(p: mut Parser) -> String {
     return node2("Variant", name, items)
   }
   return node2("Bind", name, missing())
+}
+
+fn no_pattern(p: mut Parser) {
+  if kind(p, "Str") {
+    if fail(p, "a string cannot be a pattern") {
+      note(p, "patterns match enum variants, tuples, Int, Char and Bool")
+      note(p, "help: compare strings with `if s.eq(\"a\") {{ .. }} else if s.eq(\"b\") {{ .. }}`")
+    }
+  } else if fail(p, "expected a pattern") {
+    note(p, "patterns: `Variant(x)`, `_`, a name, `1`, `1..=9`, `'a'`, `true`, `(a, b)`, `A | B`, `n @ 1..=9`")
+  }
 }
 
 fn pattern(p: mut Parser) -> String {
@@ -749,6 +880,7 @@ fn unpack(p: mut Parser, mutable: Bool) -> String {
     let n = ident(p)
     return "UnpackBind({n},{mutable})"
   }
+  let open = p.i - 1
   var out = String.from("[")
   var count = 0
   while !at_close(p, ")") {
@@ -757,7 +889,9 @@ fn unpack(p: mut Parser, mutable: Bool) -> String {
     if !eat(p, ",") { break }
   }
   expect(p, ")")
-  if count < 2 { p.failed = true }
+  if count < 2 && fail_span(p, open, p.i - 1, "a tuple pattern needs at least two names") {
+    note(p, "example: `let (a, b) = pair`; use `_` for an element you do not need")
+  }
   finish(out)
   return node1("UnpackTuple", out)
 }
@@ -772,12 +906,18 @@ fn block(p: mut Parser) -> String {
 fn block_inner(p: mut Parser) -> String {
   expect(p, "{{")
   var out = String.from("[")
-  while !at_close(p, "}}") {
+  while !at_close(p, "}}") && !unclosed(p) {
     append(out, statement(p))
   }
   expect(p, "}}")
   finish(out)
   return node1("Block", out)
+}
+
+fn unclosed(p: mut Parser) -> Bool {
+  if !kind(p, "Eof") { return false }
+  let first = fail(p, "missing closing '}}'")
+  return true
 }
 
 // A block whose last statement is its value (a branch of an `if`/`match` used as a value). A trailing `if` or
@@ -789,27 +929,34 @@ fn value_block(p: mut Parser) -> String {
   return value
 }
 
+fn bare_arm_error(p: mut Parser, at: Int) {
+  if fail_at(p, at, "a `match` statement arm needs a block `{{ .. }}`") {
+    note(p, "a bare expression arm (`P => e,`) is only for a `match` used as a value")
+    note(p, "help: write `P => {{ e }}`, or `let x = match v {{ P => e, .. }}` to use the value")
+  }
+}
+
 fn value_block_inner(p: mut Parser) -> String {
   expect(p, "{{")
   var out = String.from("[")
-  while !at_close(p, "}}") {
+  while !at_close(p, "}}") && !unclosed(p) {
     if !kw(p, "if") && !kw(p, "match") {
       append(out, statement(p))
       continue
     }
-    let outer = p.bare_line
-    p.bare_line = 0
+    let outer = p.bare_at
+    p.bare_at = 0
     var item = String.new()
     if eat_kw(p, "if") { item = if_stmt_in(p, true) } else {
       p.i = p.i + 1
       item = match_arms(p, "Match", true)
     }
     // bare arms need a value, so the statement that holds them must end the block
-    if p.bare_line != 0 && !sym(p, "}}") {
-      if !p.failed { p.error_line = p.bare_line }
-      p.failed = true
+    if p.bare_at != 0 && !sym(p, "}}") {
+      if !p.failed { p.error_line = p.tokens.at(p.bare_at - 1).line }
+      bare_arm_error(p, p.bare_at - 1)
     }
-    if outer != 0 { p.bare_line = outer }
+    if outer != 0 { p.bare_at = outer }
     append(out, item)
   }
   expect(p, "}}")
@@ -858,10 +1005,18 @@ fn loop_stmt(p: mut Parser, label: view String, is_parallel: Bool) -> String {
     let cond = parse_expr(p)
     return node3("While", label, cond, block(p))
   }
-  if !eat_kw(p, "for") { p.failed = true; return String.new() }
+  var parallel_at = p.i
+  if is_parallel { parallel_at = p.i - 1 }
+  if !eat_kw(p, "for") {
+    if is_parallel { let first = fail(p, "expected 'for' after 'parallel'") }
+    else { p.failed = true }
+    return String.new()
+  }
   let mutable = eat_kw(p, "mut")
   let n = ident(p)
-  if !eat_kw(p, "in") { p.failed = true }
+  if !eat_kw(p, "in") && fail(p, "expected `in` after the loop variable") {
+    note(p, "example: `for i in 0..10 {{ .. }}` or `for x in list {{ .. }}`")
+  }
   let first = parse_expr(p)
   var end = missing()
   var inclusive = false
@@ -878,7 +1033,7 @@ fn loop_stmt(p: mut Parser, label: view String, is_parallel: Bool) -> String {
   if is_parallel {
     if mutable || step != "_" {
       if !p.failed { p.error_line = line }
-      p.failed = true
+      let first = fail_at(p, parallel_at, "parallel for requires a read-only iterator without a step")
     }
     if end != "_" {
       let closure = "Closure(false,false,true,false,[Param({n},Own,Type(496e74,[]))],_,{body})"
@@ -892,13 +1047,17 @@ fn loop_stmt(p: mut Parser, label: view String, is_parallel: Bool) -> String {
 
 // `if c { .. v } else { .. w }` where a value is wanted: both branches are required.
 fn if_expr(p: mut Parser) -> String {
+  let at = p.i
   let line = p.tokens.at(p.i).line
   p.i = p.i + 1
   let cond = parse_expr(p)
   let yes = value_block(p)
   if !eat_kw(p, "else") {
     if !p.failed { p.error_line = line }
-    p.failed = true
+    if fail_at(p, at, "an `if` used as a value needs an `else`") {
+      note(p, "both branches must produce a value of the same type")
+      note(p, "help: write `if cond {{ a }} else {{ b }}`, or use an `if` statement when no value is needed")
+    }
     return String.new()
   }
   var no = String.new()
@@ -926,15 +1085,19 @@ fn match_arms(p: mut Parser, tag: Text, as_value: Bool) -> String {
   var arms = String.from("[")
   var count = 0
   while !at_close(p, "}}") {
-    if count >= 10000 { p.failed = true; return String.new() }
+    if count >= 10000 { let first = fail(p, "this `match` has more than 10000 arms"); return String.new() }
     count = count + 1
     let pat = pattern(p)
     var guard = missing()
     if eat_kw(p, "if") { guard = parse_expr(p) }
+    if !sym(p, "=>") && fail(p, "expected '=>' after the pattern") {
+      note(p, "example: `Some(x) if x > 3 => {{ .. }}`")
+    }
     expect(p, "=>")
     var body = String.new()
+    if !as_value && !sym(p, "{{") && !p.failed { bare_arm_error(p, p.i) }
     if as_value && !sym(p, "{{") {
-      if p.bare_line == 0 { p.bare_line = p.tokens.at(p.i).line }
+      if p.bare_at == 0 { p.bare_at = p.i + 1 }
       let value = parse_expr(p)
       body = "Block([Expr({value})])"
     } else if as_value { body = value_block(p) } else { body = block(p) }
@@ -981,6 +1144,10 @@ fn statement(p: mut Parser) -> String {
     if breaking { out = node1("Break", label) }
     else { out = node1("Continue", label) }
   } else if eat_kw(p, "defer") {
+    if (kw(p, "let") || kw(p, "var") || kw(p, "return") || kw(p, "if") || kw(p, "while") || kw(p, "match") ||
+        kw(p, "defer")) && fail(p, "`defer` takes a single call or assignment") {
+      note(p, "help: put the work in a function and defer the call: `defer cleanup(x)`")
+    }
     let value = parse_expr(p)
     out = node1("Defer", assignment_or_expr(p, value, true))
   } else {
@@ -992,18 +1159,36 @@ fn statement(p: mut Parser) -> String {
 }
 
 fn generics(p: mut Parser) -> String {
+  var bound = 0
+  return bounded_generics(p, bound)
+}
+
+// `bound`: token index of the first trait bound (0: none)
+fn bounded_generics(p: mut Parser, bound: mut Int) -> String {
   if !eat(p, "<") { return empty_list() }
   var out = String.from("[")
+  var names = List<String>.new()
   while !at_close(p, ">") {
     let constant = kw(p, "const") && p.tokens.at(current(p, 1)).kind == "Id"
     if constant { p.i = p.i + 1 }
+    let at = p.i
     let n = ident(p)
+    if p.build && !p.failed {
+      if names.contains(n) {
+        let first = fail_at(p, at, "type parameter '{p.tokens.at(at).text}' is declared twice")
+      }
+      names.push(String.from(n))
+    }
     if constant {
       expect(p, ":")
+      if p.build && is_name(p, 0) && p.tokens.at(p.i).text != "Int" {
+        let first = fail(p, "a const parameter must be an Int: `const N: Int`")
+      }
       append(out, node2("ConstParam", n, parse_type(p)))
     } else {
       var bounds = String.from("[")
       if eat(p, ":") {
+        if bound == 0 { bound = p.i }
         append(bounds, path(p))
         while !p.failed && eat(p, "+") { append(bounds, path(p)) }
       }
@@ -1013,6 +1198,7 @@ fn generics(p: mut Parser) -> String {
     if !eat(p, ",") { break }
   }
   expect(p, ">")
+  if p.build && out == "[" { let first = fail(p, "a generic list needs at least one type parameter") }
   finish(out)
   return out
 }
@@ -1023,11 +1209,15 @@ fn function(p: mut Parser, body: Bool, method: Bool, external: Bool) -> String {
   let generic = generics(p)
   expect(p, "(")
   var params = String.from("[")
+  var names = List<String>.new()
   while !at_close(p, ")") {
     let first = params.len() == 1
+    if external && first && sym(p, "..") {
+      let found = fail(p, "a variadic extern function needs at least one fixed parameter before `...`")
+    }
     if external && !first && eat(p, "..") {
       expect(p, ".")
-      if !sym(p, ")") { p.failed = true }
+      if !sym(p, ")") { let found = fail(p, "`...` must be the last parameter") }
       append(params, String.from("Variadic()"))
       break
     }
@@ -1038,7 +1228,12 @@ fn function(p: mut Parser, body: Bool, method: Bool, external: Bool) -> String {
       p.i = p.i + 1
       append(params, node1("Self", m))
     } else {
+      let at = p.i
       let param = ident(p)
+      if p.build && !p.failed {
+        if names.contains(param) { duplicate(p, at, "parameter") }
+        names.push(String.from(param))
+      }
       expect(p, ":")
       let m = mode(p)
       append(params, node3("Param", param, m, parse_type(p)))
@@ -1054,10 +1249,32 @@ fn function(p: mut Parser, body: Bool, method: Bool, external: Bool) -> String {
   return "Fn({n},{generic},{params},{ret},{statements})"
 }
 
+fn duplicate(p: mut Parser, at: Int, what: Text) {
+  if fail_at(p, at, "duplicate {what} '{p.tokens.at(at).text}'") {
+    note(p, "help: rename or remove the repeated declaration")
+  }
+}
+
+// What an `impl` (`body && method`), a `trait` or an `extern` block expects instead of `fn`
+fn no_method(p: mut Parser, body: Bool, method: Bool) {
+  if method && body && kw(p, "pub") {
+    let first = fail(p, "methods take no `pub`: they are visible wherever their type is")
+  } else if method && body { let first = fail(p, "expected 'fn' inside `impl`") }
+  else if method { let first = fail(p, "expected 'fn' (a trait lists method signatures)") }
+  else { let first = fail(p, "expected 'fn', 'struct', 'enum', 'trait' or 'impl'") }
+}
+
 fn functions(p: mut Parser, body: Bool, method: Bool, external: Bool) -> String {
   expect(p, "{{")
   var out = String.from("[")
+  var names = List<String>.new()
   while !at_close(p, "}}") {
+    if !kw(p, "fn") { no_method(p, body, method) }
+    else if p.build && body && method && is_name(p, 1) {
+      let name = String.from(p.tokens.at(p.i + 1).text)
+      if names.contains(name) { let first = fail_at(p, p.i + 1, "method '{name}' is defined twice in this impl") }
+      names.push(move name)
+    }
     append(out, function(p, body, method, external))
   }
   expect(p, "}}")
@@ -1072,11 +1289,27 @@ fn str_value(p: mut Parser) -> String {
 
 fn aggregate(p: mut Parser, is_struct: Bool) -> String {
   let n = ident(p)
-  let generic = generics(p)
+  var bound = 0
+  let generic = bounded_generics(p, bound)
+  if p.build && bound != 0 && fail_at(p, bound, "type parameters of a struct or enum cannot have bounds") {
+    note(p, "help: put the bounds on the functions that use the type, e.g. `fn f<T: Ordered>(p: view Pair<T, T>)`")
+  }
   expect(p, "{{")
   var entries = String.from("[")
+  var names = List<String>.new()
   while !at_close(p, "}}") {
+    if is_struct && kw(p, "pub") && fail(p, "a struct field takes no `pub`") {
+      note(p, "the fields of a `pub struct` are public and those of a private struct are private: write `name: Type`")
+    }
+    let at = p.i
     let entry = ident(p)
+    if p.build && !p.failed {
+      if names.contains(entry) {
+        if is_struct { duplicate(p, at, "field") } else { duplicate(p, at, "variant") }
+      }
+      names.push(String.from(entry))
+      if !is_struct && names.len() > 5000 { let first = fail_at(p, at, "this enum has more than 5000 variants") }
+    }
     if is_struct {
       expect(p, ":")
       append(entries, node2("FieldDef", entry, parse_type(p)))
@@ -1127,8 +1360,12 @@ fn item(p: mut Parser) -> String {
     let n = str_value(p)
     out = node2("Test", n, block(p))
   } else if eat_kw(p, "link") {
+    if !kind(p, "Str") { let first = fail(p, "expected a library name string after `link`") }
     out = node1("Link", str_value(p))
   } else if eat_kw(p, "extern") {
+    if p.build && !(kind(p, "Str") && p.tokens.at(p.i).value == "43") {
+      let first = fail_at(p, p.i - 1, "only `extern \"C\"` is supported")
+    }
     let abi = str_value(p)
     out = node2("Extern", abi, functions(p, false, false, true))
   } else if eat_kw(p, "const") {
@@ -1160,7 +1397,7 @@ fn item(p: mut Parser) -> String {
     }
     let methods = functions(p, true, true, false)
     out = "Impl({generic},{trait_type},{target},{methods})"
-  } else { p.failed = true }
+  } else { let first = fail(p, "expected 'fn', 'struct', 'enum', 'trait' or 'impl'") }
   return "Item({public},{attribute},{out})"
 }
 
@@ -1179,8 +1416,65 @@ fn tuple_declaration(count: Int) -> String {
   return "Item(false,_,Struct({name},{generics},{fields}))"
 }
 
+// The Rust parser first walks over every item to find the generic ones, so unbalanced braces are reported
+// before any other syntax error.
+fn check_braces(p: mut Parser) {
+  var i = 0
+  let end = p.tokens.len() - 1
+  while i < end {
+    let word = String.from(p.tokens.at(i).text)
+    let named = p.tokens.at(i + 1).kind == "Id"
+    if (word == "const" || word == "type" || word == "import" || word == "derive") && named {
+      let line = p.tokens.at(i).line
+      while i < end && p.tokens.at(i).line == line { i = i + 1 }
+      continue
+    }
+    if word == "@" {
+      let attribute = String.from(p.tokens.at(i + 1).text)
+      let target = String.from(p.tokens.at(current(p, i + 2 - p.i)).text)
+      if p.tokens.at(i + 1).kind != "Id" || attribute != "thread_bound" || !(target == "struct" || target == "enum") {
+        let first = fail_at(p, i + 1, "expected @thread_bound on a struct or enum")
+        return
+      }
+      i = i + 2
+    }
+    while i < end && !(p.tokens.at(i).kind == "Sym" && p.tokens.at(i).text == "{{") { i = i + 1 }
+    if i >= end { let first = fail_at(p, end, "missing '{{'"); return }
+    let open = i
+    var depth = 0
+    while i < end {
+      if p.tokens.at(i).kind == "Sym" {
+        if p.tokens.at(i).text == "{{" { depth = depth + 1 }
+        else if p.tokens.at(i).text == "}}" { depth = depth - 1 }
+      }
+      i = i + 1
+      if depth == 0 { break }
+    }
+    if depth != 0 { let first = fail_at(p, open, "missing closing '}}'"); return }
+  }
+}
+
+// A second top-level type with a name fails where it is read. A second function is reported after the whole
+// file reads (the Rust checker finds it): `twice` keeps the token of its name.
+fn check_redefined(p: mut Parser, at: Int, functions: mut List<String>, types: mut List<String>, twice: mut Int) {
+  let word = String.from(p.tokens.at(at).text)
+  if !(word == "fn" || word == "struct" || word == "enum") || p.tokens.at(at + 1).kind != "Id" { return }
+  let name = String.from(p.tokens.at(at + 1).text)
+  if word == "fn" {
+    if twice == 0 && functions.contains(name) { twice = at + 1 }
+    functions.push(move name)
+  } else {
+    if types.contains(name) { let first = fail_at(p, at + 1, "type '{name}' is defined twice") }
+    types.push(move name)
+  }
+}
+
 fn parse_file(p: mut Parser) -> String {
   var out = String.from("[")
+  var functions = List<String>.new()
+  var types = List<String>.new()
+  var twice = 0
+  if p.build { check_braces(p) }
   while !p.failed && !kind(p, "Eof") {
     if !p.build && eat_kw(p, "derive") {
       // `derive Clone, Equal for Name` generates impls in the real compiler; it adds no item to the AST
@@ -1191,8 +1485,14 @@ fn parse_file(p: mut Parser) -> String {
       if !eat_kw(p, "for") { p.failed = true }
       let target = ident(p)
     } else {
+      var at = p.i
+      if kw(p, "pub") { at = at + 1 }
       append(out, item(p))
+      if p.build && !p.failed { check_redefined(p, at, functions, types, twice) }
     }
+  }
+  if twice != 0 && fail_at(p, twice, "function '{p.tokens.at(twice).text}' is defined twice") {
+    p.error_line = p.err_line
   }
   for count in p.tuple_arities { append(out, tuple_declaration(count)) }
   finish(out)
@@ -1259,7 +1559,8 @@ fn run(source: view String, build: Bool) {
   }
   var p = Parser {
     tokens: move tokens, structs: move structs, imports: List<String>.new(), tuple_arities: List<Int>.new(),
-    i: 0, failed: false, error_line: 0, legacy: legacy, build: build, depth: 0, bare_line: 0,
+    i: 0, failed: false, error_line: 0, legacy: legacy, build: build, depth: 0, bare_at: 0,
+    message: String.new(), notes: List<String>.new(), err_line: 0, err_col: 0, err_len: 0,
   }
   var ast = String.new()
   if legacy {
@@ -1269,7 +1570,11 @@ fn run(source: view String, build: Bool) {
   if p.failed || !kind(p, "Eof") {
     var line = p.error_line
     if line == 0 { line = p.tokens.at(p.i).line }
-    print("SyntaxError:{line}")
+    // the driver draws the same diagnostic as the Rust compiler from this row (`ast-file` has only the line)
+    if p.build && p.message.len() > 0 {
+      print("Error:{hex(p.message)}:{p.err_line}:{p.err_col}:{p.err_len}")
+      for row in p.notes { print("Note:{hex(row)}") }
+    } else { print("SyntaxError:{line}") }
     env.exit(1)
   }
   print(ast)
