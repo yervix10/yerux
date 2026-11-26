@@ -31,3 +31,14 @@ Guarda el programa, stdout, stderr y estado de ambos backends para cada diferenc
 salida. Usa `--no-opt` para desactivar optimizaciones en ambos backends. Se ejecuta manualmente, fuera de la suite.
 
 En `f1514ce` (Linux x86-64) coincidieron los 2100 casos del ejemplo y otros 210 con `--seed 240000 --count 210 --no-opt`.
+
+- `fuzz_stdlib.py [--cases N] [--seed S] [--suite LIST] [--batch B] [--jobs J] [--backend c|native] [--out DIR]`
+  — comparación diferencial de la biblioteca estándar contra oráculos de Python: `std.json` contra `json`,
+  `std.csv` contra `csv`, `std.toml` contra `tomllib`, y `std.text`, `std.fmt` y `std.args` contra una
+  implementación de la regla escrita en `docs/STDLIB.md`. Genera entradas aleatorias y malformadas, compila los
+  casos en lotes (un programa por lote, backend nativo: unos 3000 casos en 20 s con `--jobs 6`) y compara cada
+  respuesta; un caso que hace pánico o no compila se aísla y su programa queda en `<out>/caseNNNNN_<suite>.yx`
+  (por defecto `/tmp/yerux_fuzz_stdlib`). Sale 0 si no hay discrepancias y 1 si hay alguna.
+  Ejemplo: `python3 tools/fuzz/fuzz_stdlib.py --cases 3000 --seed 7 --suite all --jobs 6`.
+  Las divergencias conocidas y aceptadas (enteros fuera de `Int64`, números no finitos en JSON, espacios o `_` en
+  `parse_int`/`parse_float`) están explicadas en `docs/REAL_PROGRAMS.md`, ronda 23.

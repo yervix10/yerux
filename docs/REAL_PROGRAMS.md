@@ -1171,3 +1171,53 @@ Three more programs under `examples/real/`, each built on both backends with the
 cases) and `maze` (a seeded recursive-backtracker, ASCII rendering and BFS; it checks its own invariant, carved passages
 equal cells minus one). They compile and run with identical output on the C and native backends. No new frictions came
 out of them.
+
+## Round 23: differential fuzzing of the standard library
+
+`tools/fuzz/fuzz_stdlib.py` (new) generates random and malformed input for `std.json`, `std.csv`, `std.toml`,
+`std.text`, `std.fmt` and `std.args` and compares each answer with Python's `json`, `csv` and `tomllib` or with an
+implementation of the rule written in docs/STDLIB.md. About 4700 cases ran with the final harness (seeds 1, 3, 5, 7
+and 9; the native backend, batches of 40 cases per compiled program). Everything else agreed: JSON accept/reject and
+re-serialisation (including `Int` vs `Float` and the escape forms), TOML dotted-key lookups against `tomllib`, CSV
+`parse` against `csv.reader`, `parse_int`, `split`, `trim`, `capitalize`, the `format_*`/pad/group/precision family,
+`fixed`/`percent`/`bytes_human` and `args.parse_with` against a model of its documented rules. Two kinds of difference
+were expected and are not counted: `std.json` rejects integers outside `Int64` and numbers that are not finite where
+Python's `json` takes them (docs/STDLIB.md says so), and Python's `float()`/`int()` accept surrounding spaces,
+`_` separators and non-ASCII digits that `text.parse_int` and `text.parse_float` do not. The differences that remain
+are the four below: one was a bug (fixed) and three are corners nobody had written down.
+
+248. **`csv.write` wrote a record whose only field is empty as an empty line.**
+     `parse` reads that line back as one empty field, so Yerux round-tripped it, but Python's `csv` module and most
+     tools read an empty line as a record with **no** fields: a one-column CSV lost its value the moment another
+     program opened it.
+     ```yerux
+     import std.csv
+     fn main() {
+       var rows = List<List<String>>.new()
+       var r = List<String>.new()
+       r.push("")
+       rows.push(move r)
+       print("w=[{csv.write(rows)}]")   // was ["\r\n"] (two bytes), now ["\"\"\r\n"]
+     }
+     ```
+     *Fixed:* a lone empty field is quoted (`tests/std_csv_write_empty_field.yx`; the golden of
+     `tests/std_csv_empty.yx` grew by the two added quotes).
+249. **`text.replace(s, "", to)` returns `s` unchanged.** The empty needle takes a special branch
+     (`src/prelude_string.yx:301`) that copies the receiver, where Rust, Python and JavaScript insert `to` between
+     every pair of characters and at both ends (`"ab".replace("", "-")` is `-a-b-` in all three). Nothing documents
+     the no-op, so code that builds the needle elsewhere (a config value, a parsed argument) silently changes
+     nothing. No golden pins it; the branch looks deliberate, so this is a decision to write down, not a fix.
+250. **`fmt.hex_padded` with a negative number puts the padding between the sign and the digits.**
+     ```yerux
+     import std.fmt
+     fn main() {
+       print(fmt.hex_padded(-255, 6))   // 000-ff
+     }
+     ```
+     docs/STDLIB.md only promises "padded with zeros to `width` digits (non-negative `x`)", and the function neither
+     rejects a negative nor defines one. Either panic (as `format_bits` does for a bad base) or pad the magnitude
+     (`-000ff`); today it is the one spelling no reader would guess.
+251. **`text.parse_float` accepts a set of forms the docs never list.** `"1e5"`, `".5"`, `"1."`, `"+1.5"`, `"inf"`,
+     `"infinity"` and `"nan"` (lower case only) parse; `" 1"`, `"1 "`, `"1_0"`, `"0x10"`, `"Infinity"` and `"NaN"`
+     are errors, where Python's `float()` takes the spaces, the underscore and the other spellings. STDLIB.md names
+     `parse_float` without saying which grammar it follows. Found by `tools/fuzz/fuzz_stdlib.py` (seed 3).
