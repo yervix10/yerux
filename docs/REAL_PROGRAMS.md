@@ -1274,6 +1274,10 @@ The harness records each original source and its raw diagnostics.
      needs an exit check consistent with Rust, including `return 1` followed by a trailing
      statement. The second needs unknown bare identifiers to produce a diagnostic before C emission.
 
+     **Fixed (round 24).** Selfhost applies Rust's rule to function and closure bodies (only the
+     last statement of the body counts) and reports `variable 'n' does not exist`. Goldens:
+     `e2340_missing_return`, `e2341_unknown_bare_name`.
+
 255. **Selfhost allows unreachable match arms after a catch-all binding.** Rust rejects the
      second arm of:
      ```yerux ignore
@@ -1287,6 +1291,10 @@ The harness records each original source and its raw diagnostics.
      Selfhost accepts it. Coverage currently detects missing constructors but does not check
      whether later arms are useful after an unguarded pattern.
 
+     **Fixed (round 24).** Selfhost reports an arm that follows an unguarded pattern accepting
+     everything, including or-patterns and tuples, before it checks the arm bodies. Golden:
+     `e2342_arm_after_catch_all`.
+
 256. **Selfhost omits some static array and range checks.** Rust rejects
      `fn main() { let a = [1, 2]; print(a[-(-65535)]) }` for an out-of-bounds constant index,
      and `fn main() { var x: Int<1..5> = 3; x = x + 5 }` for assigning 8 to a restricted range.
@@ -1295,6 +1303,13 @@ The harness records each original source and its raw diagnostics.
      and rejected by selfhost. The Rust checker loses the range through the generic method
      parameter in that reproduction. Aligning needs range typing through generics and the same
      static interval checks.
+
+     **Fixed (round 24)** for the three reproductions. Selfhost checks literal and negated-literal
+     array indexes, keeps the interval a straight-line write leaves in an integer variable, and,
+     like Rust, drops a range written as a type argument of a generic struct constructor.
+     Goldens: `e2343_negated_const_index`, `e2344_range_reassigned`,
+     `range_generic_constructor`. Selfhost still lacks the Rust checker's flow facts across
+     branches, loops and calls, so it can accept range errors that only those facts reveal.
 
 257. **Closed. Selfhost accepts an incompatible trait method and rejects a Copy specialization.**
      With `struct Point { x: Int }` and an empty main, Rust rejects

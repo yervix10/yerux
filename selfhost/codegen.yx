@@ -2943,7 +2943,17 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
     if owner == "Option" || owner == "Result" || find_named(tree, gen.enums, owner) >= 0 {
       return construct_variant(gen, tree, ty, member, ast.child(tree, node, 3))
     }
-    let concrete = declared_member_owner(tree, node, gen.sub)
+    var concrete = declared_member_owner(tree, node, gen.sub)
+    let base = type_terms.base(concrete)
+    if find_named(tree, gen.structs, base) >= 0 {
+      // the checker does not keep a range written as a constructor's type argument
+      var erased = List<String>.new()
+      for argument in type_terms.arguments(concrete) {
+        if argument.starts_with("Int<") { erased.push(String.from("Int")) }
+        else { erased.push(String.from(argument)) }
+      }
+      concrete = type_terms.apply(base, erased)
+    }
     let method = match_method(gen, tree, concrete, member, false)
     if method >= 0 {
       return emit_call(gen, tree, method, concrete, ast.child(tree, node, 3), -1, ty)
@@ -3704,7 +3714,7 @@ fn returns_value(tree: view List<ast.AstNode>, node: Int) -> Bool {
     let call = ast.child(tree, node, 0)
     if tree.at(call).tag == "Call" {
       let callee = ast.name_at(tree, call, 0)
-      return callee == "panic"
+      return callee == "panic" || callee == "std__panic_owned" || callee == "todo" || callee == "unreachable"
     }
     return false
   }

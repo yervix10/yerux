@@ -1,0 +1,8 @@
+error: the value 8 does not fit Int<1..5>
+ --> tests/e2344_range_reassigned.yx:3:7
+  |
+3 |   x = x + 5
+  |       ^^^^^
+  = Int<1..5> holds the values from 1 to 5 (both ends included)
+
+1 error(s). Nothing was generated.

@@ -69,8 +69,13 @@ pub struct Types {
   ever_moved: List<Bool>,
   // "Trait:Type" for every type the program turns into a `dyn Trait`
   erased: List<String>,
+  // nested blocks and endless loops that never fall through
+  closed: List<Int>,
+  // what the last write to an integer binding left in it, while only straight-line statements follow
+  facts: List<Fact>,
 }
-struct LoopFlow { label: String, breaks: List<Bool>, continues: List<Bool>, continued: Bool, deferred: Int }
+struct Fact { id: Int, lo: Int, hi: Int }
+struct LoopFlow { label: String, breaks: List<Bool>, continues: List<Bool>, continued: Bool, broke: Bool, deferred: Int }
 struct PatternRow { nodes: List<Int> }
 // `want` marks the tail of an `if`/`match` used as a value: its last line produces `value`.
 struct Returns {
@@ -1148,8 +1153,39 @@ fn clone_payload(types: view Types, tree: view List<ast.AstNode>, ty: view Strin
   return false
 }
 
+// A literal index (or the negation of one) is checked against the length of an array, as in the Rust checker.
+fn check_const_indexes(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
+    name: view String, args: Int) {
+  let parts = type_terms.arguments(owner)
+  var length = 0
+  if parts.len() != 2 || !parts.at(1).parse_int(length) { return }
+  var position = 0
+  var at = args + 1
+  while at < tree.at(args).end {
+    if position == 0 || name == "swap" {
+      var value = 0
+      var constant = literal_value(tree, at, value)
+      if !constant && tree.at(at).tag == "Un" && ast.name_at(tree, at, 0).eq("-") &&
+          literal_value(tree, ast.child(tree, at, 1), value) && value >= 0 - 9223372036854775807 {
+        value = 0 - value
+        constant = true
+      }
+      if constant && (value < 0 || value >= length) {
+        issue(types, "index {value} is out of bounds for the array {type_terms.pretty(owner)}")
+        return
+      }
+    }
+    position = position + 1
+    at = tree.at(at).end
+  }
+}
+
 fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     name: view String, args: Int, receiver: Int, hint: view String) -> String {
+  if receiver >= 0 && (name == "at" || name == "get" || name == "set" || name == "swap") &&
+      type_terms.base(owner).eq("Array") {
+    check_const_indexes(types, tree, owner, name, args)
+  }
   var payload = unknown()
   let builtin_box = shape_index(types, String.from("Box")) < 0
   if builtin_box { payload = type_terms.box_payload(owner) }
@@ -1776,7 +1812,10 @@ fn closure_type(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint
   types.defer_floor = floor
   var result = String.from(state.expected)
   if result == "?" { result = String.from(state.inferred) }
-  else if result.contains("?") && !state.inferred.contains("?") {
+  if result != "nothing" && result != "?" && !body_returns(types, tree, body) {
+    issue(types, "this closure must return a {result} on every path")
+  }
+  if result.contains("?") && !state.inferred.contains("?") {
     // the expected result had unresolved arguments (`Option<?>`): the body decides them
     let wanted = type_terms.base(result)
     let found = type_terms.base(state.inferred)
@@ -1924,7 +1963,22 @@ fn interval(types: view Types, tree: view List<ast.AstNode>, node: Int, depth: I
   let tag = String.from(tree.at(node).tag)
   if tag == "Var" {
     let id = types.identities.at(node)
-    if id < 0 || refined(types, tree, id) { return none }
+    if id < 0 { return none }
+    if refined(types, tree, id) {
+      // only the value the last straight-line write left in it is known
+      var at = types.facts.len()
+      while at > 0 {
+        at = at - 1
+        if types.facts.at(at).id == id {
+          if types.facts.at(at).lo <= types.facts.at(at).hi {
+            none.push(types.facts.at(at).lo)
+            none.push(types.facts.at(at).hi)
+          }
+          break
+        }
+      }
+      return none
+    }
     let declared = bound_pair(types.bindings.at(id))
     if declared.len() == 2 { return declared }
     let decl = types.declarations.at(id)
@@ -1954,6 +2008,11 @@ fn interval(types: view Types, tree: view List<ast.AstNode>, node: Int, depth: I
     let a = interval(types, tree, ast.child(tree, node, 1), depth + 1)
     let b = interval(types, tree, ast.child(tree, node, 2), depth + 1)
     if a.len() != 2 || b.len() != 2 { return none }
+    // bounds this large are left unknown, so the arithmetic below cannot overflow
+    var limit = 1000000000000000000
+    if op == "*" { limit = 1000000000 }
+    for bound in a { if bound < 0 - limit || bound > limit { return none } }
+    for bound in b { if bound < 0 - limit || bound > limit { return none } }
     var lo = 0
     var hi = 0
     if op == "+" {
@@ -1988,8 +2047,17 @@ fn check_slot(types: mut Types, tree: view List<ast.AstNode>, node: Int, expecte
   let have = interval(types, tree, node, 0)
   if have.len() != 2 { return }
   if have.at(0) >= want.at(0) && have.at(1) <= want.at(1) { return }
+  // one known value: written as a literal, or computed from what the last write left in a variable
+  var exact = false
   var n = 0
-  if literal_value(tree, node, n) { issue(types, "the value {n} does not fit {expected}") }
+  if literal_value(tree, node, n) { exact = true }
+  else if have.at(0) == have.at(1) {
+    for at in node..tree.at(node).end {
+      let id = types.identities.at(at)
+      if id >= 0 && tree.at(at).tag == "Var" && refined(types, tree, id) { exact = true }
+    }
+  }
+  if exact { issue(types, "the value {have.at(0)} does not fit {expected}") }
   else { issue(types, "this value may be outside {expected}") }
 }
 
@@ -2239,6 +2307,7 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
         return String.from("Int")
       }
     }
+    issue(types, "variable '{n}' does not exist")
     return unknown()
   }
   if tag == "Cast" {
@@ -2393,7 +2462,19 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
       let range = ast.range_type(tree, params)
       return check_range_member(types, tree, range, name, ast.child(tree, index, 3))
     }
-    let owner = type_terms.apply(base, source_types(types, tree, params))
+    var written = source_types(types, tree, params)
+    let shape = shape_index(types, base)
+    if shape >= 0 && !types.shapes.at(shape).is_enum {
+      // as in the Rust checker, `Map<K, Int<0..3>>.new()` is a `Map<K, Int>`: a range that is written
+      // as a type argument of a generic struct constructor is not kept
+      var erased = List<String>.new()
+      for argument in written {
+        if argument.starts_with("Int<") { erased.push(String.from("Int")) }
+        else { erased.push(String.from(argument)) }
+      }
+      written = move erased
+    }
+    let owner = type_terms.apply(base, written)
     return member(types, tree, owner, name, ast.child(tree, index, 3), -1, hint)
   }
   if tag == "Bin" { return binary(types, tree, index, hint) }
@@ -2439,6 +2520,10 @@ fn check_assignment(types: mut Types, tree: view List<ast.AstNode>, index: Int) 
   let value = ast.child(tree, index, 1)
   let right = infer(types, tree, value, left)
   require_value(types, tree, value, right)
+  if id >= 0 && target == root && integer(numeric_type(left)) {
+    let known = interval(types, tree, value, 0)
+    remember(types, id, known)
+  }
   if id >= 0 && types.spawn_copies.contains(id) {
     spawn_write(types, tree, id)
     return
@@ -2689,6 +2774,57 @@ fn boolean_tuple(subject: view String) -> Bool {
   return true
 }
 
+// 0: the pattern can fail. 1: one of its alternatives accepts everything and more alternatives follow.
+// 2: only its last alternative accepts everything.
+fn catch_all(tree: view List<ast.AstNode>, node: Int) -> Int {
+  let head = pattern_head(tree, node)
+  if whole_pattern(tree, head) { return 2 }
+  let tag = String.from(tree.at(head).tag)
+  if tag != "Or" && tag != "TuplePat" { return 0 }
+  let items = ast.child(tree, head, 0)
+  // an or-pattern that binds nothing stays one arm; one that binds is split into an arm per alternative
+  var binds = false
+  if tag == "Or" {
+    for at in items + 1..tree.at(items).end {
+      if tree.at(at).tag == "Bind" {
+        let bound = ast.name_at(tree, at, 0)
+        if bound != "_" { binds = true }
+      }
+    }
+  }
+  var rank = 2
+  var i = items + 1
+  while i < tree.at(items).end {
+    let found = catch_all(tree, i)
+    if tag == "Or" {
+      if found != 0 {
+        if !binds { return 2 }
+        if tree.at(i).end < tree.at(items).end { return 1 }
+        return found
+      }
+    } else if found == 0 { return 0 }
+    else if found == 1 { rank = 1 }
+    i = tree.at(i).end
+  }
+  if tag == "Or" { return 0 }
+  return rank
+}
+
+fn check_reachable(types: mut Types, tree: view List<ast.AstNode>, arms: Int) {
+  var i = arms + 1
+  while i < tree.at(arms).end {
+    if tree.at(ast.child(tree, i, 1)).tag == "_" {
+      let rank = catch_all(tree, ast.child(tree, i, 0))
+      if rank == 1 || (rank == 2 && tree.at(i).end < tree.at(arms).end) {
+        types.site_span = String.new()
+        issue(types, String.from("this arm can never run: an earlier arm already matches every value"))
+        return
+      }
+    }
+    i = tree.at(i).end
+  }
+}
+
 fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
   var scrutinee = ast.child(tree, index, 0)
   var mutable = false
@@ -2732,13 +2868,25 @@ fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNo
     if !flat_variant(tree, pat) || tree.at(guard).tag != "_" { flat = false }
     i = tree.at(i).end
   }
+  // every pattern first: an arm that can never run is reported before anything inside the arms
+  var borrowing = List<Bool>.new()
+  let pattern_errors = types.errors
+  i = arms + 1
+  while i < tree.at(arms).end {
+    var borrows = false
+    check_pattern(types, tree, ast.child(tree, i, 0), subject, mode, borrows)
+    borrowing.push(borrows)
+    i = tree.at(i).end
+  }
+  if types.errors == pattern_errors { check_reachable(types, tree, arms) }
+  var arm = 0
   i = arms + 1
   while i < tree.at(arms).end {
     let pat = ast.child(tree, i, 0)
     let guard = ast.child(tree, i, 1)
     types.moved = ownership.snapshot(before)
-    var borrows = false
-    check_pattern(types, tree, pat, subject, mode, borrows)
+    let borrows = borrowing.at(arm)
+    arm = arm + 1
     if borrows {
       types.frozen.push(Frozen { binding: id, place: place_name(tree, scrutinee), exclusive: mutable, from_let: false })
     }
@@ -2878,7 +3026,7 @@ fn check_loop(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
   let deferred = types.deferred.len()
   types.loops.push(LoopFlow {
     deferred: deferred, label: move label, breaks: ownership.snapshot(entry),
-    continues: ownership.snapshot(entry), continued: false,
+    continues: ownership.snapshot(entry), continued: false, broke: false,
   })
   let exits = check_body(types, returns, tree, body)
   let flow = types.loops.pop()
@@ -2901,6 +3049,12 @@ fn check_loop(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
     }
   } else { types.moved = move entry }
   ownership.join(types.moved, flow.breaks)
+  if !for_loop && !flow.broke {
+    let condition = ast.child(tree, index, 1)
+    if tree.at(condition).tag == "Bool" && tree.at(ast.child(tree, condition, 0)).tag == "true" {
+      types.closed.push(index)
+    }
+  }
 }
 
 fn loop_exit(types: mut Types, tree: view List<ast.AstNode>, index: Int, stop: Bool) {
@@ -2914,8 +3068,10 @@ fn loop_exit(types: mut Types, tree: view List<ast.AstNode>, index: Int, stop: B
       let start = types.loops.at(level).deferred
       check_deferred(types, tree, start)
       let current = ownership.snapshot(types.moved)
-      if stop { ownership.join(types.loops.at(level).breaks, current) }
-      else {
+      if stop {
+        ownership.join(types.loops.at(level).breaks, current)
+        types.loops.at(level).broke = true
+      } else {
         ownership.join(types.loops.at(level).continues, current)
         types.loops.at(level).continued = true
       }
@@ -2949,6 +3105,70 @@ fn check_unpack(types: mut Types, tree: view List<ast.AstNode>, pattern: Int, ty
   }
 }
 
+// The same rule the Rust checker applies to a function body: only its last statement is looked at.
+fn body_returns(types: view Types, tree: view List<ast.AstNode>, block: Int) -> Bool {
+  let tag = String.from(tree.at(block).tag)
+  if tag != "Block" && tag != "[" { return statement_returns(types, tree, block) }
+  var last = -1
+  var i = block + 1
+  while i < tree.at(block).end {
+    last = i
+    i = tree.at(i).end
+  }
+  if last < 0 { return false }
+  if tag == "Block" && tree.at(last).tag == "[" { return body_returns(types, tree, last) }
+  return statement_returns(types, tree, last)
+}
+
+fn statement_returns(types: view Types, tree: view List<ast.AstNode>, node: Int) -> Bool {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Return" { return true }
+  if tag == "Expr" {
+    let value = ast.child(tree, node, 0)
+    if tree.at(value).tag != "Call" || types.identities.at(value) >= 0 { return false }
+    let name = ast.name_at(tree, value, 0)
+    return name == "panic" || name == "std__panic_owned" || name == "todo" || name == "unreachable"
+  }
+  if tag == "If" {
+    let other = ast.child(tree, node, 2)
+    if tree.at(other).tag == "_" { return false }
+    return body_returns(types, tree, ast.child(tree, node, 1)) && body_returns(types, tree, other)
+  }
+  if tag == "Match" {
+    let arms = ast.child(tree, node, 1)
+    var i = arms + 1
+    var any = false
+    while i < tree.at(arms).end {
+      if !body_returns(types, tree, ast.child(tree, i, 2)) { return false }
+      any = true
+      i = tree.at(i).end
+    }
+    return any
+  }
+  // a nested block exits when any of its statements does; a `while true` without `break` never ends
+  if tag == "Unsafe" { return types.closed.contains(ast.child(tree, node, 0)) }
+  return types.closed.contains(node)
+}
+
+// Facts only survive statements without control flow, nested blocks, closures or calls (which could change a
+// variable lent as `mut`).
+fn straight_line(tree: view List<ast.AstNode>, node: Int) -> Bool {
+  let kind = String.from(tree.at(node).tag)
+  if kind != "Let" && kind != "Assign" && kind != "Expr" { return false }
+  for i in node + 1..tree.at(node).end {
+    let tag = String.from(tree.at(i).tag)
+    if tag == "If" || tag == "IfExpr" || tag == "Match" || tag == "MatchExpr" || tag == "While" || tag == "For" ||
+        tag == "Block" || tag == "Closure" || tag == "Call" || tag == "Method" || tag == "CallFn" { return false }
+  }
+  return true
+}
+
+// After `x = value` (or `var x = value`): remember the interval of the value, or that nothing is known.
+fn remember(types: mut Types, id: Int, known: view List<Int>) {
+  if known.len() == 2 { types.facts.push(Fact { id: id, lo: known.at(0), hi: known.at(1) }) }
+  else { types.facts.push(Fact { id: id, lo: 1, hi: 0 }) }
+}
+
 fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
   let want = returns.want
   if want {
@@ -2957,7 +3177,10 @@ fn check_body(types: mut Types, returns: mut Returns, tree: view List<ast.AstNod
       returns.want = false
     }
   }
+  let straight = straight_line(tree, index)
+  if !straight { types.facts.clear() }
   let exits = check_statement(types, returns, tree, index)
+  if !straight || exits { types.facts.clear() }
   returns.want = want
   return exits
 }
@@ -3036,6 +3259,12 @@ fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.A
     var ty = infer(types, tree, initializer, unknown())
     // `let x = list.at(i)` borrows the element
     let id = types.identities.at(index)
+    if id >= 0 && integer(numeric_type(ty)) {
+      var stored = initializer
+      if tree.at(stored).tag == "Ascribe" { stored = ast.child(tree, stored, 1) }
+      let known = interval(types, tree, stored, 0)
+      remember(types, id, known)
+    }
     var named_borrow = false
     if borrows_element(types, tree, initializer, ty) {
       named_borrow = true
@@ -3152,6 +3381,7 @@ fn check_statement(types: mut Types, returns: mut Returns, tree: view List<ast.A
     while types.frozen.len() > frozen_before { let unused = types.frozen.pop() }
     if !exits { check_deferred(types, tree, deferred) }
     while types.deferred.len() > deferred { let unused = types.deferred.pop() }
+    if exits { types.closed.push(index) }
     return exits
   }
   return false
@@ -3942,7 +4172,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     derived_clones: List<String>.new(), clone_impls: List<CloneImpl>.new(), drop_impls: List<DropImpl>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(), spawn_copies: List<Int>.new(), trusted: false,
-    ever_moved: List<Bool>.new(), erased: List<String>.new(),
+    ever_moved: List<Bool>.new(), erased: List<String>.new(), closed: List<Int>.new(), facts: List<Fact>.new(),
   }
   for i in 0..tree.len() { types.box_places.push(false) }
   if !trace {
@@ -4114,7 +4344,13 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     types.ordered_params = copy_names(types.signatures.at(fun.signature).ordered_params)
     types.in_drop = has_drop(types, types.signatures.at(fun.signature).owner) &&
       types.signatures.at(fun.signature).name == "drop" && types.signatures.at(fun.signature).receiver == "Mut"
-    let exits = check_body(types, state, tree, ast.child(tree, fun.node, 4))
+    let body = ast.child(tree, fun.node, 4)
+    let exits = check_body(types, state, tree, body)
+    if state.expected != "nothing" && state.expected != "?" && !body_returns(types, tree, body) {
+      let name = String.from(types.signatures.at(fun.signature).name)
+      types.site_span = String.new()
+      issue(types, "function '{name}' must return a {state.expected} on every path")
+    }
     types.in_drop = false
   }
   // calls are only resolved in a program that checks

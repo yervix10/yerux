@@ -1,0 +1,7 @@
+error: function 'f' must return a Int on every path
+ --> tests/e2340_missing_return.yx:1:4
+  |
+1 | fn f() -> Int { return 1
+  |    ^
+
+1 error(s). Nothing was generated.

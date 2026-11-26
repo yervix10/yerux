@@ -1,0 +1,9 @@
+error: this arm can never run: an earlier arm already matches every value
+ --> tests/e2342_arm_after_catch_all.yx:4:5
+  |
+4 |     false => {}
+  |     ^^^^^
+  = the arm on line 3 accepts everything
+  = help: put the catch-all arm last, or remove this one
+
+1 error(s). Nothing was generated.

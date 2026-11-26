@@ -1,0 +1,8 @@
+error: variable 'n' does not exist
+ --> tests/e2341_unknown_bare_name.yx:1:10
+  |
+1 | fn f() { n }
+  |          ^
+  = help: check the spelling, scope, and whether the name needs to be imported or qualified
+
+1 error(s). Nothing was generated.
