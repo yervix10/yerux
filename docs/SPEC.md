@@ -344,9 +344,9 @@ enum Name { Variant, Variant(Type, ...), ... }
 - **Built-in traits:** `Copy`, `Equal` (`==`, `!=`), `Ordered` (`<`, `<=`, `>`, `>=`), `Show`
   (`show()` and `"{x}"`), `Hash` (for `Map` and `Set` keys), `Clone` (`derive`, see the book
   chapter 9).
-- **Equality of enums.** `==` and `!=` on an enum none of whose variants carries data compare the variants and need
-  no `impl Equal` (`tests/enum_equal_fieldless.yx`). An enum with a payload, and any struct, needs `impl Equal`
-  (`tests/e2055_enum_payload_equal.yx`). `<`, `<=`, `>` and `>=` always need `impl Ordered`, also for fieldless enums
+- **Equality of enums.** `==` and `!=` on a non-generic enum none of whose variants carries data compare the variants
+  and need no `impl Equal` (`tests/enum_equal_fieldless.yx`). A generic enum, an enum with a payload, and any struct
+  need `impl Equal` (`tests/e2055_enum_payload_equal.yx`). `<`, `<=`, `>` and `>=` always need `impl Ordered`, also for fieldless enums
   (`tests/e2056_enum_ordered.yx`).
 - **Traits** list method signatures. `impl Trait for Type { ... }` must define each method with
   the exact signature. Every method's first parameter is `self`, `view self`, or `mut self`.
@@ -488,6 +488,11 @@ is valid). `return x` moves `x` out implicitly. A `let` binding cannot be modifi
   a `view` parameter: `sum(make())`, `sum([4, 5, 6][1..3])`. The compiler creates a hidden
   variable for the call and drops it right after. A `mut` parameter needs a variable: `grow(List<Int>.new())`
   is `pass a variable here (the function borrows it)`.
+- **`Text` for `view String`.** A `view String` parameter, of the library or of your own functions, accepts a `Text`:
+  a literal, a variable, a field or tuple field of a variable, an array or list element, a function or method result
+  (`tests/text_result_to_view_string.yx`). The call borrows a hidden `String` copy. A field of a call result
+  (`make().name`, `pair().0`) is not accepted: bind it with `let` first. An owned `String` position converts literals
+  only (`tests/e800_text_var_to_string.yx`).
 - **Place borrows.** `l.at(i)` is a place that borrows an element. It can be used as a receiver
   (`l.at(i).len()`), as a `view`/`mut` argument, or in `print`. It cannot be moved out, stored, or
   assigned to (use `set`).
@@ -843,6 +848,9 @@ A program is a set of files, each one a module. Module behaviour below is fixed 
   is an error (tests/mod_err/private/main.yx, tests/mod_err/private_const/main.yx).
 - Private helpers of the standard library are not reachable from user code
   (tests/e981_fs_private_helper.yx: `std.fs`; tests/e1303_process_private_helper.yx: `std.process`).
+- Struct fields take no `pub` in 1.0: the fields of a `pub struct` are public and those of a private struct are
+  private. `pub` on a field is an error (tests/e2070_pub_struct_field.yx). Accepting it in a later release is a
+  compatible addition.
 - A `pub const` must state its type explicitly (tests/mod_err/pub_const_untyped/main.yx).
 - Constants are evaluated in dependency order. A const that depends on itself through another
   module is an error (tests/mod_err/const_cycle/main.yx). Use before definition in one file is an

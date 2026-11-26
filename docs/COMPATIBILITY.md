@@ -21,24 +21,27 @@ Evidence for each claim is the test named in place (tests/ is the regression sui
 
 A feature not mentioned in this document is **Experimental** by default.
 
+A Stable-candidate row ends with **Pending:** and what it lacks. It is promoted when its cited tests pass, its
+documents agree with the compiler and no open friction contradicts it.
+
 ## 2. Language
 
 | Area | Level | Basis |
 |---|---|---|
 | Core source syntax: UTF-8, comments, ordinary literals, operators, declarations and control flow for Stable features (SPEC 1) | Stable | tests/spec_01_literals.yx, tests/spec_04_ownership.yx, tests/spec_conformance.sh |
 | Primitive types, copy/owned types, composite types, structs, enums (SPEC 2.1-2.4) | Stable | tests/spec_01_literals.yx, tests/spec_04_ownership.yx |
-| Generics and traits (SPEC 2.5), `dyn Trait` | Stable-candidate | tests/generic_impls (mod_ok), tests/mod_ok/dyn |
-| Range integers `Int<lo..hi>` (SPEC 2.6) | Stable-candidate | tests/spec_02_range_int.yx; range fixtures `tests/range_*.yx` |
+| Generics and traits (SPEC 2.5), `dyn Trait` | Stable-candidate | tests/mod_ok/generic_impls, tests/mod_ok/dyn. **Pending:** a function without `self` that has its own type parameters is accepted but cannot be called (REAL_PROGRAMS friction 161); docs/SPEC.md 1.5 and 2.5 still say explicit type arguments and generic methods do not exist. |
+| Range integers `Int<lo..hi>` (SPEC 2.6) | Stable | tests/spec_02_range_int.yx; range fixtures `tests/range_*.yx` |
 | `Option`, `Result`, `?`, `defer`, `context` (SPEC 2.7, 4) | Stable | tests/spec_05_result_defer.yx, tests/spec_06_context.yx |
-| Function values and closures (SPEC 2.8) | Stable-candidate | tests/spec_03_closures.yx; closure fixtures `tests/e70*.yx` |
+| Function values and closures (SPEC 2.8) | Stable | tests/spec_03_closures.yx; closure fixtures `tests/e70*.yx` |
 | Ownership, moves and borrows (SPEC 3) | Stable | tests/spec_04_ownership.yx; error fixtures `tests/own_*.yx` |
-| User-defined destructors (`impl Drop`, SPEC 3.8) | Stable-candidate | tests/drop_generic_single_owner.yx, tests/e1967_drop_generic_copy_bound.yx, tests/drop_panic.yx, tests/drop_worker.yx, tests/drop_disjoint_impls.yx, tests/e2050_drop_overlap_generic_concrete.yx. Overlapping impls are rejected ([DROP.md](DROP.md#overlapping-implementations)). |
+| User-defined destructors (`impl Drop`, SPEC 3.8) | Stable-candidate | tests/drop_generic_single_owner.yx, tests/e1967_drop_generic_copy_bound.yx, tests/drop_panic.yx, tests/drop_worker.yx, tests/drop_disjoint_impls.yx, tests/e2050_drop_overlap_generic_concrete.yx. Overlapping impls are rejected ([DROP.md](DROP.md#overlapping-implementations)). **Pending:** docs/SPEC.md 3.8 and SPEC.md still call `Drop` experimental, and SPEC.md still reports overlapping impls as open. |
 | Panics and exit code 101 (SPEC 4.4) | Stable | tests/spec_02_range_int.yx (`.code` 101) |
-| Modules, `import`, `pub`, packages (SPEC 6, PACKAGES.md) | Stable-candidate | tests/mod_ok, tests/mod_err, tests/packages.sh |
+| Modules, `import`, `pub`, packages (SPEC 6, PACKAGES.md) | Stable-candidate | tests/mod_ok, tests/mod_err, tests/packages.sh. **Pending:** the package module search order is untested (docs/SPEC.md section 10, item 10) and alias rules are unspecified (6.1). |
 | Concurrency: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, channels, pools (SPEC 5) | Experimental | tests/conc_*.yx, tests/concurrency*.yx |
 | Raw runtime intrinsics `__thread_*`, `__atomic_*`, `__futex_*` (need `unsafe` outside the standard library) | Internal | SPEC 5.6, tests/e2170_intrinsic_outside_unsafe.yx |
 | FFI: `extern "C"`, `link`, variadic calls, `Ptr<T>` (SPEC 7) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx |
-| `const` items and `comptime` expressions (SPEC 8.1-8.2) | Stable-candidate | tests/comptime_basic.yx, tests/const_item_basic.yx |
+| `const` items and `comptime` expressions (SPEC 8.1-8.2) | Stable-candidate | tests/comptime_basic.yx, tests/const_item_basic.yx. **Pending:** a syntax error is hidden when the same file has a `const` that calls a function (bug at the end of section 10). |
 | `comptime fn`, `comptime for/if`, reflection, comptime allocators | Not yet available | SPEC 10 |
 | Effect system; manifest capabilities; compile-time capability checks; `ffi`/`threads` capabilities | Not yet available | [CAPABILITIES.md](CAPABILITIES.md) status table |
 | Module objects `.yxo` (`yerux obj`) | Experimental | tests/modobj.sh |
@@ -59,9 +62,9 @@ Stable entries freeze public names, signatures and documented behavior for the t
 | `List<T>` core: `new`, `push`, `pop`, `len`, `at`, `get` (Copy), `set`, `remove`, `swap_remove`, `sort` | Stable | tests/edge_list_api.yx, tests/edge_list_bounds.yx |
 | `String` core: `new`, `from`, `len`, `push_str`, `push_byte`, `slice`, `split`, `join` | Stable | tests/edge_string_api.yx, tests/edge_string_utf8_boundaries.yx |
 | `Option`, `Result` methods (SPEC 4.1 table) | Stable | tests/edge_option_result.yx |
-| `Map<K, V>`, `Set<T>` | Stable-candidate | tests/edge_map_set.yx, tests/std_map_with.yx |
-| `Iter<T>` | Stable-candidate | tests/std_iter.yx |
-| `Box<T>` | Stable-candidate | used by 27 tests (e.g. tests/dyn_shapes.yx); STDLIB.md "Box" section |
+| `Map<K, V>`, `Set<T>` | Stable-candidate | tests/edge_map_set.yx, tests/std_map_with.yx. **Pending:** docs/SPEC.md 2.3 says they need `import std.collections`, but they are prelude types. |
+| `Iter<T>` | Stable | tests/std_iter.yx |
+| `Box<T>` | Stable | used by 27 tests (e.g. tests/dyn_shapes.yx); STDLIB.md "Box" section |
 | `Atomic`, `Locked`, `Shared`, `RwLock`, `Mutex`, channels, thread pools | Experimental | section 5 of SPEC; see 6.4 for the naming problems |
 | `Arena<T>` | Experimental | tests/arena_basic.yx, tests/arena_stale.yx; design in docs/COMPTIME.md part B |
 
@@ -69,21 +72,21 @@ Stable entries freeze public names, signatures and documented behavior for the t
 
 | Module | Level | Reason |
 |---|---|---|
-| `std.text`, `std.fmt`, `std.unicode` | Stable-candidate | pure functions, golden tests (tests/std_text.yx, tests/std_misc.yx, tests/unicode_basic.yx) |
-| `std.math` | Stable-candidate | tests/std_math.yx |
-| `std.rand` | Stable-candidate | deterministic LCG; tests/std_rand.yx. Output sequence is part of the contract once frozen |
-| `std.collections`, `std.sort`, `std.iter` | Stable-candidate | tests/std_collections.yx, tests/std_sort.yx, tests/std_iter.yx; see 6.3 for `sort` naming |
+| `std.text`, `std.fmt`, `std.unicode` | Stable-candidate | pure functions, golden tests (tests/std_text.yx, tests/std_misc.yx, tests/unicode_basic.yx). **Pending:** `unicode.is_combining`, `is_whitespace`, `char_width` and `normalize_nfc` are in no reference. |
+| `std.math` | Stable | tests/std_math.yx |
+| `std.rand` | Stable | deterministic LCG; tests/std_rand.yx. Output sequence is part of the contract once frozen |
+| `std.collections`, `std.sort`, `std.iter` | Stable | tests/std_collections.yx, tests/std_sort.yx, tests/std_iter.yx; see 6.3 for `sort` naming |
 | `std.hash`, `std.hex`, `std.base64` | Stable | known-answer tests tests/std_hash.yx, tests/std_hash_hex_bytes.yx, tests/std_encoding.yx |
 | `std.regex`, `std.csv`, `std.toml` | Experimental | tests/std_regex.yx, tests/std_csv.yx, tests/std_toml.yx; grammar in REGEX_CSV_TOML.md still subject to change |
-| `std.json` | Stable-candidate | `parse` to the `Value` enum (`Int`/`Float` split, source-order members, 200-level depth limit, errors with byte offset), `to_string`, `to_pretty`, `quote`, `find`, `line_col`, `type_name`; tests/std_json.yx on both backends; used by examples/real/jql |
-| `std.args`, `std.env` | Stable-candidate | tests/std_args.yx, tests/std_env_typed.yx |
-| `std.io`, `std.fs`, `std.path`, `std.time` | Stable-candidate | docs/STDLIB_IO.md, docs/STDLIB_SYSTEM.md; tests/std_fs_metadata.yx, tests/time_duration.yx. Public helpers listed in 6.3 are Internal |
-| `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable-candidate | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |
+| `std.json` | Stable | `parse` to the `Value` enum (`Int`/`Float` split, source-order members, 200-level depth limit, errors with byte offset), `to_string`, `to_pretty`, `quote`, `find`, `line_col`, `type_name`; tests/std_json.yx on both backends; used by examples/real/jql |
+| `std.args`, `std.env` | Stable-candidate | tests/std_args.yx, tests/std_env_typed.yx. **Pending:** `args.positional` is in no reference. |
+| `std.io`, `std.fs`, `std.path`, `std.time` | Stable-candidate | docs/STDLIB_IO.md, docs/STDLIB_SYSTEM.md; tests/std_fs_metadata.yx, tests/time_duration.yx. Public helpers listed in 6.3 are Internal. **Pending:** `io.write_stdout_bytes`, `io.set_env_var`, `io.remove_env_var` and `fs.read_to_string_limit` are in no reference. |
+| `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |
 | `std.process` | Experimental | docs/STDLIB_PROCESS.md; tests/process_*.yx |
 | `std.net`, `std.http` | Experimental | docs/NET.md, docs/HTTP.md; tests/net_loopback.yx, tests/std_http_client.yx |
 | `std.http.server` (HTTP/1.1 server, router, worker pool; Linux x86-64 native and C backend) | Experimental | docs/NET.md; tests/http_server/parse.yx, tests/http_server_loopback.yx, tests/http_server_fuzz.yx, examples/real/webkv |
 | `std.sync` | Experimental | spinning primitives, docs/STDLIB_SYNC.md; tests/std_sync.yx |
-| `std.log` | Stable-candidate | tests/std_log.yx |
+| `std.log` | Stable | tests/std_log.yx |
 | `std.caps` (run-time capability values; advisory, not a security boundary) | Experimental | tests/caps_grant.yx, tests/caps_deny.yx; CAPABILITIES.md |
 | `std.kv` | Experimental | single-writer store, docs/STDLIB_KV.md; tests/std_kv.yx |
 | `std.compress` | Experimental | byte-oriented run-length encoding (see item 1 in section 7) |
@@ -214,6 +217,17 @@ govern whether each affected feature is frozen.
     **Resolved:** 20 000 000 steps is final for 1.0 (what the compiler enforces); COMPTIME.md now says so and
     no longer mentions an unimplemented `--comptime-steps` flag. Test: e53_comptime_budget golden
     (message contains `20000000`).
+13. **`Text` for a `view String` parameter.** *Resolved.* A `Text` value stays accepted where a `view String`
+    is expected: the call borrows a hidden `String` copy. The accepted forms and the one exception (a field of
+    a call result) are in [SPEC.md](SPEC.md#33-temporaries-and-place-borrows). Test:
+    `tests/text_result_to_view_string.yx`.
+14. **`==` on fieldless enums.** *Resolved.* `==` and `!=` compare the variants of a non-generic enum whose
+    variants carry no data, without `impl Equal`. Every other enum needs `impl Equal`, and ordering always
+    needs `impl Ordered`. Tests: `tests/enum_equal_fieldless.yx`, `tests/e2055_enum_payload_equal.yx`,
+    `tests/e2056_enum_ordered.yx`.
+15. **No `pub` on struct fields in 1.0.** *Resolved.* The fields of a `pub struct` are public and `pub` on a
+    field is an error. Accepting the keyword later is compatible as long as existing programs keep their
+    meaning. Test: `tests/e2070_pub_struct_field.yx`.
 
 ## 8. Relation to the roadmap
 
@@ -229,32 +243,32 @@ Experimental.
 
 | Feature (root SPEC.md section) | Level | Evidence |
 |---|---|---|
-| String interpolation `"{x}"`, `{{ }}` escapes, raw strings `r"..."`, `r#"..."#` (Strings) | Stable-candidate | tests/fmt_inline_blocks.yx, tests/interp_quotes.yx, tests/raw_string.yx, tests/e1413_raw_unterminated.yx |
-| Text literal converted to `String` where a `String` is expected; temporaries for `view` parameters (Strings) | Stable-candidate | tests/conv_text_literal.yx, tests/e800_text_var_to_string.yx, tests/view_temporaries.yx, tests/e801_mut_temporary.yx |
-| String API: `slice`, `split`, `find`, `trim*`, `to_upper/lower`, `parse_int`, `char_at`, `push_char` (Strings, Char) | Stable-candidate | tests/edge_string_api.yx, tests/string_trim_vt_ff.yx, tests/str_case_latin_ext_a.yx, tests/string_case_greek_micro.yx, tests/unicode_basic.yx |
-| List API beyond the prelude core: `insert`, `swap_remove`, `truncate`, `index_of`, `slice`, `copy`, `is_sorted` (Standard collections) | Stable-candidate | tests/edge_list_api.yx, tests/edge_list_growth_edges.yx |
-| `Map<K, V>` and `Set<T>` (Standard collections) | Stable-candidate | tests/edge_map_set.yx, tests/std_map_with.yx, tests/std_collections.yx |
-| Fixed-size arrays `[T; N]`, slices `view [T]` / `mut [T]`, `chunks`, `windows`, `split_at_mut` | Stable-candidate | tests/slice_basic.yx, tests/slice_chunks.yx, tests/arr_const.yx, tests/comptime_arrays.yx, tests/range_array_loops.yx |
-| Sized integers, checked conversions `to_int8()` etc., wrapping ops, Float semantics and shortest printing (Numbers) | Stable-candidate | tests/num_sized.yx, tests/num_float_basic.yx, tests/num_panic_conv.yx, tests/num_math.yx |
-| Generics by monomorphisation, inference, bounds, generic `impl` blocks (Generics) | Stable-candidate | tests/gen_basic.yx, tests/gen_owned.yx, tests/gen_traits.yx, tests/gen_methods.yx, tests/mod_ok/generic_impls, tests/derive_basic.yx |
-| Explicit type arguments on calls (`f<Int>(x)`) | Stable-candidate | tests/generic_explicit_args.yx, tests/e1518_explicit_type_args.yx |
+| String interpolation `"{x}"`, `{{ }}` escapes, raw strings `r"..."`, `r#"..."#` (Strings) | Stable-candidate | tests/fmt_inline_blocks.yx, tests/interp_quotes.yx, tests/raw_string.yx, tests/e1413_raw_unterminated.yx. **Pending:** `{[n, 4][0]}` is rejected as two expressions (REAL_PROGRAMS friction 76); SPEC.md and GUIDE.md still forbid quotes inside `{}`. |
+| Text literal converted to `String` where a `String` is expected; temporaries for `view` parameters (Strings) | Stable-candidate | tests/conv_text_literal.yx, tests/e800_text_var_to_string.yx, tests/view_temporaries.yx, tests/text_result_to_view_string.yx, tests/e801_mut_temporary.yx. **Pending:** literals inside a tuple do not convert to `(String, String)` (REAL_PROGRAMS Round 3, item 2); STDLIB.md "Text" still requires `String.from` for a `view String` parameter (decision 13). |
+| String API: `slice`, `split`, `find`, `trim*`, `to_upper/lower`, `parse_int`, `char_at`, `push_char` (Strings, Char) | Stable-candidate | tests/edge_string_api.yx, tests/string_trim_vt_ff.yx, tests/str_case_latin_ext_a.yx, tests/string_case_greek_micro.yx, tests/unicode_basic.yx. **Pending:** `find_from` with a negative `from` returns it or panics (FRICTION.md). |
+| List API beyond the prelude core: `insert`, `swap_remove`, `truncate`, `index_of`, `slice`, `copy`, `is_sorted` (Standard collections) | Stable | tests/edge_list_api.yx, tests/edge_list_growth_edges.yx |
+| `Map<K, V>` and `Set<T>` (Standard collections) | Stable-candidate | tests/edge_map_set.yx, tests/std_map_with.yx, tests/std_collections.yx. **Pending:** docs/SPEC.md 2.3 says they need `import std.collections`, but they are prelude types. |
+| Fixed-size arrays `[T; N]`, slices `view [T]` / `mut [T]`, `chunks`, `windows`, `split_at_mut` | Stable | tests/slice_basic.yx, tests/slice_chunks.yx, tests/arr_const.yx, tests/comptime_arrays.yx, tests/range_array_loops.yx |
+| Sized integers, checked conversions `to_int8()` etc., wrapping ops, Float semantics and shortest printing (Numbers) | Stable | tests/num_sized.yx, tests/num_float_basic.yx, tests/num_panic_conv.yx, tests/num_math.yx |
+| Generics by monomorphisation, inference, bounds, generic `impl` blocks (Generics) | Stable-candidate | tests/gen_basic.yx, tests/gen_owned.yx, tests/gen_traits.yx, tests/gen_methods.yx, tests/mod_ok/generic_impls, tests/derive_basic.yx. **Pending:** generic functions without `self` cannot be called (friction 161); docs/SPEC.md 2.5 is stale on explicit type arguments and generic methods. |
+| Explicit type arguments on calls (`f<Int>(x)`) | Stable-candidate | tests/generic_explicit_args.yx, tests/e1518_explicit_type_args.yx. **Pending:** docs/SPEC.md 1.5 and 2.5 still say they are not implemented. |
 | Generic methods (type parameters of their own, in `impl` blocks) | Experimental | tests/generic_methods.yx, tests/e1519_generic_method_in_trait_impl.yx, tests/e1520_generic_method_errors.yx |
 | Generic trait methods, generic methods in trait impls, default type arguments, bounds on struct/enum parameters | Not yet available | listed as not implemented in SPEC.md |
-| Traits, `Box<dyn Trait>`, built-in traits `Equal`/`Ordered`/`Show`/`Hash`/`Copy` (Traits) | Stable-candidate | tests/dyn_shapes.yx, tests/dyn_handlers.yx, tests/dyn_call_order.yx, tests/mod_ok/dyn |
-| `Box<T>` and recursive types; iterative release of box chains (Box) | Stable-candidate | 27 tests use `Box<`; release of deep chains: tests/drop_flow.yx, tests/drop_generic.yx. Mutual recursion through `dyn` and join handles: Experimental (SPEC.md says not iterative) |
-| `match`: patterns, guards, ranges, or-patterns, exhaustiveness (Match, Enums and match) | Stable-candidate | tests/match_move_option_tuple.yx, tests/match_temp_text_arg.yx, tests/e772_range_match_not_exhaustive.yx, tests/e785_range_match_wildcard.yx |
-| `if` and `match` as expressions (Enums and match) | Stable-candidate | tests/agg_match_lists.yx, tests/agg_early_return.yx |
-| Tuples `(A, B)` up to 6 elements, `let (a, b) = e` patterns | Stable-candidate | tests/e50_tuple_errors.yx, tests/e53_tuple_big.yx, tests/e956_tuple_one_element.yx, tests/e1401_move_tuple_element.yx |
-| `Char` and UTF-8 rules (Char and UTF-8) | Stable-candidate | tests/unicode_basic.yx, tests/e1020_char_escape_plus.yx |
-| Loops: `for` over ranges, `step`, labels, `break`/`continue`, `for mut`, `for x in move l` (Loops) | Stable-candidate | tests/range_features.yx, tests/e804_step_negative_literal.yx, tests/t915_defer_scopes.yx |
+| Traits, `Box<dyn Trait>`, built-in traits `Equal`/`Ordered`/`Show`/`Hash`/`Copy` (Traits) | Stable-candidate | tests/dyn_shapes.yx, tests/dyn_handlers.yx, tests/dyn_call_order.yx, tests/mod_ok/dyn, tests/enum_equal_fieldless.yx. **Pending:** SPEC.md "Traits" omits the implicit equality of fieldless enums (decision 14); docs/SPEC.md 2.5 is stale on generic methods. |
+| `Box<T>` and recursive types; iterative release of box chains (Box) | Stable | 27 tests use `Box<`; release of deep chains: tests/drop_flow.yx, tests/drop_generic.yx. Mutual recursion through `dyn` and join handles: Experimental (SPEC.md says not iterative) |
+| `match`: patterns, guards, ranges, or-patterns, exhaustiveness (Match, Enums and match) | Stable-candidate | tests/match_move_option_tuple.yx, tests/match_temp_text_arg.yx, tests/e772_range_match_not_exhaustive.yx, tests/e785_range_match_wildcard.yx. **Pending:** a nested pattern inside an owned payload is rejected and neither SPEC documents the limit (REAL_PROGRAMS frictions 35 and 46). |
+| `if` and `match` as expressions (Enums and match) | Stable-candidate | tests/agg_match_lists.yx, tests/agg_early_return.yx. **Pending:** a `match` with bare arms as the last line of an `if` branch is rejected as a statement `match`. |
+| Tuples `(A, B)` up to 6 elements, `let (a, b) = e` patterns | Stable | tests/e50_tuple_errors.yx, tests/e53_tuple_big.yx, tests/e956_tuple_one_element.yx, tests/e1401_move_tuple_element.yx |
+| `Char` and UTF-8 rules (Char and UTF-8) | Stable-candidate | tests/unicode_basic.yx, tests/e1020_char_escape_plus.yx. **Pending:** docs/SPEC.md 1.3 says `\u{HEX}` works in strings, but the compiler rejects it. |
+| Loops: `for` over ranges, `step`, labels, `break`/`continue`, `for mut`, `for x in move l` (Loops) | Stable | tests/range_features.yx, tests/e804_step_negative_literal.yx, tests/t915_defer_scopes.yx |
 | `defer` and its ownership rules (defer) | Stable | tests/t915_defer_scopes.yx, tests/drop_exits.yx |
-| `test "name" { }` blocks, `assert`, `assert_eq`, `yerux test` (Tests and assertions) | Stable-candidate | tests/test_cmd (directory), tests/modules.sh (the `yerux test` checks) |
+| `test "name" { }` blocks, `assert`, `assert_eq`, `yerux test` (Tests and assertions) | Stable | tests/test_cmd (directory), tests/modules.sh (the `yerux test` checks) |
 | Evaluation order rules (Evaluation order) | Stable | tests/eval_order_multiple_panics.yx, tests/interp_move_order.yx, tests/fuzz_order.py |
 | `yerux fmt` canonical layout (Formatter) | Experimental | tests/fmt.sh, tests/fmt/ |
-| Compile-time `comptime` expressions and statements (Comptime) | Stable-candidate | tests/comptime_basic.yx, tests/e966_comptime_string.yx, tests/e1027_comptime_array_oob.yx; step budget 20 million (see section 10) |
+| Compile-time `comptime` expressions and statements (Comptime) | Stable | tests/comptime_basic.yx, tests/e966_comptime_string.yx, tests/e1027_comptime_array_oob.yx; step budget 20 million (see section 10) |
 | `Arena<T>` library type, `ArenaRef` tickets and epochs (Arenas) | Experimental | tests/arena_basic.yx, tests/arena_stale.yx |
-| Imports with `as`, `<root>` lookup (Modules) | Stable-candidate | tests/mod_ok/shadow_module, tests/modules.sh; the lookup root is in conflict (section 10) |
-| `std.io` and the system modules, `std.process`, `std.fs` (Standard I/O, Standard-library modules) | Stable-candidate for `std.io`/`std.fs`, Experimental for `std.process` | tests/io_*.yx (15 files), tests/std_fs_metadata.yx, tests/process_*.yx; the root list of modules is shorter than STDLIB.md (section 10) |
+| Imports with `as`, `<root>` lookup (Modules) | Stable-candidate | tests/mod_ok/shadow_module, tests/modules.sh. **Pending:** the package module search order is untested (docs/SPEC.md section 10, item 10) and alias rules are unspecified (6.1). |
+| `std.io` and the system modules, `std.process`, `std.fs` (Standard I/O, Standard-library modules) | Stable-candidate for `std.io`/`std.fs`, Experimental for `std.process` | tests/io_*.yx (15 files), tests/std_fs_metadata.yx, tests/process_*.yx; the root list of modules is shorter than STDLIB.md (section 10). **Pending:** for `std.io`/`std.fs`, document the four functions listed in section 3.2. |
 | Thread API: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, `parallel for` (Threads) | Experimental | tests/conc_*.yx, tests/concurrency*.yx, tests/e729-e745 |
 | FFI, `link`, `extern "C"`, variadics, `Ptr<T>` (C declarations) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx, tests/e40-e53 |
 | Panic exit code 101 and messages (Panic) | Stable | tests/panic_list_slice_past_end.yx and the `panic_*` series |
