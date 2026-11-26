@@ -1,0 +1,4 @@
+pub struct Box2 { v: Int }
+impl Box2 { fn new(v: Int) -> Box2 { return Box2 { v: v } } }
+pub enum E { A, B }
+impl E { fn pick() -> E { return E.B } }

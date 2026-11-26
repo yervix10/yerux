@@ -257,6 +257,9 @@ Rules, all verified:
   (exit 101).
 - **Wrapping and truncating forms never panic:** `wrapping_add`, `wrapping_mul`, `truncate_uint8`,
   and so on. `300.truncate_uint8()` is `44`; `250u8.wrapping_add(10)` is `4`.
+- **Overflow-aware `Int` forms never panic:** `checked_add`, `checked_sub` and `checked_mul` give
+  `Option<Int>` (`None` when the result does not fit); `saturating_add`, `saturating_sub` and
+  `saturating_mul` give the nearest `Int` limit. Other integer types do not have them.
 - **Checked conversions** are methods (`to_int()`, `to_float()`, `to_uint8()`, `to_uint32()`,
   ...). `300.to_uint8()` panics (`integer conversion out of range`). Float to integer truncates
   toward zero (`3.99.to_int()` is `3`); `floor_int`, `ceil_int` and `round_int` round the other

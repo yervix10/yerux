@@ -1,0 +1,12 @@
+struct S { x: Int }
+impl S {
+  fn new() -> S { return S { x: 1 } }
+  fn twice(v: Int) -> Int { return v * 2 }
+}
+fn main() {
+  let s = S.new()
+  let t = s.new()
+  let u = s.twice()
+  let w = S.nope()
+  let z = S.twice()
+}

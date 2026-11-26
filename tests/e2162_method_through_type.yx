@@ -1,0 +1,10 @@
+struct S { x: Int }
+impl S { fn get(view self) -> Int { return self.x } }
+enum C { R }
+impl C { fn red(view self) -> Bool { return true } }
+fn main() {
+  let s = S { x: 1 }
+  print(S.get(s))
+  let c = C.R
+  print(C.red(c))
+}

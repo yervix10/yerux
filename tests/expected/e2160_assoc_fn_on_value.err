@@ -1,0 +1,28 @@
+error: 'new' of S takes no `self`: it cannot be called on a value
+ --> tests/e2160_assoc_fn_on_value.yx:8:11
+  |
+8 |   let t = s.new()
+  |           ^^^^^^^
+  = help: call it on the type, `S.new(..)`, or give it `view self` / `mut self` / `self`
+
+error: 'twice' of S takes no `self`: it cannot be called on a value
+ --> tests/e2160_assoc_fn_on_value.yx:9:11
+  |
+9 |   let u = s.twice()
+  |           ^^^^^^^^^
+  = help: call it on the type, `S.twice(..)`, or give it `view self` / `mut self` / `self`
+
+error: S has no function 'nope'
+  --> tests/e2160_assoc_fn_on_value.yx:10:11
+   |
+10 |   let w = S.nope()
+   |           ^^^^^^^^
+
+error: S.twice() expects 1 argument(s) but got 0
+  --> tests/e2160_assoc_fn_on_value.yx:11:11
+   |
+11 |   let z = S.twice()
+   |           ^^^^^^^^^
+   = help: pass the number of arguments shown in the function's signature
+
+4 error(s). Nothing was generated.

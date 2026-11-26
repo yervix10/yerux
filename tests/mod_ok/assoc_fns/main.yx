@@ -1,0 +1,9 @@
+import shapes
+import shapes as sh
+fn main() {
+  let a = shapes.Box2.new(5)
+  let b = sh.Box2.new(6)
+  print(a.v + b.v)
+  let e = shapes.E.pick()
+  print(e == shapes.E.B)
+}

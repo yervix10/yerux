@@ -513,6 +513,11 @@ fn rp_rows(row: &[RP], out: &mut Vec<Vec<RP>>) {
     }
 }
 
+fn self_through_type(ty: &str, m: &str, pos: Pos) -> Diag {
+    diag(format!("'{}' of {} takes `self`: call it on a value", m, ty), pos)
+        .note(format!("help: write `value.{}(..)`; `{}.name(..)` calls the functions without `self`", m, ty))
+}
+
 struct Checker<'a> {
     types: Types,
     sigs: Sigs,
@@ -570,6 +575,7 @@ struct Checker<'a> {
     arg_temps: Vec<Stmt>, // temporaries lent to `view` parameters: the enclosing call expression owns them
     reported: HashSet<(usize, usize, usize)>,
     impl_done: HashSet<String>, // instantiated methods of generic (built-in) impls
+    assoc_fns: HashSet<String>, // impl functions without `self`: only `Type.name(..)` calls them
     pos_vars: HashMap<(usize, usize), usize>, // the variable read at a position (for range diagnostics)
     /// variables that had a range fact which an assignment or a loop dropped: why, and the line
     lost_facts: HashMap<usize, (&'static str, usize)>,
@@ -1829,7 +1835,22 @@ impl<'a> Checker<'a> {
             }
             EK::Method { recv, m, args } => {
                 let m = m.clone();
-                self.method(recv, &m, args, pos)
+                match self.type_receiver(recv) {
+                    Some(ty) if !self.takes_self(ty, &m) => {
+                        // `Point.new(..)`: a function of the struct
+                        let args = std::mem::take(args);
+                        let checked = vec![None; args.len()];
+                        let (t, k) = self.type_call(ty, &m, args, checked, pos);
+                        e.k = k;
+                        t
+                    }
+                    Some(ty) => {
+                        let tyn = self.tn(ty);
+                        self.err(self_through_type(&tyn, &m, pos));
+                        Ty::Err
+                    }
+                    None => self.method(recv, &m, args, pos),
+                }
             }
             EK::Static { ty, f, args } => {
                 let (t0, f) = (*ty, f.clone());
@@ -1864,9 +1885,23 @@ impl<'a> Checker<'a> {
             } => {
                 let eid = *eid;
                 let vname = vname.clone();
-                let (t, v) = self.variant(eid, &vname, args, pos, None);
-                *vid = v;
-                t
+                let is_variant = self.types.enums[eid].variants.iter().any(|v| v.0 == vname);
+                if !is_variant && self.takes_self(Ty::Enum(eid), &vname) {
+                    let tyn = self.tn(Ty::Enum(eid));
+                    self.err(self_through_type(&tyn, &vname, pos));
+                    Ty::Err
+                } else if !is_variant && self.method_target(Ty::Enum(eid), None, &vname).is_some() {
+                    // `Colour.parse(..)`: not a variant, a function of the enum
+                    let args = std::mem::take(args);
+                    let checked = vec![None; args.len()];
+                    let (t, k) = self.type_call(Ty::Enum(eid), &vname, args, checked, pos);
+                    e.k = k;
+                    t
+                } else {
+                    let (t, v) = self.variant(eid, &vname, args, pos, None);
+                    *vid = v;
+                    t
+                }
             }
             EK::Sequence(..) => e.ty,
             EK::GenVariant { targs: Some(_), vname, .. } if vname.is_empty() => {
@@ -2689,6 +2724,7 @@ impl<'a> Checker<'a> {
     /// Is `e` a place (a variable, a field, `l.at(i)`, or the cell of a Box)?
     fn isp(&self, e: &Expr) -> bool {
         match &e.k {
+            EK::Method { recv, .. } if self.type_receiver(recv).is_some() => false,
             EK::Var(n, _) => self.lookup(n).is_some() || !self.types.consts.contains_key(n),
             EK::Field(..) => true,
             EK::Method { recv, m, .. } if m == "at" => {
@@ -7253,6 +7289,10 @@ impl<'a> Checker<'a> {
         }
         let (ii, k, binds) = found?;
         let tok = self.ps.impls[ii].methods[k].tok;
+        if !self.ps.impls[ii].methods[k].has_self {
+            let assoc = impl_fn_name(&self.types, self.ps.impls[ii].trait_name.as_deref(), ty, m);
+            self.assoc_fns.insert(assoc);
+        }
         let tn = self.ps.impls[ii].trait_name.clone();
         let subst: Vec<(String, Ty)> = self.ps.impls[ii]
             .generics
@@ -7403,6 +7443,13 @@ impl<'a> Checker<'a> {
         if target.is_none() && m == "to_string" {
             // `x.to_string()` is `x.show()` for anything that implements Show
             target = self.method_target(rt, Some("Show"), "show");
+        }
+        if target.as_ref().is_some_and(|(name, _)| self.assoc_fns.contains(name)) {
+            self.err(
+                diag(format!("'{}' of {} takes no `self`: it cannot be called on a value", m, tyn), pos)
+                    .note(format!("help: call it on the type, `{}.{}(..)`, or give it `view self` / `mut self` / `self`", tyn, m)),
+            );
+            return Err(());
         }
         let (name, sig) = match target {
             Some(x) => x,
@@ -7976,58 +8023,7 @@ impl<'a> Checker<'a> {
                         return (Ty::Err, EK::Int(0));
                     }
                 };
-                let tyn = self.tn(ty);
-                if vname == "new" {
-                    if let Some(payload) = self
-                        .types
-                        .shared_payload(ty)
-                        .or_else(|| self.types.locked_payload(ty))
-                    {
-                        if !self.thread_transferable(payload, &mut HashSet::new()) {
-                            self.err(diag(
-                                format!(
-                                    "{} cannot contain {} because it is not thread-transferable",
-                                    tyn,
-                                    self.tn(payload)
-                                ),
-                                pos,
-                            ));
-                            return (Ty::Err, EK::Int(0));
-                        }
-                    }
-                }
-                let (fname, sig) = match self.method_target(ty, None, &vname) {
-                    Some(x) => x,
-                    None => {
-                        let mut d = diag(format!("{} has no function '{}'", tyn, vname), pos);
-                        if let Some(n) = self.unmet_bound_note(ty, &vname) {
-                            for l in n.split('\n') {
-                                d = d.note(l.to_string());
-                            }
-                        }
-                        self.err(d);
-                        return (Ty::Err, EK::Int(0));
-                    }
-                };
-                if fname.starts_with("$Drop__") {
-                    self.direct_drop_error(&tyn, pos);
-                    return (Ty::Err, EK::Int(0));
-                }
-                if sig.params.len() != args.len() {
-                    self.err(diag(
-                        format!(
-                            "{}.{}() expects {} argument(s) but got {}",
-                            tyn,
-                            vname,
-                            sig.params.len(),
-                            args.len()
-                        ),
-                        pos,
-                    ));
-                    return (Ty::Err, EK::Int(0));
-                }
-                let t = self.call_args(sig, &mut args, checked);
-                (t, EK::Call(fname, args))
+                self.type_call(ty, &vname, args, checked, pos)
             }
             EK::GenVariant {
                 name,
@@ -8135,6 +8131,76 @@ impl<'a> Checker<'a> {
             }
             other => (Ty::Err, other),
         }
+    }
+
+    /// `Type.name(args)` and `Type<A>.name(args)`: a function of the type, found in its impls.
+    fn type_call(&mut self, ty: Ty, vname: &str, mut args: Vec<Expr>, checked: Vec<Option<Ty>>, pos: Pos) -> (Ty, EK) {
+        let tyn = self.tn(ty);
+        if vname == "new" {
+            if let Some(payload) = self
+                .types
+                .shared_payload(ty)
+                .or_else(|| self.types.locked_payload(ty))
+            {
+                if !self.thread_transferable(payload, &mut HashSet::new()) {
+                    self.err(diag(
+                        format!(
+                            "{} cannot contain {} because it is not thread-transferable",
+                            tyn,
+                            self.tn(payload)
+                        ),
+                        pos,
+                    ));
+                    return (Ty::Err, EK::Int(0));
+                }
+            }
+        }
+        let (fname, sig) = match self.method_target(ty, None, vname) {
+            Some(x) => x,
+            None => {
+                let mut d = diag(format!("{} has no function '{}'", tyn, vname), pos);
+                if let Some(n) = self.unmet_bound_note(ty, vname) {
+                    for l in n.split('\n') {
+                        d = d.note(l.to_string());
+                    }
+                }
+                self.err(d);
+                return (Ty::Err, EK::Int(0));
+            }
+        };
+        if fname.starts_with("$Drop__") {
+            self.direct_drop_error(&tyn, pos);
+            return (Ty::Err, EK::Int(0));
+        }
+        if sig.params.len() != args.len() {
+            self.err(diag(
+                format!(
+                    "{}.{}() expects {} argument(s) but got {}",
+                    tyn,
+                    vname,
+                    sig.params.len(),
+                    args.len()
+                ),
+                pos,
+            ));
+            return (Ty::Err, EK::Int(0));
+        }
+        let t = self.call_args(sig, &mut args, checked);
+        (t, EK::Call(fname, args))
+    }
+
+    /// Does `ty` have a method `m` that needs a value (so `Type.m(..)` is not a call of it)?
+    fn takes_self(&mut self, ty: Ty, m: &str) -> bool {
+        self.method_target(ty, None, m).is_some_and(|(name, _)| !self.assoc_fns.contains(&name))
+    }
+
+    /// The struct named by the receiver of `Name.f(..)`, when `Name` is not a variable or a constant.
+    fn type_receiver(&self, recv: &Expr) -> Option<Ty> {
+        let EK::Var(n, _) = &recv.k else { return None };
+        if self.lookup(n).is_some() || self.types.consts.contains_key(n) {
+            return None;
+        }
+        self.ps.names.get(n).copied().filter(|t| matches!(t, Ty::Struct(_)))
     }
 
     /// Call of a generic function: infer the type arguments from the arguments, check the bounds,
@@ -8677,6 +8743,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         arg_temps: vec![],
         reported: HashSet::new(),
         impl_done: HashSet::new(),
+        assoc_fns: HashSet::new(),
         pos_names: HashMap::new(),
         pos_vars: HashMap::new(),
         lost_facts: HashMap::new(),

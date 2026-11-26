@@ -1,0 +1,71 @@
+// Friction 136: checked_add/sub/mul give None when the exact result does not fit an Int; the saturating forms give
+// the nearest limit. Every pair of the boundary values is checked against the range tests done by hand.
+
+const MAX: Int = 9223372036854775807
+const MIN: Int = -9223372036854775807 - 1
+
+fn show(o: Option<Int>) -> String {
+  match o {
+    Some(v) => { return "{v}" }
+    None => { return String.from("none") }
+  }
+}
+
+fn values() -> List<Int> {
+  var v = List<Int>.new()
+  for x in [MIN, MIN + 1, -4611686018427387904, -3037000500, -3037000499, -7, -2, -1, 0, 1, 2, 7, 3037000499,
+      3037000500, 4611686018427387903, 4611686018427387904, MAX - 1, MAX] {
+    v.push(x)
+  }
+  return v
+}
+
+// Whether a * b fits, by division only (no operation here can overflow).
+fn mul_fits(a: Int, b: Int) -> Bool {
+  if a == 0 || b == 0 { return true }
+  if a > 0 {
+    if b > 0 { return a <= MAX / b }
+    return b >= MIN / a
+  }
+  if b > 0 { return a >= MIN / b }
+  return b >= MAX / a
+}
+
+// 1 when the checked and saturating results agree with the expectation, else 0.
+fn verify(got: Option<Int>, sat: Int, fits: Bool, exact_if_fits: Int, positive: Bool) -> Int {
+  match got {
+    Some(v) => {
+      if fits && v == exact_if_fits && sat == v { return 1 }
+      return 0
+    }
+    None => {
+      let limit = if positive { MAX } else { MIN }
+      if !fits && sat == limit { return 1 }
+      return 0
+    }
+  }
+}
+
+fn main() {
+  print("add: {show(2.checked_add(3))} {show(MAX.checked_add(1))} {show(MIN.checked_add(-1))} {show(MAX.checked_add(MIN))}")
+  print("sub: {show(2.checked_sub(3))} {show(MIN.checked_sub(1))} {show(MAX.checked_sub(-1))} {show(0.checked_sub(MIN))} {show((-1).checked_sub(MIN))}")
+  print("mul: {show(6.checked_mul(-7))} {show(MIN.checked_mul(-1))} {show((-1).checked_mul(MIN))} {show(MIN.checked_mul(1))} {show(3037000500.checked_mul(3037000500))} {show(4611686018427387904.checked_mul(-2))}")
+  print("sat: {MAX.saturating_add(9)} {MIN.saturating_sub(9)} {MIN.saturating_mul(-1)} {MAX.saturating_mul(-2)} {5.saturating_mul(5)}")
+  let all = values()
+  var checks = 0
+  var good = 0
+  for a in all {
+    for b in all {
+      let add_fits = !((b > 0 && a > MAX - b) || (b < 0 && a < MIN - b))
+      let sub_fits = !((b < 0 && a > MAX + b) || (b > 0 && a < MIN + b))
+      let sum = if add_fits { a + b } else { 0 }
+      let difference = if sub_fits { a - b } else { 0 }
+      let product = if mul_fits(a, b) { a * b } else { 0 }
+      good = good + verify(a.checked_add(b), a.saturating_add(b), add_fits, sum, a >= 0)
+      good = good + verify(a.checked_sub(b), a.saturating_sub(b), sub_fits, difference, a >= 0)
+      good = good + verify(a.checked_mul(b), a.saturating_mul(b), mul_fits(a, b), product, (a > 0) == (b > 0))
+      checks = checks + 3
+    }
+  }
+  print("{good} of {checks} boundary checks agree")
+}

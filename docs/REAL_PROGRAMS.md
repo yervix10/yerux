@@ -987,9 +987,13 @@ and registered in `tests/real_programs.sh`.
 136. **`Int` has no checked arithmetic.** There are `wrapping_*` forms but nothing that reports overflow, so a program
     that must not panic on user input writes the range tests by hand (`apply` in `sheet/engine.yx`; `bcvm/vm.yx` does the
     same).
+    *Fixed:* `Int` has `checked_add`/`checked_sub`/`checked_mul` (`Option<Int>`) and `saturating_*`
+    (`docs/STDLIB.md`, `tests/int_checked_ops.yx`).
 137. **`Type.new()` works on a generic struct but not on a plain one.** `impl<T> Heap<T> { fn new() .. }` can be called
     as `Heap<Int>.new()`; `impl Sheet { fn new() -> Sheet .. }` is rejected ("no `self` parameter, so nothing can call
     it"). The plain struct needs a free function.
+    *Fixed:* a function without `self` is accepted in the `impl` of a plain struct or enum and is called as
+    `Type.name(..)`; calling it on a value is an error (`tests/assoc_functions.yx`, `tests/e2160_assoc_fn_on_value.yx`).
 138. **`derive Clone` does not reach through `Box`** (documented limit in `docs/CLONE.md`), so every recursive syntax
     tree needs its `impl Clone` written variant by variant.
 
@@ -1018,3 +1022,11 @@ programs).
     `unwrap()` panics with `called Option.unwrap() on a None value` plus the source line, which does not say that a
     sibling sender closed the channel. The failure is quick to reproduce but slow to attribute; the programs handle
     `None` explicitly and, in prodpipeline, assert the final `None` only after both handles are joined.
+## Round 18: frictions found while fixing 136 and 137 (160 fixed; 161 open)
+
+160. **selfhost took a constant used as a receiver for a type name.** `LIMIT.wrapping_add(1)` failed in the
+    self-hosted compiler ("method .. on Int"). *Fixed* in `selfhost/types.yx` and `selfhost/codegen.yx`
+    (`tests/int_checked_ops.yx` uses `MAX.checked_add(1)`).
+161. **A generic function without `self` cannot be called.** `impl S { fn make<T: Copy>(v: T) -> T .. }` is accepted,
+    but `S.make(1)` says "S has no function 'make'". A free generic function works.
+

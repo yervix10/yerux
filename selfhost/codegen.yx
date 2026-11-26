@@ -920,6 +920,41 @@ fn emit_print(gen: mut Generator, tree: view List<ast.AstNode>, value: view Valu
   else { unsupported("print of {value.ty}") }
 }
 
+fn has_variant(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String, name: view String) -> Bool {
+  prepare_type(gen, tree, ty)
+  let layout = enum_index(gen, ty)
+  if layout < 0 { return false }
+  for variant in gen.enum_layouts.at(layout).variants {
+    if variant.name.eq(name) { return true }
+  }
+  return false
+}
+
+// `a.checked_add(b)` is None, and `a.saturating_add(b)` the nearest limit, when the result does not fit.
+fn overflow_call(gen: mut Generator, tree: view List<ast.AstNode>, recv: Int, argument: Int,
+    name: view String, ty: view String) -> Value {
+  let left = expression(gen, tree, recv)
+  let saved = temp(gen, tree, left.ty, left.code)
+  let right = expression(gen, tree, argument)
+  let other = temp(gen, tree, right.ty, right.code)
+  let operation = name.slice(name.find("_") + 1, name.len())
+  let wide = temp(gen, tree, String.from("Int"), String.from("0"))
+  let overflowed = "__builtin_{operation}_overflow({saved.code}, {other.code}, &{wide.code})"
+  if name.starts_with("saturating_") {
+    var positive = "{saved.code} >= 0"
+    if operation == "mul" { positive = "({saved.code} > 0) == ({other.code} > 0)" }
+    line(gen, "if ({overflowed}) {wide.code} = ({positive}) ? INT64_MAX : INT64_MIN;")
+    return move wide
+  }
+  prepare_type(gen, tree, ty)
+  let layout = enum_index(gen, ty)
+  let some = variant_index(gen.enum_layouts.at(layout), String.from("Some"))
+  let none = variant_index(gen.enum_layouts.at(layout), String.from("None"))
+  let result = temp(gen, tree, ty, "{{ .tag = {none} }}")
+  line(gen, "if (!{overflowed}) {{ {result.code}.tag = {some}; {result.code}.v{some}.p0 = {wide.code}; }}")
+  return move result
+}
+
 fn construct_variant(gen: mut Generator, tree: view List<ast.AstNode>, ty: view String,
     name: view String, args: Int) -> Value {
   prepare_type(gen, tree, ty)
@@ -2208,6 +2243,14 @@ fn handle_value(gen: mut Generator, tree: view List<ast.AstNode>, handle: view V
   return Value { ty: String.from(payload), code: "((*({cell_c} *)(({handle.code}).m{hex_text("cell")})->data).m{hex_text("value")})" }
 }
 
+fn names_constant(gen: view Generator, tree: view List<ast.AstNode>, name: view String) -> Bool {
+  for item in gen.constants {
+    let declared = ast.name_at(tree, item, 0)
+    if declared.eq(name) { return true }
+  }
+  return false
+}
+
 fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view String) -> Value {
   let recv = ast.child(tree, node, 0)
   let name = ast.name_at(tree, node, 1)
@@ -2217,7 +2260,8 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
   var actual = args + 1
   var values = List<String>.new()
   var helper = String.new()
-  let is_static = owner != "" && gen.locals.identities.at(recv) < 0
+  // a constant as receiver (`LIMIT.checked_add(1)`) is a value, not the name of a type
+  let is_static = owner != "" && gen.locals.identities.at(recv) < 0 && !names_constant(gen, tree, owner)
   var receiver_type = type_terms.substitute(gen.checked.expressions.at(recv), gen.sub)
   if is_static { receiver_type = String.from(owner) }
   if !is_static && receiver_type.starts_with("JoinHandle<") && name == "join" {
@@ -2366,7 +2410,8 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
   }
   let result_base = type_terms.base(ty)
   if owner != "" && gen.locals.identities.at(recv) < 0 && result_base == owner &&
-      (owner == "Option" || owner == "Result" || find_named(tree, gen.enums, owner) >= 0) {
+      (owner == "Option" || owner == "Result" || find_named(tree, gen.enums, owner) >= 0) &&
+      (match_method(gen, tree, ty, name, false) < 0 || has_variant(gen, tree, ty, name)) {
     return construct_variant(gen, tree, ty, name, args)
   }
   if owner == "List" && gen.locals.identities.at(recv) < 0 && name == "new" {
@@ -2436,6 +2481,9 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
           return temp(gen, tree, ty, "({a} < {b} ? -1 : {a} > {b} ? 1 : {a} == {b} ? 0 : ({a} != {a} ? ({b} != {b} ? 0 : 1) : -1))")
         }
         return temp(gen, tree, ty, "({a} < {b} ? -1 : {a} > {b} ? 1 : 0)")
+      }
+      if types.overflow_aware(name) {
+        return overflow_call(gen, tree, recv, actual, name, ty)
       }
       if name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" {
         let left = expression(gen, tree, recv)

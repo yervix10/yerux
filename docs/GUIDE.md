@@ -668,7 +668,7 @@ fn main() {
 
 - A trait lists method signatures only (no default bodies). Every method's first parameter is `self`: `view self`, `mut self`, or `self` (consumes the receiver).
 - `impl Trait for Type { ... }` must define every method with exactly the trait's signature.
-- `impl Type { ... }` adds plain methods to your own struct or enum.
+- `impl Type { ... }` adds plain methods to your own struct or enum. A function there without `self` is called on the type: `Point.new(1, 2)`.
 - Dispatch is static for generics. For run-time dispatch box the value as a trait object, `Box<dyn Trait>` (see the book, chapter 8, and `tests/dyn_shapes.yx`); a `view dyn Trait` parameter borrows one.
 - Functions, structs and enums can be generic. They are **monomorphised**: each distinct use compiles to a specialised copy, with zero run-time cost.
 - Type arguments of function calls are **inferred**; write them (`first<Int>(l)`, `empty<Text>()`) only when inference cannot fix them. Struct and enum values infer theirs from field values or the expected type; otherwise write them (`Maybe<Int>.None`).
