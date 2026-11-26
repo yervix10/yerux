@@ -1040,7 +1040,7 @@ escape, i64 min/max and radix extremes with underscores and signs, and
 with a golden `tests/expected/<name>.out` + `.code`. All pass on C, native and
 ASan/UBSan.
 
-### Round 18 frictions (not changed; minimal repros)
+### Round 18 frictions (240-247, fixed in round 19; minimal repros)
 
 240. **`csv.line_of` counts only LF, not CR, so a CR-only file reports every
      error on line 1.** `parse` treats byte 13 as a record separator, but
@@ -1056,6 +1056,7 @@ ASan/UBSan.
      ```
      Same for `"a\r\"bad\"x"` → line 1 instead of 2. Found while probing
      `tests/std_csv_errpos.yx`.
+     *Fixed:* a lone CR ends a line (CRLF counts once) (`tests/std_csv_errpos.yx`). `csv.write` of a record with no fields, which read back as one empty field, now panics (`tests/std_csv_write_empty_record.yx`).
 241. **`parse_checked` size and field-limit errors carry no line number**,
      although the module header (`src/std/csv.yx:4`) promises "all of these as
      an Err with a line number":
@@ -1075,6 +1076,7 @@ ASan/UBSan.
      Same shape for input over 16 MiB (`std.csv: input larger than 16 MiB`).
      Line-scanning errors do report `line N`; these two do not. Golden in
      `tests/expected/std_csv_errpos.out`.
+     *Fixed:* both errors name the line on which the limit is crossed (`tests/std_csv_errpos.yx`).
 242. **A quoted TOML table header keeps its quotes, so its keys are
      unreachable.** Keys are unquoted on lookup (`find_value`,
      `src/std/toml.yx:147`) but the table name is only trimmed:
@@ -1087,6 +1089,7 @@ ASan/UBSan.
      ```
      tomllib accepts `["srv"]` as table `srv`. Golden in
      `tests/expected/std_toml_quotes.out`.
+     *Fixed:* table names are parsed as keys, quotes removed; `get_string_opt` of a bare value, which gave `Some("")`, is now `None` (`tests/std_toml_check.yx`).
 243. **A `]` inside a single-quoted literal closes the multi-line array scan
      early and drops the continuation lines.** `scan_brackets`
      (`src/std/toml.yx:7`) tracks `"` but not `'`:
@@ -1100,6 +1103,7 @@ ASan/UBSan.
      }
      ```
      tomllib returns `[' ]', 2]`. Golden in `tests/expected/std_toml_quotes.out`.
+     *Fixed:* the bracket scan follows both kinds of string (`tests/std_toml_quotes.yx`).
 244. **Invalid TOML escapes are accepted with the backslash silently dropped.**
      tomllib rejects all three; `unquote` (`src/std/toml.yx:30`) falls through
      to `push_byte(c)`:
@@ -1113,6 +1117,7 @@ ASan/UBSan.
      ```
      `get_string` returns `String`, so there is no channel for the failure
      anyway. Golden in `tests/expected/std_toml_unicode.out`.
+     *Fixed:* such a string is not a value (the getter gives its default, `check` names the line); `\b` and `\f`, which were read as letters, are resolved (`tests/std_toml_check.yx`).
 245. **`std.toml` has no error positions: malformed input is
      indistinguishable from a missing key.** Unlike `csv.parse_checked`
      (`line N`) and `json.line_col`, every reader returns a default with no
@@ -1127,6 +1132,7 @@ ASan/UBSan.
      ```
      Keys before the bad header are still reachable (`x = 9\n[bad` finds `x`),
      so the abort point is silent. Found in `tests/std_toml_empty.yx`.
+     *Fixed:* `toml.check(doc)` validates the document and reports `std.toml: line N: ...`, including a signed `0x`/`0o`/`0b` integer, which only read as 0; `0x-10` read as -16 and is now rejected (`tests/std_toml_check.yx`).
 246. **`toml.get_array` does not stop at the matching `]`.** Text after the
      closing bracket is read as further elements:
      ```yerux
@@ -1139,6 +1145,7 @@ ASan/UBSan.
      An unterminated multi-line array likewise swallows the rest of the
      document (`a = [1,\n 2\nb = 3` → elements `1`, `2 b = 3`, while `b`
      still looks up as 3). Golden in `tests/expected/std_toml_quotes.out`.
+     *Fixed:* an array must end the value; trailing text, missing commas, nesting or no closing `]` give an empty list (`tests/std_toml_check.yx`).
 247. **`[]` aborts the whole lookup while `[ ]` acts as the root scope.**
      `find_value` returns early when a header line is shorter than 3 bytes
      (`src/std/toml.yx:141`), killing every key after it; a header with a
@@ -1152,3 +1159,4 @@ ASan/UBSan.
      }
      ```
      tomllib rejects both spellings. Golden in `tests/expected/std_toml_empty.out`.
+     *Fixed:* `[]` and `[ ]` are both malformed headers (`tests/std_toml_check.yx`).

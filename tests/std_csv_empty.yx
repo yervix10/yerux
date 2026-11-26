@@ -1,6 +1,6 @@
 // std.csv empties: empty input, empty fields, rows made only of separators,
-// a whitespace field kept verbatim, and the write side of empty rows (an empty
-// row serialises to a bare CRLF and parses back as one empty field).
+// a whitespace field kept verbatim, and the write side of rows of empty fields
+// (one empty field serialises to a bare CRLF and parses back as itself).
 import std.csv
 
 fn dump(rows: view List<List<String>>) {
@@ -53,9 +53,4 @@ fn main() {
   let w = csv.write(rows)
   print("wlen={w.len()}")
   dump(csv.parse(w))
-  // a row with no fields at all becomes one empty field after a round trip
-  var only = List<List<String>>.new()
-  var none = List<String>.new()
-  only.push(move none)
-  dump(csv.parse(csv.write(only)))
 }

@@ -1,17 +1,20 @@
 // Minimal TOML reader for project manifests: tables, scalar strings, integers,
-// booleans, and flat arrays. Values are queried by dotted key.
+// booleans, and flat arrays. Values are queried by dotted key. A value that is not
+// valid TOML (or is outside this subset) reads as the getter's missing-value
+// default; `check` says which line is wrong.
 import std.text
 import std.io
 
 // Count brackets outside quoted strings as each line is appended.
-fn scan_brackets(v: view String, depth: mut Int, quoted: mut Bool) {
+fn scan_brackets(v: view String, depth: mut Int) {
+  var quote = 0
   var i = 0
   while i < v.len() {
     let c = v.byte(i)
-    if quoted {
-      if c == 92 { i = i + 1 } else if c == 34 { quoted = false }
-    } else if c == 34 {
-      quoted = true
+    if quote != 0 {
+      if c == 92 && quote == 34 { i = i + 1 } else if c == quote { quote = 0 }
+    } else if c == 34 || c == 39 {
+      quote = c
     } else if c == 91 {
       depth = depth + 1
     } else if c == 93 {
@@ -21,48 +24,80 @@ fn scan_brackets(v: view String, depth: mut Int, quoted: mut Bool) {
   }
 }
 
-// the string literal that starts at the quote at `at`: escapes \" \\ \n \t resolved; stops at the closing quote
-fn unquote(v: view String, at: Int, end: mut Int) -> String {
+fn hex_value(h: Int) -> Int {
+  if h >= 48 && h <= 57 { return h - 48 }
+  if h >= 97 && h <= 102 { return h - 87 }
+  if h >= 65 && h <= 70 { return h - 55 }
+  return -1
+}
+
+// the string literal that starts at the quote at `at`, escapes resolved; None when it is not closed on this line,
+// holds a control character, or has an escape TOML does not define (including a surrogate or truncated \u)
+fn unquote(v: view String, at: Int, end: mut Int) -> Option<String> {
   var out = String.new()
   var i = at + 1
   while i < v.len() && v.byte(i) != 34 {
     var c = v.byte(i)
-    if c == 92 && i + 1 < v.len() {
+    if (c < 32 && c != 9) || c == 127 { return None }
+    if c == 92 {
+      if i + 1 >= v.len() { return None }
       i = i + 1
-      c = v.byte(i)
-      if c == 110 { c = 10 } else if c == 116 { c = 9 } else if c == 114 { c = 13 }
-      else if (c == 117 || c == 85) && i + (if c == 117 { 4 } else { 8 }) < v.len() {
+      let e = v.byte(i)
+      if e == 117 || e == 85 {
         // \uXXXX and \UXXXXXXXX: a Unicode scalar value, kept as its UTF-8 bytes
-        let width = if c == 117 { 4 } else { 8 }
+        let width = if e == 117 { 4 } else { 8 }
+        if i + width >= v.len() { return None }
         var cp = 0
-        var ok = true
         for k in 1..width + 1 {
-          let h = v.byte(i + k)
-          var d = -1
-          if h >= 48 && h <= 57 { d = h - 48 } else if h >= 97 && h <= 102 { d = h - 87 } else if h >= 65 && h <= 70 { d = h - 55 }
-          if d < 0 { ok = false } else { cp = cp * 16 + d }
+          let d = hex_value(v.byte(i + k))
+          if d < 0 { return None }
+          cp = cp * 16 + d
         }
-        if ok && Char.is_valid(cp) {
-          out.push_char(Char.from_int(cp))
-          i = i + width + 1
-          continue
-        }
+        if !Char.is_valid(cp) { return None }
+        out.push_char(Char.from_int(cp))
+        i = i + width + 1
+        continue
       }
+      if e == 98 { c = 8 } else if e == 116 { c = 9 } else if e == 110 { c = 10 } else if e == 102 { c = 12 }
+      else if e == 114 { c = 13 } else if e == 34 || e == 92 { c = e } else { return None }
     }
     out.push_byte(c)
     i = i + 1
   }
+  if i >= v.len() { return None }
   end = i + 1
-  return out
+  return Some(move out)
 }
 
-// the literal string ('...', no escapes) that starts at the quote at `at`
-fn unquote_literal(v: view String, at: Int, end: mut Int) -> String {
+// the literal string ('...', no escapes) that starts at the quote at `at`; None when it is not closed
+fn unquote_literal(v: view String, at: Int, end: mut Int) -> Option<String> {
   var j = at + 1
-  while j < v.len() && v.byte(j) != 39 { j = j + 1 }
+  while j < v.len() && v.byte(j) != 39 {
+    let c = v.byte(j)
+    if (c < 32 && c != 9) || c == 127 { return None }
+    j = j + 1
+  }
+  if j >= v.len() { return None }
   end = j + 1
-  return v.slice(at + 1, j)
+  return Some(v.slice(at + 1, j))
 }
+
+// either kind of string, starting at `at`
+fn quoted_at(v: view String, at: Int, end: mut Int) -> Option<String> {
+  if v.byte(at) == 34 { return unquote(v, at, end) }
+  return unquote_literal(v, at, end)
+}
+
+// a whole value that is one string and nothing else
+fn string_value(raw: view String) -> Option<String> {
+  if raw.len() < 2 || (raw.byte(0) != 34 && raw.byte(0) != 39) { return None }
+  var end = 0
+  let parsed = quoted_at(raw, 0, end)
+  if end != raw.len() { return None }
+  return parsed
+}
+
+fn is_blank_byte(c: Int) -> Bool { return c == 32 || c == 9 || c == 13 }
 
 // an integer in TOML syntax: optional sign, `_` between digits, 0x / 0o / 0b prefixes; None when it is not one
 fn toml_int(raw: view String) -> Option<Int> {
@@ -83,7 +118,11 @@ fn toml_int(raw: view String) -> Option<Int> {
   var base = 10
   var body = String.from(t)
   if t.starts_with("0x") { base = 16 } else if t.starts_with("0o") { base = 8 } else if t.starts_with("0b") { base = 2 }
-  if base != 10 { body = t.slice(2, t.len()) }
+  if base != 10 {
+    body = t.slice(2, t.len())
+    // no sign between the prefix and the digits
+    if body.len() == 0 || hex_value(body.byte(0)) < 0 { return None }
+  }
   match text.parse_int_radix(body, base) {
     Ok(v) => { return Some(v) }
     Err(_) => { return None }
@@ -118,67 +157,363 @@ fn strip_comment(line: view String) -> String {
   return String.from(line)
 }
 
-fn find_value(input: view String, wanted: view String, found: mut Bool) -> String {
-  found = false
-  // A hostile manifest should not allocate a String for every blank line.
-  if input.len() > 16777216 { return String.new() }
-  if !io.valid_utf8(input) { return String.new() }
+fn is_digit_byte(c: Int) -> Bool { return c >= 48 && c <= 57 }
+
+// the end of the digits at `i` (with `_` only between two digits), or -1 when there is none
+fn digits_end(t: view String, i: Int) -> Int {
+  var j = i
+  while j < t.len() {
+    if is_digit_byte(t.byte(j)) {
+      j = j + 1
+    } else if t.byte(j) == 95 && j > i && j + 1 < t.len() && is_digit_byte(t.byte(j + 1)) {
+      j = j + 1
+    } else { break }
+  }
+  if j == i { return -1 }
+  return j
+}
+
+fn is_float_text(t: view String) -> Bool {
+  var i = 0
+  if t.len() > 0 && (t.byte(0) == 43 || t.byte(0) == 45) { i = 1 }
+  let rest = t.slice(i, t.len())
+  if rest.eq("inf") || rest.eq("nan") { return true }
+  i = digits_end(t, i)
+  if i < 0 { return false }
+  var fractional = false
+  if i < t.len() && t.byte(i) == 46 {
+    i = digits_end(t, i + 1)
+    if i < 0 { return false }
+    fractional = true
+  }
+  if i < t.len() && (t.byte(i) == 101 || t.byte(i) == 69) {
+    i = i + 1
+    if i < t.len() && (t.byte(i) == 43 || t.byte(i) == 45) { i = i + 1 }
+    i = digits_end(t, i)
+    if i < 0 { return false }
+    fractional = true
+  }
+  return fractional && i == t.len()
+}
+
+// the shape of a date, a time or a date-time (the fields are not range-checked)
+fn is_date_text(t: view String) -> Bool {
+  if t.len() < 8 { return false }
+  let dated = t.byte(4) == 45
+  let lead = if dated { 4 } else { 2 }
+  if !dated && t.byte(2) != 58 { return false }
+  for i in 0..lead {
+    if !is_digit_byte(t.byte(i)) { return false }
+  }
+  var spaces = 0
+  for i in 0..t.len() {
+    let c = t.byte(i)
+    if c == 32 {
+      spaces = spaces + 1
+    } else if !is_digit_byte(c) && c != 45 && c != 58 && c != 46 && c != 43 && c != 84 && c != 90 && c != 116 && c != 122 {
+      return false
+    }
+  }
+  return spaces <= 1
+}
+
+// a value written without quotes or brackets
+fn is_bare_value(t: view String) -> Bool {
+  if t.eq("true") || t.eq("false") { return true }
+  return toml_int(t).is_some() || is_float_text(t) || is_date_text(t)
+}
+
+// the elements of a flat array that makes up the whole value; None when it is not closed, lacks a comma, has an
+// invalid element or a nested array or table, or is followed by anything
+fn array_value(raw: view String) -> Option<List<String>> {
+  if raw.len() < 2 || raw.byte(0) != 91 { return None }
+  var out = List<String>.new()
+  var i = 1
+  while true {
+    while i < raw.len() && is_blank_byte(raw.byte(i)) { i = i + 1 }
+    if i >= raw.len() { return None }
+    let c = raw.byte(i)
+    if c == 93 { break }
+    if c == 34 || c == 39 {
+      var end = 0
+      match quoted_at(raw, i, end) {
+        Some(item) => { out.push(item.clone()) }
+        None => { return None }
+      }
+      i = end
+    } else {
+      var j = i
+      while j < raw.len() && raw.byte(j) != 44 && raw.byte(j) != 93 { j = j + 1 }
+      let item = raw.slice(i, j).trim()
+      if !is_bare_value(item) { return None }
+      out.push(item.clone())
+      i = j
+    }
+    while i < raw.len() && is_blank_byte(raw.byte(i)) { i = i + 1 }
+    if i >= raw.len() { return None }
+    if raw.byte(i) == 44 { i = i + 1 } else if raw.byte(i) != 93 { return None }
+  }
+  if i + 1 != raw.len() { return None }
+  return Some(move out)
+}
+
+// A key or table name: bare or quoted parts joined by dots, quotes removed. None when it is empty or malformed.
+fn parse_key(t: view String) -> Option<String> {
+  var out = String.new()
+  var i = 0
+  while true {
+    while i < t.len() && is_blank_byte(t.byte(i)) { i = i + 1 }
+    if i >= t.len() { return None }
+    let c = t.byte(i)
+    if c == 34 || c == 39 {
+      var end = 0
+      match quoted_at(t, i, end) {
+        Some(part) => { out.push_str(part) }
+        None => { return None }
+      }
+      i = end
+    } else {
+      // bare parts may hold non-ASCII letters (more than TOML allows), but nothing that is TOML syntax
+      let start = i
+      while i < t.len() {
+        let b = t.byte(i)
+        if b == 46 || b == 34 || b == 39 || b == 91 || b == 93 || b == 123 || b == 125 || b == 61 || b == 35 || is_blank_byte(b) { break }
+        i = i + 1
+      }
+      if i == start { return None }
+      out.push_slice(t, start, i)
+    }
+    while i < t.len() && is_blank_byte(t.byte(i)) { i = i + 1 }
+    if i >= t.len() { break }
+    if t.byte(i) != 46 { return None }
+    out.push_byte(46)
+    i = i + 1
+  }
+  return Some(move out)
+}
+
+// the first `=` outside a quoted key, or -1
+fn find_equals(line: view String) -> Int {
+  var quote = 0
+  var i = 0
+  while i < line.len() {
+    let c = line.byte(i)
+    if quote != 0 {
+      if c == 92 && quote == 34 { i = i + 1 } else if c == quote { quote = 0 }
+    } else if c == 34 || c == 39 {
+      quote = c
+    } else if c == 61 {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// For a value starting with `[` on line `at`: the line on which its brackets balance, or -1.
+fn array_end(lines: view List<String>, at: Int, first: view String) -> Int {
+  var depth = 0
+  scan_brackets(first, depth)
+  var j = at
+  while depth > 0 {
+    j = j + 1
+    if j >= lines.len() { return -1 }
+    let more = strip_comment(lines.at(j)).trim()
+    scan_brackets(more, depth)
+  }
+  return j
+}
+
+// the lines of a multi-line array, from `at` to `last`, as one value
+fn joined(lines: view List<String>, at: Int, last: Int, first: view String) -> String {
+  var value = String.from(first)
+  var j = at + 1
+  while j <= last {
+    let more = strip_comment(lines.at(j)).trim()
+    value.push_str(" ")
+    value.push_str(more)
+    j = j + 1
+  }
+  return value
+}
+
+fn qualified(table: view String, in_table: Bool, key: view String) -> String {
+  if !in_table { return String.from(key) }
+  var full = String.from(table)
+  full.push_byte(46)
+  full.push_str(key)
+  return full
+}
+
+fn too_many_lines(input: view String) -> Bool {
   var line_count = 0
   var scan = 0
   while scan < input.len() {
     if input.byte(scan) == 10 {
       line_count = line_count + 1
-      if line_count > 100000 { return String.new() }
+      if line_count > 100000 { return true }
     }
     scan = scan + 1
   }
+  return false
+}
+
+fn find_value(input: view String, wanted: view String, found: mut Bool) -> String {
+  found = false
+  // A hostile manifest should not allocate a String for every blank line.
+  if input.len() > 16777216 { return String.new() }
+  if !io.valid_utf8(input) { return String.new() }
+  if too_many_lines(input) { return String.new() }
   let lines = input.split(String.from("\n"))
   var table = String.new()
+  var in_table = false
+  var hidden = false // inside a [[array of tables]], which this reader does not read
+  var unclosed = false // after an array that never closes, later ones are not followed (it would be quadratic)
   var i = 0
   while i < lines.len() {
     let line = strip_comment(lines.at(i)).trim()
     if line.starts_with("[") {
-      if line.len() < 3 || !line.ends_with("]") { return String.new() }
-      table = line.slice(1, line.len() - 1).trim()
+      let double = line.starts_with("[[")
+      var edge = 1
+      var closing = "]"
+      if double {
+        edge = 2
+        closing = "]]"
+      }
+      if line.len() < 2 * edge || !line.ends_with(closing) { return String.new() }
+      let inner = line.slice(edge, line.len() - edge)
+      match parse_key(inner) {
+        Some(name) => { table = name.clone() }
+        None => { return String.new() }
+      }
+      in_table = true
+      hidden = double
     } else {
-      let eq = line.find(String.from("="))
+      let eq = find_equals(line)
       if eq >= 0 {
-        var key = line.slice(0, eq).trim()
-        if key.len() >= 2 && key.byte(0) == 34 && key.byte(key.len() - 1) == 34 {
-          var key_end = 0
-          key = unquote(key, 0, key_end)
+        var value = line.slice(eq + 1, line.len()).trim()
+        var last = i
+        if value.starts_with("[") && !unclosed {
+          last = array_end(lines, i, value)
+          if last < 0 { unclosed = true }
         }
-        var full = String.from(key)
-        if table.len() > 0 {
-          full = String.new()
-          full.push_slice(table, 0, table.len())
-          full.push_char(Char.from_int(46))
-          full.push_slice(key, 0, key.len())
-        }
-        if full.eq(wanted) {
-          var value = line.slice(eq + 1, line.len()).trim()
-          // a multi-line array: keep reading lines until its brackets balance
-          if value.starts_with("[") {
-            var depth = 0
-            var quoted = false
-            scan_brackets(value, depth, quoted)
-            var j = i + 1
-            while depth > 0 && j < lines.len() {
-              let more = strip_comment(lines.at(j)).trim()
-              scan_brackets(more, depth, quoted)
-              value.push_str(" ")
-              value.push_str(more)
-              j = j + 1
-            }
+        let written = line.slice(0, eq)
+        var wanted_here = false
+        match parse_key(written) {
+          Some(key) => {
+            let full = qualified(table, in_table, key)
+            wanted_here = !hidden && full.eq(wanted)
           }
+          None => {}
+        }
+        if wanted_here {
           found = true
+          // an array that never closes takes the rest of the document, and so is not a valid value
+          if value.starts_with("[") {
+            let stop = array_end(lines, i, value)
+            if stop < 0 { return joined(lines, i, lines.len() - 1, value) }
+            return joined(lines, i, stop, value)
+          }
           return value
         }
+        // the lines of a multi-line array are not table headers or keys
+        if last > i { i = last }
       }
     }
     i = i + 1
   }
   return String.new()
+}
+
+fn line_error(line: Int, message: view String) -> String {
+  return "std.toml: line {line}: {message}"
+}
+
+// why a value is not accepted, or "" when it is
+fn value_problem(value: view String) -> String {
+  if value.len() == 0 { return String.from("missing value") }
+  if value.starts_with("\"\"\"") || value.starts_with("'''") {
+    return String.from("multi-line strings are not supported")
+  }
+  let c = value.byte(0)
+  if c == 34 || c == 39 {
+    if string_value(value).is_none() { return String.from("invalid string (unclosed, bad escape, or text after it)") }
+  } else if c == 91 {
+    if array_value(value).is_none() { return String.from("invalid or nested array") }
+  } else if c == 123 {
+    return String.from("inline tables are not supported")
+  } else if !is_bare_value(value) {
+    return String.from("invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)")
+  } else if has_leading_zero(value) {
+    return String.from("a decimal number cannot start with a zero")
+  }
+  return String.new()
+}
+
+fn has_leading_zero(value: view String) -> Bool {
+  var i = 0
+  if value.byte(0) == 43 || value.byte(0) == 45 { i = 1 }
+  if i + 1 >= value.len() || value.byte(i) != 48 || !(is_digit_byte(value.byte(i + 1)) || value.byte(i + 1) == 95) {
+    return false
+  }
+  return !is_date_text(value)
+}
+
+/// Validates the whole document against the subset this module reads: `Ok(number of keys)`, or the first problem as
+/// `std.toml: line N: ...`. The getters never report errors; call this to tell a bad file from a missing key.
+pub fn check(input: view String) -> Result<Int, String> {
+  if input.len() > 16777216 { return Err(line_error(1, "input larger than 16 MiB")) }
+  if too_many_lines(input) { return Err(line_error(100001, "more than 100000 lines")) }
+  let lines = input.split(String.from("\n"))
+  var table = String.new()
+  var in_table = false
+  var tables = Set<String>.new()
+  var keys = Set<String>.new()
+  var count = 0
+  var i = 0
+  while i < lines.len() {
+    let number = i + 1
+    if !io.valid_utf8(lines.at(i)) { return Err(line_error(number, "invalid UTF-8")) }
+    let line = strip_comment(lines.at(i)).trim()
+    if line.starts_with("[[") { return Err(line_error(number, "arrays of tables are not supported")) }
+    if line.starts_with("[") {
+      if line.len() < 2 || !line.ends_with("]") { return Err(line_error(number, "table header without a closing ']'")) }
+      let inner = line.slice(1, line.len() - 1)
+      match parse_key(inner) {
+        Some(name) => { table = name.clone() }
+        None => { return Err(line_error(number, "empty or malformed table name")) }
+      }
+      in_table = true
+      if tables.contains(table) { return Err(line_error(number, "a table is defined twice")) }
+      tables.insert(table.clone())
+    } else if line.len() > 0 {
+      let eq = find_equals(line)
+      if eq < 0 { return Err(line_error(number, "expected 'key = value' or '[table]'")) }
+      let written = line.slice(0, eq)
+      var full = String.new()
+      match parse_key(written) {
+        Some(key) => { full = qualified(table, in_table, key) }
+        None => { return Err(line_error(number, "empty or malformed key")) }
+      }
+      if keys.contains(full) { return Err(line_error(number, "a key is defined twice")) }
+      keys.insert(move full)
+      count = count + 1
+      var value = line.slice(eq + 1, line.len()).trim()
+      if value.starts_with("[") {
+        let last = array_end(lines, i, value)
+        if last < 0 { return Err(line_error(number, "array without a closing ']'")) }
+        for j in i + 1..last + 1 {
+          if !io.valid_utf8(lines.at(j)) { return Err(line_error(j + 1, "invalid UTF-8")) }
+        }
+        value = joined(lines, i, last, value)
+        i = last
+      }
+      let problem = value_problem(value)
+      if problem.len() > 0 { return Err(line_error(number, problem)) }
+    }
+    i = i + 1
+  }
+  return Ok(count)
 }
 
 fn raw_value(input: view String, wanted: view String) -> String {
@@ -193,9 +528,10 @@ pub fn has(input: view String, key: view String) -> Bool {
   return found
 }
 
+// None when the key is absent or its value is not a valid string
 pub fn get_string_opt(input: view String, key: view String) -> Option<String> {
-  if !has(input, key) { return None }
-  return Some(get_string(input, key))
+  let raw = raw_value(input, key)
+  return string_value(raw)
 }
 
 // None when the key is absent or its value is not an integer
@@ -212,16 +548,10 @@ pub fn get_bool_opt(input: view String, key: view String) -> Option<Bool> {
 }
 
 pub fn get_string(input: view String, key: view String) -> String {
-  let raw = raw_value(input, key)
-  if raw.len() >= 2 && raw.char_at(0).to_int() == 34 {
-    var end = 0
-    return unquote(raw, 0, end)
+  match get_string_opt(input, key) {
+    Some(value) => { return value.clone() }
+    None => { return String.new() }
   }
-  if raw.len() >= 2 && raw.byte(0) == 39 {
-    var end = 0
-    return unquote_literal(raw, 0, end)
-  }
-  return String.new()
 }
 
 pub fn get_int(input: view String, key: view String) -> Int {
@@ -237,28 +567,8 @@ pub fn get_bool(input: view String, key: view String) -> Bool {
 
 pub fn get_array(input: view String, key: view String) -> List<String> {
   let raw = raw_value(input, key).trim()
-  var out = List<String>.new()
-  if raw.len() < 2 || raw.char_at(0).to_int() != 91 { return out }
-  var i = 1
-  while i < raw.len() {
-    let c = raw.byte(i)
-    if c == 34 {
-      var end = 0
-      out.push(unquote(raw, i, end))
-      i = end
-    } else if c == 39 {
-      var end = 0
-      out.push(unquote_literal(raw, i, end))
-      i = end
-    } else if c == 44 || c == 32 || c == 9 || c == 93 {
-      i = i + 1
-    } else {
-      var j = i
-      while j < raw.len() && raw.byte(j) != 44 && raw.byte(j) != 93 { j = j + 1 }
-      let item = raw.slice(i, j).trim()
-      if item.len() > 0 { out.push(move item) }
-      i = j
-    }
+  match array_value(raw) {
+    Some(items) => { return items.clone() }
+    None => { return List<String>.new() }
   }
-  return out
 }

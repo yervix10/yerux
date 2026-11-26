@@ -1,0 +1,13 @@
+// csv.write of a record with no fields used to write an empty line, which parses back as one empty field. CSV cannot
+// express an empty record, so it is a panic.
+import std.csv
+
+fn main() {
+  var rows = List<List<String>>.new()
+  var first = List<String>.new()
+  first.push("a")
+  rows.push(move first)
+  rows.push(List<String>.new())
+  let out = csv.write(rows)
+  print("not reached {out.len()}")
+}

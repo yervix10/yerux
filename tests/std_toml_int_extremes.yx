@@ -42,7 +42,7 @@ fn main() {
   print(opt("a = xyz", "a"))
   print(opt("a = 12abc", "a"))
   print(opt("a = 9223372036854775807x", "a"))
-  // signed radix is rejected (sign not stripped before the prefix check)
+  // signed radix is rejected, as in TOML (toml.check names the line)
   print(get_int("a = -0x10", "a"))
   print(opt("a = -0x10", "a"))
   print(get_int("a = +0o17", "a"))

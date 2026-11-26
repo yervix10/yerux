@@ -811,7 +811,7 @@ Textual paths with `/` as the separator (nothing touches the file system). `join
 `std.regex` provides bounded matching and substitution with groups, alternation `a|b` and quantified groups; an invalid
 pattern is an error (`regex.check` returns it, the other functions panic). Syntax and step budget:
 [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md).
-`std.csv.parse/write` handle quoted RFC 4180 records. `std.toml` reads the
+`std.csv.parse/write` handle quoted RFC 4180 records; `std.toml.check` validates a manifest and names the line of the first problem. `std.toml` reads the
 manifest subset via dotted-key accessors.
 
 ### `std.json`

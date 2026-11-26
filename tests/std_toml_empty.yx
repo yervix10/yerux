@@ -1,7 +1,7 @@
 // std.toml empties and silent failures: empty document, whitespace-only and
 // comment-only input, bare values reading as "", empty arrays, absent keys,
-// empty vs malformed table headers, and the absence of any error position
-// (malformed input is indistinguishable from a missing key).
+// empty vs malformed table headers. The getters report no error position
+// (toml.check does: tests/std_toml_check.yx).
 import std.toml
 
 fn main() {
@@ -32,10 +32,10 @@ fn main() {
   print(toml.has("b = 1", "a"))
   print(toml.get_int("b = 1", "a"))
   print(toml.get_string_opt("b = 1", "a").is_some())
-  // empty table header name: `[ ]` trims to "" and acts as root scope
+  // `[ ]` and `[]` are both malformed headers
   print(toml.has("[ ]\nk = 3", "k"))
   print(toml.get_int("[ ]\nk = 3", "k"))
-  // `[]` (len < 3) aborts the whole lookup: keys after it are unreachable
+  // a malformed header ends the lookup: only keys before it are reachable
   print(toml.has("[]\nk = 3", "k"))
   print(toml.get_int("x = 9\n[]\nk = 3", "x"))
   print(toml.get_int("[]\nx = 9", "x"))
@@ -46,10 +46,8 @@ fn main() {
   print(toml.get_int("[bad\ny = 1", "x"))
   // keys before the bad header are still reachable
   print(toml.get_int("x = 9\n[bad\ny = 1", "x"))
-  // unterminated multi-line array swallows following lines into the value
+  // an unterminated multi-line array is not a value; later keys are still found
   let unter = toml.get_array("a = [1,\n 2\nb = 3", "a")
   print(unter.len())
-  print(unter.at(0))
-  print(unter.at(1))
   print(toml.get_int("a = [1,\n 2\nb = 3", "b"))
 }

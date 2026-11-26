@@ -8,13 +8,13 @@ with # hash
 with = eq
 x\ty
 no "escapes"
-open
-open
-x\
+
+
+
 true
 1
 false
-false
+true
 true
 # not comment
 true
@@ -28,11 +28,10 @@ z]w
 2
 1
 2
-1
+2
 ]
+2
 2
 ]x
 2
-2
-1
-trailing
+0

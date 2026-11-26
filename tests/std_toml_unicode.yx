@@ -1,6 +1,6 @@
 // std.toml unicode: UTF-8 in values, keys and comments; \uXXXX and \UXXXXXXXX
-// escapes resolve to scalars; invalid escapes are accepted silently with the
-// backslash dropped (\q -> q, truncated \u00, lone surrogate \uD800).
+// escapes resolve to scalars; a string with an invalid escape (\q, truncated
+// \u00, lone surrogate \uD800) or without its closing quote is not a value.
 import std.toml
 
 fn main() {
@@ -10,7 +10,7 @@ fn main() {
   print(toml.get_string("a = \"\\u00e9\"", "a"))
   print(toml.get_string("a = \"\\U0001F600\"", "a"))
   print(toml.get_string("a = \"\\u4e2d\\u6587\"", "a"))
-  // invalid escapes: backslash dropped, no error
+  // invalid escapes: the getter gives its default
   print(toml.get_string("a = \"x\\qy\"", "a"))
   print(toml.get_string("a = \"\\u00\"", "a"))
   print(toml.get_string("a = \"\\uD800\"", "a"))

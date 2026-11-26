@@ -1,0 +1,74 @@
+ok 9
+ok 0
+false
+std.toml: line 1: invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)
+false
+std.toml: line 1: invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)
+false
+std.toml: line 1: invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)
+false
+std.toml: line 1: invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)
+false
+std.toml: line 1: invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)
+false
+std.toml: line 2: invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)
+8080
+8081
+8082
+6
+5
+none
+3 8 12 65
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+none
+std.toml: line 1: invalid string (unclosed, bad escape, or text after it)
+0 []
+none
+none
+some []
+std.toml: line 1: invalid value (strings need quotes; a 0x, 0o or 0b integer takes no sign)
+std.toml: line 1: a decimal number cannot start with a zero
+false
+false
+std.toml: line 1: empty or malformed table name
+std.toml: line 2: empty or malformed table name
+0 []
+0 []
+0 []
+0 []
+2 [1|2]
+2 []|2]
+1 [3]
+4
+0 []
+std.toml: line 1: invalid or nested array
+std.toml: line 2: array without a closing ']'
+std.toml: line 1: invalid or nested array
+std.toml: line 2: table header without a closing ']'
+std.toml: line 2: expected 'key = value' or '[table]'
+std.toml: line 1: empty or malformed key
+std.toml: line 1: missing value
+std.toml: line 2: a key is defined twice
+std.toml: line 2: a table is defined twice
+std.toml: line 1: arrays of tables are not supported
+std.toml: line 1: inline tables are not supported
+std.toml: line 1: multi-line strings are not supported
+std.toml: line 1: empty or malformed key
+std.toml: line 2: invalid UTF-8
+false
+2
+false
+std.toml: line 1: array without a closing ']'

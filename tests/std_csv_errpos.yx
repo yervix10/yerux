@@ -1,7 +1,7 @@
 // std.csv errors with position: text after a closing quote and an unclosed
-// quote report the line number of the offending byte; multi-line inputs count
-// LF; CR-only records do not advance the count; the 16 MiB and 100000-field
-// limits are reported without a line number.
+// quote report the line number of the offending byte; LF, CRLF and a lone CR
+// each end a line; the 16 MiB and 100000-field limits report the line on which
+// they are crossed.
 import std.csv
 
 fn show(s: view String) {
@@ -16,7 +16,7 @@ fn main() {
   show("\"ab\"cd\n\"ef\"gh")
   show("a,b\nx,\"y\"z")
   show("a,b\r\nx,\"y\"z")
-  // CR-only: the error is on record 3 but line_of counts only LF
+  // CR-only line ends count too
   show("a\rb\r\"unclosed")
   show("a\r\"bad\"x")
   // unclosed quote at end of input
@@ -27,7 +27,7 @@ fn main() {
   // clean input still Ok
   show("a,b\nc,d")
   show("\"a\",\"b\"")
-  // 16 MiB limit: no line number
+  // 16 MiB limit
   var big = String.new()
   var n = 0
   while n < 16777217 {
@@ -45,7 +45,7 @@ fn main() {
     Ok(r) => { print("16MiB ok rows={r.len()}") }
     Err(e) => { print(e) }
   }
-  // field limit: 100000 cells is ok, 100001 errors with no line number
+  // field limit: 100000 cells is ok, 100001 is an error
   var fields_ok = String.new()
   n = 0
   while n < 99999 {

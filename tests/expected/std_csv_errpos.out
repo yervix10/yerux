@@ -2,16 +2,16 @@ std.csv: line 1: text after a closing quote
 std.csv: line 1: text after a closing quote
 std.csv: line 2: text after a closing quote
 std.csv: line 2: text after a closing quote
-std.csv: line 1: unclosed quote
-std.csv: line 1: text after a closing quote
+std.csv: line 3: unclosed quote
+std.csv: line 2: text after a closing quote
 std.csv: line 1: unclosed quote
 std.csv: line 3: unclosed quote
 ok rows=1
 ok rows=1
 ok rows=2
 ok rows=1
-std.csv: input larger than 16 MiB
+std.csv: line 1: input larger than 16 MiB
 16MiB ok rows=1
 100k ok rows=1 f0=100000
-std.csv: more than 100000 fields
+std.csv: line 1: more than 100000 fields
 100k lines ok rows=100000

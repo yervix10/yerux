@@ -55,15 +55,9 @@ fn main() {
   let w = csv.write(rows)
   dump(csv.parse(w))
   print("wlen={w.len()}")
-  // write of an empty row list and of a single empty row
+  // write of an empty row list (a record with no fields panics: tests/std_csv_write_empty_record.yx)
   let none = List<List<String>>.new()
   print("w0={csv.write(none).len()}")
-  var one = List<List<String>>.new()
-  var empty = List<String>.new()
-  one.push(move empty)
-  let w1 = csv.write(one)
-  print("w1={w1.len()}")
-  dump(csv.parse(w1))
   // write quotes on every trigger byte: 34 = ", 44 = ,, 13 = CR, 10 = LF
   var trig = List<List<String>>.new()
   var tr = List<String>.new()

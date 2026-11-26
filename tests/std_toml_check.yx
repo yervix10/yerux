@@ -1,0 +1,109 @@
+// Frictions 242-247: what std.toml used to accept or lose without a word. The getters give their missing-value
+// default for a value that is not valid TOML, and toml.check names the line.
+import std.toml
+
+fn check(doc: view String) {
+  match toml.check(doc) {
+    Ok(n) => { print("ok {n}") }
+    Err(e) => { print(e) }
+  }
+}
+
+fn text(doc: view String, key: view String) {
+  match toml.get_string_opt(doc, key) {
+    Some(s) => { print("some [{s}]") }
+    None => { print("none") }
+  }
+}
+
+fn array(doc: view String, key: view String) {
+  let a = toml.get_array(doc, key)
+  let joined = a.join("|")
+  print("{a.len()} [{joined}]")
+}
+
+fn main() {
+  // a good document: every kind of value the subset knows, plus floats and dates
+  check("# c\ntitle = \"x\"\n[a]\nn = -1_000\nh = 0xFF\nf = 1.5e-3\nd = 1979-05-27T07:32:00Z\nt = 07:32:00\nz = 0\ny = false\n[\"b c\".'d']\nl = [\n  1, # one\n  ']',\n]\n")
+  check("")
+
+  // signed radix and a sign after the prefix
+  for doc in ["a = -0x10", "a = +0o17", "a = -0b1", "a = 0x-10", "a = 0x+1", "x = 1\na = -0x10"] {
+    let d = String.from(doc)
+    print(toml.get_int_opt(d, "a").is_some())
+    check(d)
+  }
+
+  // quoted and dotted table names
+  print(toml.get_int("[\"srv\"]\nport = 8080", "srv.port"))
+  print(toml.get_int("['srv']\nport = 8081", "srv.port"))
+  print(toml.get_int("[ a . \"b c\" ]\nport = 8082", "a.b c.port"))
+  print(toml.get_int("[t]\n'k' = 5\n\"x=y\" = 6", "t.x=y"))
+  print(toml.get_int("[t]\n'k' = 5", "t.k"))
+
+  // escapes: the valid ones, then invalid ones
+  let esc = "a = \"\\b|\\f|\\r|\\/\""
+  text(esc, "a")
+  let good = toml.get_string("a = \"\\b\\f\\u0041\"", "a")
+  print("{good.len()} {good.byte(0)} {good.byte(1)} {good.byte(2)}")
+  for doc in ["a = \"x\\qy\"", "a = \"\\u00\"", "a = \"\\uD800\"", "a = \"\\U00110000\"", "a = \"open", "a = 'open", "a = \"x\" y", "a = \"x\\\""] {
+    let d = String.from(doc)
+    text(d, "a")
+    check(d)
+  }
+  array("a = [\"ok\", \"x\\q\"]", "a")
+
+  // a bare value is not a string
+  text("a = xyz", "a")
+  text("a = 7", "a")
+  text("a = \"\"", "a")
+  check("a = xyz")
+  check("a = 007")
+
+  // [] and [ ] alike
+  print(toml.has("[]\nk = 3", "k"))
+  print(toml.has("[ ]\nk = 3", "k"))
+  check("[]\nk = 3")
+  check("x = 1\n[ ]\nk = 3")
+
+  // an array ends at its ']'
+  array("a = [1] trailing", "a")
+  array("a = [1]]", "a")
+  array("a = [1 2]", "a")
+  array("a = [1,,2]", "a")
+  array("a = [1, 2,]", "a")
+  array("a = [']',\n 2]", "a")
+  array("a = [[1],\n [2],\n]\nb = [3]", "b")
+  print(toml.get_int("a = [\n [1],\n]\nc = 4", "c"))
+  array("a = [1,\n 2\nb = 3", "a")
+  check("a = [1] trailing")
+  check("ok = 1\na = [1,\n 2\nb = 3")
+  check("a = [\n 1 2,\n]")
+
+  // other things outside TOML or the subset, each with its line
+  check("x = 1\n[bad\ny = 1")
+  check("x = 1\nnonsense")
+  check("= 1")
+  check("a =")
+  check("a = 1\na = 2")
+  check("[t]\n[t]")
+  check("[[bin]]\nname = \"x\"")
+  check("a = {{ b = 1 }}")
+  check("a = \"\"\"x\"\"\"")
+  check("my key = 1")
+  var invalid = String.from("ok = 1\nname = \"")
+  invalid.push_byte(255)
+  invalid.push_str("\"\n")
+  check(invalid)
+
+  // keys of an array of tables stay unreachable, later tables do not
+  let bins = "[[bin]]\nname = \"x\"\n[after]\nn = 2"
+  print(toml.has(bins, "bin.name"))
+  print(toml.get_int(bins, "after.n"))
+
+  // many unclosed arrays stay linear
+  var hostile = String.new()
+  for i in 0..90000 { hostile.push_str("k = [\n") }
+  print(toml.has(hostile, "missing"))
+  check(hostile)
+}
