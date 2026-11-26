@@ -43,9 +43,10 @@ yerux fmt --check .                       # the files the formatter would rewrit
 yerux lsp                                 # language server on stdin/stdout, started by your editor
 ```
 
-`yerux fmt --check .` lists every file whose formatting would change, and this repository's own sources are
-not all written in that canonical style yet, so expect a long list and exit status 1. The VS Code extension
-lives in `editors/vscode`.
+`yerux fmt --check .` lists every file whose formatting would change, and this repository is not written in
+that canonical style yet (the deliberately broken `tests/e*.yx` fixtures cannot be formatted at all), so expect
+a long list and exit status 1; `yerux fmt --stdout file.yx` shows one file's canonical text without writing it.
+The VS Code extension lives in `editors/vscode`.
 
 `--target aarch64` and `--target windows` select the cross targets (native backend, console programs; see
 [docs/WINDOWS.md](docs/WINDOWS.md) for what is verified and what is rejected).
