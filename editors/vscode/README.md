@@ -46,8 +46,8 @@ If VS Code cannot see `yerux` (typical when it is started from the application l
 Each [release](https://github.com/yervix10/yerux/releases) of Yerux has the `.vsix`:
 
 ```sh
-curl -fsSLO https://github.com/yervix10/yerux/releases/download/v1.0.0/yerux-0.3.0.vsix
-code --install-extension yerux-0.3.0.vsix
+curl -fsSLO https://github.com/yervix10/yerux/releases/download/v1.1.0/yerux-0.3.1.vsix
+code --install-extension yerux-0.3.1.vsix
 ```
 
 ## Building it yourself
