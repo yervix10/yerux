@@ -2,7 +2,7 @@
 // file has to exist next to the program. Everything else about a std module is an ordinary module (modules.rs).
 
 /// Every embedded standard-library module.
-pub const MODULES: &[&str] = &["std.io", "std.text", "std.sort", "std.iter", "std.fmt", "std.args", "std.collections", "std.time", "std.path", "std.math", "std.fs", "std.env", "std.net", "std.process", "std.hex", "std.hash", "std.rand", "std.log", "std.http", "std.http.server", "std.unicode", "std.compress", "std.kv", "std.sync", "std.caps"];
+pub const MODULES: &[&str] = &["std.io", "std.text", "std.sort", "std.iter", "std.fmt", "std.args", "std.cli", "std.collections", "std.time", "std.path", "std.math", "std.fs", "std.env", "std.net", "std.process", "std.hex", "std.hash", "std.rand", "std.log", "std.http", "std.http.server", "std.unicode", "std.compress", "std.kv", "std.sync", "std.caps"];
 
 /// Source text of the standard-library module `key` (`std.io`), if there is one.
 pub fn source(key: &str) -> Option<&'static str> {
@@ -13,6 +13,7 @@ pub fn source(key: &str) -> Option<&'static str> {
         "std.iter" => Some(include_str!("std/iter.yx")),
         "std.fmt" => Some(include_str!("std/fmt.yx")),
         "std.args" => Some(include_str!("std/args.yx")),
+        "std.cli" => Some(include_str!("std/cli.yx")),
         "std.collections" => Some(include_str!("std/collections.yx")),
         "std.time" => Some(include_str!("std/time.yx")),
         "std.path" => Some(include_str!("std/path.yx")),

@@ -1,0 +1,31 @@
+// std.cli: subcommands, flags, options with defaults and generated help (friction 64)
+import std.cli
+
+fn main() {
+  var tool = cli.command("tool", "Build and inspect projects")
+  cli.add_flag(tool, cli.short_flag("verbose", "v", "Print more detail"))
+  var level = cli.option("level", "LEVEL", "Log level")
+  cli.set_default(level, "info")
+  cli.add_flag(tool, move level)
+
+  var build = cli.command("build", "Build the project")
+  cli.add_flag(build, cli.flag("release", "Optimize the output"))
+  cli.add_flag(build, cli.short_option("output", "o", "FILE", "Write the artifact here"))
+  cli.add_subcommand(tool, move build)
+
+  var argv = List<String>.new()
+  for w in ["tool", "-v", "build", "--release", "-o", "out.bin", "src/main.yx"] {
+    argv.push(String.from(w))
+  }
+  let m = cli.parse(tool, argv)
+  print(cli.ok(m))
+  print(cli.subcommand(m))
+  print(m.name)
+  print(cli.has(m, "verbose"))
+  print(cli.has(m, "--release"))
+  print(cli.value_or(m, "o", "-"))
+  print(cli.value_or(m, "level", "-"))
+  print(cli.positional(m, 0).unwrap())
+  print(cli.positionals(m).len())
+  print(m.help_text)
+}
