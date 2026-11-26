@@ -74,7 +74,7 @@ Rules worth knowing:
 - **Interrupted calls** (`EINTR`) are retried, never reported.
 - **stdin buffering.** `read_line`, `read_all` and `read_stdin_bytes` share one 64 KiB buffer that is allocated when a read finds it empty and freed again as soon as everything in it has been consumed (a program that stops reading in the middle of a buffer keeps it until exit). Reading stdin by other means (raw intrinsics) would bypass it.
 - **Output ordering.** `print` and `write_stdout` are both unbuffered in the native backend. The C backend flushes C's `stdout` before every raw syscall, so the order of `print` and raw writes is the same in both.
-- Not thread-safe (there are no threads yet).
+- Not thread-safe: the stdin buffer and the environment table have no lock, so two threads that call these functions at once race (threads themselves are supported; see CONCURRENCY.md).
 
 ## `std.fs`: the file system
 
@@ -196,7 +196,7 @@ All arguments are plain `Int`s, so the checker needs nothing special beyond arit
 
 ## Not done yet
 
-Non-blocking I/O and `epoll`, threads and a lock around the stdin buffer, time zones, a Windows port and process spawning on AArch64. See [NET.md](NET.md) for blocking TCP.
+Non-blocking I/O and `epoll`, a lock around the stdin buffer, time zones, a Windows port and process spawning on AArch64. See [NET.md](NET.md) for blocking TCP.
 
 ## Ending the process: `exit`, `exit_clean`, `run_status`
 
