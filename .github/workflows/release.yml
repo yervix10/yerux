@@ -64,3 +64,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" editors/vscode/*.vsix --clobber
+
+  openvsx:
+    # Publishes the extension to Open VSX with a short-lived token from GitHub's OIDC ID token: no secret is stored.
+    # Off until a namespace owner registers this repository and workflow as a trusted publisher at
+    # https://open-vsx.org/user-settings/trusted-publishers and sets the repository variable OPENVSX_TRUSTED=true.
+    needs: release
+    if: ${{ vars.OPENVSX_TRUSTED == 'true' && !contains(github.ref_name, '-rc') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish to Open VSX (skipped when this extension version is already there)
+        working-directory: editors/vscode
+        run: |
+          ver="$(node -p 'require("./package.json").version')"
+          if curl -fsS "https://open-vsx.org/api/yerux/yerux/$ver" >/dev/null 2>&1; then
+            echo "yerux.yerux $ver is already on Open VSX"
+            exit 0
+          fi
+          npm ci --no-audit --no-fund
+          npx --yes ovsx@1.4.0 publish --trusted-publishing
