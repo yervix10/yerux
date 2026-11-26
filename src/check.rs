@@ -4194,14 +4194,19 @@ impl<'a> Checker<'a> {
         if is_place(e) {
             return;
         }
-        if !matches!(
-            e.k,
-            EK::Call(..) | EK::Method { .. } | EK::Static { .. } | EK::IfExpr(..) | EK::MatchExpr(..)
-        ) {
+        // The type is read from the signature, not by checking the expression: the hoisted initialiser is checked
+        // again when the hidden `let` is, and checking a call twice is only harmless for a plain function call
+        // (a method call is rewritten into an intrinsic on the first pass: `p.read()` becomes `__ptr_read`).
+        let is_string = match &e.k {
+            EK::Call(n, _) => self.sigs.get(n).is_some_and(|s| s.ret == Ty::String),
+            EK::Static { ty, f, .. } => *ty == Ty::String && f.as_str() == "from",
+            _ => false,
+        };
+        if !is_string {
             return;
         }
-        let t = self.expr(e);
-        if t != Ty::String {
+        // check the initialiser once, here: the hidden `let` is spliced into the block already checked
+        if self.expr(e) != Ty::String {
             return;
         }
         let pos = e.pos;
