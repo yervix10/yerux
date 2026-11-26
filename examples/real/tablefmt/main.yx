@@ -1,0 +1,126 @@
+// tablefmt: formats an embedded pipe-separated sales table as an aligned report.
+// Cells are trimmed with std.text, the widest cell of each column sets the width, the
+// numeric columns are right-aligned, and a computed TOTAL row closes the table. The
+// caption is a fixed UTC timestamp formatted with std.time. No arguments; exit 0.
+import std.text
+import std.time
+
+enum Align { Left, Right }
+
+fn pad(s: view String, width: Int, a: Align) -> String {
+  var r = String.new()
+  var n = s.char_count()
+  match a {
+    Align.Left => {
+      r.push_str(s)
+      while n < width {
+        r.push_str(" ")
+        n = n + 1
+      }
+    }
+    Align.Right => {
+      while n < width {
+        r.push_str(" ")
+        n = n + 1
+      }
+      r.push_str(s)
+    }
+  }
+  return r
+}
+
+fn border(widths: view List<Int>) -> String {
+  var r = String.new()
+  for w in widths {
+    r.push_str("+")
+    r.push_str(String.from("-").repeat(w + 2))
+  }
+  r.push_str("+")
+  return r
+}
+
+fn line(cells: view List<String>, widths: view List<Int>, aligns: view [Align]) -> String {
+  var r = String.new()
+  for i in 0..cells.len() {
+    r.push_str("| ")
+    r.push_str(pad(cells.at(i), widths.at(i), aligns[i]))
+    r.push_str(" ")
+  }
+  r.push_str("|")
+  return r
+}
+
+fn main() {
+  let headers = ["Product", "Region", "Units", "Revenue", "Share %"]
+  let aligns = [Align.Left, Align.Left, Align.Right, Align.Right, Align.Right]
+  let raw = [
+    "Harbor Desk | North | 128 | 5120 | 31",
+    "Cable Kit |  West  | 640 | 3840 | 24",
+    "Lamp Set | South | 75 | 2625 | 16",
+    "Wall Mount | East | 410 | 2050 | 13",
+    "Travel Case | North | 52 | 2652 | 16",
+  ]
+
+  var rows = List<List<String>>.new()
+  for raw_line in raw {
+    let parts = String.from(raw_line).split("|")
+    var row = List<String>.new()
+    for part in parts {
+      row.push(part.trim())
+    }
+    rows.push(move row)
+  }
+
+  var header = List<String>.new()
+  var widths = List<Int>.new()
+  for i in 0..headers.len() {
+    let s = String.from(headers[i])
+    header.push(s.clone())
+    widths.push(s.char_count())
+  }
+  for row in rows {
+    for i in 0..row.len() {
+      let n = row.at(i).char_count()
+      if n > widths.at(i) { widths.set(i, n) }
+    }
+  }
+
+  var units = 0
+  var revenue = 0
+  for row in rows {
+    match text.parse_int(row.at(2)) {
+      Ok(v) => { units = units + v }
+      Err(_) => {}
+    }
+    match text.parse_int(row.at(3)) {
+      Ok(v) => { revenue = revenue + v }
+      Err(_) => {}
+    }
+  }
+  var total = List<String>.new()
+  total.push(String.from("TOTAL"))
+  total.push(String.from(""))
+  total.push(String.from("{units}"))
+  total.push(String.from("{revenue}"))
+  total.push(String.from("100"))
+  for i in 0..total.len() {
+    let n = total.at(i).char_count()
+    if n > widths.at(i) { widths.set(i, n) }
+  }
+
+  let when = match time.utc(2024, 3, 15, 9, 30, 0) {
+    Ok(dt) => { time.format_iso(dt) }
+    Err(_) => { String.from("unknown") }
+  }
+  print("QUARTERLY SALES REPORT ({text.to_upper(String.from("q1"))}) - generated {when}")
+  print(border(widths))
+  print(line(header, widths, aligns))
+  print(border(widths))
+  for row in rows {
+    print(line(row, widths, aligns))
+  }
+  print(border(widths))
+  print(line(total, widths, aligns))
+  print(border(widths))
+  print("{rows.len()} data rows, {units} units, {revenue} revenue")
+}

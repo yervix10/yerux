@@ -914,3 +914,30 @@ on LF and CRLF input, and compact/pretty round trips), each with a golden
      either `quote` should escape/replace bad bytes or the panic should say which
      std.json entry point hit it. Found while probing std.json edge cases for
      `tests/std_json_escapes.yx`.
+## Round 16: tablefmt, durations
+
+Two small programs in `examples/real/<name>/`, each with `expected.out`, built on both backends (C and `--native`
+identical, exit 0) and registered in `tests/real_programs.sh` (now twenty programs).
+
+- **tablefmt**: formats an embedded pipe-separated sales table. `std.text` trims the cells and parses the numeric
+  columns; the widest cell sets each column width, numbers are right-aligned, and a computed TOTAL row closes the
+  table. A fixed UTC date is formatted with `std.time.format_iso`. 126 lines.
+- **durations**: evaluates small duration expressions (`1h 30m + 45s`, `3 * 12m30s`, `2h15m - 35m`). A byte parser
+  reads numbers with `std.text.parse_int`, maps the units to nanoseconds, and builds `std.time` Durations; the
+  results and a total/shortest/longest summary use `time.format`. Two bad inputs are reported with a byte offset.
+  130 lines.
+
+### Round 16 frictions (92 and 94 open; 93 and 95 are language rules, not defects)
+
+92. **An array literal is not a `List`.** `let aligns = [Align.Left, Align.Right]` has type `[Align; 2]`, and a
+    `view List<Align>` parameter rejects it with `expected List<Align> but this is [Align; 2]`. The help says
+    "convert it explicitly", but there is no list literal to write. Workaround: take the parameter as `view [Align]`
+    (arrays index with `[]` and also have `.at`); the program then passes the literal directly.
+93. **Returning an owned `String` bound by a match arm needs `move`.** `Err(e) => { return Err(e) }` is rejected
+    (`'e' is a String and is not copied`), and so is `Parser { src: compact }`; the diagnostic correctly suggests
+    `move e` / `move compact`. Expected ownership rule, listed because both are easy to hit while wrapping errors.
+94. **There is no `Int.to_string()`.** Putting an integer into an owned `String` needs
+    `String.from("{n}")`, `push_int(n)` or string interpolation; the program uses `String.from("{units}")` for the
+    TOTAL row. (Interpolation into a `Text` then `String.from` is the general idiom.)
+95. **`std.time.format` stops at hours.** A 26-hour span prints as `26h 03m 04s`, never `1d 02h ...`; days are a
+    parse-side unit only. Documented behaviour, no change.

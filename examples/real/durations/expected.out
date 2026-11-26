@@ -1,0 +1,12 @@
+1h 30m + 45s = 1h 30m 45s  [5445 s, 5445000000000 ns]
+2h15m - 35m = 1h 40m 00s  [6000 s, 6000000000000 ns]
+3 * 12m30s = 37m 30s  [2250 s, 2250000000000 ns]
+1d + 2h + 3m + 4s = 26h 03m 04s  [93784 s, 93784000000000 ns]
+250ms + 750ms = 1.0 s  [1 s, 1000000000 ns]
+2h + 15x = error: unknown unit 'x'
+5m + = error: expected a number at byte 3
+---
+valid expressions: 5
+total: 29h 51m 20s
+shortest: 1.0 s
+longest: 26h 03m 04s
