@@ -533,12 +533,18 @@ impl Loader<'_> {
                 chain.push(dep.clone());
                 let from = chain.iter().position(|k| *k == dep).unwrap_or(0);
                 let shown: Vec<&str> = chain[from..].iter().map(|k| display_key(k)).collect();
-                self.report(
-                    file,
-                    diag(format!("import cycle: {}", shown.join(" -> ")), mpos)
-                        .note("modules cannot import each other, directly or through others")
-                        .note("help: move what they share into a third module that both of them import"),
-                );
+                let mut error = diag(format!("import cycle: {}", shown.join(" -> ")), mpos)
+                    .note("modules cannot import each other, directly or through others");
+                if self.stack.len() == 1 && self.stack.first() == Some(&dep) {
+                    error = error.note(
+                        "help: this entry file imports itself because its name matches the module; rename the test file or import the intended source module",
+                    );
+                } else {
+                    error = error.note(
+                        "help: move what they share into a third module that both of them import",
+                    );
+                }
+                self.report(file, error);
                 continue;
             }
             if !self.by_key.contains_key(&dep) {

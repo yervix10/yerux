@@ -89,7 +89,7 @@ fn errno_kind(e: Int) -> IoErrorKind {
     if e == 13 || e == 1 || e == 30 {
         return IoErrorKind.PermissionDenied
     }
-    if e == 17 {
+    if e == 17 || e == 98 {
         return IoErrorKind.AlreadyExists
     }
     if e == 21 {
@@ -161,6 +161,27 @@ fn errno_text(e: Int) -> Text {
     }
     if e == 110 {
         return "Connection timed out"
+    }
+    if e == 98 {
+        return "Address already in use"
+    }
+    if e == 99 {
+        return "Cannot assign requested address"
+    }
+    if e == 101 {
+        return "Network is unreachable"
+    }
+    if e == 103 {
+        return "Software caused connection abort"
+    }
+    if e == 104 {
+        return "Connection reset by peer"
+    }
+    if e == 111 {
+        return "Connection refused"
+    }
+    if e == 113 {
+        return "No route to host"
     }
     if e == 16 {
         return "Device or resource busy"
