@@ -1,0 +1,55 @@
+// Friction 112: the std.json writers took a String with bytes that are not UTF-8 and panicked. Each ill-formed
+// sequence is now written as one U+FFFD; well-formed text and the escapes are unchanged.
+import std.io
+import std.json
+
+fn bytes_of(list: view List<Int>) -> String {
+  var s = String.from("<")
+  for b in list { s.push_byte(b) }
+  s.push_str(">")
+  return s
+}
+
+fn show(title: view String, list: view List<Int>) {
+  let s = bytes_of(list)
+  let q = json.quote(s)
+  var parsed = false
+  match json.parse(q) {
+    Ok(_) => { parsed = true }
+    Err(_) => {}
+  }
+  var hex = List<String>.new()
+  for i in 0..q.len() { hex.push("{q.byte(i)}") }
+  let joined = hex.join(" ")
+  print("{title}: {joined} | utf8={io.valid_utf8(q)} parses={parsed}")
+}
+
+fn list(a: view [Int]) -> List<Int> {
+  var out = List<Int>.new()
+  for x in a { out.push(x) }
+  return out
+}
+
+fn main() {
+  show("lone 255", list([255]))
+  show("lone continuation", list([128, 65]))
+  show("truncated 2", list([195]))
+  show("truncated 3", list([226, 130]))
+  show("truncated 4 then ascii", list([240, 159, 152, 34]))
+  show("overlong", list([192, 175]))
+  show("overlong 3", list([224, 128, 128]))
+  show("surrogate", list([237, 160, 128]))
+  show("above U+10FFFF", list([244, 144, 128, 128]))
+  show("lead then lead", list([195, 195, 169]))
+  show("valid 2 3 4", list([195, 169, 226, 130, 172, 240, 159, 152, 128]))
+  show("escapes", list([34, 92, 10, 9, 13, 1, 31, 127]))
+  var bad = String.from("x")
+  bad.push_byte(255)
+  let v = json.Value.Str(bad.clone())
+  print(json.to_string(v))
+  var members = List<json.Member>.new()
+  members.push(json.Member { key: bad.clone(), value: move v })
+  let obj = json.Value.Obj(move members)
+  print(json.to_string(obj))
+  print(json.to_pretty(obj))
+}

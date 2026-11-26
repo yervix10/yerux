@@ -9,7 +9,8 @@
 // `parse` builds a `Value`: numbers without a fraction or exponent become `Int` (an integer too large for
 // `Int` is an error), the rest `Float`; objects keep their members in source order, duplicate keys included.
 // Nesting is limited to 200 levels. `to_string` writes one line, `to_pretty` indents by two spaces; a Float
-// that is NaN or infinite has no JSON spelling and is written as `null`.
+// that is NaN or infinite has no JSON spelling and is written as `null`; bytes that are not UTF-8 are written
+// as U+FFFD.
 import std.text
 import std.io
 
@@ -319,11 +320,25 @@ fn indent(out: mut String, level: Int) {
   for i in 0..level { out.push_str("  ") }
 }
 
+// A JSON text is UTF-8 and the writers cannot fail, so each ill-formed sequence in `s` becomes one U+FFFD (the
+// longest prefix of a valid sequence is replaced as a unit, as the Unicode standard recommends).
 pub fn quote(s: view String) -> String {
   var out = String.new()
   out.push_byte(34)
-  for c in s.chars() {
-    let n = c.to_int()
+  var i = 0
+  while i < s.len() {
+    let n = s.byte(i)
+    if n >= 128 {
+      let step = utf8_step(s, i)
+      if step > 0 {
+        out.push_slice(s, i, i + step)
+        i = i + step
+      } else {
+        out.push_char(Char.from_int(65533))
+        i = i - step
+      }
+      continue
+    }
     if n == 34 { out.push_str("\\\"") }
     else if n == 92 { out.push_str("\\\\") }
     else if n == 10 { out.push_str("\\n") }
@@ -333,10 +348,36 @@ pub fn quote(s: view String) -> String {
       out.push_str("\\u00")
       out.push_byte(hex_digit(n / 16))
       out.push_byte(hex_digit(n % 16))
-    } else { out.push_char(c) }
+    } else { out.push_byte(n) }
+    i = i + 1
   }
   out.push_byte(34)
   return out
+}
+
+// For a non-ASCII byte at `i`: the length of the well-formed sequence that starts there, or minus the number of bytes
+// of the ill-formed one (at least 1).
+fn utf8_step(s: view String, i: Int) -> Int {
+  let b = s.byte(i)
+  if b < 194 || b > 244 { return -1 }
+  var size = 2
+  if b >= 224 { size = 3 }
+  if b >= 240 { size = 4 }
+  // the second byte has a narrower range after E0, ED, F0 and F4 (overlong forms, surrogates, above U+10FFFF)
+  var lo = 128
+  var hi = 191
+  if b == 224 { lo = 160 }
+  if b == 237 { hi = 159 }
+  if b == 240 { lo = 144 }
+  if b == 244 { hi = 143 }
+  for k in 1..size {
+    if i + k >= s.len() { return -k }
+    let c = s.byte(i + k)
+    if c < lo || c > hi { return -k }
+    lo = 128
+    hi = 191
+  }
+  return size
 }
 
 fn hex_digit(n: Int) -> Int {

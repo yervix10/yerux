@@ -1,0 +1,17 @@
+lone 255: 34 60 239 191 189 62 34 | utf8=true parses=true
+lone continuation: 34 60 239 191 189 65 62 34 | utf8=true parses=true
+truncated 2: 34 60 239 191 189 62 34 | utf8=true parses=true
+truncated 3: 34 60 239 191 189 62 34 | utf8=true parses=true
+truncated 4 then ascii: 34 60 239 191 189 92 34 62 34 | utf8=true parses=true
+overlong: 34 60 239 191 189 239 191 189 62 34 | utf8=true parses=true
+overlong 3: 34 60 239 191 189 239 191 189 239 191 189 62 34 | utf8=true parses=true
+surrogate: 34 60 239 191 189 239 191 189 239 191 189 62 34 | utf8=true parses=true
+above U+10FFFF: 34 60 239 191 189 239 191 189 239 191 189 239 191 189 62 34 | utf8=true parses=true
+lead then lead: 34 60 239 191 189 195 169 62 34 | utf8=true parses=true
+valid 2 3 4: 34 60 195 169 226 130 172 240 159 152 128 62 34 | utf8=true parses=true
+escapes: 34 60 92 34 92 92 92 110 92 116 92 114 92 117 48 48 48 49 92 117 48 48 49 102 127 62 34 | utf8=true parses=true
+"x�"
+{"x�":"x�"}
+{
+  "x�": "x�"
+}

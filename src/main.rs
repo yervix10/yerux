@@ -396,7 +396,26 @@ fn dump_ast(file: &str, parse: fn(&str) -> Result<String, syntax::Diag>) {
     }
 }
 
+/// `println!`/`eprintln!` panic when the reader of a pipe has gone (`yerux doctor | head -1`): Rust ignores SIGPIPE.
+/// That is not a failure of the compiler, so the process ends without a message. A closed stdout is a success, except
+/// for `test` and `bench`, whose unread rows may have held a failure; a closed stderr only loses error text, so it
+/// stays a failure.
+fn exit_quietly_on_broken_pipe() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info.payload().downcast_ref::<String>().map(String::as_str).unwrap_or("");
+        // 32 is EPIPE; Windows reports ERROR_BROKEN_PIPE (109) or ERROR_NO_DATA (232)
+        let codes: &[&str] = if cfg!(windows) { &["(os error 109)", "(os error 232)"] } else { &["(os error 32)"] };
+        if msg.starts_with("failed printing to std") && codes.iter().any(|c| msg.ends_with(c)) {
+            let verdict = matches!(env::args().nth(1).as_deref(), Some("test" | "bench"));
+            exit(if msg.starts_with("failed printing to stdout") && !verdict { 0 } else { 1 });
+        }
+        default(info);
+    }));
+}
+
 fn main() {
+    exit_quietly_on_broken_pipe();
     // the front end and the IR passes are recursive: run on a thread with a large (lazily committed) stack
     let h = std::thread::Builder::new()
         .stack_size(2 << 30)
@@ -810,6 +829,11 @@ fn compile_file(args: &[String]) {
                 "could not run the program (for --target windows on this OS, wine is needed)",
             );
             let _ = fs::remove_file(&exe);
+            // a program ended by SIGPIPE reports 141, as when the shell runs the binary itself
+            #[cfg(unix)]
+            if std::os::unix::process::ExitStatusExt::signal(&st) == Some(13) {
+                exit(141);
+            }
             exit(st.code().unwrap_or(1));
         }
         _ => {

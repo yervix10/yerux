@@ -817,11 +817,13 @@ manifest subset via dotted-key accessors.
 | `Error { offset: Int, message: String }` | `offset` is a byte offset into the text |
 | `to_string(v) -> String` | compact, one line |
 | `to_pretty(v) -> String` | two-space indent, one element per line; empty arrays and objects stay `[]` and `{}` |
-| `quote(s) -> String` | a JSON string literal with escapes (`\"`, `\\`, `\n`, `\t`, `\r`, other control characters as `\u00XX`) |
+| `quote(s) -> String` | a JSON string literal with escapes (`\"`, `\\`, `\n`, `\t`, `\r`, other control characters as `\u00XX`). Bytes that are not UTF-8 become U+FFFD, one per ill-formed sequence |
 | `type_name(v) -> Text` | `"null"`, `"boolean"`, `"number"`, `"string"`, `"array"`, `"object"` |
 | `line_col(text, offset) -> (Int, Int)` | 1-based line and column for messages. Columns count characters for valid UTF-8 and bytes for malformed text |
 
-A `Float` that is NaN or infinite has no JSON spelling and is written as `null`. Tests: tests/std_json.yx (C and native); `examples/real/jql` is built on it.
+A `Float` that is NaN or infinite has no JSON spelling and is written as `null`.
+
+The writers (`quote`, `to_string`, `to_pretty`) never panic and always produce UTF-8. A `String` can hold any bytes (`push_byte`); in a string value or an object key, each ill-formed sequence is written as U+FFFD, as the Unicode standard recommends (a truncated sequence is one U+FFFD; the bytes of a surrogate or an overlong form are replaced one by one). This loses the original bytes: check `io.valid_utf8(s)` first if that matters. `parse` stays strict and rejects ill-formed UTF-8. Tests: tests/std_json_invalid_utf8.yx, tests/std_json.yx (C and native); `examples/real/jql` is built on it.
 
 ### Language limits met while writing these modules
 - Methods cannot be added to `String` / `List` from a module, so the helpers are free functions (`text.split(s, ",")`, not `s.split(",")`).
