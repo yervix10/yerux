@@ -1,6 +1,6 @@
 # Yerux compile-time execution and explicit allocators
 
-Status (0.9.0-rc1): design spec, of which a small part is implemented. Anything not listed as implemented
+Status (1.0.0): design spec, of which a small part is implemented. Anything not listed as implemented
 here is **not implemented**; the reference for what works is [../SPEC.md](../SPEC.md) (Comptime, Arenas, `const` items).
 
 | Implemented | Evidence |

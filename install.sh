@@ -16,7 +16,7 @@ while [ "$#" -gt 0 ]; do
 Usage: install.sh [--prefix DIR]
 Installs Yerux in DIR/bin (default: ~/.local/bin).
 Run from an unpacked release or pipe the script to sh to download a release.
-YERUX_VERSION selects a stable release or release candidate (e.g. 0.9.0-rc1).
+YERUX_VERSION selects a stable release or release candidate (e.g. 1.0.0-rc1).
 The default is the latest stable release.
 HELP
       exit 0

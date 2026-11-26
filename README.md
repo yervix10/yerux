@@ -3,7 +3,7 @@
 Yerux is an experimental compiled language with explicit ownership, second-class borrows (no lifetimes), checked
 arithmetic, traits and generics (monomorphised), closures, iterators, `Drop`, OS threads, and a standard library
 written in Yerux itself. The compiler is written in Rust (`src/`) and is being rewritten in Yerux piece by piece
-(`selfhost/`). Current version: **0.9.0-rc1** ([CHANGELOG.md](CHANGELOG.md)).
+(`selfhost/`). Current version: **1.0.0** ([CHANGELOG.md](CHANGELOG.md)).
 
 Two backends share one front end: a C backend (the default, through `cc`; it is the test oracle) and a native
 backend that writes x86-64 Linux ELF files by itself, plus Linux AArch64 and Windows x86-64 (PE) targets.

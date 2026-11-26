@@ -2,6 +2,17 @@
 
 Compiler versions match `VERSION` and the release tag. The language roadmap is in `docs/ROADMAP.md`.
 
+## 1.0.0
+
+First stable release. The Rust compiler is the official implementation; the self-hosted compiler stays experimental.
+
+- Froze the language and standard-library surface: every entry in `docs/COMPATIBILITY.md` is Stable except `std.process` (Experimental).
+- Freeze decisions: `Text` stays accepted where `view String` is expected, structural `==` works on fieldless enums, and struct fields have no `pub` in 1.0.
+- Hardened the checker, loader and lock analysis (rounds 14-20), with Rust and self-host kept in parity.
+- Added `Int` checked and saturating arithmetic, fixed `std.json`, `std.csv`, `std.toml`, `std.args` edge cases, and clearer thread panic and spawn errors.
+- Added real-program examples under `examples/real/` and fuzzing tools; documented known limits in `docs/REAL_PROGRAMS.md`.
+- Verified the Windows native backend on Windows Server 2022 (ASLR, unwind info, output parity).
+
 ## 0.9.0-rc1
 
 - Added reproducible self-host bootstrap checks and an opt-in Yerux compiler driver (`0c98ed5`).
