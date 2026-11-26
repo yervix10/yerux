@@ -38,6 +38,31 @@ fn hex_value(b: Int) -> Int {
   return -1
 }
 
+fn radix_decimal(src: view String, start: Int, end: Int, radix: Int) -> String {
+  let base = 1000000000
+  var hi = 0
+  var lo = 0
+  var j = start
+  while j < end {
+    let d = hex_value(src.byte(j))
+    if d >= 0 {
+      let next_lo = lo * radix + d
+      lo = next_lo % base
+      hi = hi * radix + next_lo / base
+    }
+    j = j + 1
+  }
+  if hi == 0 { return "{lo}" }
+  let lo_str = "{lo}"
+  var zeros = String.new()
+  var k = lo_str.len()
+  while k < 9 {
+    zeros.push_byte(48)
+    k = k + 1
+  }
+  return "{hi}{zeros}{lo_str}"
+}
+
 fn emit_interp(parts: view List<Part>, count: Int, line: Int) {
   if count == 0 {
     emit(line, "Id:", String.from("String"))
@@ -272,23 +297,25 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool, ol: Int, oc:
         var limit = 16
         if radix == 2 { limit = 64 }
         if significant > limit { report_error(src, ol, oc, "number too large (the largest is 18446744073709551615)", start, i - start, "", "") }
-        // up to 63 bits the value fits an Int; above that the row is the unsupported one
+        // up to 63 bits the value fits an Int; values in [2^63, 2^64 - 1] emit NumT as decimal text
         var fits = significant < limit || (radix == 16 && significant == 16 && first_digit < 8)
         if radix == 2 && significant == 64 { fits = false }
         if radix == 16 && significant == 16 && first_digit >= 8 { fits = false }
-        var value = 0
         if fits {
+          var value = 0
           j = digits_start
           while j < integer_end {
             let d = hex_value(src.byte(j))
             if d >= 0 { value = value * radix + d }
             j = j + 1
           }
-        } else { value = -1 }
-        if value >= 0 {
           if suffix.len() == 0 { let row = "Num:{value}"; emit_row(tokpos, row) }
           else { let row = "NumT:{value}:{suffix}"; emit_row(tokpos, row) }
-        } else { emit(tokpos, "UnsupportedNumber:", raw) }
+        } else {
+          let dec = radix_decimal(src, digits_start, integer_end, radix)
+          let row = "NumT:{dec}:{suffix}"
+          emit_row(tokpos, row)
+        }
       } else {
         var value = 0
         if core.parse_int(value) {
