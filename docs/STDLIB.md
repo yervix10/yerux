@@ -62,6 +62,7 @@ All APIs below are from `src/prelude*.yx` — ordinary Yerux code compiled only 
 | `trim_end` | `fn trim_end(view self) -> String` | `let t = s.trim_end()` |
 | `to_upper` | `fn to_upper(view self) -> String` (ASCII, Latin-1, Ext-A, Greek, Cyrillic) | `let u = s.to_upper()` |
 | `to_lower` | `fn to_lower(view self) -> String` | `let l = s.to_lower()` |
+| `change_case` | `fn change_case(view self, up: Bool) -> String` | the engine behind `to_upper` / `to_lower` |
 | `replace` | `fn replace(view self, from: view String, to: view String) -> String` | `let r = s.replace("old", "new")` |
 | `repeat` | `fn repeat(view self, n: Int) -> String` | `let r = s.repeat(3)` |
 
