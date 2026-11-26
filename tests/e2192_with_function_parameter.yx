@@ -1,0 +1,12 @@
+// A function parameter called while a lock is held: the closure given to it waits.
+fn guarded(lock: view Locked<Int>, f: view fn(Int) -> Int) -> Int {
+  return lock.with(|v| f(v))
+}
+
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let lock = Locked.new(0)
+  let sum = guarded(lock, |n| n + rx.recv().unwrap())
+  print(sum)
+  tx.close()
+}

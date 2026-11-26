@@ -297,10 +297,12 @@ of the contents that borrow their receiver can also be called on the
 `Shared` handle. `Locked.new(value)` protects an owned value. Use
 `with(|value| { ... })` to access it exclusively, `with_view(|value| ...)`
 to borrow it for reading under the same mutex, and `take()` to consume a
-directly owned lock and recover its value. Inside a `with` closure (of a `Locked` or a `Mutex`) waiting or
-acquiring another lock is rejected, also through any chain of function and method calls: `join`, `recv`,
-`spawn`, `parallel for`, thread-pool operations, `io.read_line`, `io.read_file`, `io.write_file` and sleeping.
-This is not a complete blocking analysis; what it misses is listed in
+directly owned lock and recover its value. Inside a closure that holds a lock
+(`Locked`, `Mutex`, `RwLock`) waiting or acquiring another lock is rejected, also through any chain of function
+and method calls, function values, trait object methods and destructors: `join`, `recv`, `send` when a bounded
+channel of that type exists, `spawn`, `parallel for`, thread-pool operations, `io.read_line`, `io.read_file`,
+`io.write_file` and sleeping. Where the code called is not known, every candidate counts. This is not a complete
+blocking analysis; the rules and what it misses are in
 [docs/CONCURRENCY.md](docs/CONCURRENCY.md#locks-and-waiting). If a worker panics while holding a lock, the
 lock is poisoned and wakes its waiters. Subsequent access panics, so partial updates cannot be observed
 through the lock.

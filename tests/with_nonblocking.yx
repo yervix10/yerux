@@ -1,0 +1,40 @@
+// What stays legal under a lock: function values that do not wait, an unbounded `send`, values that are moved out
+// of the closure instead of dropped in it.
+struct Note {
+  text: String,
+}
+
+struct Shape {
+  scale: fn(Int) -> Int,
+}
+
+impl Drop for Note {
+  fn drop(mut self) {
+    print(self.text)
+  }
+}
+
+fn apply(f: view fn(Int) -> Int, n: Int) -> Int {
+  return f(n)
+}
+
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let lock = Locked.new(2)
+  let double = |n: Int| n * 2
+  let shape = Shape { scale: |n: Int| n + 1 }
+  let first = lock.with(|v| apply(double, v) + shape.scale(v))
+  let second = lock.with(|v| apply(|n| shape.scale(n), v))
+  lock.with(|v| {
+    let sent = tx.send(v)
+  })
+  let notes = Locked.new(List<Note>.new())
+  notes.with(|list| {
+    let note = Note { text: String.from("kept") }
+    list.push(move note)
+  })
+  let table = RwLock<Int>.new(5)
+  print(rwlock_read(table, |v| double(v)))
+  print(first + second)
+  print(rx.recv().unwrap())
+}

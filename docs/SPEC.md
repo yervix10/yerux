@@ -761,7 +761,11 @@ section lists only what the tests fix. Anything not listed is **no especificado*
 - Waiting on a task or channel, or acquiring another lock, inside a `with` callback of a `Locked` or a
   `Mutex` is an error (tests/e739_locked_wait.yx, tests/e743_locked_reentry.yx), also through any chain of
   function and method calls (tests/e2172_with_wait_through_function.yx,
-  tests/e2173_mutex_update_lock_through_method.yx). The operations covered and the cases not detected are
+  tests/e2173_mutex_update_lock_through_method.yx), function values (tests/e2190_with_stored_function_value.yx
+  .. e2192), trait objects (tests/e2193_with_trait_object.yx), destructors
+  (tests/e2194_with_destructor_waits.yx) and `send` when a bounded channel of the type exists
+  (tests/e2195_with_bounded_send.yx). The `rwlock_read`/`rwlock_write` callbacks follow the same rule
+  (tests/e2196_rwlock_closure_waits.yx, tests/e2197_with_takes_rwlock.yx). The operations covered and the cases not detected are
   listed in CONCURRENCY.md, "Locks and waiting".
 - Poisoning: if a task panics inside a `with` callback, a later access from another task fails
   (`join()` returns an error) instead of reading the content (tests/conc_sharing.yx).

@@ -1,0 +1,10 @@
+error: cannot wait or acquire a lock inside a with closure
+  --> tests/e2193_with_trait_object.yx:30:31
+   |
+30 |   let sum = lock.with(|v| v + tasks.at(0).run())
+   |                               ^^^^^^^^^^^^^^^^^
+   = 'dyn Task.run' may wait: dyn Task.run -> Slow.run -> std.time.sleep_ms -> std.io.sleep_ms
+   = why: waiting while a lock is held can deadlock every thread that needs the lock
+   = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.

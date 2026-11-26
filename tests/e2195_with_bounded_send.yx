@@ -1,0 +1,9 @@
+// `send` on a bounded channel waits while the queue is full.
+fn main() {
+  let (tx, rx) = Sender<Int>.bounded(1)
+  let lock = Locked.new(0)
+  lock.with(|v| {
+    let sent = tx.send(v)
+  })
+  print(rx.recv().unwrap())
+}

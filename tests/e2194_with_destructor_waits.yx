@@ -1,0 +1,21 @@
+// A destructor runs where the value goes out of scope: here while the lock is held.
+import std.time
+
+struct Slow {
+  pause: Int,
+}
+
+impl Drop for Slow {
+  fn drop(mut self) {
+    time.sleep_ms(self.pause)
+  }
+}
+
+fn main() {
+  let lock = Locked.new(0)
+  lock.with(|v| {
+    let slow = Slow { pause: 1 }
+    v = v + slow.pause
+  })
+  print(1)
+}

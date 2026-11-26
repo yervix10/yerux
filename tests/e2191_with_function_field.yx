@@ -1,0 +1,17 @@
+// A function in a field is not known at the call: every function of its type counts.
+struct Job {
+  run: fn(Int) -> Int,
+}
+
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let lock = Locked.new(0)
+  let job = Job {
+    run: move |n: Int| {
+      return rx.recv().unwrap() + n
+    },
+  }
+  let sum = lock.with(|v| job.run(v))
+  print(sum)
+  tx.close()
+}

@@ -8831,7 +8831,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
     let mut errs = std::mem::take(&mut ck.errs);
     // calls are only resolved in a program that checks
     if errs.is_empty() {
-        errs = crate::lockwait::check(&mut p.funcs);
+        errs = crate::lockwait::check(&mut p.funcs, &p.types);
     }
     for id in ck.drop_cycles {
         let def = &p.types.structs[id];
