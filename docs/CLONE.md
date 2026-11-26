@@ -15,7 +15,7 @@ moved or shared. `Copy` only covers types that own nothing; `Clone` is the expli
 |---|---|
 | `Int`, `Char`, `Bool`, `Text`, every sized integer / float | nothing |
 | `String` | nothing |
-| `List<T>` | `T: Clone` |
+| `List<T>`, `Box<T>` | `T: Clone` |
 | `Map<K, V>`, `Set<T>` | `K`/`V`/`T: Clone` |
 | `Option<T>`, `Result<T, E>` | `T`/`E: Clone` |
 | tuples `(A, B, ..)` (up to 6) | every element `Clone` |
@@ -38,7 +38,9 @@ derive Clone, Equal, Show for Shape
 ordinary `impl` blocks (`expand_derives` in `syntax.rs`, run on the user's tokens before parsing), so everything
 downstream sees plain impls and errors point at the `derive` line.
 
-- `Clone`: struct fields / enum payloads are cloned with `.clone()`.
+- `Clone`: struct fields and enum payloads are cloned with `.clone()`. A boxed field or payload
+  gets a fresh box containing a clone of its value. This also works for recursive structs and enums
+  linked through boxes.
 - `Equal`: fields compared with `!=` (structs) or variant + payload `==` (enums).
 - `Show`: `Person { name: Ana, tags: [a], age: 30 }`, `Circle(3)`, `Dot` (fields shown with `{x}`).
 - Every field type must implement the trait (`tests/e1033_derive_field_not_clone.yx`); an unknown trait or type
@@ -47,8 +49,9 @@ downstream sees plain impls and errors point at the `derive` line.
 
 ## Limits
 
-- No impl for `Box`, closures or `dyn` values; enums/tuples have no derived `Equal` through `==` on temporaries
-  (bind to a variable first, a general language rule).
+- Closures and erased `dyn` values have no `Clone` impl.
+- To compare derived enums or tuples with `==`, bind temporary values to variables first.
 - `Shared<T>` keeps its own inherent `clone()` (reference-count bump, not a deep copy).
 
-Tests: `tests/derive_basic.yx`, `tests/clone_trait.yx` (C, native, ASan, native debug-alloc `live: 0`), `tests/list_string_clone.yx`.
+The tests include `tests/derive_basic.yx`, `tests/clone_trait.yx`, `tests/list_string_clone.yx` and
+`tests/clone_box_tree.yx`. The recursive clone test runs in the Rust and self-hosted compilers.

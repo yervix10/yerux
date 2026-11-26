@@ -103,3 +103,7 @@ impl Clone for Char { fn clone(view self) -> Char { return self } }
 impl Clone for Bool { fn clone(view self) -> Bool { return self } }
 impl Clone for Text { fn clone(view self) -> Text { return self } }
 impl Clone for String { fn clone(view self) -> String { return String.from(self) } }
+
+impl<T: Clone> Clone for Box<T> {
+    fn clone(view self) -> Box<T> { return Box.new(self.get().clone()) }
+}

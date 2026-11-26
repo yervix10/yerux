@@ -1,5 +1,11 @@
+struct Payload { number: Int }
+
+impl Payload {
+  fn clone(view self) -> Payload { return Payload { number: self.number } }
+}
+
 fn main() {
-  let a = Box.new(String.from("x"))
-  let b = a.clone()
-  print("{b}")
+  let original = Box.new(Payload { number: 1 })
+  let copied = original.clone()
+  print(copied.get().number)
 }

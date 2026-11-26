@@ -39,6 +39,7 @@ struct Generator {
   collection_ready: List<Bool>,
   pending_lists: List<Int>,
   box_payloads: List<String>,
+  box_clones: List<String>,
   layout_path: List<String>,
   sorted_elements: List<String>,
   globals: String,
@@ -306,8 +307,9 @@ fn emit_heap_drops(gen: mut Generator, tree: view List<ast.AstNode>, first_insta
   var collections = List<Int>.new()
   var list = 0
   var instance = first_instance
+  var clone = 0
   // Complete component payloads encountered through a Box even if the box is never allocated.
-  while list < gen.collections.len() || instance < gen.instances.len() {
+  while list < gen.collections.len() || instance < gen.instances.len() || clone < gen.box_clones.len() {
     if list < gen.collections.len() {
       let ty = String.from(gen.collections.at(list))
       var id = -1
@@ -326,9 +328,12 @@ fn emit_heap_drops(gen: mut Generator, tree: view List<ast.AstNode>, first_insta
       }
       collections.push(id)
       list = list + 1
-    } else {
+    } else if instance < gen.instances.len() {
       emit_function(gen, tree, instance)
       instance = instance + 1
+    } else {
+      emit_box_clone(gen, tree, clone)
+      clone = clone + 1
     }
   }
   for i in 0..components.len() { emit_drop_component(gen, tree, components.at(i), i) }
@@ -1984,13 +1989,25 @@ fn array_literal(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
   return move result
 }
 
-fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Value) -> Value {
+fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Value, trait_only: Bool) -> Value {
   let ty = String.from(source.ty)
   if ty == "String" { return temp(gen, tree, ty, "nx_str_from({text_view(source)})") }
   if integer_c(ty).len() != 0 || ty == "Bool" || ty == "Text" || ty == "Float" || ty == "Float32" || ty == "Char" {
     return temp(gen, tree, ty, source.code)
   }
   let base = type_terms.base(ty)
+  if base == "Box" && !gen.user_box {
+    let inner = type_terms.box_payload(ty)
+    if type_terms.dyn_trait(inner).len() != 0 { unsupported("Clone for {ty}") }
+    // Emit one helper per concrete Box. Its body may call itself through the payload.
+    var id = gen.box_clones.index_of(ty)
+    if id < 0 {
+      id = gen.box_clones.len()
+      gen.box_clones.push(String.from(ty))
+      gen.prototypes.push_str("static ScBox sc_clone_box_{id}(ScBox source);\n")
+    }
+    return temp(gen, tree, ty, "sc_clone_box_{id}({source.code})")
+  }
   prepare_type(gen, tree, ty)
   if base == "List" {
     let result = temp(gen, tree, ty, String.from("{{0}}"))
@@ -2000,7 +2017,7 @@ fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Va
     line(gen, "for (int64_t i{id} = 0; i{id} < ({source.code}).len; ++i{id}) {{")
     gen.indent = gen.indent + 1
     let entry = Value { ty: type_terms.element(ty), code: "({source.code}).d[i{id}]" }
-    let copied = clone_value(gen, tree, entry)
+    let copied = clone_value(gen, tree, entry, trait_only)
     line(gen, "sc_push_{c}(&{result.code}, {transfer(gen, tree, copied)});")
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
@@ -2013,13 +2030,14 @@ fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Va
     line(gen, "for (int64_t i{id} = 0; i{id} < {sequence_length(source)}; ++i{id}) {{")
     gen.indent = gen.indent + 1
     let entry = Value { ty: type_terms.element(ty), code: "({source.code}).d[i{id}]" }
-    let copied = clone_value(gen, tree, entry)
+    let copied = clone_value(gen, tree, entry, trait_only)
     line(gen, "{result.code}.d[i{id}] = {transfer(gen, tree, copied)};")
     gen.indent = gen.indent - 1
     line(gen, String.from("}}"))
     return move result
   }
-  let user_clone = match_method(gen, tree, ty, String.from("clone"), true)
+  var user_clone = trait_method(gen, tree, ty, "Clone", "clone")
+  if !trait_only { user_clone = match_method(gen, tree, ty, "clone", true) }
   if user_clone >= 0 {
     let sub = call_substitution(gen, tree, user_clone, ty)
     let instance = schedule(gen, user_clone, ty, move sub)
@@ -2042,7 +2060,7 @@ fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Va
         gen.indent = gen.indent + 1
         for i in 0..count {
           let payload = enum_payload(gen, source, slot, i)
-          let copied = clone_value(gen, tree, payload)
+          let copied = clone_value(gen, tree, payload, trait_only && !gen.clone_types.contains(base))
           line(gen, "{result.code}.v{slot}.p{i} = {transfer(gen, tree, copied)};")
         }
         gen.indent = gen.indent - 1
@@ -2060,7 +2078,7 @@ fn clone_value(gen: mut Generator, tree: view List<ast.AstNode>, source: view Va
       let field = Value {
         ty: declared_for(tree, ast.child(tree, at, 1), sub), code: "({source.code}).m{name}",
       }
-      let copied = clone_value(gen, tree, field)
+      let copied = clone_value(gen, tree, field, false)
       line(gen, "{result.code}.m{name} = {transfer(gen, tree, copied)};")
       at = tree.at(at).end
     }
@@ -2140,6 +2158,16 @@ fn box_new(gen: mut Generator, tree: view List<ast.AstNode>, args: Int, ty: view
   var concrete = String.from(inner)
   if trait_name != "" { concrete = String.from(value.ty) }
   let value = coerce(gen, tree, move value, concrete)
+  let cell = allocate_box(gen, tree, value)
+  if trait_name != "" {
+    let table = dyn_table(gen, tree, trait_name, concrete)
+    return temp(gen, tree, ty, "(ScDyn){{ {cell}, sc_vtable_{table} }}")
+  }
+  return temp(gen, tree, ty, cell)
+}
+
+fn allocate_box(gen: mut Generator, tree: view List<ast.AstNode>, value: view Value) -> String {
+  let concrete = String.from(value.ty)
   if concrete.starts_with("Slice<") || concrete == "nothing" { unsupported("Box payload {concrete}") }
   prepare_type(gen, tree, concrete)
   let c = c_type(gen, tree, concrete)
@@ -2151,13 +2179,24 @@ fn box_new(gen: mut Generator, tree: view List<ast.AstNode>, args: Int, ty: view
   }
   let id = gen.temp
   gen.temp = gen.temp + 1
-  line(gen, "ScBox b{id} = sc_make_box_{factory}();")
-  line(gen, "*({c} *)b{id}->data = {transfer(gen, tree, value)};")
-  if trait_name != "" {
-    let table = dyn_table(gen, tree, trait_name, concrete)
-    return temp(gen, tree, ty, "(ScDyn){{ b{id}, sc_vtable_{table} }}")
-  }
-  return temp(gen, tree, ty, "b{id}")
+  let cell = "b{id}"
+  line(gen, "ScBox {cell} = sc_make_box_{factory}();")
+  line(gen, "*({c} *){cell}->data = {transfer(gen, tree, value)};")
+  return cell
+}
+
+fn emit_box_clone(gen: mut Generator, tree: view List<ast.AstNode>, id: Int) {
+  let ty = type_terms.box_payload(gen.box_clones.at(id))
+  prepare_type(gen, tree, ty)
+  let c = c_type(gen, tree, ty)
+  line(gen, "static ScBox sc_clone_box_{id}(ScBox source) {{")
+  gen.indent = gen.indent + 1
+  let source = Value { ty: move ty, code: "(*({c} *)source->data)" }
+  let copied = clone_value(gen, tree, source, true)
+  let cell = allocate_box(gen, tree, copied)
+  line(gen, "return {cell};")
+  gen.indent = gen.indent - 1
+  line(gen, String.from("}}"))
 }
 
 fn dyn_call(gen: mut Generator, tree: view List<ast.AstNode>, receiver: Int, trait_name: view String,
@@ -2406,7 +2445,7 @@ fn string_method(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty
   }
   if !is_static && name == "clone" && tree.at(args).end == args + 1 {
     let value = expression(gen, tree, recv)
-    return clone_value(gen, tree, value)
+    return clone_value(gen, tree, value, false)
   }
   let result_base = type_terms.base(ty)
   if owner != "" && gen.locals.identities.at(recv) < 0 && result_base == owner &&
@@ -3973,7 +4012,7 @@ fn main() {
       var gen = Generator {
         checked: move checked, locals: move bindings, structs: List<Int>.new(), functions: List<Int>.new(),
         collections: List<String>.new(), collection_ready: List<Bool>.new(), pending_lists: List<Int>.new(),
-        layout_path: List<String>.new(), box_payloads: List<String>.new(), sorted_elements: List<String>.new(), globals: String.new(),
+        layout_path: List<String>.new(), box_payloads: List<String>.new(), box_clones: List<String>.new(), sorted_elements: List<String>.new(), globals: String.new(),
         enums: List<Int>.new(), enum_layouts: List<EnumLayout>.new(),
         traits: List<Int>.new(), heap_drops: List<String>.new(), dyn_tables: List<String>.new(),
         struct_layouts: List<StructLayout>.new(), methods: List<Method>.new(), clone_types: List<String>.new(), constants: List<Int>.new(), externs: List<Int>.new(),
