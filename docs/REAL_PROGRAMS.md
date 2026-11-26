@@ -972,12 +972,12 @@ and registered in `tests/real_programs.sh`.
   markers. 800 generated cases check the script length against an LCS table, patch application, identity merges and the
   symmetry of the two sides. It compiled and passed without any compiler friction.
 
-### Round 16 frictions (132-135 fixed; 136-138 open)
+### Round 16 frictions (132–138 fixed)
 
 132. **The help for `clone` on a `Box` asks for something impossible.** `Box.new(x).clone()` said "write
     `impl Clone for Box<String> { .. }`", but methods cannot be added to a built-in type. The same help appeared for
-    `derive Clone` on a recursive enum with `Box` payloads. *Fixed:* the help gives `Box.new((*b).clone())` and says to
-    write the recursive `impl Clone` by hand (`tests/e2132_box_clone_help.yx`).
+    `derive Clone` on a recursive enum with `Box` payloads. *Fixed:* when the payload lacks `Clone`, the compiler
+    names the missing bound and suggests implementing it for the payload (`tests/e2132_box_clone_help.yx`).
 133. **`if let` and `while let` only say "unexpected keyword 'let' here".** *Fixed:* the error says that they do not
     exist and shows the `match` form (`tests/e2133_while_let_help.yx`).
 134. **A string literal as a `match` pattern only says "expected a pattern".** *Fixed:* it says that a string cannot be
@@ -996,8 +996,8 @@ and registered in `tests/real_programs.sh`.
     it"). The plain struct needs a free function.
     *Fixed:* a function without `self` is accepted in the `impl` of a plain struct or enum and is called as
     `Type.name(..)`; calling it on a value is an error (`tests/assoc_functions.yx`, `tests/e2160_assoc_fn_on_value.yx`).
-138. **`derive Clone` does not reach through `Box`** (documented limit in `docs/CLONE.md`), so every recursive syntax
-    tree needs its `impl Clone` written variant by variant.
+138. **Recursive types linked through `Box` needed manual `Clone` implementations.** *Fixed:* `Box<T>` implements
+    `Clone` when `T` does, so recursive structs and enums can derive it (`tests/clone_box_tree.yx`).
 
 ## Round 18: wordcount, prodpipeline
 

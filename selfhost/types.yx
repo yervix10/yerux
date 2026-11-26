@@ -16,6 +16,7 @@ struct Signature {
   required_trait: String,
 }
 struct Function { node: Int, signature: Int, impl_params: Int }
+struct CloneImpl { owner: String, generics: Int }
 struct Frozen { binding: Int, place: String, exclusive: Bool, from_let: Bool }
 struct Types {
   identities: List<Int>,
@@ -34,6 +35,8 @@ struct Types {
   ordered_params: List<String>,
   modes: List<String>,
   equal_types: List<String>,
+  derived_clones: List<String>,
+  clone_impls: List<CloneImpl>,
   lead: Int,
   variadics: List<String>,
   lead_type: String,
@@ -1050,6 +1053,38 @@ fn user_iterator(types: view Types, owner: view String) -> String {
   return result
 }
 
+fn clone_payload(types: view Types, tree: view List<ast.AstNode>, ty: view String) -> Bool {
+  if types.generics.contains(ty) {
+    return (types.function_params >= 0 && bounded_parameters(tree, types.function_params, "Clone").contains(ty)) ||
+      (types.impl_params >= 0 && bounded_parameters(tree, types.impl_params, "Clone").contains(ty))
+  }
+  let base = type_terms.base(ty)
+  if base == "Array" { return clone_payload(types, tree, type_terms.element(ty)) }
+  if base == "Box" || base == "List" || base == "Option" || base == "Result" ||
+      base.starts_with("$tuple") || types.derived_clones.contains(base) {
+    for arg in type_terms.arguments(ty) {
+      if !clone_payload(types, tree, arg) { return false }
+    }
+    return true
+  }
+  let number = numeric_type(ty)
+  if integer(number) || floating(number) || ty == "Bool" || ty == "Char" || ty == "Text" || ty == "String" {
+    return true
+  }
+  for candidate in types.clone_impls {
+    if !type_terms.base(candidate.owner).eq(base) { continue }
+    var sub = type_terms.with_names(generic_names(tree, candidate.generics))
+    type_terms.bind(sub, candidate.owner, ty)
+    if !type_terms.substitute(candidate.owner, sub).eq(ty) { continue }
+    var valid = true
+    for param in bounded_parameters(tree, candidate.generics, "Clone") {
+      if !clone_payload(types, tree, type_terms.substitute(param, sub)) { valid = false; break }
+    }
+    if valid { return true }
+  }
+  return false
+}
+
 fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     name: view String, args: Int, receiver: Int, hint: view String) -> String {
   var payload = unknown()
@@ -1090,6 +1125,20 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     expect_type(types, inner, actual)
     if inner != "?" { return expected }
     return "Box<{actual}>"
+  }
+  if receiver >= 0 && payload != "?" && name == "clone" {
+    let count = child_count(tree, args)
+    if count != 0 {
+      issue(types, "method 'clone' of {owner} expects 0 argument(s) besides the receiver but got {count}")
+      return unknown()
+    }
+    if !clone_payload(types, tree, payload) {
+      issue(types, "type {type_terms.pretty(owner)} has no method 'clone'")
+      return unknown()
+    }
+    var loans = List<ownership.Loan>.new()
+    record_loan(types, tree, loans, receiver, String.from("View"), owner, true)
+    return String.from(owner)
   }
   if receiver >= 0 && payload != "?" && (name == "get" || name == "take") {
     if child_count(tree, args) != 0 { issue(types, "'{name}' takes no arguments") }
@@ -3767,6 +3816,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     loops: List<LoopFlow>.new(), deferred: List<Int>.new(), defer_floor: 0, frozen: List<Frozen>.new(), site_span: String.new(), thread_bound: List<String>.new(), externs: List<String>.new(), in_drop: false, operand: false,
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
+    derived_clones: List<String>.new(), clone_impls: List<CloneImpl>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(), spawn_copies: List<Int>.new(), trusted: false,
     ever_moved: List<Bool>.new(), erased: List<String>.new(),
   }
@@ -3797,14 +3847,22 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
       let trait_node = ast.child(tree, item, 1)
       if tree.at(trait_node).tag == "Type" {
         let name = ast.name_at(tree, trait_node, 0)
-        let owner = source_type(types, tree, ast.child(tree, item, 2))
-        if name == "Drop" {
-          let shape = shape_index(types, owner)
-          if shape >= 0 && types.shapes.at(shape).is_enum { issue_once(types, "`Drop` can only be implemented for a struct, not for {owner}") }
-          else if shape >= 0 { types.shapes.at(shape).user_drop = true }
-        } else if name == "Equal" { types.equal_types.push(String.from(owner)) }
-        else if name == "Ordered" { types.ordered_types.push(String.from(owner)) }
-        else if name == "Show" { types.shown_types.push(String.from(owner)) }
+        if name == "Clone" {
+          let generics = ast.child(tree, item, 0)
+          types.generics = generic_names(tree, generics)
+          let owner = source_type(types, tree, ast.child(tree, item, 2))
+          types.clone_impls.push(CloneImpl { owner: move owner, generics: generics })
+          types.generics = List<String>.new()
+        } else {
+          let owner = source_type(types, tree, ast.child(tree, item, 2))
+          if name == "Drop" {
+            let shape = shape_index(types, owner)
+            if shape >= 0 && types.shapes.at(shape).is_enum { issue_once(types, "`Drop` can only be implemented for a struct, not for {owner}") }
+            else if shape >= 0 { types.shapes.at(shape).user_drop = true }
+          } else if name == "Equal" { types.equal_types.push(String.from(owner)) }
+          else if name == "Ordered" { types.ordered_types.push(String.from(owner)) }
+          else if name == "Show" { types.shown_types.push(String.from(owner)) }
+        }
       }
     }
     decl = tree.at(decl).end
@@ -3822,6 +3880,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
         while trait_at < tree.at(traits).end {
           let name = ast.decoded_name(tree, trait_at)
           if name == "Clone" {
+            types.derived_clones.push(String.from(types.shapes.at(shape).name))
             let owner = type_terms.apply(types.shapes.at(shape).name, types.shapes.at(shape).generics)
             let index = types.signatures.len()
             prelude_method(types, owner, "clone", "View", "", "", "Own")

@@ -1,9 +1,9 @@
-error: type Box<String> has no method 'clone'
- --> tests/e2132_box_clone_help.yx:3:11
+error: type Box<Payload> has no method 'clone'
+ --> tests/e2132_box_clone_help.yx:9:16
   |
-3 |   let b = a.clone()
-  |           ^^^^^^^^^
-  = a Box has no `clone`, and `derive Clone` does not reach through one
-  = help: clone the value inside and box it again: `Box.new((*b).clone())`; for a recursive type write its `impl Clone` by hand
+9 |   let copied = original.clone()
+  |                ^^^^^^^^^^^^^^^^
+  = 'clone' needs T: Clone, but Payload does not implement Clone
+  = help: add `impl Clone for Payload { .. }`
 
 1 error(s). Nothing was generated.

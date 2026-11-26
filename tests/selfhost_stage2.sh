@@ -32,6 +32,15 @@ diff -rq "$tmp/gen1/runtime" "$tmp/gen2/runtime" || status=1
 printf 'fn main() { print(6 * 7) }\n' >"$tmp/hello.yx"
 "$tmp/gen2/yerux-self" "$tmp/hello.yx" -o "$tmp/hello"
 [[ $("$tmp/hello") == 42 ]] || { printf 'selfhost stage2: generation 2 miscompiled a program\n' >&2; status=1; }
+# Recursive Clone emits a finite set of helpers and mutations stay in the copy.
+"$tmp/gen2/yerux-self" tests/clone_box_tree.yx -o "$tmp/clone-box"
+"$tmp/clone-box" >"$tmp/clone-box.out"
+cmp tests/expected/clone_box_tree.out "$tmp/clone-box.out"
+if "$tmp/gen2/yerux-self" tests/e2132_box_clone_help.yx -o "$tmp/rejected-box" >"$tmp/error" 2>&1; then
+  printf 'selfhost stage2: cloned a Box with a non-Clone payload\n' >&2
+  status=1
+fi
+grep -F "type Box<Payload> has no method 'clone'" "$tmp/error"
 mkdir -p "$tmp/bin/selfhost"
 ln -s "$tmp/gen2/yerux-self" "$tmp/bin/selfhost/yerux-self"
 cp "$seed" "$tmp/bin/yerux"

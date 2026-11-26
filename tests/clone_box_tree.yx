@@ -1,0 +1,54 @@
+enum Expr { Number(Int), Add(Box<Expr>, Box<Expr>) }
+derive Clone for Expr
+
+struct NamedExpr { label: String, next: Option<Box<NamedExpr>> }
+derive Clone for NamedExpr
+
+fn evaluate(expr: view Expr) -> Int {
+  match expr {
+    Number(n) => { return n }
+    Add(left, right) => { return evaluate(*left) + evaluate(*right) }
+  }
+}
+
+fn duplicate<T: Clone>(value: view T) -> T {
+  return value.clone()
+}
+
+fn duplicate_box<T: Clone>(value: view Box<T>) -> Box<T> {
+  return value.clone()
+}
+
+fn suffix(node: mut NamedExpr) {
+  node.label.push_str("!")
+}
+
+fn main() {
+  let original = Box.new(Expr.Add(Box.new(Expr.Number(1)), Box.new(Expr.Add(Box.new(Expr.Number(2)), Box.new(Expr.Number(3))))))
+  let copied = duplicate_box(original)
+  var changed = copied.take()
+  match mut changed {
+    Number(n) => { n = 0 }
+    Add(left, _) => { left = Box.new(Expr.Number(10)) }
+  }
+  print(evaluate(*original))
+  print(evaluate(changed))
+
+  let child = NamedExpr { label: String.from("leaf"), next: None }
+  let parent = NamedExpr { label: String.from("root"), next: Some(Box.new(move child)) }
+  var copy = duplicate(parent)
+  copy.label.push_str("!")
+  match mut copy.next {
+    Some(next) => {
+      suffix(*next)
+      print(next.get().label)
+    }
+    None => { assert(false) }
+  }
+  match parent.next {
+    Some(next) => { print(next.get().label) }
+    None => { assert(false) }
+  }
+  print(parent.label)
+  print(copy.label)
+}
