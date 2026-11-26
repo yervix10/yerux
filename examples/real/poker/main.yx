@@ -1,0 +1,257 @@
+// poker: evaluates ten fixed five-card hands, rejects six malformed ones, ranks
+// the valid hands best-first (stable sort; equal scores keep input order), names
+// the winner, and tallies how many hands landed in each category.
+// Cards are rank+suit, lowercase: ranks 2-9 t j q k a, suits c d h s.
+// No arguments; exit 0.
+//   yerux run examples/real/poker/main.yx     |  yerux build examples/real/poker/main.yx [--native] -o BIN
+import std.sort
+import std.text
+
+struct Hand {
+  id: Int,
+  text: String,
+  cat: Int,
+  score: Int,
+}
+
+struct Bad {
+  id: Int,
+  why: String,
+}
+
+struct Eval {
+  cat: Int,
+  score: Int,
+}
+
+fn cat_name(cat: Int) -> String {
+  if cat == 9 { return "straight flush" }
+  if cat == 8 { return "four of a kind" }
+  if cat == 7 { return "full house" }
+  if cat == 6 { return "flush" }
+  if cat == 5 { return "straight" }
+  if cat == 4 { return "three of a kind" }
+  if cat == 3 { return "two pair" }
+  if cat == 2 { return "pair" }
+  return "high card"
+}
+
+fn rank_of(b: Int) -> Int {
+  if b >= 50 && b <= 57 { return b - 48 }
+  if b == 116 || b == 84 { return 10 }
+  if b == 106 || b == 74 { return 11 }
+  if b == 113 || b == 81 { return 12 }
+  if b == 107 || b == 75 { return 13 }
+  if b == 97 || b == 65 { return 14 }
+  return 0
+}
+
+fn suit_of(b: Int) -> Int {
+  if b == 99 || b == 67 { return 0 }
+  if b == 100 || b == 68 { return 1 }
+  if b == 104 || b == 72 { return 2 }
+  if b == 115 || b == 83 { return 3 }
+  return -1
+}
+
+fn evaluate(ranks: view List<Int>, suits: view List<Int>) -> Eval {
+  var flush = true
+  var j = 1
+  while j < suits.len() {
+    if suits.at(j) != suits.at(0) { flush = false }
+    j = j + 1
+  }
+  var rs = List<Int>.new()
+  for r in ranks { rs.push(r) }
+  sort.stable(rs)
+  var uniq = List<Int>.new()
+  var counts = List<Int>.new()
+  var i = rs.len() - 1
+  while i >= 0 {
+    let r = rs.at(i)
+    if uniq.len() == 0 || uniq.at(uniq.len() - 1) != r {
+      var c = 0
+      for x in ranks { if x == r { c = c + 1 } }
+      uniq.push(r)
+      counts.push(c)
+    }
+    i = i - 1
+  }
+  var straight = false
+  var high = 0
+  if uniq.len() == 5 {
+    if uniq.at(0) - uniq.at(4) == 4 {
+      straight = true
+      high = uniq.at(0)
+    } else if uniq.at(0) == 14 && uniq.at(1) == 5 && uniq.at(2) == 4 && uniq.at(3) == 3 && uniq.at(4) == 2 {
+      straight = true
+      high = 5
+    }
+  }
+  var pair_ranks = 0
+  var has_trip = false
+  var has_quad = false
+  for c in counts {
+    if c == 2 { pair_ranks = pair_ranks + 1 }
+    if c == 3 { has_trip = true }
+    if c == 4 { has_quad = true }
+  }
+  var cat = 1
+  if flush && straight { cat = 9 } else if has_quad { cat = 8 } else if has_trip && pair_ranks == 1 { cat = 7 } else if flush { cat = 6 } else if straight { cat = 5 } else if has_trip { cat = 4 } else if pair_ranks == 2 { cat = 3 } else if pair_ranks == 1 { cat = 2 }
+  var kickers = List<Int>.new()
+  if cat == 9 || cat == 5 {
+    kickers.push(high)
+  } else {
+    var used = List<Int>.new()
+    for _ in 0..uniq.len() { used.push(0) }
+    while kickers.len() < uniq.len() {
+      var best = 0
+      var best_c = -1
+      var best_r = -1
+      for k in 0..uniq.len() {
+        if used.at(k) == 0 {
+          let c = counts.at(k)
+          let r = uniq.at(k)
+          if c > best_c || (c == best_c && r > best_r) {
+            best = k
+            best_c = c
+            best_r = r
+          }
+        }
+      }
+      used.set(best, 1)
+      kickers.push(best_r)
+    }
+  }
+  var score = cat * 759375
+  var mul = 50625
+  for k in kickers {
+    score = score + k * mul
+    mul = mul / 15
+  }
+  return Eval { cat: cat, score: score }
+}
+
+fn cmp_hand(a: view Hand, b: view Hand) -> Int {
+  if a.score > b.score { return -1 }
+  if a.score < b.score { return 1 }
+  return 0
+}
+
+fn main() {
+  var raws = List<String>.new()
+  raws.push("2h 2d 2c ks qh")
+  raws.push("as ks qs js ts")
+  raws.push("2c 2d 2h 2s 9d")
+  raws.push("3c 3d 3h 4c 4d")
+  raws.push("2s 5s 8s js ks")
+  raws.push("as 2d 3h 4c 5s")
+  raws.push("as ad kc kd 9c")
+  raws.push("qh qd 8c 5d 2s")
+  raws.push("2h 5c 8d js kc")
+  raws.push("2c 5d 8h js kh")
+  raws.push("2h 2h 3c 4c 5c")
+  raws.push("1h 2h 3h 4h 5h")
+  raws.push("2x 3h 4h 5h 6h")
+  raws.push("2h 3h 4h 5h")
+  raws.push("2h 3h 4h 5h 6h 7h")
+  raws.push("2h 3h 4h 5h zz")
+  var hands = List<Hand>.new()
+  var bads = List<Bad>.new()
+  var tally = List<Int>.new()
+  for _ in 0..9 { tally.push(0) }
+  for i in 0..raws.len() {
+    let id = i + 1
+    let line = String.from(raws.at(i))
+    let toks = text.split_ws(line)
+    var ranks = List<Int>.new()
+    var suits = List<Int>.new()
+    var bad = String.new()
+    for t in toks {
+      if t.len() != 2 {
+        bad = "bad card {t}"
+      } else {
+        let r = rank_of(t.byte(0))
+        let s = suit_of(t.byte(1))
+        if r == 0 || s < 0 {
+          bad = "bad card {t}"
+        } else {
+          ranks.push(r)
+          suits.push(s)
+        }
+      }
+    }
+    if bad.eq("") {
+      if toks.len() != 5 {
+        bad = "expected 5 cards, got {toks.len()}"
+      } else {
+        var dup = String.new()
+        for x in 0..5 {
+          for y in x + 1..5 {
+            if ranks.at(x) == ranks.at(y) && suits.at(x) == suits.at(y) {
+              dup = String.from(toks.at(y))
+            }
+          }
+        }
+        if !dup.eq("") {
+          bad = "duplicate card {dup}"
+        }
+      }
+    }
+    if bad.eq("") {
+      let ev = evaluate(ranks, suits)
+      hands.push(Hand { id: id, text: move line, cat: ev.cat, score: ev.score })
+      tally.set(ev.cat - 1, tally.at(ev.cat - 1) + 1)
+    } else {
+      bads.push(Bad { id: id, why: move bad })
+    }
+  }
+  print("evaluated:")
+  for h in hands {
+    print("  {h.id.show()}: {h.text} -> {cat_name(h.cat)}")
+  }
+  sort.stable_by(hands, cmp_hand)
+  print("ranked (best first):")
+  var prev_score = 0 - 1
+  var prev_id = 0
+  for h in hands {
+    var note = String.new()
+    if h.score == prev_score {
+      note = " (tie with {prev_id.show()})"
+    }
+    print("  {h.id.show()}: {h.text} -> {cat_name(h.cat)}{note}")
+    prev_score = h.score
+    prev_id = h.id
+  }
+  let top = hands.at(0)
+  var tied = 0
+  for h in hands {
+    if h.score == top.score { tied = tied + 1 }
+  }
+  if tied == 1 {
+    print("winner: {top.id.show()} {cat_name(top.cat)}")
+  } else {
+    var ids = String.new()
+    for h in hands {
+      if h.score == top.score {
+        if ids.eq("") {
+          ids = h.id.show()
+        } else {
+          ids = ids + " " + h.id.show()
+        }
+      }
+    }
+    print("winners: {ids} {cat_name(top.cat)}")
+  }
+  print("tally:")
+  var c = 9
+  while c >= 1 {
+    print("  {cat_name(c)} {tally.at(c - 1).show()}")
+    c = c - 1
+  }
+  print("rejected:")
+  for b in bads {
+    print("  {b.id.show()}: {b.why}")
+  }
+  print("summary: {hands.len().show()} valid, {bads.len().show()} rejected, 9 categories")
+}

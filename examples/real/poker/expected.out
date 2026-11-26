@@ -1,0 +1,41 @@
+evaluated:
+  1: 2h 2d 2c ks qh -> three of a kind
+  2: as ks qs js ts -> straight flush
+  3: 2c 2d 2h 2s 9d -> four of a kind
+  4: 3c 3d 3h 4c 4d -> full house
+  5: 2s 5s 8s js ks -> flush
+  6: as 2d 3h 4c 5s -> straight
+  7: as ad kc kd 9c -> two pair
+  8: qh qd 8c 5d 2s -> pair
+  9: 2h 5c 8d js kc -> high card
+  10: 2c 5d 8h js kh -> high card
+ranked (best first):
+  2: as ks qs js ts -> straight flush
+  3: 2c 2d 2h 2s 9d -> four of a kind
+  4: 3c 3d 3h 4c 4d -> full house
+  5: 2s 5s 8s js ks -> flush
+  6: as 2d 3h 4c 5s -> straight
+  1: 2h 2d 2c ks qh -> three of a kind
+  7: as ad kc kd 9c -> two pair
+  8: qh qd 8c 5d 2s -> pair
+  9: 2h 5c 8d js kc -> high card
+  10: 2c 5d 8h js kh -> high card (tie with 9)
+winner: 2 straight flush
+tally:
+  straight flush 1
+  four of a kind 1
+  full house 1
+  flush 1
+  straight 1
+  three of a kind 1
+  two pair 1
+  pair 1
+  high card 2
+rejected:
+  11: duplicate card 2h
+  12: bad card 1h
+  13: bad card 2x
+  14: expected 5 cards, got 4
+  15: expected 5 cards, got 6
+  16: bad card zz
+summary: 10 valid, 6 rejected, 9 categories

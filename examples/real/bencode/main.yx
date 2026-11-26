@@ -1,0 +1,285 @@
+// bencode: parses embedded bencode documents (the BitTorrent wire format),
+// validates them (leading zeros, negative zero, duplicate keys, trailing data,
+// UTF-8 boundaries, nesting depth), re-encodes every accepted value canonically
+// with sorted dictionary keys (unsorted keys are accepted and reordered), and
+// prints the SHA-256 of the canonical form. Errors carry the byte offset of
+// the problem.
+// No arguments; exit 0.
+import std.hash
+import std.sort
+
+struct Fault { at: Int, msg: String }
+
+enum Val {
+  Int(Int),
+  Bytes(String),
+  List(List<Val>),
+  Dict(List<Pair>),
+}
+
+struct Pair { key: String, val: Val }
+
+struct Parser { src: String, pos: Int, depth: Int }
+
+fn fail(at: Int, msg: String) -> Result<Val, Fault> {
+  return Err(Fault { at: at, msg: move msg })
+}
+
+fn fail_str(at: Int, msg: String) -> Result<String, Fault> {
+  return Err(Fault { at: at, msg: move msg })
+}
+
+fn is_continuation(b: Int) -> Bool {
+  return b >= 128 && b < 192
+}
+
+fn cmp_bytes(a: view String, b: view String) -> Int {
+  var i = 0
+  while i < a.len() && i < b.len() {
+    let x = a.byte(i)
+    let y = b.byte(i)
+    if x < y { return -1 }
+    if x > y { return 1 }
+    i = i + 1
+  }
+  if a.len() < b.len() { return -1 }
+  if a.len() > b.len() { return 1 }
+  return 0
+}
+
+fn cmp_pair(a: view Pair, b: view Pair) -> Int {
+  return cmp_bytes(a.key, b.key)
+}
+
+fn parse_int(p: mut Parser) -> Result<Val, Fault> {
+  let start = p.pos
+  p.pos = p.pos + 1
+  if p.pos >= p.src.len() { return fail(p.pos, String.from("unexpected end of input")) }
+  var neg = false
+  if p.src.byte(p.pos) == 45 {
+    neg = true
+    p.pos = p.pos + 1
+  }
+  let digits = p.pos
+  var n = 0
+  var any = false
+  while p.pos < p.src.len() {
+    let b = p.src.byte(p.pos)
+    if b == 101 { break }
+    if b < 48 || b > 57 {
+      return fail(p.pos, String.from("invalid digit in integer"))
+    }
+    any = true
+    match n.checked_mul(10) {
+      Some(v) => { n = v }
+      None => { return fail(start, String.from("integer is out of range")) }
+    }
+    match n.checked_add(b - 48) {
+      Some(v) => { n = v }
+      None => { return fail(start, String.from("integer is out of range")) }
+    }
+    p.pos = p.pos + 1
+  }
+  if !any { return fail(p.pos, String.from("integer has no digits")) }
+  if p.pos >= p.src.len() { return fail(p.pos, String.from("unterminated integer")) }
+  if p.pos - digits > 1 && p.src.byte(digits) == 48 {
+    return fail(digits, String.from("integer has a leading zero"))
+  }
+  if neg && n == 0 {
+    return fail(digits, String.from("integer must not be negative zero"))
+  }
+  p.pos = p.pos + 1
+  if neg { n = 0 - n }
+  return Ok(Val.Int(n))
+}
+
+fn parse_byte_string(p: mut Parser) -> Result<String, Fault> {
+  let start = p.pos
+  var len = 0
+  var digits = 0
+  while p.pos < p.src.len() {
+    let b = p.src.byte(p.pos)
+    if b == 58 { break }
+    if b < 48 || b > 57 {
+      return fail_str(p.pos, String.from("invalid digit in string length"))
+    }
+    match len.checked_mul(10) {
+      Some(v) => { len = v }
+      None => { return fail_str(start, String.from("string length is out of range")) }
+    }
+    match len.checked_add(b - 48) {
+      Some(v) => { len = v }
+      None => { return fail_str(start, String.from("string length is out of range")) }
+    }
+    digits = digits + 1
+    p.pos = p.pos + 1
+  }
+  if digits == 0 { return fail_str(start, String.from("string has no length prefix")) }
+  if p.pos >= p.src.len() { return fail_str(p.pos, String.from("unterminated length prefix")) }
+  if digits > 1 && p.src.byte(start) == 48 {
+    return fail_str(start, String.from("string length has a leading zero"))
+  }
+  p.pos = p.pos + 1
+  let from = p.pos
+  let to = from + len
+  if to > p.src.len() {
+    return fail_str(start, String.from("byte string runs past the end of the document"))
+  }
+  if from > 0 && is_continuation(p.src.byte(from)) {
+    return fail_str(from, String.from("byte string starts inside a character"))
+  }
+  if to < p.src.len() && is_continuation(p.src.byte(to)) {
+    return fail_str(to, String.from("byte string ends inside a character"))
+  }
+  let s = p.src.slice(from, to)
+  p.pos = to
+  return Ok(move s)
+}
+
+fn parse_value(p: mut Parser) -> Result<Val, Fault> {
+  if p.depth >= 32 {
+    return fail(p.pos, String.from("nesting deeper than 32 levels"))
+  }
+  if p.pos >= p.src.len() {
+    return fail(p.pos, String.from("unexpected end of input"))
+  }
+  let b = p.src.byte(p.pos)
+  if b == 105 { return parse_int(p) }
+  if b == 108 { return parse_list(p) }
+  if b == 100 { return parse_dict(p) }
+  if b >= 48 && b <= 57 {
+    let s = parse_byte_string(p)?
+    return Ok(Val.Bytes(move s))
+  }
+  return fail(p.pos, String.from("expected an integer, byte string, list or dictionary"))
+}
+
+fn parse_list(p: mut Parser) -> Result<Val, Fault> {
+  p.pos = p.pos + 1
+  p.depth = p.depth + 1
+  var items = List<Val>.new()
+  while p.pos < p.src.len() && p.src.byte(p.pos) != 101 {
+    let v = parse_value(p)?
+    items.push(move v)
+  }
+  if p.pos >= p.src.len() {
+    return fail(p.pos, String.from("unterminated list"))
+  }
+  p.pos = p.pos + 1
+  p.depth = p.depth - 1
+  return Ok(Val.List(move items))
+}
+
+fn parse_dict(p: mut Parser) -> Result<Val, Fault> {
+  p.pos = p.pos + 1
+  p.depth = p.depth + 1
+  var pairs = List<Pair>.new()
+  while p.pos < p.src.len() && p.src.byte(p.pos) != 101 {
+    if p.src.byte(p.pos) < 48 || p.src.byte(p.pos) > 57 {
+      return fail(p.pos, String.from("dictionary key must be a byte string"))
+    }
+    let at = p.pos
+    let key = parse_byte_string(p)?
+    if pairs.len() > 0 {
+      let last = pairs.at(pairs.len() - 1)
+      let c = cmp_bytes(last.key, key)
+      if c == 0 { return fail(at, String.from("duplicate dictionary key")) }
+    }
+    let v = parse_value(p)?
+    pairs.push(Pair { key: move key, val: move v })
+  }
+  if p.pos >= p.src.len() {
+    return fail(p.pos, String.from("unterminated dictionary"))
+  }
+  p.pos = p.pos + 1
+  p.depth = p.depth - 1
+  sort.stable_by(pairs, cmp_pair)
+  return Ok(Val.Dict(move pairs))
+}
+
+fn encode(v: view Val, out: mut String) {
+  match v {
+    Val.Int(n) => {
+      out.push_str("i")
+      out.push_int(n)
+      out.push_str("e")
+    }
+    Val.Bytes(s) => {
+      out.push_str("{s.len()}:")
+      out.push_str(s)
+    }
+    Val.List(items) => {
+      out.push_str("l")
+      for x in items { encode(x, out) }
+      out.push_str("e")
+    }
+    Val.Dict(pairs) => {
+      out.push_str("d")
+      for p in pairs {
+        out.push_str("{p.key.len()}:")
+        out.push_str(p.key)
+        encode(p.val, out)
+      }
+      out.push_str("e")
+    }
+  }
+}
+
+fn encode_to(v: view Val) -> String {
+  var out = String.new()
+  encode(v, out)
+  return out
+}
+
+fn main() {
+  var docs = List<String>.new()
+  docs.push(String.from("d3:cow3:moo4:spam4:eggse"))
+  docs.push(String.from("li1ei2e4:spame"))
+  docs.push(String.from("d4:infod6:lengthi1024e4:name9:file.txtee"))
+  docs.push(String.from("d1:bi1e1:ai2ee"))
+  docs.push(String.from("i042e"))
+  docs.push(String.from("i-0e"))
+  docs.push(String.from("ie"))
+  docs.push(String.from("4:spam5:eggs"))
+  docs.push(String.from("d3:cow3:moo3:moo3:moo3:mooi1ee"))
+  docs.push(String.from("1:é"))
+  docs.push(String.from("li1e"))
+  docs.push(String.from(""))
+  var deep = String.new()
+  for _ in 0..40 { deep.push_str("l") }
+  deep.push_str("i1e")
+  for _ in 0..40 { deep.push_str("e") }
+  docs.push(move deep)
+
+  var ok = 0
+  var reordered = 0
+  var errs = 0
+  for i in 0..docs.len() {
+    var p = Parser { src: String.from(docs.at(i)), pos: 0, depth: 0 }
+    match parse_value(p) {
+      Ok(v) => {
+        if p.pos != p.src.len() {
+          print("doc {i + 1}: error at byte {p.pos}: trailing data after the value")
+          errs = errs + 1
+        } else {
+          let canon = encode_to(v)
+          if canon.eq(p.src) {
+            print("doc {i + 1}: ok {canon}")
+          } else {
+            print("doc {i + 1}: keys reordered")
+            print("  input   {p.src}")
+            print("  canonical {canon}")
+            reordered = reordered + 1
+          }
+          print("  sha256 {hash.sha256(canon)}")
+          ok = ok + 1
+        }
+      }
+      Err(f) => {
+        print("doc {i + 1}: error at byte {f.at}: {f.msg}")
+        errs = errs + 1
+      }
+    }
+  }
+  print("summary: {ok} ok ({reordered} reordered), {errs} errors")
+}

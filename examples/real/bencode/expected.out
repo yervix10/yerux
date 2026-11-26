@@ -1,0 +1,19 @@
+doc 1: ok d3:cow3:moo4:spam4:eggse
+  sha256 a45ff8b0217fa7f6adf081a3e001d004f4f607bb56e4b0d61125cd3a53cd9535
+doc 2: ok li1ei2e4:spame
+  sha256 8ecf8854a3bdb5a87f55e3c034eb01c6121e4df14d2963324db94eac557a62f1
+doc 3: error at byte 40: unterminated dictionary
+doc 4: keys reordered
+  input   d1:bi1e1:ai2ee
+  canonical d1:ai2e1:bi1ee
+  sha256 c516bfed0601152b6d5bad1db58c119a2b2ed09b027c67a377084ee906ff489d
+doc 5: error at byte 1: integer has a leading zero
+doc 6: error at byte 2: integer must not be negative zero
+doc 7: error at byte 1: integer has no digits
+doc 8: error at byte 6: trailing data after the value
+doc 9: error at byte 21: duplicate dictionary key
+doc 10: error at byte 3: byte string ends inside a character
+doc 11: error at byte 4: unterminated list
+doc 12: error at byte 0: unexpected end of input
+doc 13: error at byte 32: nesting deeper than 32 levels
+summary: 3 ok (1 reordered), 10 errors

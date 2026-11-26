@@ -1163,3 +1163,11 @@ ASan/UBSan.
      ```
      tomllib rejects both spellings. Golden in `tests/expected/std_toml_empty.out`.
      *Fixed:* `[]` and `[ ]` are both malformed headers (`tests/std_toml_check.yx`).
+
+## Round 21: poker, bencode, maze
+
+Three more programs under `examples/real/`, each built on both backends with the output pinned by `tests/real_programs.sh`:
+`poker` (hand evaluation and ranking, including the ace-low straight), `bencode` (an encoder and decoder with error
+cases) and `maze` (a seeded recursive-backtracker, ASCII rendering and BFS; it checks its own invariant, carved passages
+equal cells minus one). They compile and run with identical output on the C and native backends. No new frictions came
+out of them.

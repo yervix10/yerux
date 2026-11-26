@@ -1,0 +1,220 @@
+// maze: carves two fixed mazes with a seeded recursive-backtracker (wall bits
+// per cell, no bitwise operators), renders them as ASCII with the shortest
+// start-to-goal path marked S * G, and prints BFS stats: carved passages must
+// equal cells - 1 (a perfect maze), path steps, cells touched by the search,
+// and dead ends (cells with a single passage).
+// No arguments; exit 0.
+//   yerux run examples/real/maze/main.yx     |  yerux build examples/real/maze/main.yx [--native] -o BIN
+import std.rand
+
+struct Maze {
+  w: Int,
+  h: Int,
+  walls: List<Int>,
+}
+
+struct Route {
+  path: List<Int>,
+  touched: Int,
+  found: Bool,
+}
+
+fn bit_of(dir: Int) -> Int {
+  if dir == 0 { return 1 }
+  if dir == 1 { return 2 }
+  if dir == 2 { return 4 }
+  return 8
+}
+
+fn has_wall(m: view Maze, x: Int, y: Int, dir: Int) -> Bool {
+  let bit = bit_of(dir)
+  let w = m.walls.at(y * m.w + x)
+  return (w / bit) % 2 == 1
+}
+
+fn neighbor(cur: Int, dir: Int, w: Int) -> Int {
+  if dir == 0 { return cur - w }
+  if dir == 1 { return cur + 1 }
+  if dir == 2 { return cur + w }
+  return cur - 1
+}
+
+fn carve(w: Int, h: Int, seed: Int) -> Maze {
+  var walls = List<Int>.new()
+  for _ in 0..w * h { walls.push(15) }
+  var visited = List<Int>.new()
+  for _ in 0..w * h { visited.push(0) }
+  var rng = rand.new(seed)
+  var stack = List<Int>.new()
+  visited.set(0, 1)
+  stack.push(0)
+  while stack.len() > 0 {
+    let cur = stack.at(stack.len() - 1)
+    let cx = cur % w
+    let cy = cur / w
+    var nbs = List<Int>.new()
+    var dirs = List<Int>.new()
+    if cy > 0 && visited.at(cur - w) == 0 {
+      nbs.push(cur - w)
+      dirs.push(0)
+    }
+    if cx + 1 < w && visited.at(cur + 1) == 0 {
+      nbs.push(cur + 1)
+      dirs.push(1)
+    }
+    if cy + 1 < h && visited.at(cur + w) == 0 {
+      nbs.push(cur + w)
+      dirs.push(2)
+    }
+    if cx > 0 && visited.at(cur - 1) == 0 {
+      nbs.push(cur - 1)
+      dirs.push(3)
+    }
+    if nbs.len() == 0 {
+      stack.pop()
+    } else {
+      let k = rand.range(rng, 0, nbs.len())
+      let nxt = nbs.at(k)
+      let dir = dirs.at(k)
+      let opp = (dir + 2) % 4
+      walls.set(cur, walls.at(cur) - bit_of(dir))
+      walls.set(nxt, walls.at(nxt) - bit_of(opp))
+      visited.set(nxt, 1)
+      stack.push(nxt)
+    }
+  }
+  return Maze { w: w, h: h, walls: move walls }
+}
+
+fn solve(m: view Maze) -> Route {
+  let cells = m.w * m.h
+  let target = cells - 1
+  var parent = List<Int>.new()
+  for _ in 0..cells { parent.push(0 - 1) }
+  var queue = List<Int>.new()
+  queue.push(0)
+  parent.set(0, 0)
+  var head = 0
+  var touched = 0
+  var found = false
+  while head < queue.len() {
+    let cur = queue.at(head)
+    head = head + 1
+    touched = touched + 1
+    if cur == target {
+      found = true
+      break
+    }
+    let cx = cur % m.w
+    let cy = cur / m.w
+    for dir in 0..4 {
+      if !has_wall(m, cx, cy, dir) {
+        let nb = neighbor(cur, dir, m.w)
+        if nb >= 0 && nb < cells && parent.at(nb) == 0 - 1 {
+          parent.set(nb, cur)
+          queue.push(nb)
+        }
+      }
+    }
+  }
+  var path = List<Int>.new()
+  if found {
+    var at = target
+    while at != 0 {
+      path.push(at)
+      at = parent.at(at)
+    }
+    path.push(0)
+  }
+  return Route { path: move path, touched: touched, found: found }
+}
+
+fn render(m: view Maze, path: view List<Int>) -> String {
+  var on_path = List<Int>.new()
+  for _ in 0..m.w * m.h { on_path.push(0) }
+  for idx in path { on_path.set(idx, 1) }
+  var out = String.new()
+  var row = 0
+  while row < 2 * m.h + 1 {
+    var col = 0
+    while col < 2 * m.w + 1 {
+      if row % 2 == 0 && col % 2 == 0 {
+        out.push_byte(43)
+      } else if row % 2 == 0 {
+        let x = (col - 1) / 2
+        if row == 2 * m.h {
+          if has_wall(m, x, m.h - 1, 2) {
+            out.push_byte(45)
+          } else {
+            out.push_byte(32)
+          }
+        } else if has_wall(m, x, row / 2, 0) {
+          out.push_byte(45)
+        } else {
+          out.push_byte(32)
+        }
+      } else if col % 2 == 0 {
+        let y = (row - 1) / 2
+        var x = col / 2
+        var bit = 3
+        if col == 2 * m.w {
+          x = m.w - 1
+          bit = 1
+        }
+        if has_wall(m, x, y, bit) {
+          out.push_byte(124)
+        } else {
+          out.push_byte(32)
+        }
+      } else {
+        let x = (col - 1) / 2
+        let y = (row - 1) / 2
+        let idx = y * m.w + x
+        if idx == 0 {
+          out.push_byte(83)
+        } else if idx == m.w * m.h - 1 {
+          out.push_byte(71)
+        } else if on_path.at(idx) == 1 {
+          out.push_byte(42)
+        } else {
+          out.push_byte(32)
+        }
+      }
+      col = col + 1
+    }
+    out.push_str("\n")
+    row = row + 1
+  }
+  return out
+}
+
+fn run_maze(w: Int, h: Int, seed: Int) {
+  let m = carve(w, h, seed)
+  let route = solve(m)
+  let cells = w * h
+  var passages = 0
+  var dead = 0
+  for i in 0..cells {
+    let x = i % w
+    let y = i / w
+    var deg = 0
+    for dir in 0..4 {
+      if !has_wall(m, x, y, dir) { deg = deg + 1 }
+    }
+    passages = passages + deg
+    if deg == 1 { dead = dead + 1 }
+  }
+  passages = passages / 2
+  print("maze {w}x{h} seed {seed}")
+  print(render(m, route.path))
+  var status = "not found"
+  if route.found { status = "found" }
+  let steps = route.path.len() - 1
+  print("stats: passages {passages} (cells-1 = {cells - 1}), path {steps} steps ({status}), touched {route.touched} cells, dead ends {dead}")
+}
+
+fn main() {
+  run_maze(10, 6, 7)
+  run_maze(14, 9, 42)
+  print("summary: 2 mazes, both perfect (passages = cells - 1), both solved")
+}
