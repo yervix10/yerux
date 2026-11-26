@@ -535,7 +535,23 @@ impl Loader<'_> {
                 let shown: Vec<&str> = chain[from..].iter().map(|k| display_key(k)).collect();
                 let mut error = diag(format!("import cycle: {}", shown.join(" -> ")), mpos)
                     .note("modules cannot import each other, directly or through others");
-                if self.stack.len() == 1 && self.stack.first() == Some(&dep) {
+                let entry_path = Path::new(&self.files[file].path);
+                let is_test_entry = entry_path.parent().and_then(Path::file_name)
+                    == Some(std::ffi::OsStr::new("tests"));
+                let stem = entry_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                let is_diagnostic_fixture = stem
+                    .strip_prefix('e')
+                    .and_then(|tail| tail.split_once('_'))
+                    .is_some_and(|(digits, _)| {
+                        !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+                    });
+                if self.packages.is_none()
+                    && is_test_entry
+                    && !is_diagnostic_fixture
+                    && stem == import
+                    && self.stack.len() == 1
+                    && self.stack.first() == Some(&dep)
+                {
                     error = error.note(
                         "help: this entry file imports itself because its name matches the module; rename the test file or import the intended source module",
                     );

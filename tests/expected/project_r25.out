@@ -2,4 +2,3 @@ project mode without dependencies: check ok
 project mode: build and run ok
 project mode: test ok
 project mode without dependencies: LSP diagnostics clean
-self-named test import: diagnostic golden ok

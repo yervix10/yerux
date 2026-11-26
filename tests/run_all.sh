@@ -168,6 +168,7 @@ AUX=(
   "tool_add|bash tests/tool_add.sh"
   "packages|bash tests/packages.sh"
   "project_r25|bash tests/project_r25.sh"
+  "project_self_import|bash tests/project_self_import.sh"
   "run_args|bash tests/run_args.sh"
   "range_ir|bash tests/range_ir.sh"
   "inline_ir|bash tests/inline_ir.sh"

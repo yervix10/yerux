@@ -123,19 +123,5 @@ finally:
         proc.kill()
 PY
 
-mkdir -p "$T/standalone/tests"
-cat >"$T/standalone/tests/almacen.yx" <<'SOURCE'
-import almacen
-fn main() {}
-SOURCE
-(
-  cd "$T/standalone"
-  if "$Y" check tests/almacen.yx >"$T/self.out" 2>"$T/self.err"; then
-    echo "expected self import to fail" >&2
-    exit 1
-  fi
-)
-cmp "$T/self.err" "$ROOT/tests/expected/project_self_import.err"
-printf 'self-named test import: diagnostic golden ok\n' >>"$T/result.out"
 cmp "$T/result.out" "$ROOT/tests/expected/project_r25.out"
 echo "project_r25: ok"
