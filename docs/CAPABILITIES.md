@@ -19,8 +19,9 @@ So today:
 - `std.fs`, `std.net`, `std.process` and `std.env` are callable from any module of any package with no
   check, and a dependency may declare `extern` blocks and use `unsafe`.
 - Any code can call `caps.all()`, so receiving a narrow value restricts only code that uses nothing else.
-- The reserved intrinsics (`__syscall` and the others, docs/STDLIB_IO.md) are also callable from user
-  code, without `unsafe` and without an import.
+- Any code can also call the reserved intrinsics (`__syscall` and the others, docs/STDLIB_IO.md) without an
+  import, inside an `unsafe` block. Outside the standard library they are rejected without it, but
+  writing `unsafe` needs no permission.
 
 `std.caps` therefore prevents mistakes in cooperating code. It is **not a security boundary** against
 untrusted dependencies.
@@ -192,8 +193,9 @@ Code that does not use `std.caps` is not checked at all.
 
 **Not implemented.** An `extern` call, a `Ptr` operation or a reserved intrinsic can make an `fs` or `net` syscall without going through
 the stdlib. Therefore an `extern` block needs the `ffi` capability (docs/FFI.md section 7), and
-`unsafe` is still required for the call itself. For a package with neither capability to be unable to
-reach the OS, the reserved intrinsics (`__syscall` and the others) would have to be gated too.
+`unsafe` is still required for the call itself. The reserved intrinsics (`__syscall` and the others) and
+`push_raw` already need `unsafe` outside the standard library, so for a package with neither capability to be
+unable to reach the OS, `unsafe` itself would have to be gated.
 
 ## 7. stdin, stdout and stderr
 
@@ -240,5 +242,5 @@ is a deliberate exclusion and should be revisited only if a use case needs it.
    stdlib entry points. *Values implemented (`std.caps`); compile-time checks not implemented.*
 3. Narrowing with runtime checks, starting with `fs.root` and `process` program lists. *Implemented for all
    four capabilities.*
-4. `ffi` gating for `extern` and `unsafe` (and the reserved intrinsics). *Not implemented; FFI itself works
-   (docs/FFI.md).*
+4. `ffi` gating for `extern` and `unsafe` (and so the reserved intrinsics). *Not implemented; the
+   intrinsics need `unsafe`, which any package may write. FFI itself works (docs/FFI.md).*

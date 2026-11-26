@@ -177,8 +177,9 @@ The design has two orthogonal checks. Only the first exists.
    operations that touch memory or build an address (`alloc`, `free`, `read`, `write`, arithmetic,
    `addr`, `from_addr`; `tests/e1564_ptr_outside_unsafe.yx`). `Ptr<T>.null()` and `is_null()` need no `unsafe`, and a
    `Ptr` can be stored in a struct or moved into a task: the compiler checks nothing about what it points to.
-   `#![forbid(unsafe)]` is **not implemented**. The reserved `__` intrinsics (docs/STDLIB_IO.md) bypass
-   this gate: user code can call them without `unsafe`.
+   `#![forbid(unsafe)]` is **not implemented**. The raw `__` intrinsics (docs/STDLIB_IO.md) and
+   `push_raw` need `unsafe` too outside the standard library
+   (`tests/e2170_intrinsic_outside_unsafe.yx`, `tests/e2171_push_raw_outside_unsafe.yx`); `raw_addr` needs none.
 2. **`ffi` capability** (authority). **Not implemented.** The idea: a package may declare `extern` blocks or
    use `unsafe` only if its manifest requests `ffi` and the root application grants it, so third-party code
    cannot silently `dlopen` or issue syscalls; syscall-level capabilities (`net`, `fs`) would subdivide it.

@@ -55,7 +55,8 @@ Rules:
 
 The reserved concurrency runtime intrinsics on x86-64 Linux are documented
 in [docs/CONCURRENCY.md](docs/CONCURRENCY.md). They require the caller to manage
-thread handles and atomic storage manually.
+thread handles and atomic storage manually, and an `unsafe { .. }` block outside
+the standard library.
 
 ## Syntax
 ```
@@ -295,14 +296,13 @@ of the contents that borrow their receiver can also be called on the
 `Shared` handle. `Locked.new(value)` protects an owned value. Use
 `with(|value| { ... })` to access it exclusively, `with_view(|value| ...)`
 to borrow it for reading under the same mutex, and `take()` to consume a
-directly owned lock and recover its value. Inside a `with` closure (of a
-`Locked` or a `Mutex`) waiting or acquiring another lock is rejected, also
-through any chain of function and method calls (`join`, `recv`, `spawn`,
-`std.io` file and line reads and writes, sleeping). Calls through stored function
-values or trait objects, destructors, a bounded `send` and `RwLock` closures are
-not followed. If a worker panics while
-holding a lock, the lock is poisoned and wakes its waiters. Subsequent access
-panics, so partial updates cannot be observed through the lock.
+directly owned lock and recover its value. Inside a `with` closure (of a `Locked` or a `Mutex`) waiting or
+acquiring another lock is rejected, also through any chain of function and method calls: `join`, `recv`,
+`spawn`, `parallel for`, thread-pool operations, `io.read_line`, `io.read_file`, `io.write_file` and sleeping.
+This is not a complete blocking analysis; what it misses is listed in
+[docs/CONCURRENCY.md](docs/CONCURRENCY.md#locks-and-waiting). If a worker panics while holding a lock, the
+lock is poisoned and wakes its waiters. Subsequent access panics, so partial updates cannot be observed
+through the lock.
 
 `Atomic.new(value)` supports `Int` and `Bool`. Both use sequentially
 consistent `load`, `store`, `swap` and `compare_swap`. An integer
@@ -318,8 +318,7 @@ order is unspecified. A panic in a parallel iteration remains process-fatal.
 The Linux AArch64 and Windows native targets also run workers, channels, locks and
 atomics, with the limits listed in [docs/BACKEND.md](docs/BACKEND.md) and
 [docs/WINDOWS.md](docs/WINDOWS.md). A worker that panics writes its message to stderr
-before `join` returns `Err`. The lock checks are direct only: waiting or locking inside
-`with` through a called function is not detected.
+before `join` returns `Err`.
 See [docs/CONCURRENCY.md](docs/CONCURRENCY.md) for implementation status.
 
 ## Effects and capabilities
@@ -329,12 +328,12 @@ package may import `std.fs`, `std.net`, `std.process` and `std.env`, declare `ex
 `unsafe`. A `[capabilities]` section in `yerux.toml` is not read (it is ignored without a warning),
 and `main` takes no parameters.
 
-What exists is the library `std.caps`: values (`Caps`, `Fs`, `Net`, `Process`, `Env`) that wrap the
-standard modules, can only be narrowed, and refuse at **run time** with an `IoError` of kind
-`PermissionDenied` (`tests/caps_grant.yx`, `tests/caps_deny.yx`). It is advisory: any code can still
-call `caps.all()` or use the underlying modules and intrinsics, so it is not a security boundary
-against untrusted code. Manifest grants, compile-time checks and `ffi`/`threads` capabilities are
-not implemented: [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+What exists is the library `std.caps`: values (`Caps`, `Fs`, `Net`, `Process`, `Env`) that wrap the standard
+modules, can only be narrowed, and refuse at **run time** with an `IoError` of kind `PermissionDenied`
+(`tests/caps_grant.yx`, `tests/caps_deny.yx`). It is advisory: any code can still call `caps.all()`, use the
+underlying modules, or reach the intrinsics from an `unsafe` block, so it is not a security boundary against
+untrusted code. Manifest grants, compile-time checks and `ffi`/`threads` capabilities are not implemented:
+[docs/CAPABILITIES.md](docs/CAPABILITIES.md).
 
 ## Traits
 A trait names a set of methods; a type opts in with an `impl`. Calls on concrete types or types with trait bounds use static dispatch.
@@ -412,7 +411,7 @@ The compiler embeds all 30 modules of `src/std/` (plain Yerux, `std.io` included
 ## Standard I/O (`import std.io`)
 A module of the standard library, embedded in the compiler: `import std.io` (used as `io.read_line()`, `io.read_file(path)`, `io.args()`, `io.exit(code)`, `io.monotonic_ns()`, `io.sleep_ms(ms)`, ...). Every failure is a value: operations return `Result<T, io.IoError>` where `IoError { kind: IoErrorKind, code: Int, message: String }` (and `?` works as usual); `String`s read from the outside are validated as UTF-8 (`InvalidData` otherwise). Full API, rules and tests: [docs/STDLIB_IO.md](docs/STDLIB_IO.md).
 
-It is written in Yerux over a small set of reserved intrinsics (`__syscall(nr, a1..a6)`, `__global(i)`, `__alloc`, `__free`, `__load8/64`, `__store8/64`, and the `String` methods `raw_addr()` / `push_raw(addr, n)`), all on plain `Int` addresses: no libc and no FFI on the native path. The native x86-64 Linux backend emits a `syscall` instruction; the C backend (oracle) calls libc `syscall()`. AArch64 and Windows support a documented part of this surface and report the unsupported operations at compile time: [docs/BACKEND.md](docs/BACKEND.md), [docs/WINDOWS.md](docs/WINDOWS.md). The reserved intrinsics are not access-controlled: user code can call them (see Effects and capabilities).
+It is written in Yerux over a small set of reserved intrinsics (`__syscall(nr, a1..a6)`, `__global(i)`, `__alloc`, `__free`, `__load8/64`, `__store8/64`, and the `String` methods `raw_addr()` / `push_raw(addr, n)`), all on plain `Int` addresses: no libc and no FFI on the native path. The native x86-64 Linux backend emits a `syscall` instruction; the C backend (oracle) calls libc `syscall()`. AArch64 and Windows support a documented part of this surface and report the unsupported operations at compile time: [docs/BACKEND.md](docs/BACKEND.md), [docs/WINDOWS.md](docs/WINDOWS.md). Outside the standard library a call to a raw intrinsic or to `push_raw` must be inside `unsafe { .. }` (`raw_addr` needs none; `tests/e2170_intrinsic_outside_unsafe.yx`, `tests/e2171_push_raw_outside_unsafe.yx`). `unsafe` is not a capability: any package may write it (see Effects and capabilities).
 
 ## Loops, `break` and `continue`
 ```

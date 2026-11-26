@@ -36,7 +36,7 @@ A feature not mentioned in this document is **Experimental** by default.
 | Panics and exit code 101 (SPEC 4.4) | Stable | tests/spec_02_range_int.yx (`.code` 101) |
 | Modules, `import`, `pub`, packages (SPEC 6, PACKAGES.md) | Stable-candidate | tests/mod_ok, tests/mod_err, tests/packages.sh |
 | Concurrency: `scope`, `spawn move`, `JoinHandle`, `Shared`, `Locked`, `Atomic`, channels, pools (SPEC 5) | Experimental | tests/conc_*.yx, tests/concurrency*.yx |
-| Raw runtime intrinsics `__thread_*`, `__atomic_*`, `__futex_*` | Internal | SPEC 5.6 |
+| Raw runtime intrinsics `__thread_*`, `__atomic_*`, `__futex_*` (need `unsafe` outside the standard library) | Internal | SPEC 5.6, tests/e2170_intrinsic_outside_unsafe.yx |
 | FFI: `extern "C"`, `link`, variadic calls, `Ptr<T>` (SPEC 7) | Experimental | tests/ffi_*.yx, tests/ptr_construct.yx, tests/ptr_rw.yx |
 | `const` items and `comptime` expressions (SPEC 8.1-8.2) | Stable-candidate | tests/comptime_basic.yx, tests/const_item_basic.yx |
 | `comptime fn`, `comptime for/if`, reflection, comptime allocators | Not yet available | SPEC 10 |

@@ -65,7 +65,10 @@ fn main() {
 
 Handles still in the list when it is dropped are joined at that point.
 
-Using `spawn` outside a `scope`, or capturing a borrowed variable, is a compile error:
+A worker gets its own copy of a captured number or other Copy value, so assigning it inside the worker is a
+compile error: return the result and read it with `join()`, or share it (below).
+
+Using `spawn` outside a `scope`, or capturing a borrowed variable, is a compile error too:
 
 ```yerux error=scope
 fn main() {
@@ -113,7 +116,8 @@ fn main() {
 ```
 
 A worker that panics while holding a `Locked` poisons it: later accesses panic instead of reading half-updated
-data. Waiting for something else while holding a lock, or locking the same `Locked` twice, is rejected.
+data. Waiting for something else while holding a lock, or taking a second lock, is rejected, also when it happens
+inside a function the closure calls ([the limits](../CONCURRENCY.md#locks-and-waiting)).
 
 ## `parallel for`
 

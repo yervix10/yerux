@@ -19,7 +19,8 @@ under a futex-backed mutex. A worker returns its cache to the shared lists
 under one lock when it exits. Allocation counters use atomic increments. The
 C oracle uses pthreads and C11 atomics.
 
-The reserved runtime intrinsics are `__thread_start(fn() -> Int) -> Int` and
+The reserved runtime intrinsics (callable only inside `unsafe { .. }` outside the
+standard library) are `__thread_start(fn() -> Int) -> Int` and
 `__thread_wait(Int) -> Int`. The returned integer is an opaque handle that the
 caller must wait on exactly once. The 64-bit atomic intrinsics take an address
 aligned to eight bytes. `__atomic_load(addr)` reads, `__atomic_store(addr, x)`
@@ -40,8 +41,9 @@ The AArch64 implementation is tested under QEMU. Windows PE implements workers
 with `CreateThread` and contended locks with `WaitOnAddress` (limits in
 [WINDOWS.md](WINDOWS.md)). The structured API uses `scope { ... }`, `spawn move` and
 `JoinHandle<T>.join() -> Result<T, ThreadPanic>`. Owned captures are moved,
-and scalar captures are copied (changing such a copy inside the worker is a compile error). Waiting or locking
-inside a `with` closure is rejected also through function calls. Borrow captures into spawned workers are
+and scalar captures are copied: assigning such a copy inside the worker (or a field or element of it, or
+lending it as `mut`) is a compile error. A `move` closure created inside the worker may change its own copy.
+Borrow captures into spawned workers are
 rejected, including borrowed scalar parameters. Handles join when dropped.
 A `List<JoinHandle<T>>` collects the workers of a loop (`handles.push(move h)`, then `remove`/`pop` + `join`);
 a handle declared in a loop body and still owned at the end of the iteration is a compile error, because
@@ -62,7 +64,7 @@ remain fatal.
 A worker that panics while holding a `Locked` guard poisons the lock and
 wakes waiting threads. A later access panics before reading the contents.
 The current lock uses the same exclusive mutex for `with` and `with_view`.
-Direct nested locking and waiting in a lock closure are rejected.
+Nested locking and waiting in a lock closure are rejected ([Locks and waiting](#locks-and-waiting)).
 Native and C `print` calls serialize complete lines.
 
 `parallel for` supports integer ranges and read-only list iteration. It runs
@@ -101,11 +103,32 @@ each `parallel for` still create their own workers.
 The actor examples and the `Channel<T>` examples below describe APIs that are
 not implemented.
 
-The checks inside `with` are direct only: a `with` closure that calls `recv`,
-`join` or another lock directly is rejected (`cannot wait or acquire a lock
-inside a with closure`), but the same operation inside a called function is
-accepted. There is no per-function "blocks" analysis. Diagnostics carry no
-`E-C` codes.
+### Locks and waiting
+
+A closure that runs while a `Locked` or a `Mutex` is held (`with`, `with_view`, `update`,
+`mutex_with`, `mutex_with_view`, `mutex_update`) must not wait or acquire another lock. The error is
+`cannot wait or acquire a lock inside a with closure`. The checker follows function and method calls in
+user and standard library code, closures passed to a call and local closures that are called, and a note
+shows the chain (`'total' may wait: total -> first -> Receiver.recv`). The operations that count are:
+taking a `Locked` or `Mutex`; `spawn`, `parallel for` and `join`; `recv`, `recv_timeout` and `select2`;
+`ThreadPool.parallel_for`, `ThreadPool.close` and `thread_pool_map`; the raw `__thread_start`,
+`__thread_wait` and `__futex_park`; `io.read_line`, `io.read_file`, `io.write_file`, `io.sleep_ms` and
+`io.sleep_ns` (so also `std.time.sleep`).
+
+Not detected:
+
+- calls through a function value received as a parameter or stored in a variable, struct or list and
+  passed on, and calls through a trait object;
+- what a destructor does (including the implicit join of a dropped handle);
+- `send` on a full bounded channel;
+- `RwLock`: acquiring one inside `with` is accepted, and the closures of `rwlock_read`/`rwlock_write`
+  are not checked;
+- blocking calls that do not go through the operations above, for example `std.net` sockets,
+  `io.append_file`, `io.read_all` and `extern` functions.
+
+In a `Locked` closure, a method named `with`, `with_view`, `join`, `recv`, `sleep_ms`, `read_line`,
+`read_file` or `write_file` is rejected by name, even one that does not wait (`parts.join(",")`).
+Diagnostics carry no `E-C` codes.
 
 ## Current APIs and runnable examples
 
@@ -143,8 +166,9 @@ print(rx.recv().is_none())
 
 `Mutex<T>` is a named facade over `Locked<T>`. Use `mutex_update` for a
 mutation and `mutex_with_view`/`mutex_with` when the callback returns an owned
-result. The callback keeps the lock held, so do not block or wait for another
-worker inside it. `RwLock<T>` exposes `rwlock_read` and `rwlock_write`; several
+result. The callback keeps the lock held, so it must not block or wait for another worker (the cases the
+checker rejects are under [Locks and waiting](#locks-and-waiting)). `RwLock<T>` exposes `rwlock_read` and
+`rwlock_write`; several
 read callbacks may overlap, while a write callback is exclusive. Acquisition
 spins and does not promise writer fairness. A panic in an RwLock callback can
 leave it held. `Atomic<Int>` and `Atomic<Bool>` expose sequentially consistent
@@ -297,7 +321,7 @@ print(counter.with(n => n))
 - `Locked<T>` pairs a mutex with an owned `T`. The *only* access is the scoped method `l.with(f)`, where `f` is a **second-class closure that receives the content as a parameter** (`view T` or `mut T`). The lock is released when `f` returns. Because borrows are second-class, the content reference cannot leak out of `f`, so no guard objects, no `MutexGuard<'a>`, no forgetting to unlock, no lock held across `.await`-like points by accident.
 - `with` returns whatever `f` returns (it must be an owned value: `Int`, `String`, a moved value). Returning the borrowed parameter is already an error by the existing "cannot return a borrow" rule.
 - `l.with_view(f)` also takes the exclusive lock. Shared reads use `RwLock`, which exists; a fairness guarantee is not implemented.
-- Inside `f` the closure may not call `with` on the same `Locked` (self-deadlock; detected statically in the simple case, see section 11) and may not `spawn`/`join`/block on a channel (error E-C6, "do not wait while holding a lock").
+- Inside `f` the closure may not call `with` on the same `Locked` (self-deadlock; any second lock is rejected, see "Locks and waiting") and may not `spawn`/`join`/block on a channel (error E-C6, "do not wait while holding a lock").
 - `Locked.take(move self) -> T` consumes the lock when you hold the only handle (after the scope).
 - Design text, superseded: worker panics are recoverable today, so a `Locked` held by a panicking worker is **poisoned** and a later access panics.
 
@@ -411,10 +435,10 @@ parallel for i in 0..n { lock.with(mut l => l.push(i)) }    // Locked
 
 Data races are impossible (statically). **Deadlock and livelock are not**, as in every language with locks. Mitigations, from cheap to expensive:
 1. **Scoped locking only** (`with`): no lock is held across a function that the closure doesn't syntactically see being called... except through calls. A lock cannot be held "by accident" past its closure.
-2. **Static check for the common self-deadlock**: within one `with` closure, a second `with` on the same `Locked` variable (or alias obtained from the same `Shared` clone) is error E-C4.
+2. **Static check for the common self-deadlock**: within one `with` closure, a second `with` on the same `Locked` variable (or alias obtained from the same `Shared` clone) is error E-C4. (Implemented more strictly: any second `Locked` or `Mutex` is rejected, with no `E-C` code.)
 3. **Lock order**: `Locked.new_ordered(level: 1, x)` (optional integer level). The runtime in debug builds asserts that locks are taken in increasing level order per thread and reports both lock sites. Release builds omit the check. Library types (`Channel`) use levels internally.
 4. **Debug-build deadlock detector**: on a lock wait that exceeds 2 s, build the wait-for graph (lock owner table + per-thread "waiting on" slot); if a cycle exists print it with source locations and exit 101.
-5. **`with` may not block** (E-C6): no `recv`, `join`, `sleep`, nested `scope`, or file/network syscalls inside it (the design is an effect annotation computed per function, `blocks`, propagated through calls. **Not implemented**: there is no effect system, only the direct-call check for waiting and locking).
+5. **`with` may not block** (E-C6): no `recv`, `join`, `sleep`, nested `scope`, or file/network syscalls inside it (the design is an effect annotation computed per function, `blocks`, propagated through calls. The annotation is **not implemented**: there is no effect system, and the checker follows calls to find waiting and locking instead, with the limits listed under "Locks and waiting").
 6. Priority inversion/unbounded waits: documented, not solved.
 
 ## 12. Actors (library, on top)

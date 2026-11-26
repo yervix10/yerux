@@ -726,6 +726,11 @@ section lists only what the tests fix. Anything not listed is **no especificado*
 - A `view` (borrowed) value cannot be captured by a task (tests/e732_spawn_view_capture.yx).
   A borrowed `mut` value cannot be captured either (tests/e733_spawn_mut_capture.yx). A borrowed
   parameter cannot be moved into a task (tests/e730_thread_runtime_borrow.yx).
+- A task works on its own copy of a captured Copy value, so changing it is an error: assigning it, a
+  field or an element, or lending it as `mut`, directly or from a borrowing closure
+  (tests/e2174_spawn_assign_capture.yx, tests/e2175_spawn_lend_capture.yx,
+  tests/e2176_spawn_closure_assigns_capture.yx). A `move` closure created inside the task may change its
+  own copy.
 - A value moved into a task cannot be used by the parent afterwards (tests/e735_spawn_use_after_move.yx).
 - A value whose type is bound to a thread (for example one that holds a `Window`) cannot be
   transferred to a task (tests/e734_spawn_thread_bound.yx).
@@ -750,8 +755,11 @@ section lists only what the tests fix. Anything not listed is **no especificado*
 - `Locked<T>` is accessed only through callbacks: `with(f)` (exclusive, may return an owned value)
   and `with_view(f)` (tests/conc_sharing.yx). `take()` consumes the lock and returns the content
   (tests/conc_sharing.yx).
-- Waiting on a task or channel, or acquiring another lock, inside a `with` callback is an error
-  (tests/e739_locked_wait.yx, tests/e743_locked_reentry.yx).
+- Waiting on a task or channel, or acquiring another lock, inside a `with` callback of a `Locked` or a
+  `Mutex` is an error (tests/e739_locked_wait.yx, tests/e743_locked_reentry.yx), also through any chain of
+  function and method calls (tests/e2172_with_wait_through_function.yx,
+  tests/e2173_mutex_update_lock_through_method.yx). The operations covered and the cases not detected are
+  listed in CONCURRENCY.md, "Locks and waiting".
 - Poisoning: if a task panics inside a `with` callback, a later access from another task fails
   (`join()` returns an error) instead of reading the content (tests/conc_sharing.yx).
 - `with_view(f)` / `mutex_with_view(m, f)` give `f` a read-only view but take the same exclusive lock as `with`
@@ -787,7 +795,9 @@ section lists only what the tests fix. Anything not listed is **no especificado*
   split lines. The order of lines between tasks is **no especificado**.
 - Raw runtime intrinsics (reserved, not part of the stable API): `__thread_start(fn() -> Int) -> Int`,
   `__thread_wait`, `__atomic_load`, `__atomic_store`, `__atomic_cmpxchg`, `__atomic_fetch_add`,
-  `__futex_park`, `__futex_wake` (tests/conc_runtime.yx). `__futex_park` returns `-11` (EAGAIN) when the
+  `__futex_park`, `__futex_wake` (tests/conc_runtime.yx). Outside the standard library a call to any of
+  them must be inside `unsafe { .. }`, like every raw intrinsic and `push_raw`
+  (tests/e2170_intrinsic_outside_unsafe.yx, tests/e2171_push_raw_outside_unsafe.yx). `__futex_park` returns `-11` (EAGAIN) when the
   word does not match the expected value, and `__futex_wake` returns `0` (tests/conc_runtime.yx).
   A raw worker must return `Int` (tests/e729_thread_runtime_signature.yx). The address argument must
   be an `Int` (tests/e731_futex_address.yx).
