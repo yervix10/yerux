@@ -46,7 +46,7 @@ yerux lsp                                 # language server (VS Code extension i
   `tests/doctests.sh`, so it cannot drift from the compiler.
 - [Guide](docs/GUIDE.md): the one-page tour (also doc-tested).
 - [Language specification](SPEC.md) and [backend status](BACKEND.md).
-- [Standard library](docs/STDLIB.md) (prelude and the 22 `std.*` modules) and the area references:
+- [Standard library](docs/STDLIB.md) (prelude and the 30 `std.*` modules) and the area references:
   [I/O](docs/STDLIB_IO.md), [system](docs/STDLIB_SYSTEM.md), [processes](docs/STDLIB_PROCESS.md),
   [network](docs/NET.md), [HTTP](docs/HTTP.md), [regex/csv/toml](docs/REGEX_CSV_TOML.md), [kv](docs/STDLIB_KV.md),
   [compress](docs/STDLIB_COMPRESS.md), [sync](docs/STDLIB_SYNC.md), [Unicode](docs/UNICODE.md).
