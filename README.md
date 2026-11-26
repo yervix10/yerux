@@ -75,3 +75,11 @@ The VS Code extension lives in `editors/vscode`.
 prefixed with `e` that must fail to compile, and `examples/real/` with larger programs (calculator, key-value CLI,
 HTTP server and client, JSON, a mini-make, a small interpreter). `tests/` holds the golden-tested programs and the
 scripts that `tests/run_all.sh` runs; see [docs/TESTING.md](docs/TESTING.md).
+
+## Contributing
+
+The 1.0 surface is frozen: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) says which items are Stable and how
+they may change. [CONTRIBUTING.md](CONTRIBUTING.md) covers building from source, running a subset of the suite
+(`tests/run_all.sh PATTERN`, `tests/doctests.sh`, `tests/fmt.sh`), adding a test with golden outputs, and which
+platforms are actually tested. Bugs and feature requests have issue templates; a minimal program that
+reproduces the problem is the most useful thing you can paste.
