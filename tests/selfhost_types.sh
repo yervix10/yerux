@@ -21,8 +21,10 @@ report_mismatch() {
 }
 
 source_ast() {
-  "$bins/lexer" "$1" --positioned >"$tmp/tokens" &&
-    "$bins/parser" "$tmp/tokens" >"$tmp/ast"
+  local file=$1
+  shift
+  "$bins/lexer" "$file" --positioned >"$tmp/tokens" &&
+    "$bins/parser" "$tmp/tokens" "$@" >"$tmp/ast"
 }
 
 total=0
@@ -56,15 +58,19 @@ typed=0
 type_errors=0
 owned=0
 ownership_errors=0
-for file in tests/selfhost/{types,ownership}/*.yx; do
-  stage=$(basename "$(dirname "$file")")
-  source_ast "$file"
+for file in tests/selfhost/{types,ownership}/*.yx tests/e2323_tuple_match_nonexhaustive.yx; do
+  case "$file" in
+    tests/selfhost/ownership/*) stage=ownership; source_ast "$file" ;;
+    # The build parser emits the synthetic tuple definitions needed by the checker.
+    tests/e2323_*) stage=types; source_ast "$file" --build ;;
+    *) stage=types; source_ast "$file" ;;
+  esac
   rust_rc=0
   self_rc=0
   "$rust" types-file "$file" >"$tmp/rust" 2>"$tmp/rust-errors" || rust_rc=$?
   "$bins/types" "$stage" "$tmp/ast" >"$tmp/self" || self_rc=$?
   case "$(basename "$file")" in
-    bad_*)
+    bad_*|e2323_*)
       sed -n '/^error: /p' "$tmp/rust-errors" | sort >"$tmp/want"
       sed -n '/^error: /p' "$tmp/self" | sort >"$tmp/got"
       if [[ $rust_rc == 1 && $self_rc == 1 && -s "$tmp/want" ]] && cmp -s "$tmp/want" "$tmp/got"; then

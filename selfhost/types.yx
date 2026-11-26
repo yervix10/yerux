@@ -2600,6 +2600,15 @@ fn flat_variant(tree: view List<ast.AstNode>, node: Int) -> Bool {
   return true
 }
 
+// Other tuple columns (for example Int ranges) can require interval coverage.
+fn boolean_tuple(subject: view String) -> Bool {
+  if !subject.starts_with("$tuple") { return false }
+  for part in type_terms.arguments(subject) {
+    if part != "Bool" { return false }
+  }
+  return true
+}
+
 fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNode>, index: Int) -> Bool {
   var scrutinee = ast.child(tree, index, 0)
   var mutable = false
@@ -2694,7 +2703,7 @@ fn check_match(types: mut Types, returns: mut Returns, tree: view List<ast.AstNo
         }
       }
     }
-  } else if subject == "Bool" {
+  } else if subject == "Bool" || boolean_tuple(subject) {
     let uncovered = missing_pattern(types, tree, rows, columns, missing)
   }
   if missing.len() > 0 {

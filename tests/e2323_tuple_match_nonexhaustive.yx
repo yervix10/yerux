@@ -1,0 +1,7 @@
+fn main() {
+  let pair = (false, true)
+  match pair {
+    (false, false) => {}
+    (true, _) => {}
+  }
+}
