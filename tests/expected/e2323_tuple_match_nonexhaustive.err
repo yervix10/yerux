@@ -1,0 +1,8 @@
+error: `match` is not exhaustive: missing (false, true)
+ --> tests/e2323_tuple_match_nonexhaustive.yx:3:3
+  |
+3 |   match pair {
+  |   ^^^^^
+  = help: add the missing arms, or a catch-all arm `_ => { }`
+
+1 error(s). Nothing was generated.

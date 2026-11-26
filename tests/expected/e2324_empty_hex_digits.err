@@ -1,0 +1,7 @@
+error: expected digits after `0x`
+ --> tests/e2324_empty_hex_digits.yx:1:19
+  |
+1 | fn main() { print(0x) }
+  |                   ^^
+
+1 error(s). Nothing was generated.

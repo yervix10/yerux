@@ -1,0 +1,7 @@
+error: unexpected letters after a number
+ --> tests/e2325_invalid_binary_digit.yx:1:19
+  |
+1 | fn main() { print(0b102) }
+  |                   ^^^^^
+
+1 error(s). Nothing was generated.

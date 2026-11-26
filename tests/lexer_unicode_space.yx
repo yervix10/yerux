@@ -1,0 +1,2 @@
+// A vertical tab and a no-break space are token separators.
+fn main() { print(20+ 22) }

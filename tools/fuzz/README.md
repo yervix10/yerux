@@ -42,3 +42,22 @@ En `f1514ce` (Linux x86-64) coincidieron los 2100 casos del ejemplo y otros 210 
   Ejemplo: `python3 tools/fuzz/fuzz_stdlib.py --cases 3000 --seed 7 --suite all --jobs 6`.
   Las divergencias conocidas y aceptadas (enteros fuera de `Int64`, números no finitos en JSON, espacios o `_` en
   `parse_int`/`parse_float`) están explicadas en `docs/REAL_PROGRAMS.md`, ronda 23.
+
+## Compilador Rust frente a selfhost
+
+```sh
+cargo build --release
+YERUX_SEED=target/release/yerux bash selfhost/bootstrap.sh target/selfhost
+python3 tools/fuzz/fuzz_selfhost.py --seed 233000 --count 2100 -j 8 --out /tmp/yerux-selfhost-fuzz
+```
+
+En Linux, muta programas independientes de `tests/` y `examples/` que el compilador Rust acepta, más los
+generados por `fuzz_backends.py`. Usa los mutadores de `fuzz_valid.py` y `fuzz_syntax.py` y omite duplicados.
+Compara el estado de `c` de ambos compiladores y, cuando rechazan, el primer mensaje principal, incluido el
+código del diagnóstico si aparece. Cuando ambos generan C, lo compila con el mismo `cc -O0` y compara stdout
+y el estado del ejecutable. Usa solo semillas locales sin dependencias del sistema y ejecuta en directorios
+temporales con plazos. El arnés es manual y queda fuera de la suite.
+
+`results.jsonl` tiene un registro por caso. Cada caso marcado conserva su fuente y sus diagnósticos en
+`case-<id>/`; en un desacuerdo de ejecución conserva también las salidas. Pasa uno o más archivos
+independientes como argumentos posicionales para repetir o reducir un hallazgo en un directorio de salida nuevo.

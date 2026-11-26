@@ -206,6 +206,17 @@ fn raw_closes(src: view String, at: Int, hashes: Int) -> Bool {
   return true
 }
 
+// Rust's char::is_whitespace follows Unicode White_Space; only LF starts a new source line.
+fn unicode_space(c: Int) -> Bool {
+  return c == 133 || c == 160 || c == 5760 || (c >= 8192 && c <= 8202) ||
+    c == 8232 || c == 8233 || c == 8239 || c == 8287 || c == 12288
+}
+
+fn integer_suffix(s: view String) -> Bool {
+  return s == "i8" || s == "i16" || s == "i32" || s == "i64" ||
+    s == "u8" || s == "u16" || s == "u32" || s == "u64"
+}
+
 fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool, ol: Int, oc: Int) {
   var line = first_line
   var line_start = 0
@@ -215,9 +226,12 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool, ol: Int, oc:
     let b = src.byte(i)
     var tokpos = line
     if columns && line > 0 { tokpos = line + 1000000 * column_of(src, line_start, i) }
-    if b == 10 || b == 13 || b == 32 || b == 9 {
+    if (b >= 9 && b <= 13) || b == 32 {
       if b == 10 && line > 0 { line = line + 1; line_start = i + 1 }
       i = i + 1
+    }
+    else if b >= 128 && unicode_space(src.char_at(i).to_int()) {
+      i = i + src.char_size(i)
     }
     else if b == 47 && i + 1 < n && src.byte(i + 1) == 47 {
       while i < n && src.byte(i) != 10 { i = i + 1 }
@@ -256,7 +270,12 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool, ol: Int, oc:
       if radix == 10 {
         while i < n && (is_digit(src.byte(i)) || src.byte(i) == 95) { i = i + 1 }
       } else {
-        while i < n && (hex_value(src.byte(i)) >= 0 || src.byte(i) == 95) { i = i + 1 }
+        while i < n {
+          let byte = src.byte(i)
+          let digit = hex_value(byte)
+          if byte != 95 && (digit < 0 || digit >= radix) { break }
+          i = i + 1
+        }
       }
       let integer_end = i
       var is_float = false
@@ -279,6 +298,16 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool, ol: Int, oc:
       let raw = src.slice(start, i)
       let core = src.slice(start, core_end).replace("_", "")
       let suffix = raw.slice(core_end - start, raw.len())
+      if radix != 10 {
+        if core.len() == 2 {
+          var prefix = String.from("0b")
+          if radix == 16 { prefix = String.from("0x") }
+          report_error(src, ol, oc, "expected digits after `{prefix}`", start, core_end - start, "", "")
+        }
+        if suffix.len() > 0 && !integer_suffix(suffix) {
+          report_error(src, ol, oc, "unexpected letters after a number", start, core_end + 1 - start, "", "")
+        }
+      }
       if is_float || suffix == "f32" || suffix == "f64" {
         let row = "Float:{hex(core)}:{suffix}"; emit_row(tokpos, row)
       } else if radix != 10 {
