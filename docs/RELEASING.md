@@ -61,7 +61,7 @@ A candidate tag publishes a prerelease with `--latest=false`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yervix10/yerux/main/install.sh | sh
-curl -fsSL https://raw.githubusercontent.com/yervix10/yerux/main/install.sh | YERUX_VERSION=1.0.0 sh
+curl -fsSL https://raw.githubusercontent.com/yervix10/yerux/main/install.sh | YERUX_VERSION=1.1.0 sh
 ```
 
 The second command selects the candidate explicitly once GitHub publishes it.

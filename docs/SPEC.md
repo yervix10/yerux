@@ -8,7 +8,7 @@
 > [COMPATIBILITY.md](COMPATIBILITY.md), section 10, and are not resolved silently. Stability levels:
 > [COMPATIBILITY.md](COMPATIBILITY.md), section 9.
 
-Status: **draft**. Describes the language as implemented by `yerux` 1.0.0. Where the
+Status: **draft**. Describes the language as implemented by `yerux` 1.1.0. Where the
 implementation and this text disagree, the text is the target and the difference is recorded in
 section 10 (Pending decisions). Sources: [GUIDE.md](GUIDE.md), [DESIGN.md](DESIGN.md), the
 [book](book/README.md), and the feature specs linked from each section. Every `yx` example in

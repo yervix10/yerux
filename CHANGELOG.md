@@ -2,6 +2,28 @@
 
 Compiler versions match `VERSION` and the release tag. The language roadmap is in `docs/ROADMAP.md`.
 
+## 1.1.0
+
+Additions on top of 1.0.0; nothing that was Stable changed.
+
+- Added `std.cli` (subcommands, flags and generated help on top of `std.args`), Experimental in `docs/COMPATIBILITY.md`.
+- `derive Clone` now reaches through `Box`, so recursive enums and structs no longer need a hand-written `impl Clone`
+  (friction 138), in the Rust compiler and in self-host.
+- `yerux lsp` accepts `--stdio`, which is what LSP clients such as VS Code, Neovim and Helix append. Fixes the VS Code
+  extension failing to start the server with `could not read --stdio`.
+- Self-host: three acceptance bugs found by differential fuzzing (empty hex digits, invalid binary digit, non-exhaustive
+  tuple `match`) and a lexer fix for Unicode spaces; the remaining differences are documented as frictions 252-260.
+- `std.csv`: `csv.write` quotes a record whose only field is empty, so it reads back as one field in other tools
+  (friction 248); further `std.csv`, `std.json` and `std.toml` edge cases pinned with tests.
+- The installer prints the installed version and size, how to put `yerux` on the `PATH` for the user's shell, a notice
+  when no C compiler is found, and next steps; colors only on a terminal (`NO_COLOR` turns them off).
+- Release archives include `LICENSE-MIT` and `LICENSE-APACHE`; the project is licensed under MIT OR Apache-2.0.
+- Round 21-23 work: real programs `poker`, `bencode` and `maze`, and reusable fuzzers in `tools/fuzz/` (C against
+  native backend, Rust against self-host, standard library against Python oracles) with about 9000 cases run.
+- Repository: issue templates and `CONTRIBUTING.md`; README and guide checked from a clean install.
+- VS Code extension 0.3.0 (published on Open VSX and attached to each release): clear notice when `yerux` is not
+  installed, repository links, icon. It lives in `editors/vscode`.
+
 ## 1.0.0
 
 First stable release. The Rust compiler is the official implementation; the self-hosted compiler stays experimental.

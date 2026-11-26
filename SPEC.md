@@ -1,4 +1,4 @@
-# Yerux — Language reference (1.0.0)
+# Yerux — Language reference (1.1.0)
 
 > **Role of this document.** This is the detailed reference of the language, organised by feature.
 > It is the source for the feature list, examples and error messages. The structured
@@ -549,7 +549,7 @@ Lexer → parser → type + ownership checker → C generator → `cc -O2` (defa
 - Usage: `yerux check|c|build|run file.yx [-o output]`, `yerux fmt ...`, `yerux test ...`.
 
 ## Status and roadmap
-The current version is 1.0.0. [docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative roadmap:
+The current version is 1.1.0. [docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative roadmap:
 self-hosting is milestone M7 in docs/ROADMAP.md (partial today) and the 1.0 release is M12 there.
 
 Implemented and described in this document: `struct`, `enum`, `match`, `String`, `List<T>`, the C and
