@@ -348,6 +348,9 @@ Ordinary generic enums: `Option<T>` is `Some(T)` or `None`; `Result<T, E>` is `O
 | `ok_or_else` | `fn ok_or_else<E>(self, f: view fn() -> E) -> Result<T, E>` | Option, consumes: any error type, built lazily |
 | `ok_or` | `fn ok_or(self, msg: view String) -> Result<T, String>` | Option, consumes: `opt.ok_or("message")`; the error is a `String` (kept so existing code keeps its type; see COMPATIBILITY.md section 7 item 5) |
 | `ok_or` (free) | `fn ok_or<T, E>(o: Option<T>, e: E) -> Result<T, E>` | any error type: `ok_or(opt, MyError.Missing)`; final, kept alongside the method |
+| `context` | `fn context(self, msg: view String) -> Result<T, String>` | Option and Result (`E: Show`); consumes; Result: `Err("msg: cause")`, Option: `None` becomes `Err(msg)` (see [ERRORS.md](ERRORS.md)) |
+| `with_context` | `fn with_context(self, f: fn() -> String) -> Result<T, String>` | Result only, consumes: the message is built only on failure |
+| `wrap` | `fn wrap(self, msg: view String) -> Result<T, String>` | Result: the older name for `context` |
 
 Also `Show` (`"{o}"` gives `Some(8)`, `None`, `Ok(42)`, `Err(text)`) when the payloads implement `Show`, and `Equal` for `Option<T: Equal>`.
 
