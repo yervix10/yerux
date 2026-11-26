@@ -695,7 +695,7 @@ String temporary) is fixed on main (fc682b3) and is no longer listed.
 59. **A `const` of type `Text` is rejected with a wrong note.** `const PAT: Text = "^a+$"` gives "a const must be
     computed from literals, other consts and arithmetic" with the note "function calls are not allowed here yet". The
     value is a literal and there is no call. Workaround: `fn pat() -> String { return String.from("^a+$") }`.
-    *Fixed message:* "a const holds a number, Bool or Char: a Text constant is not supported" with a help (`tests/e2064_const_text.yx`).
+    *Fixed message:* "a const holds a number, Bool or Char: a Text constant is not supported" with a help (`tests/e2064_const_text.yx`, a positive test `tests/const_text_literal.yx` since round 25b, friction 264).
 60. **Text results and array elements are not accepted for `view String` parameters.** Still open from Round 11 friction
     48. `fn pat() -> Text`; `std_is(pat(), "aa")` with `std_is(p: view String, ...)` gives "expected String but this is
     Text". A Text variable is accepted.
@@ -1365,3 +1365,34 @@ The harness records each original source and its raw diagnostics.
      fn f(n: Int) -> Int { return 1 + f(n - 1) }
      fn main() { let c = comptime f(999) }
      ```
+
+## Round 25b: text constants, diagnostics and String temporaries
+
+Four frictions from writing ordinary Yerux code, all about the compiler stopping at something small: two are fixed
+(264 and 267) and two are better messages with the same rule (265 and 266).
+
+264. **`const NAME: Text = ".."` was rejected.** Any module with a fixed text (a prefix, a help line, a table
+     header) had to repeat the literal at every use or add a `fn pattern() -> Text { return ".." }` next to it,
+     and the error argued for exactly that: "a const holds a number, Bool or Char: a Text constant is not
+     supported". *Fixed:* a text constant holds a literal, or another text constant defined above it, and a use
+     behaves like the literal: it prints, compares and is lent to a `view String`. `const NAME: String = ".."`
+     builds a fresh owned `String` at each use. Tests: `tests/const_text.yx` (both kinds, a chained const, a
+     `view String` parameter, a comparison) and `tests/e2329_const_int_from_text.yx` (a text where a number is
+     declared: "expected Int but this is Text", with the text-constant spelling in the help).
+265. **An interpolated string is a `String` and cannot be passed to a `Text` parameter.** `fn tag(s: Text)` called
+     as `tag("{n}")` is rejected, which is right (`Text` is the literal type and a `String` is not it), but the
+     help only mentioned `s.eq(t)` — a method that does not exist for a free function. The help now names the
+     parameter type that accepts both: `view String` (a `Text` literal is lent to it as a `String`).
+     Golden: `tests/expected/e2330_string_where_text.err`.
+266. **A nested pattern inside an owned payload of `match move`.** `Wrapped(Str(t)) => ..` reports "cannot look
+     inside an owned payload in `match move`", which is correct but only said "bind it to a name". The three helps
+     now spell the three ways out: bind the payload and `match move` it in the arm body, move the work into a
+     helper that takes the inner enum, or drop `move` and borrow. Golden:
+     `tests/expected/e2331_match_move_nested_payload.err` (the rule itself is unchanged).
+267. **`f(x) == "text"` was rejected although `let j = f(x)` then `j == "text"` works.** The message ("the left side
+     is a String value that is not a variable") names the reason — `==` on a `String` calls `eq`, which borrows
+     its left side — but every boolean-looking expression had to be broken into two statements first
+     (`assert(name() == "bob")` is the shape that hurts). *Fixed:* a `String` call result on the left of `==`/`!=`
+     is checked first, stored in a hidden variable (`cmp__N`) and compared from there; the temporary lives until
+     the end of the statement, so no borrow escapes. Test: `tests/string_temp_compare.yx` (a call, a method
+     call, a chain, two uses in a row, and a `String` variable on the right).
