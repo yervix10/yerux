@@ -1,6 +1,6 @@
 # `yerux lsp`: language server
 
-`yerux lsp` speaks the Language Server Protocol (JSON-RPC 2.0, `Content-Length` framing) on stdin/stdout. It is
+`yerux lsp` (also `yerux lsp --stdio`, which is what generic LSP clients send) speaks the Language Server Protocol (JSON-RPC 2.0, `Content-Length` framing) on stdin/stdout. It is
 part of the compiler binary and reuses the Rust front end; there is no new dependency (`src/json.rs` is a small
 JSON reader/writer, `src/lsp.rs` the server). The VS Code client is in [`editors/vscode`](../editors/vscode/README.md).
 

@@ -21,4 +21,9 @@ const p = require("./package.json");
 if (p.main !== "./src/extension.js" || !p.contributes.grammars.length) throw new Error("bad package.json");
 '
 node --check src/extension.js
+# the client must not append `--stdio` to the command (older yerux binaries reject it), and `yerux lsp --stdio` itself works
+! grep -q "TransportKind" src/extension.js
+Y="${Y:-../../target/release/yerux}"
+a="$("$Y" lsp </dev/null 2>&1; echo $?)"; b="$("$Y" lsp --stdio </dev/null 2>&1; echo $?)"
+[ "$a" = "$b" ] || { echo "yerux lsp --stdio differs from yerux lsp: [$a] vs [$b]"; exit 1; }
 echo "vscode extension files ok"

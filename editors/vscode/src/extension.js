@@ -1,6 +1,6 @@
 // VS Code client for `yerux lsp`: starts the server over stdio and lets vscode-languageclient do the rest.
 const vscode = require("vscode");
-const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
+const { LanguageClient } = require("vscode-languageclient/node");
 
 let client;
 
@@ -8,8 +8,9 @@ function activate(context) {
   const cfg = vscode.workspace.getConfiguration("yerux");
   const command = cfg.get("serverPath") || "yerux";
   const serverOptions = {
-    run: { command, args: ["lsp"], transport: TransportKind.stdio },
-    debug: { command, args: ["lsp"], transport: TransportKind.stdio },
+    // No `transport`: for a command, vscode-languageclient then talks over stdio without appending `--stdio`.
+    run: { command, args: ["lsp"] },
+    debug: { command, args: ["lsp"] },
   };
   const clientOptions = {
     documentSelector: [{ scheme: "file", language: "yerux" }],

@@ -587,7 +587,8 @@ fn real_main() {
             _ => {}
         }
     }
-    if args.len() == 2 && args[1] == "lsp" {
+    // `--stdio` is accepted (and ignored): LSP clients such as vscode-languageclient, Neovim and Helix append it.
+    if args.len() >= 2 && args[1] == "lsp" && args[2..].iter().all(|a| a == "--stdio") {
         exit(lsp::run());
     }
     if args.len() >= 2 && args[1] == "fmt" {

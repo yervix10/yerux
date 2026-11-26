@@ -21,13 +21,13 @@ Everything below is run from the root of the Yerux repository.
    ```sh
    cd editors/vscode
    npm install                                # installs vscode-languageclient and @vscode/vsce
-   npm run package                            # writes yerux-0.2.0.vsix
+   npm run package                            # writes yerux-0.2.1.vsix
    ```
 
 3. **Install it**:
 
    ```sh
-   code --install-extension yerux-0.2.0.vsix
+   code --install-extension yerux-0.2.1.vsix
    ```
 
    Reload VS Code and open any `.yx` file. (For VSCodium use `codium --install-extension`; for Cursor and other
@@ -44,7 +44,7 @@ The extension is plain JavaScript plus JSON; only `vscode-languageclient` has to
 
   ```sh
   cd editors/vscode && npm install --omit=dev
-  mkdir -p ~/.vscode/extensions && cp -r . ~/.vscode/extensions/yerux.yerux-0.2.0
+  mkdir -p ~/.vscode/extensions && cp -r . ~/.vscode/extensions/yerux.yerux-0.2.1
   ```
 
   and restart VS Code (use `~/.vscode-oss/extensions` for VSCodium).
@@ -61,9 +61,9 @@ The extension is plain JavaScript plus JSON; only `vscode-languageclient` has to
   XML
   cat > /tmp/yx/extension.vsixmanifest <<'XML'
   <?xml version="1.0" encoding="utf-8"?>
-  <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"><Metadata><Identity Language="en-US" Id="yerux" Version="0.2.0" Publisher="yerux"/><DisplayName>Yerux</DisplayName><Description xml:space="preserve">Yerux language support</Description></Metadata><Installation><InstallationTarget Id="Microsoft.VisualStudio.Code"/></Installation><Assets><Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true"/></Assets></PackageManifest>
+  <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"><Metadata><Identity Language="en-US" Id="yerux" Version="0.2.1" Publisher="yerux"/><DisplayName>Yerux</DisplayName><Description xml:space="preserve">Yerux language support</Description></Metadata><Installation><InstallationTarget Id="Microsoft.VisualStudio.Code"/></Installation><Assets><Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true"/></Assets></PackageManifest>
   XML
-  (cd /tmp/yx && python3 -m zipfile -c yerux-0.2.0.vsix '[Content_Types].xml' extension.vsixmanifest extension) && code --install-extension /tmp/yx/yerux-0.2.0.vsix
+  (cd /tmp/yx && python3 -m zipfile -c yerux-0.2.1.vsix '[Content_Types].xml' extension.vsixmanifest extension) && code --install-extension /tmp/yx/yerux-0.2.1.vsix
   ```
 
   (The folder copy is the more robust of the two.)

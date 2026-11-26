@@ -2,7 +2,7 @@
   "name": "yerux",
   "displayName": "Yerux",
   "description": "Yerux language support: syntax highlighting and the `yerux lsp` language server (diagnostics, completion, outline, go to definition, references, rename, hover types, signature help, semantic tokens, formatting).",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "yerux",
   "license": "MIT",
   "engines": {
