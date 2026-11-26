@@ -1,0 +1,6 @@
+files: 4
+a.txt == nested/c.txt
+a.txt == nested/d.txt
+nested/c.txt == nested/d.txt
+duplicate pairs: 3
+temp dir removed: true

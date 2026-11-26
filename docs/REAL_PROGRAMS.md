@@ -941,3 +941,18 @@ identical, exit 0) and registered in `tests/real_programs.sh` (now twenty progra
     TOTAL row. (Interpolation into a `Text` then `String.from` is the general idiom.)
 95. **`std.time.format` stops at hours.** A 26-hour span prints as `26h 03m 04s`, never `1d 02h ...`; days are a
     parse-side unit only. Documented behaviour, no change.
+## Round 16: dupfinder
+
+One small program in `examples/real/dupfinder/`, with `expected.out`, built on C and `--native`, and registered in
+`tests/real_programs.sh`. It creates a temporary fixture tree, recursively lists regular files with `std.fs`,
+joins paths with `std.path`, and reports every pair with equal size and content.
+
+### Round 16 frictions (152 onward)
+
+152. **Temporary directory cleanup requires an explicit remove.** `std.fs.create_dir_all` and `std.fs.write` do not
+    install RAII cleanup for process-local test data. The example calls `fs.remove_dir_all(root)` and prints that result
+    explicitly; a missing cleanup would leave files behind in `env.temp_dir`.
+153. **Directory entries expose kind but no recursive walk helper.** `std.fs.read_dir_entries(dir)` requires a manual
+    recursive function, plus a relative-path accumulator built with `path.join` and `/`. This is clear but adds boilerplate
+    compared with a built-in `walk` API.
+
