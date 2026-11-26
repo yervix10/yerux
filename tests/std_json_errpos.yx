@@ -1,0 +1,28 @@
+// std.json edge cases: error offsets on multi-line input. line_col must count
+// lines on LF and CRLF, count columns in characters (not bytes) on valid UTF-8,
+// and keep pointing at the offending byte for a malformed document.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => { print("ACCEPTED {json.to_string(v)}") }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1} byte {e.offset}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("[\n  1,\n  oops\n]")
+  show("[\r\n  1,\r\n  oops\r\n]")
+  show("{{\n  \"é\": [1,]\n}}")
+  show("{{\n  \"日本\": \n}}")
+  show("\"héllo\nworld")
+  show("[1,\n2,\n3")
+  show("[\n\n\n{{\"a\":}}\n]")
+  show("[\n  \"ünïcödé\",\n  01\n]")
+  show("  \n\t  nul\n")
+  show("\n\n{{\"a\": 1, \"a\": }}\n")
+  show("[\"é\", \"日\"]\n\nx")
+}

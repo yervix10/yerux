@@ -1,0 +1,46 @@
+// std.json edge cases: duplicate keys. Members are kept in source order with the
+// duplicates included, `find` reports the last one, the writer keeps every
+// occurrence, and duplicates nest inside values without disturbing either.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => {
+      print(json.to_string(v))
+      print(json.to_pretty(v))
+    }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1}: {e.message}")
+    }
+  }
+}
+
+fn inspect(src: view String) {
+  match json.parse(src) {
+    Ok(v) => {
+      match v {
+        Obj(members) => {
+          print("len {members.len()} last a at {json.find(members, "a")} last z at {json.find(members, "z")} missing q at {json.find(members, "q")}")
+          for i in 0..members.len() {
+            print("{members.at(i).key}={json.to_string(members.at(i).value)}")
+          }
+        }
+        _ => { print("not an object") }
+      }
+    }
+    Err(e) => { print(e.message) }
+  }
+}
+
+fn main() {
+  show("{{\"a\":1,\"a\":2,\"a\":3}}")
+  show("{{\"z\":1,\"a\":2,\"z\":3}}")
+  show("{{\"a\":{{\"b\":1,\"b\":2}},\"a\":3}}")
+  show("{{\"k\":true,\"k\":null,\"k\":[1,2],\"k\":\"x\"}}")
+  show("{{\"a\":1,\"a\":1}}")
+  inspect("{{\"x\":1,\"x\":2,\"y\":3}}")
+  inspect("{{\"a\":1,\"b\":2,\"a\":3,\"b\":4,\"a\":5}}")
+  inspect("{{\"k\":{{\"k\":1}},\"k\":2}}")
+  inspect("{{}}")
+}

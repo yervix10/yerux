@@ -1,0 +1,30 @@
+ERR 1:1 byte 0: unexpected end of JSON
+ERR 2:3 byte 5: unexpected end of JSON
+[] | []
+{} | {}
+[] | []
+{} | {}
+[1,2] | [
+  1,
+  2
+]
+null | null
+"" | ""
+[[],[[]],{}] | [
+  [],
+  [
+    []
+  ],
+  {}
+]
+{"":{"":{}}} | {
+  "": {
+    "": {}
+  }
+}
+ERR 1:7 byte 6: unexpected character
+ERR 1:8 byte 7: an object key must be a string
+ERR 1:2 byte 1: unexpected character
+ERR 1:2 byte 1: unexpected character
+ERR 1:4 byte 3: unexpected character
+ERR 1:8 byte 7: an object key must be a string

@@ -1,0 +1,11 @@
+ERR 3:3 byte 9: unexpected character
+ERR 3:3 byte 11: unexpected character
+ERR 2:11 byte 13: unexpected character
+ERR 3:1 byte 15: unexpected character
+ERR 1:7 byte 7: control character in string
+ERR 3:2 byte 8: expected ',' or ']'
+ERR 4:6 byte 9: unexpected character
+ERR 3:3 byte 21: a number cannot start with a leading zero
+ERR 2:7 byte 9: invalid literal
+ERR 3:15 byte 16: unexpected character
+ERR 3:1 byte 15: unexpected text after the JSON value

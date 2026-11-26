@@ -1,0 +1,49 @@
+// std.json edge cases: round trips. A value that parses must survive
+// to_string and to_pretty unchanged, including the spellings that look fragile
+// (surrogate pairs, control escapes, duplicate keys, -0, deep nesting).
+import std.json
+
+fn round(src: view String) {
+  match json.parse(src) {
+    Ok(v) => {
+      let compact = json.to_string(v)
+      let pretty = json.to_pretty(v)
+      match json.parse(compact) {
+        Err(e) => { print("REPARSE-COMPACT ERR {e.message}: {compact}") }
+        Ok(v2) => {
+          let compact2 = json.to_string(v2)
+          if compact.eq(compact2) { print("ok {compact}") }
+          else { print("DRIFT {compact} -> {compact2}") }
+        }
+      }
+      match json.parse(pretty) {
+        Err(e) => { print("REPARSE-PRETTY ERR {e.message}") }
+        Ok(v3) => {
+          let compact3 = json.to_string(v3)
+          if compact.eq(compact3) { print("pretty ok") }
+          else { print("PRETTY DRIFT {compact} -> {compact3}") }
+        }
+      }
+    }
+    Err(e) => { print("ERR {e.message}") }
+  }
+}
+
+fn main() {
+  round("0")
+  round("-0")
+  round("-0.0")
+  round("9223372036854775807")
+  round("1.7976931348623157e308")
+  round("5e-324")
+  round("\"\\ud83d\\ude00\"")
+  round("\"\\u0000\\u001f\"")
+  round("\"a\\nb\\tc\\\\d\\\"e\"")
+  round("\"héllo 日本語 😀\"")
+  round("{{\"a\":1,\"a\":2}}")
+  round("[[[[[[[[[[1]]]]]]]]]]")
+  round("{{\"k\":[null,true,false,1.5,\"x\"],\"k\":{{}}}}")
+  round("[1,2,3,4,5,6,7,8,9,10]")
+  round("\"\\ud7ff\\ue000\\ufffd\\uffff\"")
+  round("{{\"\":{{\"\":1}}}}")
+}

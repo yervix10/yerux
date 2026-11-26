@@ -1,0 +1,39 @@
+// std.json edge cases: floats at the binary64 borders. The finite extremes parse
+// and round trip, an out-of-range spelling is rejected, and NaN/infinity have no
+// JSON spelling so the writer emits null for them.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => { print(json.to_string(v)) }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("1.7976931348623157e308")
+  show("-1.7976931348623157e308")
+  show("1.7976931348623159e308")
+  show("1e400")
+  show("-1e400")
+  show("1e-400")
+  show("5e-324")
+  show("2.2250738585072014e-308")
+  show("2.2250738585072011e-308")
+  show("9.9e-309")
+  show("0.0")
+  show("-0.0")
+  show("1.0")
+  show("1e0")
+  show("0.1")
+  show("3.141592653589793238462643383279")
+  show("1.7976931348623157e309")
+  print(json.to_string(json.Value.Float(0.0 / 0.0)))
+  print(json.to_string(json.Value.Float(1.0 / 0.0)))
+  print(json.to_string(json.Value.Float(-1.0 / 0.0)))
+  print(json.to_pretty(json.Value.Float(1.0 / 0.0)))
+  print(json.to_string(json.Value.Float(-0.0)))
+}

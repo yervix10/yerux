@@ -1,0 +1,39 @@
+// std.json edge cases: Unicode. Surrogate pairs at both ends of the legal range,
+// the lone and mispaired surrogates that must be rejected, astral characters as a
+// pair and as raw UTF-8, and error offsets after multi-byte characters.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => { print(json.to_string(v)) }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1} byte {e.offset}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("\"\\ud83d\\ude00\"")
+  show("\"\\uD83D\\uDE00\"")
+  show("\"\\ud800\\udc00\"")
+  show("\"\\udbff\\udfff\"")
+  show("\"\\ud7ff\"")
+  show("\"\\ue000\"")
+  show("\"\\ufffd\"")
+  show("\"\\uffff\"")
+  show("\"\\ud800\"")
+  show("\"\\ud800x\"")
+  show("\"\\ud800\\u0041\"")
+  show("\"\\ud800\\udbff\"")
+  show("\"\\udc00\"")
+  show("\"\\udbff\"")
+  show("\"\\udfff\"")
+  show("\"héllo 日本語 😀\"")
+  show("\"\\u00e9\\u65e5\\ud83d\\ude00\"")
+  show("{{\"ключ\": \"значение\"}}")
+  show("[\"αβγ\", \"δ\"]")
+  show("\"é\\q\"")
+  show("\"日本")
+  show("\"mixed é 日 😀 end\"")
+}

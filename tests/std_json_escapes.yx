@@ -1,0 +1,60 @@
+// std.json edge cases: string escapes. Every escape the grammar defines, the
+// malformed ones it rejects with their byte offsets, and the raw control bytes
+// that may not appear unescaped inside a string.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => { print(json.to_string(v)) }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("\"\"")
+  show("\"abc\"")
+  show("\"a\\\"b\"")
+  show("\"a\\\\b\"")
+  show("\"a\\/b\"")
+  show("\"a\\bb\"")
+  show("\"a\\fb\"")
+  show("\"a\\nb\"")
+  show("\"a\\rb\"")
+  show("\"a\\tb\"")
+  show("\"\\u0041\\u00e9\\u20ac\"")
+  show("\"line1\\nline2\\tend\"")
+  show("\"\\u0000\"")
+  show("\"\\u001f\"")
+  show("\"\\u007f\"")
+  show("\"\\q\"")
+  show("\"\\u12\"")
+  show("\"\\u00g0\"")
+  show("\"\\u123\"")
+  show("\"abc")
+  show("\"a\\\"")
+  show("\"tab\there\"")
+
+  var bell = String.from("\"a")
+  bell.push_byte(7)
+  bell.push_str("b\"")
+  show(bell)
+
+  var nul = String.from("\"a")
+  nul.push_byte(0)
+  nul.push_str("b\"")
+  show(nul)
+
+  var del = String.from("\"a")
+  del.push_byte(127)
+  del.push_str("b\"")
+  show(del)
+
+  print(json.quote(String.from("a\"b\\c")))
+  var ctrl = String.from("a")
+  ctrl.push_byte(1)
+  ctrl.push_byte(9)
+  print(json.quote(ctrl))
+}
