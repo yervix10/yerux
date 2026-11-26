@@ -14,6 +14,7 @@ struct Parser {
   legacy: Bool,
   build: Bool,
   depth: Int,
+  bare_line: Int,
 }
 
 fn hex(s: view String) -> String {
@@ -772,6 +773,43 @@ fn block_inner(p: mut Parser) -> String {
   return node1("Block", out)
 }
 
+// A block whose last statement is its value (a branch of an `if`/`match` used as a value). A trailing `if` or
+// `match` is a value too, so its `match` arms may be bare expressions.
+fn value_block(p: mut Parser) -> String {
+  if p.failed || !enter(p) { return String.new() }
+  let value = value_block_inner(p)
+  p.depth = p.depth - 1
+  return value
+}
+
+fn value_block_inner(p: mut Parser) -> String {
+  expect(p, "{{")
+  var out = String.from("[")
+  while !at_close(p, "}}") {
+    if !kw(p, "if") && !kw(p, "match") {
+      append(out, statement(p))
+      continue
+    }
+    let outer = p.bare_line
+    p.bare_line = 0
+    var item = String.new()
+    if eat_kw(p, "if") { item = if_stmt_in(p, true) } else {
+      p.i = p.i + 1
+      item = match_arms(p, "Match", true)
+    }
+    // bare arms need a value, so the statement that holds them must end the block
+    if p.bare_line != 0 && !sym(p, "}}") {
+      if !p.failed { p.error_line = p.bare_line }
+      p.failed = true
+    }
+    if outer != 0 { p.bare_line = outer }
+    append(out, item)
+  }
+  expect(p, "}}")
+  finish(out)
+  return node1("Block", out)
+}
+
 fn binding(p: mut Parser, mutable: Bool) -> String {
   if sym(p, "(") {
     let pat = unpack(p, mutable)
@@ -789,14 +827,20 @@ fn binding(p: mut Parser, mutable: Bool) -> String {
 }
 
 fn if_stmt(p: mut Parser) -> String {
+  return if_stmt_in(p, false)
+}
+
+// With `value`, the statement may give the value of the enclosing branch (see `value_block`).
+fn if_stmt_in(p: mut Parser, value: Bool) -> String {
   let cond = parse_expr(p)
-  let yes = block(p)
+  var yes = String.new()
+  if value { yes = value_block(p) } else { yes = block(p) }
   var no = missing()
   if eat_kw(p, "else") {
     if eat_kw(p, "if") {
-      let inner = if_stmt(p)
+      let inner = if_stmt_in(p, value)
       no = "Block([{inner}])"
-    } else { no = block(p) }
+    } else if value { no = value_block(p) } else { no = block(p) }
   }
   return node3("If", cond, yes, no)
 }
@@ -844,7 +888,7 @@ fn if_expr(p: mut Parser) -> String {
   let line = p.tokens.at(p.i).line
   p.i = p.i + 1
   let cond = parse_expr(p)
-  let yes = block(p)
+  let yes = value_block(p)
   if !eat_kw(p, "else") {
     if !p.failed { p.error_line = line }
     p.failed = true
@@ -852,9 +896,9 @@ fn if_expr(p: mut Parser) -> String {
   }
   var no = String.new()
   if eat_kw(p, "if") {
-    let inner = if_stmt(p)
+    let inner = if_stmt_in(p, true)
     no = "Block([{inner}])"
-  } else { no = block(p) }
+  } else { no = value_block(p) }
   return node3("IfExpr", cond, yes, no)
 }
 
@@ -883,9 +927,10 @@ fn match_arms(p: mut Parser, tag: Text, as_value: Bool) -> String {
     expect(p, "=>")
     var body = String.new()
     if as_value && !sym(p, "{{") {
+      if p.bare_line == 0 { p.bare_line = p.tokens.at(p.i).line }
       let value = parse_expr(p)
       body = "Block([Expr({value})])"
-    } else { body = block(p) }
+    } else if as_value { body = value_block(p) } else { body = block(p) }
     append(arms, node3("Arm", pat, guard, body))
     let comma = eat(p, ",")
   }
@@ -1207,7 +1252,7 @@ fn run(source: view String, build: Bool) {
   }
   var p = Parser {
     tokens: move tokens, structs: move structs, imports: List<String>.new(), tuple_arities: List<Int>.new(),
-    i: 0, failed: false, error_line: 0, legacy: legacy, build: build, depth: 0,
+    i: 0, failed: false, error_line: 0, legacy: legacy, build: build, depth: 0, bare_line: 0,
   }
   var ast = String.new()
   if legacy {

@@ -1,0 +1,10 @@
+// Commas inside brackets belong to the one expression of a `{}`.
+fn sum(xs: view [Int]) -> Int {
+  var total = 0
+  for x in xs { total = total + x }
+  return total
+}
+fn main() {
+  let n = 3
+  print("{sum([n, 4])} and {sum([1, 2, n])}")
+}

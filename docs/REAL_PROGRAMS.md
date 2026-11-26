@@ -236,6 +236,7 @@ backend. The suite runs them as `mdconv`, `raytrace` and `httpjson` in `tests/ru
    `Err(...)` at each call site (`httpjson` does this with `json.fail`).
 2. **A `Text` literal is not a `String` inside a tuple.** `var h = List<(String, String)>.new(); h.push(("Accept", "x"))`
    fails with `expected (String, String) but this is (Text, Text)`. Use `String.from("Accept")` in each slot.
+    *Fixed:* a literal inside a tuple converts when the tuple type is expected (`tests/tuple_text_literal.yx`).
 3. **A pattern cannot reach into an owned payload.** `match json.parse(s) { Ok(Json.Str(t)) => { .. } .. }` gives
    `cannot look inside an owned payload in match move`. The diagnostic is clear; bind the value first, then match it
    (`Ok(v) => { match v { Str(t) => ... } }`).
@@ -827,6 +828,7 @@ the less-exercised standard modules `std.toml`, `std.csv` and `std.args` togethe
 76. **A comma inside `[...]` in an interpolation is reported as two expressions.**
     `let n = 3` then `print("{[n, 4][0]}")` gives "a `{}` in a string holds one expression". The splitter counts
     `(`/`)` but not `[`/`]`. `print("{(n, 4).0}")` works.
+    *Fixed:* brackets (`tests/interp_commas.yx`) and explicit type arguments (unit test `interpolation_tests` in `src/syntax.rs`) are counted.
 77. **A quote inside `{expr}` is still accepted** (see friction 58). `print("[{shown.join(", ")}]")` prints `[a]`.
 78. **`build --native` before the file name fails with an unclear message.**
     `yerux build --native main.yx -o out` gives `could not read --native: No such file or directory`, exit 2. With the
@@ -1029,6 +1031,7 @@ programs).
     (`tests/int_checked_ops.yx` uses `MAX.checked_add(1)`).
 161. **A generic function without `self` cannot be called.** `impl S { fn make<T: Copy>(v: T) -> T .. }` is accepted,
     but `S.make(1)` says "S has no function 'make'". A free generic function works.
+    *Fixed:* it is called as `Type.name(..)` (`tests/assoc_generic_functions.yx`).
 
 ## Round 18: std.csv / std.toml edge-case regression tests
 

@@ -1,0 +1,32 @@
+// Friction 161: a function with type parameters of its own and no `self` is called as `Type.name(..)`.
+struct Maker { n: Int }
+impl Maker {
+  fn make<T: Copy>(v: T) -> T { return v }
+  fn show_of<T: Show>(v: view T) -> String { return v.show() }
+  fn build<R>(f: view fn(Int) -> R) -> R { return f(Maker.make(20)) }
+}
+enum Pick { Left, Right }
+impl Pick {
+  fn of<T: Copy>(first: Bool, a: T, b: T) -> T {
+    if first { return a }
+    return b
+  }
+}
+struct Holder<T> { items: List<T> }
+impl<T: Copy> Holder<T> {
+  fn new() -> Holder<T> { return Holder { items: List<T>.new() } }
+  fn twice<U: Copy>(x: U) -> (U, U) { return (x, x) }
+  fn first<U: Copy>(x: T, y: U) -> T { return x }
+}
+fn main() {
+  print(Maker.make(1))
+  print(Maker.make("hi"))
+  print(Maker.show_of(7))
+  print(Maker.build(|x| x + 1))
+  print(Pick.of(false, 1, 2))
+  print(Holder<Int>.new().items.len())
+  print(Holder<Int>.twice("s").0)
+  print(Holder<Int>.first(9, true))
+  let later = || Maker.make(5)
+  print(later())
+}

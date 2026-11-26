@@ -89,7 +89,7 @@ fn main() {
 before appending. User-defined `view` parameters can already borrow a
 temporary, so the closely related call forms have different rules.
 
-### A negative `from` in `String.find_from` panics or leaks the negative index
+### Fixed: a negative `from` in `String.find_from` panics or leaked the negative index
 
 ```yx
 fn main() {
@@ -106,7 +106,9 @@ unchanged, and with a non-empty pattern `byte(from)` panics. A negative
 out-of-range value then reaches `slice` as an index. `find` and `contains`
 pass `0`, so they are unaffected. Found by
 `tests/edge_string_empty_ops.yx` / `tests/edge_string_utf8_boundaries.yx`
-work; no regression test records the broken result on purpose.
+work.
+
+*Fixed:* every negative `from` panics (`tests/panic_find_from_negative.yx`).
 
 ### Integer operators do not offer a recoverable overflow result
 
@@ -184,7 +186,7 @@ variant literals (`Kind.End == k`). A hand-written `impl Equal for E` or a
 `derive Equal for E` line still wins. Enums with a payload keep requiring an
 `Equal` implementation (`yerux check` error e1506). Test: `enum_implicit_equal`.
 
-### Open: whole-file reads have no size argument
+### Fixed: whole-file reads have no size argument
 
 ```yx
 import std.fs
@@ -196,6 +198,8 @@ fn main() {
 The compiler reports that `read_to_string` takes one argument. The
 interpreter can reject oversized source only after reading it. A bounded
 read would let callers enforce a byte limit during I/O.
+
+*Fixed:* `fs.read_to_string_limit(path, limit)` (`tests/std_fs_limit_reader.yx`).
 
 ## JSON
 
@@ -221,7 +225,7 @@ The lexer treats the opening brace as interpolation, even though the quotes
 inside the literal are escaped. The lookup regression doubles both braces.
 The CLI's sample document is stored as a separate JSON file.
 
-### Open: Unicode escapes are available for Char, with a narrower escape set for Text
+### Documented: Unicode escapes are available for Char, with a narrower escape set for Text
 
 ```yx
 fn main() { print("\u{1F600}") }

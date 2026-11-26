@@ -606,6 +606,17 @@ impl Loader<'_> {
                     .note("the type of a public constant is part of the module's interface, so it is written out"),
                 );
             }
+            // a `fn`, struct, enum or trait named like an import is reported where its name is read below
+            if let Some(n) = sp.name.as_ref().filter(|n| aliases.contains_key(*n)) {
+                if sp.kind == Kind::Const || is_id(&toks[sp.head], "type") {
+                    self.trace(file, "error", &["module-value", n]);
+                    self.report(
+                        file,
+                        diag(format!("'{}' is a module, not a value", n), toks[sp.head + 1].pos)
+                            .note(format!("help: use one of its items: `{}.name`", n)),
+                    );
+                }
+            }
             if let Some(n) = &sp.name {
                 if items
                     .insert(

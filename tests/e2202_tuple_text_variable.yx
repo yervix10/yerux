@@ -1,0 +1,5 @@
+fn main() {
+  let s = "a"
+  let t: (String, Int) = (s, 1)
+  print(t.1)
+}

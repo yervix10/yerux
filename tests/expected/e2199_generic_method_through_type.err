@@ -1,0 +1,8 @@
+error: 'convert' of Maker takes `self`: call it on a value
+ --> tests/e2199_generic_method_through_type.yx:4:9
+  |
+4 |   print(Maker.convert(|x| x))
+  |         ^^^^^^^^^^^^^^^^^^^^
+  = help: write `value.convert(..)`; `Maker.name(..)` calls the functions without `self`
+
+1 error(s). Nothing was generated.

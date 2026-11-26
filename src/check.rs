@@ -605,6 +605,7 @@ struct Checker<'a> {
     closure_borrow_pos: HashSet<(usize, usize)>, // positions of closure literals that borrow variables
     ret_free: bool,        // checking a closure whose result type is not known yet
     explicit_targs: Option<Vec<Ty>>, // type arguments written at the call being checked (`f<Int>(x)`)
+    static_self: Option<Ty>, // the type written in `Type.name(..)` for a generic function of its impl
     pending_bare: usize,   // `return None`-like returns of a closure whose result type was still unknown
     free_pids: Vec<usize>, // type parameters of the generic callee that are still unknown
     closure_loans: HashMap<usize, Vec<(usize, u8, Pos)>>, // hidden closure variable -> what it borrows
@@ -1890,7 +1891,10 @@ impl<'a> Checker<'a> {
                     let tyn = self.tn(Ty::Enum(eid));
                     self.err(self_through_type(&tyn, &vname, pos));
                     Ty::Err
-                } else if !is_variant && self.method_target(Ty::Enum(eid), None, &vname).is_some() {
+                } else if !is_variant
+                    && (self.method_target(Ty::Enum(eid), None, &vname).is_some()
+                        || self.generic_method_fn(Ty::Enum(eid), &vname).is_some())
+                {
                     // `Colour.parse(..)`: not a variant, a function of the enum
                     let args = std::mem::take(args);
                     let checked = vec![None; args.len()];
@@ -7422,6 +7426,10 @@ impl<'a> Checker<'a> {
         self.ps.gfns.iter().any(|g| g.name == f).then_some(f)
     }
 
+    fn has_receiver(&self, f: &str) -> bool {
+        self.ps.gfns.iter().any(|g| g.name == f && g.receiver)
+    }
+
     /// `x.m(args)` -> `Trait__Type__m(x, args)`.
     fn rewrite_method(&mut self, e: &mut Expr, rt: Ty) -> Result<(), ()> {
         let pos = e.pos;
@@ -7463,6 +7471,13 @@ impl<'a> Checker<'a> {
                     return Err(());
                 }
                 return Ok(()); // the built-in path explains
+            }
+            None if self.generic_method_fn(rt, &m).is_some_and(|f| !self.has_receiver(&f)) => {
+                self.err(
+                    diag(format!("'{}' of {} takes no `self`: it cannot be called on a value", m, tyn), pos)
+                        .note(format!("help: call it on the type, `{}.{}(..)`, or give it `view self` / `mut self` / `self`", tyn, m)),
+                );
+                return Err(());
             }
             None if self.generic_method_fn(rt, &m).is_some() => {
                 // `opt.map(f)` -> `__gm__Option__map(opt, f)`: a method with type parameters of its own
@@ -7912,7 +7927,19 @@ impl<'a> Checker<'a> {
                             .iter()
                             .map(|t| if let Ty::Param(i) = t { *i } else { 0 })
                             .collect();
-                        let tys: Vec<Ty> = fields.iter_mut().map(|(_, fe)| self.expr(fe)).collect();
+                        // a tuple literal where a tuple type is expected: its `String` elements take Text literals
+                        let expected = hint
+                            .filter(|_| name.starts_with("Tuple"))
+                            .and_then(|t| self.tuple_elems(t))
+                            .filter(|elems| elems.len() == fields.len());
+                        let mut tys = Vec::with_capacity(fields.len());
+                        for (k, (_, fe)) in fields.iter_mut().enumerate() {
+                            self.hint = expected
+                                .as_ref()
+                                .map(|elems| elems[k])
+                                .filter(|t| *t == Ty::String || self.tuple_elems(*t).is_some());
+                            tys.push(self.expr(fe));
+                        }
                         let mut bind = vec![None; pids.len()];
                         if let Ty::Struct(sid) = tpl {
                             for ((fname, _), t) in fields.iter().zip(&tys) {
@@ -8157,6 +8184,14 @@ impl<'a> Checker<'a> {
         }
         let (fname, sig) = match self.method_target(ty, None, vname) {
             Some(x) => x,
+            None if self.generic_method_fn(ty, vname).is_some() => {
+                // `Type.make(..)`: a function with type parameters of its own, instantiated like a free one
+                let f = self.generic_method_fn(ty, vname).unwrap_or_default();
+                self.static_self = Some(ty);
+                let t = self.call(&f, &mut args, pos);
+                let f = self.rename.take().unwrap_or(f);
+                return (t, EK::Call(f, args));
+            }
             None => {
                 let mut d = diag(format!("{} has no function '{}'", tyn, vname), pos);
                 if let Some(n) = self.unmet_bound_note(ty, vname) {
@@ -8191,7 +8226,10 @@ impl<'a> Checker<'a> {
 
     /// Does `ty` have a method `m` that needs a value (so `Type.m(..)` is not a call of it)?
     fn takes_self(&mut self, ty: Ty, m: &str) -> bool {
-        self.method_target(ty, None, m).is_some_and(|(name, _)| !self.assoc_fns.contains(&name))
+        match self.method_target(ty, None, m) {
+            Some((name, _)) => !self.assoc_fns.contains(&name),
+            None => self.generic_method_fn(ty, m).is_some_and(|f| self.has_receiver(&f)),
+        }
     }
 
     /// The struct named by the receiver of `Name.f(..)`, when `Name` is not a variable or a constant.
@@ -8212,7 +8250,7 @@ impl<'a> Checker<'a> {
         }
         if g.params.len() != args.len() {
             // a generic method counts its receiver as the first parameter
-            let skip = usize::from(g.self_tok.is_some());
+            let skip = usize::from(g.receiver);
             self.err(diag(
                 format!(
                     "'{}' expects {} argument(s){} but got {}",
@@ -8260,6 +8298,20 @@ impl<'a> Checker<'a> {
             }
         }
         let mut bind: Vec<Option<Ty>> = vec![None; g.pids.len()];
+        if let (Some(ty), Some(tok)) = (self.static_self.take(), g.self_tok) {
+            // `Heap<Int>.make(..)`: the written type fixes the parameters of the impl
+            let subst = g.tparams.iter().map(|p| p.name.clone()).zip(g.pids.iter().map(|p| Ty::Param(*p))).collect();
+            let fits = match self.with_ps(|ps| ps.self_ty_at(tok, subst)) {
+                Ok(pat) => unify(&self.types, pat, ty, &g.pids, &mut bind).is_ok(),
+                Err(_) => false,
+            };
+            if !fits {
+                let tyn = self.tn(ty);
+                let short = g.name.rsplit("__").next().unwrap_or(&g.name).to_string();
+                self.err(diag(format!("{} has no function '{}'", tyn, short), pos));
+                return Ty::Err;
+            }
+        }
         if let Some(explicit) = self.explicit_targs.take() {
             if explicit.len() != g.pids.len() {
                 self.err(diag(
@@ -8767,6 +8819,7 @@ pub fn check_program(p: &mut Program, ps: &mut Parser) -> Result<Sigs, Vec<Diag>
         ret_free: false,
         pending_bare: 0,
         explicit_targs: None,
+        static_self: None,
         free_pids: vec![],
         closure_loans: HashMap::new(),
     };

@@ -1,0 +1,6 @@
+struct Maker { n: Int }
+impl Maker { fn make<T: Copy>(v: T) -> T { return v } }
+fn main() {
+  let m = Maker { n: 1 }
+  print(m.make(2))
+}

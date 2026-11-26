@@ -1,0 +1,8 @@
+error: expected (String, Int) but this is (Text, Int)
+ --> tests/e2202_tuple_text_variable.yx:3:26
+  |
+3 |   let t: (String, Int) = (s, 1)
+  |                          ^^^^^^
+  = help: check the value at this expression; convert it explicitly or change the expected type
+
+1 error(s). Nothing was generated.

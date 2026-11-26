@@ -1,0 +1,8 @@
+error: 'lib' is a module, not a value
+ --> tests/mod_err/alias_clash_type/main.yx:3:6
+  |
+3 | type lib = Int
+  |      ^^^
+  = help: use one of its items: `lib.name`
+
+1 error(s). Nothing was generated.

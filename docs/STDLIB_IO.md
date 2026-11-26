@@ -34,10 +34,13 @@ pub struct IoError { kind: IoErrorKind, code: Int, message: String }            
 | `read_stdin_bytes(buf)` | `Result<Int, IoError>` | Read into a mutable byte slice with no UTF-8 conversion. A non-empty buffer returns 0 at EOF. |
 | `read_all()` | `Result<String, IoError>` | Rest of stdin (`""` at end of input). |
 | `write_stdout(s)`, `write_stderr(s)` | `Result<Int, IoError>` | Raw write of the bytes of `s` (no newline), returns the byte count. |
+| `write_stdout_bytes(data: view [UInt8])` | `Result<Int, IoError>` | Writes the bytes (a List, array or slice) to stdout with no UTF-8 conversion, returns the byte count. |
 | `eprint(s)`, `eprintln(s)` | | Diagnostics on stderr; errors ignored. |
 | `args()` | `List<String>` | Program name first. |
 | `env_var(name)` | `Option<String>` | `None` when unset. |
 | `env_vars()` | `List<String>` | `"KEY=VALUE"` entries. |
+| `set_env_var(name, value)` | `Result<Int, IoError>` | Sets the variable for this process; `InvalidInput` for an empty name, a name with `=` or NUL, or a value with NUL. Not thread-safe. |
+| `remove_env_var(name)` | `Result<Int, IoError>` | Removes it: `Ok(1)`, or `Ok(0)` when it was unset; `InvalidInput` for an invalid name. Not thread-safe. |
 | `exit(code)` | | Ends the process at once (status = `code & 255`). No deferred statements, no drops. |
 | `process_id()` | `Int` | |
 | `read_file(path)` | `Result<String, IoError>` | Whole file; `InvalidData` if it is not valid UTF-8. |
@@ -97,6 +100,7 @@ Same rules as `std.io` (raw syscalls, `view String` paths, NUL in a path is `Inv
 | Function | Result | Notes |
 |---|---|---|
 | `read_to_string(path)` | `Result<String, IoError>` | `= io.read_file`; `InvalidData` when not UTF-8. |
+| `read_to_string_limit(path, limit)` | `Result<String, IoError>` | At most `limit` bytes (0..16 MiB, else `InvalidInput`); a longer file is `InvalidData`. |
 | `read_lines(path)` | `Result<List<String>, IoError>` | Without `\n` / `\r\n`; a final newline adds no empty line. |
 | `write(path, data)`, `append(path, data)` | `Result<Int, IoError>` | `= io.write_file` / `io.append_file` (mode 0644, umask applies). |
 | `copy(from, to)` | `Result<Int, IoError>` | Byte copy (any content, not only UTF-8), `to` gets the permission bits of `from`; a directory is `IsDirectory`; copying a file onto itself (same device and inode, also through a hard link) is an `Invalid argument` error and leaves it untouched. Returns the bytes copied. |

@@ -88,7 +88,7 @@ Escapes in `Text`, `String` and `Char` literals:
 |---|---|
 | `\n` `\t` `\r` | newline, tab, carriage return |
 | `\"` `\\` | quote, backslash |
-| `\u{HEX}` | Unicode scalar, Char literals and strings (`'\u{1F600}'`) |
+| `\u{HEX}` | Unicode scalar, Char literals only (`'\u{1F600}'`); in a string write the character itself or use `push_char` |
 | `{{` `}}` | literal `{` and `}` in a string |
 | `{expr}` | interpolation: one expression on the same line. It may contain string literals with escapes (`"x{"ab"}y"`, `"{s.split(" ").len()}"`), but not a `}` or a nested `{` (a literal brace inside the expression is an error); write `{{` `}}` outside it (`tests/interp_string_literal.yx`, `tests/e2063_interp_brace_in_literal.yx`) |
 
@@ -185,9 +185,8 @@ type         = name [ "<" type { "," type } ">" ] | "Int" "<" range_bound ".." r
 
 Notes on the grammar:
 
-- Generic arguments are written only on types and constructors (`List<Int>.new()`,
-  `Maybe.Some(i)`). Type arguments of function calls are inferred; explicit type arguments on
-  calls are not implemented (section 10).
+- Generic arguments are written on types and constructors (`List<Int>.new()`, `Maybe<Int>.None`)
+  and, optionally, on calls of generic functions (`first<Int>(l)`, section 2.5).
 - `view` and `mut` are parameter-mode keywords in parameter and function-type positions and
   borrow markers on values (`mut m` in `match mut`). They are not reference types.
 - Enum variants are named with the enum in expressions (`Shape.Rect(4, 5)`) and without it in
@@ -314,8 +313,9 @@ copied`.
 - **Slices** `view [T]` and `mut [T]` are borrows of a run of elements. A slice type can only
   appear as a parameter type. It cannot be stored in a variable, field or result (section 3).
 - **Box** `Box<T>` owns one heap value. Recursive types must pass through `Box<T>` or `List<T>`.
-- **Maps and sets** `Map<K, V>` and `Set<T>` (`import std.collections`) require `Hash + Equal`
-  keys. See the book, chapter 12.
+- **Maps and sets** `Map<K, V>` and `Set<T>` are built in (no import) and require `Hash + Equal`
+  keys (tests/edge_map_set.yx). `import std.collections` adds helpers such as the borrowed lookup
+  `map_with`. See the book, chapter 12.
 
 ### 2.4 Structs and enums
 
@@ -338,15 +338,23 @@ enum Name { Variant, Variant(Type, ...), ... }
   monomorphised: each distinct use compiles to a specialised copy (no run-time cost).
 - **Bounds** constrain a parameter: `fn bigger<T: Ordered + Copy>(a: T, b: T) -> T`. Verified:
   `bigger(3, 9)` is `9` and `bigger("pear", "apple")` is `pear`.
-- **Inference.** Type arguments of function calls are inferred and are never written. Struct and
+- **Inference.** Type arguments of function calls are inferred from the arguments. Struct and
   enum values infer their arguments from field values or the expected type. Otherwise write them
   (`Maybe<Int>.None`).
+- **Explicit type arguments.** A call of a generic function may write them all, in order
+  (`first<Int>(l)`, `conv<Int, Bool>(x, f)`; tests/generic_explicit_args.yx,
+  tests/e1518_explicit_type_args.yx). A call through a type or a value (`Type.name(..)`, `x.method(..)`)
+  takes none.
+- **Generic methods** have type parameters of their own (`fn map<U>(view self, ..)` inside an `impl`;
+  tests/generic_methods.yx). One without `self` is called as `Type.name(..)`
+  (tests/assoc_generic_functions.yx). Methods of a trait `impl` cannot be generic
+  (tests/e1519_generic_method_in_trait_impl.yx).
 - **Built-in traits:** `Copy`, `Equal` (`==`, `!=`), `Ordered` (`<`, `<=`, `>`, `>=`), `Show`
   (`show()` and `"{x}"`), `Hash` (for `Map` and `Set` keys), `Clone` (`derive`, see the book
   chapter 9).
-- **Equality of enums.** `==` and `!=` on an enum none of whose variants carries data compare the variants and need
-  no `impl Equal` (`tests/enum_equal_fieldless.yx`). An enum with a payload, and any struct, needs `impl Equal`
-  (`tests/e2055_enum_payload_equal.yx`). `<`, `<=`, `>` and `>=` always need `impl Ordered`, also for fieldless enums
+- **Equality of enums.** `==` and `!=` on a non-generic enum none of whose variants carries data compare the variants
+  and need no `impl Equal` (`tests/enum_equal_fieldless.yx`). A generic enum, an enum with a payload, and any struct
+  need `impl Equal` (`tests/e2055_enum_payload_equal.yx`). `<`, `<=`, `>` and `>=` always need `impl Ordered`, also for fieldless enums
   (`tests/e2056_enum_ordered.yx`).
 - **Traits** list method signatures. `impl Trait for Type { ... }` must define each method with
   the exact signature. Every method's first parameter is `self`, `view self`, or `mut self`.
@@ -354,8 +362,8 @@ enum Name { Variant, Variant(Type, ...), ... }
   `view dyn Trait` parameter borrows one.
 - **Generic bodies** are checked once against their bounds. Inside, a `T` value is moved unless
   `T: Copy` is declared.
-- **Not yet:** explicit type arguments on calls, bounds on struct and enum parameters, generic
-  methods (`fn map<U>(..)` inside an `impl`). See section 10.
+- **Not yet:** bounds on struct and enum parameters, default type arguments, generic methods in
+  traits.
 
 ### 2.6 Range integers
 
@@ -488,6 +496,12 @@ is valid). `return x` moves `x` out implicitly. A `let` binding cannot be modifi
   a `view` parameter: `sum(make())`, `sum([4, 5, 6][1..3])`. The compiler creates a hidden
   variable for the call and drops it right after. A `mut` parameter needs a variable: `grow(List<Int>.new())`
   is `pass a variable here (the function borrows it)`.
+- **`Text` for `view String`.** A `view String` parameter, of the library or of your own functions, accepts a `Text`:
+  a literal, a variable, a field or tuple field of a variable, an array or list element, a function or method result
+  (`tests/text_result_to_view_string.yx`). The call borrows a hidden `String` copy. A field of a call result
+  (`make().name`, `pair().0`) is not accepted: bind it with `let` first. An owned `String` position converts literals
+  only, also inside a tuple whose type is expected (`let h: (String, Int) = ("a", 1)`;
+  `tests/tuple_text_literal.yx`, `tests/e2202_tuple_text_variable.yx`).
 - **Place borrows.** `l.at(i)` is a place that borrows an element. It can be used as a receiver
   (`l.at(i).len()`), as a `view`/`mut` argument, or in `print`. It cannot be moved out, stored, or
   assigned to (use `set`).
@@ -519,6 +533,13 @@ fn main() {
 
 ### 3.4 Match and borrowed payloads
 
+- In `match move value`, and in a `match` of an owned temporary (such as a call result), a pattern
+  cannot look inside an owned payload: `Some(Num(n))` is rejected when the payload of `Some` is
+  owned (`tests/e1514_nested_owned_payload_pattern.yx`). Bind the payload and `match` it in the arm,
+  or store the value in a variable and `match` it by borrowing.
+- A bare arm (`P => e,`) belongs to a `match` used as a value, which includes a `match` that is the
+  last line of a branch of an `if` or `match` value (`tests/value_trailing_match.yx`,
+  `tests/e2200_bare_arm_not_last.yx`).
 - `match value` borrows an owned payload for the arm. `match mut value` borrows it mutably and can
   change payloads. `match move value` consumes the enum and gives the arm ownership of its
   bindings; unbound payloads are dropped.
@@ -548,7 +569,7 @@ can never be a variable, field, element or result. `view [T]` accepts an array, 
 slice, a sub-range `a[from..to]`, or a temporary array or list kept alive for the call. Rules for
 arrays and slices are in the book (chapter 12) and in [ARRAYS.md](ARRAYS.md).
 
-### 3.8 User-defined destructors (experimental)
+### 3.8 User-defined destructors
 
 A struct can implement the built-in `Drop` trait with `fn drop(mut self)`. Destruction
 runs that method first, then drops the owned fields in reverse declaration order. Live
@@ -834,8 +855,16 @@ A program is a set of files, each one a module. Module behaviour below is fixed 
 - Import cycles are errors, reported as the full chain `a -> b -> a` (tests/mod_err/cycle/main.yx).
 - A local variable, parameter or loop variable may have the name of an imported module. Inside its
   scope the name refers to the variable (tests/mod_ok/shadow_module/main.yx).
-- Aliases with `import ... as ...` are used in tests/mod_ok/ fixtures; their exact rules beyond the
-  duplicate-name error are **no especificado**.
+- `import a.b as name` makes `name` the only way to reach the module in that file: the default
+  alias `b` is not defined (tests/mod_err/alias_replaces_name/main.yx). Without `as` the alias is
+  the last segment of the path.
+- Two modules may share a last segment when `as` renames one, and one module may be imported under
+  two names; both names reach the same items and types (tests/mod_ok/alias_rules/main.yx).
+- An alias belongs to the file that imports it; it is not an item of that module
+  (tests/mod_err/alias_not_reexported/main.yx).
+- A top-level `fn`, `struct`, `enum`, `trait`, `const` or `type` cannot have the name of an alias
+  (tests/mod_err/alias_clash_const/main.yx, tests/mod_err/alias_clash_type/main.yx). A parameter or
+  local variable can.
 
 ### 6.2 Visibility
 
@@ -843,6 +872,9 @@ A program is a set of files, each one a module. Module behaviour below is fixed 
   is an error (tests/mod_err/private/main.yx, tests/mod_err/private_const/main.yx).
 - Private helpers of the standard library are not reachable from user code
   (tests/e981_fs_private_helper.yx: `std.fs`; tests/e1303_process_private_helper.yx: `std.process`).
+- Struct fields take no `pub` in 1.0: the fields of a `pub struct` are public and those of a private struct are
+  private. `pub` on a field is an error (tests/e2070_pub_struct_field.yx). Accepting it in a later release is a
+  compatible addition.
 - A `pub const` must state its type explicitly (tests/mod_err/pub_const_untyped/main.yx).
 - Constants are evaluated in dependency order. A const that depends on itself through another
   module is an error (tests/mod_err/const_cycle/main.yx). Use before definition in one file is an
@@ -874,6 +906,11 @@ A program is a set of files, each one a module. Module behaviour below is fixed 
 - `yerux.lock` records `name`, `version`, `tag` and `rev`. `build --locked` and `lock --locked`
   fail when the lock is missing or out of date, and `lock --update` moves it to newer compatible
   tags (tests/packages.sh).
+- **Search order.** `import std.x` is always the standard library. Otherwise, in a package, a
+  first segment that names a declared dependency selects it: `import dep` reads its `src/dep.yx`, or
+  `src/lib.yx` when that file does not exist, and `import dep.a.b` reads its `src/a/b.yx`. Any other
+  import is local: a file under `src/` reads `src/<path>.yx`; the compiled file outside `src/` reads
+  the file in its own folder, or `src/<path>.yx` when there is none (tests/packages.sh).
 - Transitive dependencies are resolved. Two requirements that cannot both hold are a
   `dependency conflict` (tests/packages.sh). Dependency cycles are errors, reported as the chain
   (tests/packages.sh: `loop_a -> loop_b -> loop_a`).
@@ -1098,8 +1135,7 @@ unfixed point that no test pins down. The implemented behaviour in sections 1-9 
 9. **Compile-time budgets.** The compiler enforces a step budget of 20 000 000 (E-K2, tests/e1962_comptime_depth_1000.yx
    covers the depth limit of 1000 nested calls, E-K6). COMPTIME.md describes a 256 MiB memory budget that is
    not enforced yet. `examples/e53_comptime_budget.yx` (an endless loop) reaches that same E-K2 limit.
-10. **Module search order.** Whether `src/<name>.yx` or `src/lib.yx` is tried first for a package
-    import (PACKAGES.md) is not tested. Pending.
+10. **Module search order.** *Resolved:* section 6.4 states it and tests/packages.sh pins it.
 11. **Standard library coverage.** STDLIB.md lists APIs that no test calls; they are pending until tested.
     `parallel map`/`reduce` are not implemented.
 

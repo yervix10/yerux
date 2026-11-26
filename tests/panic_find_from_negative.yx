@@ -1,0 +1,6 @@
+// A negative start is rejected, also with the empty pattern.
+fn main() {
+  let s = String.from("abc")
+  print(s.find("b"))
+  print(s.find_from("", -5))
+}

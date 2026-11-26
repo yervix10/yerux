@@ -74,7 +74,13 @@ compila, `<root>` (SPEC.md, sección 6). En un proyecto el archivo principal es
 `src/main.yx`, así que los imports locales se resuelven en `src/`. Un
 `yerux run main.yx` desde la raíz del paquete no ve `src/`, y falla con
 `cannot find module`. Los nombres de dependencias se resuelven con
-`src/<nombre>.yx` o `src/lib.yx`; tests/spec_conformance.sh lo verifica.
+`src/<nombre>.yx` y, si no existe, `src/lib.yx`; tests/spec_conformance.sh lo verifica.
+
+El orden de búsqueda es: la biblioteca estándar (`std.*`), después una dependencia
+declarada cuyo nombre sea el primer segmento (aunque exista un archivo local con ese
+nombre) y por último un archivo local. Un archivo de `src/` busca en `src/`; el
+archivo compilado fuera de `src/` busca en su propia carpeta y, si no está, en
+`src/`. tests/packages.sh fija este orden.
 
 Cada módulo puede importar módulos locales y dependencias directas de su
 propio paquete. Para importar una dependencia transitiva desde la aplicación,

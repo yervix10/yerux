@@ -1,0 +1,7 @@
+import lib
+
+type lib = Int
+
+fn main() {
+  print(lib.one())
+}

@@ -1,0 +1,9 @@
+error: module 'mid' has no item called 'lib'
+ --> tests/mod_err/alias_not_reexported/main.yx:4:9
+  |
+4 |   print(mid.lib.one())
+  |         ^^^^^^^
+  = public items of 'mid': two
+  = help: check the module alias and exported item name; qualify the name with the correct module
+
+1 error(s). Nothing was generated.
