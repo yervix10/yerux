@@ -105,30 +105,46 @@ not implemented.
 
 ### Locks and waiting
 
-A closure that runs while a `Locked` or a `Mutex` is held (`with`, `with_view`, `update`,
-`mutex_with`, `mutex_with_view`, `mutex_update`) must not wait or acquire another lock. The error is
-`cannot wait or acquire a lock inside a with closure`. The checker follows function and method calls in
-user and standard library code, closures passed to a call and local closures that are called, and a note
-shows the chain (`'total' may wait: total -> first -> Receiver.recv`). The operations that count are:
-taking a `Locked` or `Mutex`; `spawn`, `parallel for` and `join`; `recv`, `recv_timeout` and `select2`;
-`ThreadPool.parallel_for`, `ThreadPool.close` and `thread_pool_map`; the raw `__thread_start`,
-`__thread_wait` and `__futex_park`; `io.read_line`, `io.read_file`, `io.write_file`, `io.sleep_ms` and
-`io.sleep_ns` (so also `std.time.sleep`).
+A closure that runs while a `Locked`, `Mutex` or `RwLock` is held (`with`, `with_view`, `update`,
+`mutex_with`, `mutex_with_view`, `mutex_update`, `rwlock_read`, `rwlock_write`) must not wait or acquire
+another lock. The error is `cannot wait or acquire a lock inside a with closure`. The checker follows
+function and method calls in user and standard library code, closures passed to a call and local closures
+that are called, and a note shows the chain (`'total' may wait: total -> first -> Receiver.recv`). The
+operations that count are: taking a `Locked`, `Mutex` or `RwLock`; `spawn`, `parallel for` and `join`;
+`recv`, `recv_timeout` and `select2`; `ThreadPool.parallel_for`, `ThreadPool.close` and `thread_pool_map`;
+the raw `__thread_start`, `__thread_wait` and `__futex_park`; `io.read_line`, `io.read_file`,
+`io.write_file`, `io.sleep_ms` and `io.sleep_ns` (so also `std.time.sleep`); and dropping a
+`std.process.Child`, which reaps it.
 
-Not detected:
+Where the code that runs is not written at the call, **every candidate counts**, so a program can be
+rejected although the run would never reach the waiting one:
 
-- calls through a function value received as a parameter or stored in a variable, struct or list and
-  passed on, and calls through a trait object;
-- what a destructor does (including the implicit join of a dropped handle);
-- `send` on a full bounded channel;
-- `RwLock`: acquiring one inside `with` is accepted, and the closures of `rwlock_read`/`rwlock_write`
-  are not checked;
+- A function value taken from a field, a list element or the result of a call, and a function-typed
+  parameter called under the lock: it is rejected if the program makes **any** function value of the same
+  type that may wait (tests/e2191_with_function_field.yx, tests/e2192_with_function_parameter.yx). A
+  local variable or a closure literal is followed exactly (tests/e2190_with_stored_function_value.yx).
+- A trait object method: any implementation the program turns into that trait object
+  (tests/e2193_with_trait_object.yx).
+- `send`: rejected if the program creates a bounded channel with the same element type anywhere, since the
+  type of a `Sender` does not say whether its channel is bounded. With only unbounded channels of that
+  type, `send` is allowed (tests/e2195_with_bounded_send.yx).
+- Destructors run where an owned value that is never moved goes out of scope (a local, an owned parameter),
+  where a result is discarded or a variable is overwritten, and in `set`, `clear` and `truncate` of a list.
+  If the `Drop` of the value, or of anything it contains, may wait, that place counts
+  (tests/e2194_with_destructor_waits.yx).
+
+**Limitations (accepted by the checker, can deadlock):**
+
+- a value that is moved on one path and dropped on another, values bound by a `match` arm or discarded in a
+  pattern, and elements destroyed by other operations of the library;
+- function values that the library keeps and calls later, such as the closures of a lazy `Iter` adapter
+  consumed inside the lock;
 - blocking calls that do not go through the operations above, for example `std.net` sockets,
-  `io.append_file`, `io.read_all` and `extern` functions.
+  `std.process` waits, `io.append_file`, `io.read_all` and `extern` functions.
 
 In a `Locked` closure, a method named `with`, `with_view`, `join`, `recv`, `sleep_ms`, `read_line`,
 `read_file` or `write_file` is rejected by name, even one that does not wait (`parts.join(",")`).
-Diagnostics carry no `E-C` codes.
+Diagnostics carry no `E-C` codes. tests/with_nonblocking.yx shows what stays allowed.
 
 ## Current APIs and runnable examples
 
@@ -166,8 +182,7 @@ print(rx.recv().is_none())
 
 `Mutex<T>` is a named facade over `Locked<T>`. Use `mutex_update` for a
 mutation and `mutex_with_view`/`mutex_with` when the callback returns an owned
-result. The callback keeps the lock held, so it must not block or wait for another worker (the cases the
-checker rejects are under [Locks and waiting](#locks-and-waiting)). `RwLock<T>` exposes `rwlock_read` and
+result. The callback keeps the lock held, so it must not block or wait for another worker (the cases the checker rejects, also for the `RwLock` callbacks, are under [Locks and waiting](#locks-and-waiting)). `RwLock<T>` exposes `rwlock_read` and
 `rwlock_write`; several
 read callbacks may overlap, while a write callback is exclusive. Acquisition
 spins and does not promise writer fairness. A panic in an RwLock callback can
@@ -435,7 +450,7 @@ parallel for i in 0..n { lock.with(mut l => l.push(i)) }    // Locked
 
 Data races are impossible (statically). **Deadlock and livelock are not**, as in every language with locks. Mitigations, from cheap to expensive:
 1. **Scoped locking only** (`with`): no lock is held across a function that the closure doesn't syntactically see being called... except through calls. A lock cannot be held "by accident" past its closure.
-2. **Static check for the common self-deadlock**: within one `with` closure, a second `with` on the same `Locked` variable (or alias obtained from the same `Shared` clone) is error E-C4. (Implemented more strictly: any second `Locked` or `Mutex` is rejected, with no `E-C` code.)
+2. **Static check for the common self-deadlock**: within one `with` closure, a second `with` on the same `Locked` variable (or alias obtained from the same `Shared` clone) is error E-C4. (Implemented more strictly: any second `Locked`, `Mutex` or `RwLock` is rejected, with no `E-C` code.)
 3. **Lock order**: `Locked.new_ordered(level: 1, x)` (optional integer level). The runtime in debug builds asserts that locks are taken in increasing level order per thread and reports both lock sites. Release builds omit the check. Library types (`Channel`) use levels internally.
 4. **Debug-build deadlock detector**: on a lock wait that exceeds 2 s, build the wait-for graph (lock owner table + per-thread "waiting on" slot); if a cycle exists print it with source locations and exit 101.
 5. **`with` may not block** (E-C6): no `recv`, `join`, `sleep`, nested `scope`, or file/network syscalls inside it (the design is an effect annotation computed per function, `blocks`, propagated through calls. The annotation is **not implemented**: there is no effect system, and the checker follows calls to find waiting and locking instead, with the limits listed under "Locks and waiting").

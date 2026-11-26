@@ -1,0 +1,10 @@
+error: cannot wait or acquire a lock inside a with closure
+  --> tests/e2194_with_destructor_waits.yx:17:5
+   |
+17 |     let slow = Slow { pause: 1 }
+   |     ^^^
+   = 'slow' is dropped here and its destructor may wait: Slow.drop -> std.time.sleep_ms -> std.io.sleep_ms
+   = why: waiting while a lock is held can deadlock every thread that needs the lock
+   = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.

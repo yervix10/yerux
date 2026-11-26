@@ -1,0 +1,10 @@
+error: cannot wait or acquire a lock inside a with closure
+ --> tests/e2192_with_function_parameter.yx:3:24
+  |
+3 |   return lock.with(|v| f(v))
+  |                        ^^^^
+  = the function called here is not known; one of the same type may wait: a closure -> Receiver.recv
+  = why: waiting while a lock is held can deadlock every thread that needs the lock
+  = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.

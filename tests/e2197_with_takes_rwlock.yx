@@ -1,0 +1,11 @@
+// Taking an `RwLock` inside `with` is taking a second lock.
+fn total(table: view RwLock<Int>) -> Int {
+  return rwlock_read(table, |v| v)
+}
+
+fn main() {
+  let table = RwLock<Int>.new(1)
+  let lock = Locked.new(0)
+  let sum = lock.with(|v| v + total(table))
+  print(sum)
+}

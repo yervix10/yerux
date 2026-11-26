@@ -1,0 +1,8 @@
+// The closures of an `RwLock` hold it: they must not wait either.
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let table = RwLock<Int>.new(0)
+  let value = rwlock_read(table, |v| v + rx.recv().unwrap())
+  print(value)
+  tx.close()
+}

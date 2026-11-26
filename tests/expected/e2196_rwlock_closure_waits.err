@@ -1,0 +1,9 @@
+error: cannot wait or acquire a lock inside a with closure
+ --> tests/e2196_rwlock_closure_waits.yx:5:42
+  |
+5 |   let value = rwlock_read(table, |v| v + rx.recv().unwrap())
+  |                                          ^^^^^^^^^
+  = why: waiting while a lock is held can deadlock every thread that needs the lock
+  = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.

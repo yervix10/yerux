@@ -1,0 +1,15 @@
+// A stored function value that waits is rejected where it is handed on under a lock.
+fn apply(f: view fn(Int) -> Int) -> Int {
+  return f(1)
+}
+
+fn main() {
+  let (tx, rx) = Sender<Int>.unbounded()
+  let lock = Locked.new(0)
+  let wait = move |n: Int| {
+    return rx.recv().unwrap() + n
+  }
+  let sum = lock.with(|v| v + apply(wait))
+  print(sum)
+  tx.close()
+}

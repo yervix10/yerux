@@ -59,6 +59,10 @@ struct Types {
   spawn_copies: List<Int>,
   // the function being checked belongs to the standard library or to the prelude (raw intrinsics allowed)
   trusted: Bool,
+  // bindings that are moved somewhere: the others are dropped where they live
+  ever_moved: List<Bool>,
+  // "Trait:Type" for every type the program turns into a `dyn Trait`
+  erased: List<String>,
 }
 pub struct Checked {
   bindings: List<String>, expressions: List<String>, messages: List<String>, borrowed_closures: List<Bool>, errors: Int,
@@ -629,6 +633,7 @@ fn move_binding(types: mut Types, id: Int, name: view String) {
   } else {
     check_frozen(types, id, name, true)
     types.moved.set(id, true)
+    types.ever_moved.set(id, true)
   }
 }
 
@@ -810,6 +815,10 @@ fn call_args(types: mut Types, tree: view List<ast.AstNode>, args: Int, name: vi
     if sig >= 0 && i != lead { record_loan(types, tree, loans, i, mode, actual, false) }
     type_terms.bind(sub, formal, actual)
     let resolved = type_terms.substitute(formal, sub)
+    let wanted_trait = type_terms.dyn_trait(resolved)
+    if wanted_trait != "" && !actual.starts_with("$dyn<") {
+      types.erased.push("{wanted_trait}:{type_terms.base(actual)}")
+    }
     let text_argument = mode == "View" && resolved == "String" && actual == "Text"
     let elem = type_terms.element(actual)
     let slice_argument = resolved.starts_with("Slice<") && elem != "?" &&
@@ -1046,7 +1055,10 @@ fn member(types: mut Types, tree: view List<ast.AstNode>, owner: view String,
     if erased != "" { value_hint = unknown() }
     let actual = infer(types, tree, args + 1, value_hint)
     require_value(types, tree, args + 1, actual)
-    if erased != "" { return expected }
+    if erased != "" {
+      types.erased.push("{erased}:{type_terms.base(actual)}")
+      return expected
+    }
     expect_type(types, inner, actual)
     if inner != "?" { return expected }
     return "Box<{actual}>"
@@ -3251,21 +3263,25 @@ fn in_prelude(tree: view List<ast.AstNode>, node: Int, key: view String, user_li
 }
 
 // ── no waiting while a lock is held ──
+// As in the Rust checker, where the callee is not written at the call every candidate counts: `fnvalue:T` stands for
+// some function value of type T and `dyn:Trait.m` for some implementation of the method.
 
 fn takes_lock(key: view String) -> Bool {
   return key == "Locked.with" || key == "Locked.with_view" || key == "__locked_with" || key == "__locked_with_view" ||
     key == "Mutex.with" || key == "Mutex.with_view" || key == "Mutex.update" || key == "mutex_with" ||
-    key == "mutex_with_view" || key == "mutex_update"
+    key == "mutex_with_view" || key == "mutex_update" || key == "rwlock_read" || key == "rwlock_write"
 }
 
-// The primitives that wait or acquire a lock
-fn waits(key: view String) -> Bool {
+// The primitives that wait or acquire a lock; `bounded` holds the element types of the bounded channels
+fn waits(key: view String, bounded: view List<String>) -> Bool {
+  if key.starts_with("send:") { return bounded.contains(String.from(key.slice(5, key.len()))) }
   return takes_lock(key) || key == "__spawn_owned" || key == "__parallel_range" || key == "__parallel_list" ||
     key == "__thread_wait" || key == "__thread_start" || key == "__thread_start_recover" || key == "__futex_park" ||
     key == "thread_pool_map" || key == "select2" || key == "JoinHandle.join" || key == "Receiver.recv" ||
     key == "Receiver.recv_timeout" || key == "ThreadPool.parallel_for" || key == "ThreadPool.close" ||
     key == "std__io__read_line" || key == "std__io__read_file" || key == "std__io__write_file" ||
-    key == "std__io__sleep_ms" || key == "std__io__sleep_ns"
+    key == "std__io__sleep_ms" || key == "std__io__sleep_ns" || key == "std__process__Child.drop" ||
+    key == "__join_on_drop"
 }
 
 // The direct check of a `Locked.with` closure goes by name
@@ -3288,134 +3304,382 @@ fn waits_directly(tree: view List<ast.AstNode>, node: Int) -> Bool {
   return false
 }
 
-// The calls under `node`. A closure counts where it is handed to a call or called, not where it is only stored.
-// `bodies` collects what is run while holding a lock: closure nodes, and the names of functions passed as such.
-struct LockWalk { calls: List<String>, closures: List<Int>, functions: List<String> }
-
-fn lock_closure(tree: view List<ast.AstNode>, types: view Types, node: Int) -> Int {
-  let id = types.identities.at(node)
-  if id < 0 { return -1 }
-  let decl = types.declarations.at(id)
-  if tree.at(decl).tag != "Let" { return -1 }
-  let value = ast.child(tree, decl, 2)
-  if tree.at(value).tag != "Closure" { return -1 }
-  return value
+// The calls under a node. A function value counts where it is handed to a call or called, not where it is only
+// stored. `closures` and `functions` are what runs while a lock is held; `params` are the function-typed parameters
+// used, which only matter under a lock.
+struct LockWalk {
+  calls: List<String>, closures: List<Int>, functions: List<String>, params: List<String>, bounded: List<String>,
 }
 
-fn lock_call(types: view Types, tree: view List<ast.AstNode>, key: view String, args: Int, walk: mut LockWalk) {
+// What an expression of function type may hold
+struct Held { closures: List<Int>, functions: List<String>, param: Bool, stored: Bool }
+
+// The assignments to variables: binding and value node
+struct Writes { ids: List<Int>, values: List<Int> }
+
+fn new_walk() -> LockWalk {
+  return LockWalk { calls: List<String>.new(), closures: List<Int>.new(), functions: List<String>.new(),
+    params: List<String>.new(), bounded: List<String>.new() }
+}
+
+fn holds(types: view Types, tree: view List<ast.AstNode>, writes: view Writes, node: Int, depth: Int, out: mut Held) {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Closure" {
+    out.closures.push(node)
+    return
+  }
+  if tag != "Var" && tag != "Move" {
+    out.stored = true
+    return
+  }
+  let id = types.identities.at(node)
+  if id < 0 {
+    let name = ast.name_at(tree, node, 0)
+    if signature_index(types, name, false) >= 0 { out.functions.push(move name) }
+    else { out.stored = true }
+    return
+  }
+  holds_binding(types, tree, writes, id, depth, out)
+}
+
+fn holds_binding(types: view Types, tree: view List<ast.AstNode>, writes: view Writes, id: Int, depth: Int,
+    out: mut Held) {
+  let decl = types.declarations.at(id)
+  let tag = String.from(tree.at(decl).tag)
+  if tag == "Param" {
+    out.param = true
+    return
+  }
+  if tag != "Let" || depth > 3 {
+    out.stored = true
+    return
+  }
+  holds(types, tree, writes, ast.child(tree, decl, 2), depth + 1, out)
+  for i in 0..writes.ids.len() {
+    if writes.ids.at(i) == id { holds(types, tree, writes, writes.values.at(i), depth + 1, out) }
+  }
+}
+
+fn new_held() -> Held {
+  return Held { closures: List<Int>.new(), functions: List<String>.new(), param: false, stored: false }
+}
+
+// A function value is used: handed to a call or called. `locking`: the callee runs it while holding a lock.
+fn use_value(types: view Types, tree: view List<ast.AstNode>, writes: view Writes, held: view Held, ty: view String,
+    locking: Bool, walk: mut LockWalk) {
+  let some = "fnvalue:{ty}"
+  for closure in held.closures {
+    if locking { walk.closures.push(closure) }
+    walk_closure(types, tree, writes, closure, walk)
+  }
+  for name in held.functions {
+    if locking { walk.functions.push(String.from(name)) }
+    walk.calls.push(String.from(name))
+  }
+  if held.stored {
+    if locking { walk.functions.push(String.from(some)) }
+    walk.calls.push(String.from(some))
+  }
+  if held.param {
+    if locking { walk.functions.push(String.from(some)) }
+    walk.params.push(String.from(some))
+  }
+}
+
+fn lock_call(types: view Types, tree: view List<ast.AstNode>, writes: view Writes, key: view String, args: Int,
+    walk: mut LockWalk) {
   walk.calls.push(String.from(key))
   let locking = takes_lock(key)
   var at = args + 1
   while at < tree.at(args).end {
-    if tree.at(at).tag == "Closure" {
+    let tag = String.from(tree.at(at).tag)
+    let ty = String.from(types.expressions.at(at))
+    if tag == "Closure" {
       if locking { walk.closures.push(at) }
-      walk_closure(types, tree, at, walk)
-    } else if tree.at(at).tag == "Var" && types.identities.at(at) < 0 {
-      let name = ast.name_at(tree, at, 0)
-      if signature_index(types, name, false) >= 0 {
-        if locking { walk.functions.push(String.from(name)) }
-        walk.calls.push(move name)
+      walk_closure(types, tree, writes, at, walk)
+    } else if (tag == "Var" || tag == "Move") && ty.starts_with("fn(") {
+      var held = new_held()
+      holds(types, tree, writes, at, 0, held)
+      use_value(types, tree, writes, held, ty, locking, walk)
+      walk_calls(types, tree, writes, at, walk)
+    } else {
+      if ty.starts_with("fn(") {
+        var held = new_held()
+        held.stored = true
+        use_value(types, tree, writes, held, ty, locking, walk)
       }
-    } else { walk_calls(types, tree, at, walk) }
+      walk_calls(types, tree, writes, at, walk)
+    }
     at = tree.at(at).end
   }
 }
 
-fn walk_closure(types: view Types, tree: view List<ast.AstNode>, node: Int, walk: mut LockWalk) {
-  walk_calls(types, tree, ast.child(tree, node, 6), walk)
+fn walk_closure(types: view Types, tree: view List<ast.AstNode>, writes: view Writes, node: Int, walk: mut LockWalk) {
+  walk_calls(types, tree, writes, ast.child(tree, node, 6), walk)
 }
 
-fn walk_calls(types: view Types, tree: view List<ast.AstNode>, node: Int, walk: mut LockWalk) {
+// The destructors that run when a value of type `ty` is dropped
+fn droppers(types: view Types, ty: view String, seen: mut List<String>, out: mut List<String>) {
+  if ty == "?" || seen.len() > 64 || seen.contains(String.from(ty)) { return }
+  seen.push(String.from(ty))
+  if ty.starts_with("fn(") { return }
+  let erased = type_terms.dyn_trait(ty)
+  if erased != "" {
+    let prefix = "{erased}:"
+    for pair in types.erased {
+      if pair.starts_with(prefix) {
+        let concrete = String.from(pair.slice(prefix.len(), pair.len()))
+        droppers(types, concrete, seen, out)
+      }
+    }
+    return
+  }
+  let family = type_terms.base(ty)
+  if family == "JoinHandle" { out.push(String.from("__join_on_drop")) }
+  if family == "Ptr" || family == "Slice" { return }
+  let args = type_terms.arguments(ty)
+  for arg in args { droppers(types, arg, seen, out) }
+  let shape = shape_index(types, ty)
+  if shape < 0 { return }
+  if types.shapes.at(shape).user_drop { out.push("{family}.drop") }
+  for field in types.shapes.at(shape).fields {
+    let held = instantiate(field.ty, types.shapes.at(shape).generics, ty)
+    droppers(types, held, seen, out)
+  }
+  for variant in types.shapes.at(shape).variants {
+    for payload in variant.payload {
+      let held = instantiate(payload, types.shapes.at(shape).generics, ty)
+      droppers(types, held, seen, out)
+    }
+  }
+}
+
+fn drop_value(types: view Types, ty: view String, walk: mut LockWalk) {
+  var seen = List<String>.new()
+  var found = List<String>.new()
+  droppers(types, ty, seen, found)
+  for key in found { walk.calls.push(String.from(key)) }
+}
+
+fn walk_calls(types: view Types, tree: view List<ast.AstNode>, writes: view Writes, node: Int, walk: mut LockWalk) {
   let tag = String.from(tree.at(node).tag)
   if tag == "Closure" { return }
   if tag == "Call" {
     let name = ast.name_at(tree, node, 0)
-    if types.identities.at(node) >= 0 {
-      let body = lock_closure(tree, types, node)
-      if body >= 0 { walk_closure(types, tree, body, walk) }
-      lock_call(types, tree, String.new(), ast.child(tree, node, 1), walk)
-    } else { lock_call(types, tree, name, ast.child(tree, node, 1), walk) }
+    let id = types.identities.at(node)
+    if id >= 0 {
+      var held = new_held()
+      holds_binding(types, tree, writes, id, 0, held)
+      use_value(types, tree, writes, held, types.bindings.at(id), false, walk)
+      lock_call(types, tree, writes, String.new(), ast.child(tree, node, 1), walk)
+    } else { lock_call(types, tree, writes, name, ast.child(tree, node, 1), walk) }
     return
   }
   if tag == "CallFn" {
     let callee = ast.child(tree, node, 0)
-    if tree.at(callee).tag == "Closure" { walk_closure(types, tree, callee, walk) }
-    else { walk_calls(types, tree, callee, walk) }
-    lock_call(types, tree, String.new(), ast.child(tree, node, 1), walk)
+    var held = new_held()
+    holds(types, tree, writes, callee, 0, held)
+    use_value(types, tree, writes, held, types.expressions.at(callee), false, walk)
+    if tree.at(callee).tag != "Closure" { walk_calls(types, tree, writes, callee, walk) }
+    lock_call(types, tree, writes, String.new(), ast.child(tree, node, 1), walk)
     return
   }
   if tag == "Method" {
     let receiver = ast.child(tree, node, 0)
     let name = ast.name_at(tree, node, 1)
+    let args = ast.child(tree, node, 2)
     var owner = String.new()
+    var key = String.new()
     if tree.at(receiver).tag == "Var" && types.identities.at(receiver) < 0 {
       owner = ast.name_at(tree, receiver, 0)
     } else if types.expressions.at(receiver) != "?" {
       var ty = String.from(types.expressions.at(receiver))
       let family = type_terms.base(ty)
       if family == "Shared" && name != "clone" && name != "get" { ty = type_terms.first_argument(ty) }
+      var erased = type_terms.dyn_trait(ty)
+      let outer = type_terms.base(ty)
+      if outer == "Box" {
+        let payload = type_terms.box_payload(ty)
+        erased = type_terms.dyn_trait(payload)
+      }
       owner = type_terms.base(ty)
-      walk_calls(types, tree, receiver, walk)
-    } else { walk_calls(types, tree, receiver, walk) }
-    lock_call(types, tree, "{owner}.{name}", ast.child(tree, node, 2), walk)
+      if erased != "" { key = "dyn:{erased}.{name}" }
+      let kind = type_terms.base(ty)
+      if kind == "Sender" && name == "send" { key = "send:{type_terms.first_argument(ty)}" }
+      if kind == "List" && (name == "set" || name == "clear" || name == "truncate") { drop_value(types, ty, walk) }
+      let shape = shape_index(types, ty)
+      if shape >= 0 && !types.shapes.at(shape).is_enum {
+        let field = field_index(types.shapes.at(shape), name)
+        if field >= 0 {
+          let held_type = instantiate(types.shapes.at(shape).fields.at(field).ty, types.shapes.at(shape).generics, ty)
+          if held_type.starts_with("fn(") { key = "fnvalue:{held_type}" }
+        }
+      }
+      walk_calls(types, tree, writes, receiver, walk)
+    } else { walk_calls(types, tree, writes, receiver, walk) }
+    if key == "" { key = "{owner}.{name}" }
+    if key == "Sender.bounded" { note_bounded(types, node, walk) }
+    lock_call(types, tree, writes, key, args, walk)
     return
   }
   if tag == "GenericMember" {
     let owner = ast.name_at(tree, node, 0)
     let name = ast.name_at(tree, node, 2)
-    lock_call(types, tree, "{owner}.{name}", ast.child(tree, node, 3), walk)
+    if owner == "Sender" && name == "bounded" { note_bounded(types, node, walk) }
+    lock_call(types, tree, writes, "{owner}.{name}", ast.child(tree, node, 3), walk)
     return
+  }
+  if tag == "Let" || tag == "UnpackBind" {
+    let id = types.identities.at(node)
+    if id >= 0 && !types.ever_moved.at(id) { drop_value(types, types.bindings.at(id), walk) }
+  }
+  if tag == "Expr" {
+    let value = ast.child(tree, node, 0)
+    let kind = String.from(tree.at(value).tag)
+    if kind != "Var" && kind != "Field" && kind != "Move" { drop_value(types, types.expressions.at(value), walk) }
+  }
+  if tag == "Assign" {
+    let target = ast.child(tree, node, 0)
+    let id = types.identities.at(target)
+    if id >= 0 && tree.at(target).tag == "Var" { drop_value(types, types.bindings.at(id), walk) }
+    else { drop_value(types, types.expressions.at(target), walk) }
   }
   var at = node + 1
   while at < tree.at(node).end {
-    walk_calls(types, tree, at, walk)
+    walk_calls(types, tree, writes, at, walk)
     at = tree.at(at).end
   }
 }
 
-fn new_walk() -> LockWalk {
-  return LockWalk { calls: List<String>.new(), closures: List<Int>.new(), functions: List<String>.new() }
+// `Sender<T>.bounded(n)`: its type is `($tuple<Sender<T>, Receiver<T>>)`
+fn note_bounded(types: view Types, node: Int, walk: mut LockWalk) {
+  let pair = type_terms.first_argument(types.expressions.at(node))
+  walk.bounded.push(type_terms.first_argument(pair))
 }
 
-fn any_waits(calls: view List<String>, waiting: view List<String>) -> Bool {
+fn any_waits(calls: view List<String>, waiting: view List<String>, bounded: view List<String>) -> Bool {
   for call in calls {
-    if waits(call) || waiting.contains(call) { return true }
+    if waits(call, bounded) || waiting.contains(String.from(call)) { return true }
   }
   return false
+}
+
+fn starts_thread(name: view String) -> Bool {
+  return name == "__spawn_owned" || name == "__thread_start" || name == "__thread_start_recover" ||
+    name == "__parallel_range" || name == "__parallel_list"
 }
 
 // A closure that runs under a lock must not reach a wait or another lock through any chain of calls
 fn check_lock_waits(types: mut Types, tree: view List<ast.AstNode>, functions: view List<Function>,
     prelude: view List<Bool>) {
+  var writes = Writes { ids: List<Int>.new(), values: List<Int>.new() }
+  for node in 0..tree.len() {
+    if tree.at(node).tag == "Assign" {
+      let target = ast.child(tree, node, 0)
+      if tree.at(target).tag == "Var" && types.identities.at(target) >= 0 {
+        writes.ids.push(types.identities.at(target))
+        writes.values.push(ast.child(tree, node, 1))
+      }
+    }
+  }
   var walks = List<LockWalk>.new()
   var keys = List<String>.new()
   for i in 0..functions.len() {
     var walk = new_walk()
-    if !prelude.at(i) { walk_calls(types, tree, ast.child(tree, functions.at(i).node, 4), walk) }
+    let node = functions.at(i).node
+    if !prelude.at(i) {
+      walk_calls(types, tree, writes, ast.child(tree, node, 4), walk)
+      // parameters the function owns and never hands on are dropped in it
+      let params = ast.child(tree, node, 2)
+      var at = params + 1
+      while at < tree.at(params).end {
+        let id = types.identities.at(at)
+        let kind = String.from(tree.at(at).tag)
+        var offset = 1
+        if kind == "Self" { offset = 0 }
+        if id >= 0 && tree.at(ast.child(tree, at, offset)).tag == "Own" && !types.ever_moved.at(id) {
+          drop_value(types, types.bindings.at(id), walk)
+        }
+        at = tree.at(at).end
+      }
+    }
     walks.push(move walk)
     keys.push(function_key(types, functions.at(i).signature))
+  }
+  // the function values the program can pass around, by type
+  var consumed = List<Int>.new()
+  var made = List<Int>.new()
+  for i in 0..functions.len() {
+    if prelude.at(i) { continue }
+    let node = functions.at(i).node
+    var at = node + 1
+    while at < tree.at(node).end {
+      let tag = String.from(tree.at(at).tag)
+      if tag == "Call" && types.identities.at(at) < 0 {
+        let name = ast.name_at(tree, at, 0)
+        if starts_thread(name) {
+          let args = ast.child(tree, at, 1)
+          var arg = args + 1
+          while arg < tree.at(args).end {
+            consumed.push(arg)
+            arg = tree.at(arg).end
+          }
+        }
+      }
+      if tag == "Closure" || (tag == "Var" && types.identities.at(at) < 0 &&
+          types.expressions.at(at).starts_with("fn(")) { made.push(at) }
+      at = at + 1
+    }
+  }
+  for node in made {
+    if consumed.contains(node) { continue }
+    let ty = String.from(types.expressions.at(node))
+    if !ty.starts_with("fn(") { continue }
+    var walk = new_walk()
+    if tree.at(node).tag == "Closure" { walk_closure(types, tree, writes, node, walk) }
+    else { walk.calls.push(ast.name_at(tree, node, 0)) }
+    walks.push(move walk)
+    keys.push("fnvalue:{ty}")
+  }
+  // the implementations behind every trait object
+  let known = keys.len()
+  for pair in types.erased {
+    let parts = pair.split(":")
+    if parts.len() != 2 { continue }
+    let prefix = "{parts.at(1)}."
+    for i in 0..functions.len() {
+      if keys.at(i).starts_with(prefix) {
+        var walk = new_walk()
+        walk.calls.push(String.from(keys.at(i)))
+        let method = String.from(keys.at(i).slice(prefix.len(), keys.at(i).len()))
+        walks.push(move walk)
+        keys.push("dyn:{parts.at(0)}.{method}")
+      }
+    }
+  }
+  var bounded = List<String>.new()
+  for walk in walks {
+    for element in walk.bounded { bounded.push(String.from(element)) }
   }
   var waiting = List<String>.new()
   var changed = true
   while changed {
     changed = false
     for i in 0..walks.len() {
-      if !waiting.contains(keys.at(i)) && any_waits(walks.at(i).calls, waiting) {
+      if !waiting.contains(String.from(keys.at(i))) && any_waits(walks.at(i).calls, waiting, bounded) {
         waiting.push(String.from(keys.at(i)))
         changed = true
       }
     }
   }
   for i in 0..walks.len() {
+    var bad = any_waits(walks.at(i).functions, waiting, bounded)
     for closure in walks.at(i).closures {
       var inner = new_walk()
-      walk_closure(types, tree, closure, inner)
-      if any_waits(inner.calls, waiting) {
-        issue(types, String.from("cannot wait or acquire a lock inside a with closure"))
-        return
-      }
+      walk_closure(types, tree, writes, closure, inner)
+      if any_waits(inner.calls, waiting, bounded) || any_waits(inner.params, waiting, bounded) { bad = true }
     }
-    if any_waits(walks.at(i).functions, waiting) {
+    if bad {
       issue(types, String.from("cannot wait or acquire a lock inside a with closure"))
       return
     }
@@ -3436,6 +3700,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     trace: trace, expressions: List<String>.new(), messages: List<String>.new(), equal_types: List<String>.new(), lead: -1, variadics: List<String>.new(), lead_type: String.new(), shown_types: List<String>.new(),
     ordered_types: List<String>.new(), aliases: List<String>.new(),
     borrowed_closures: List<Bool>.new(), box_places: List<Bool>.new(), spawn_copies: List<Int>.new(), trusted: false,
+    ever_moved: List<Bool>.new(), erased: List<String>.new(),
   }
   for i in 0..tree.len() { types.box_places.push(false) }
   if !trace {
@@ -3451,6 +3716,7 @@ pub fn check_file(tree: view List<ast.AstNode>, bindings: view locals.Locals, ve
     types.bindings.push(unknown())
     types.modes.push(String.from("Own"))
     if verify_ownership { types.moved.push(false) }
+    types.ever_moved.push(false)
   }
   let items = ast.child(tree, 0, 0)
   declare_prelude(types)

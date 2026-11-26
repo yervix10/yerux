@@ -1,0 +1,32 @@
+// A trait object method may be any implementation the program boxes, so one that sleeps counts.
+import std.time
+
+trait Task {
+  fn run(view self) -> Int
+}
+
+struct Fast {}
+
+struct Slow {}
+
+impl Task for Fast {
+  fn run(view self) -> Int {
+    return 1
+  }
+}
+
+impl Task for Slow {
+  fn run(view self) -> Int {
+    time.sleep_ms(1)
+    return 2
+  }
+}
+
+fn main() {
+  let lock = Locked.new(0)
+  var tasks = List<Box<dyn Task>>.new()
+  tasks.push(Box<dyn Task>.new(Fast {}))
+  tasks.push(Box<dyn Task>.new(Slow {}))
+  let sum = lock.with(|v| v + tasks.at(0).run())
+  print(sum)
+}

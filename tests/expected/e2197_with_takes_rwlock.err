@@ -1,0 +1,10 @@
+error: cannot wait or acquire a lock inside a with closure
+ --> tests/e2197_with_takes_rwlock.yx:9:31
+  |
+9 |   let sum = lock.with(|v| v + total(table))
+  |                               ^^^^^^^^^^^^
+  = 'total' may wait: total -> rwlock_read
+  = why: waiting while a lock is held can deadlock every thread that needs the lock
+  = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.

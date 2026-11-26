@@ -1,0 +1,10 @@
+error: cannot wait or acquire a lock inside a with closure
+  --> tests/e2191_with_function_field.yx:14:27
+   |
+14 |   let sum = lock.with(|v| job.run(v))
+   |                           ^^^^^^^^^^
+   = the function called here is not known; one of the same type may wait: a closure -> Receiver.recv
+   = why: waiting while a lock is held can deadlock every thread that needs the lock
+   = help: copy what you need out of the closure, return from `with`, then call it
+
+1 error(s). Nothing was generated.
