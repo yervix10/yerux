@@ -1,0 +1,28 @@
+// The left side of `==` is hoisted only when the call really returns a String (r25c). A method call is rewritten
+// by the checker on its first pass (`p.read()` becomes `__ptr_read`, `s.at(i)` a place), so probing its type by
+// checking it and then checking it again turned the rewrite into "function '__ptr_read' does not exist".
+fn count() -> Int {
+  return 7
+}
+
+fn flag() -> Bool {
+  return true
+}
+
+fn main() {
+  print(count() == 7)
+  print(count() != 8)
+  print(flag() == true)
+  let s = String.from("abc")
+  print(s.len() == 3)
+  var l = List<Int>.new()
+  l.push(5)
+  print(l.at(0) == 5)
+  unsafe {
+    let p = Ptr<UInt8>.alloc(2)
+    p.write(49u8)
+    print(p.read() == 49u8)
+    print(p.is_null() == false)
+    p.free()
+  }
+}
