@@ -5,6 +5,7 @@
   "version": "0.2.1",
   "publisher": "yerux",
   "license": "MIT",
+  "icon": "icons/yerux.png",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -28,7 +29,11 @@
         "extensions": [
           ".yx"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/yerux.svg",
+          "dark": "./icons/yerux.svg"
+        }
       }
     ],
     "grammars": [
