@@ -26,6 +26,53 @@ HELP
   shift
 done
 
+# ---- look: colors and a spinner only on a real terminal (NO_COLOR / dumb TERM disable them) ----
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
+  fancy=1
+  esc="$(printf '\033')"
+  b="${esc}[1m"; g="${esc}[32m"; y="${esc}[33m"; d="${esc}[2m"; z="${esc}[0m"
+  v="${esc}[38;5;135m"; bl="${esc}[38;5;33m"; c="${esc}[36m"; r="${esc}[31m"
+  ok='✓'; warn='!'
+else
+  fancy=0
+  b=; g=; y=; d=; z=; v=; bl=; c=; r=
+  ok='ok'; warn='warning:'
+fi
+
+# run "label" command args...: spinner while it runs, then a check mark (or a cross and its status)
+run() {
+  label="$1"; shift
+  if [ "$fancy" = 0 ]; then
+    printf '  %s ...\n' "$label"
+    "$@"
+    return
+  fi
+  "$@" &
+  pid=$!
+  i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    case $((i % 10)) in
+      0) f='⠋' ;; 1) f='⠙' ;; 2) f='⠹' ;; 3) f='⠸' ;; 4) f='⠼' ;;
+      5) f='⠴' ;; 6) f='⠦' ;; 7) f='⠧' ;; 8) f='⠇' ;; *) f='⠏' ;;
+    esac
+    if [ $((i % 20)) -lt 10 ]; then col="$v"; else col="$bl"; fi
+    printf '\r  %s%s%s %s' "$col" "$f" "$z" "$label"
+    i=$((i + 1))
+    sleep 0.08
+  done
+  if wait "$pid"; then
+    printf '\r\033[K  %s%s%s %s\n' "$g" "$ok" "$z" "$label"
+  else
+    printf '\r\033[K  %s✗%s %s\n' "$r" "$z" "$label"
+    return 1
+  fi
+}
+
+if [ "$fancy" = 1 ]; then
+  printf '\n  %s╲ ╱%s  %s%sYerux%s %sinstaller%s\n' "$v" "$z" "$b" "$bl" "$z" "$d" "$z"
+  printf '  %s ╳ %s  %sownership, borrow checking, native code%s\n\n' "$bl" "$z" "$d" "$z"
+fi
+
 tmp=
 candidate=
 cleanup() {
@@ -85,11 +132,13 @@ else
   [ "${#hash}" -eq 64 ] || die "invalid SHA-256"
   case "$hash" in *[!0-9a-fA-F]*) die "invalid SHA-256" ;; esac
 
-  curl -fsSL "$url" -o "$tmp/$archive"
-  (cd "$tmp" && printf '%s  %s\n' "$hash" "$archive" | sha256sum -c - >/dev/null) ||
+  run "Downloading yerux $version ($arch)" curl -fsSL "$url" -o "$tmp/$archive" ||
+    die "download failed: $url"
+  run "Verifying SHA-256" sh -c 'cd "$1" && printf "%s  %s\n" "$2" "$3" | sha256sum -c - >/dev/null' _ "$tmp" "$hash" "$archive" ||
     die "checksum mismatch for $archive"
   src="$tmp/yerux"
-  tar -xOzf "$tmp/$archive" -- "$name/bin/yerux" > "$src"
+  run "Unpacking" sh -c 'tar -xOzf "$1" -- "$2" > "$3"' _ "$tmp/$archive" "$name/bin/yerux" "$src" ||
+    die "could not unpack $archive"
 fi
 
 mkdir -p -- "$prefix/bin"
@@ -102,14 +151,7 @@ fi
 mv -fT -- "$candidate" "$prefix/bin/yerux"
 candidate=
 
-# ---- summary (plain text unless stdout is a terminal; NO_COLOR disables colors) ----
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
-  b="$(printf '\033[1m')"; g="$(printf '\033[32m')"; y="$(printf '\033[33m')"; d="$(printf '\033[2m')"; z="$(printf '\033[0m')"
-  ok='✓'; warn='!'
-else
-  b=; g=; y=; d=; z=
-  ok='ok'; warn='warning:'
-fi
+# ---- summary ----
 size=
 if bytes="$(wc -c < "$prefix/bin/yerux" 2>/dev/null)" && [ -n "$bytes" ]; then
   size=" ($(( (bytes + 524288) / 1048576 )) MB)"
@@ -138,8 +180,8 @@ if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1 && ! comm
 fi
 
 printf '\n%sNext steps%s\n' "$b" "$z"
-printf '    yerux doctor                       %scheck what this installation can do%s\n' "$d" "$z"
-printf '    yerux new hello && cd hello        %sa project: yerux.toml + src/main.yx%s\n' "$d" "$z"
-printf '    yerux run                          %sbuild and run it%s\n' "$d" "$z"
-printf '  Guide: https://github.com/yervix10/yerux/blob/main/docs/GUIDE.md\n'
-printf '  Bugs:  https://github.com/yervix10/yerux/issues\n'
+printf '    %syerux doctor%s                       %scheck what this installation can do%s\n' "$c" "$z" "$d" "$z"
+printf '    %syerux new hello && cd hello%s        %sa project: yerux.toml + src/main.yx%s\n' "$c" "$z" "$d" "$z"
+printf '    %syerux run%s                          %sbuild and run it%s\n' "$c" "$z" "$d" "$z"
+printf '  Guide: %shttps://github.com/yervix10/yerux/blob/main/docs/GUIDE.md%s\n' "$bl" "$z"
+printf '  Bugs:  %shttps://github.com/yervix10/yerux/issues%s\n' "$bl" "$z"
