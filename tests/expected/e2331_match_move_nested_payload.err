@@ -1,0 +1,18 @@
+error: cannot look inside an owned payload in `match move`
+  --> tests/e2331_match_move_nested_payload.yx:15:5
+   |
+15 |     Wrapped(Str(text)) => { print(text) }
+   |     ^^^^^^^
+   = moving the payload out and testing its parts at the same time is not supported
+   = help: bind the payload to a name and `match move` the name in the arm body: `Wrapped(v) => match move v { Str(t) => .. }`
+   = help: or move the work into a helper that takes the inner enum and matches it there: `fn show(v: Value)`, then `Wrapped(v) => show(v)`
+   = help: or use `match e { .. }` (no `move`) to borrow the payloads instead of moving them
+
+error: variable 'text' does not exist
+  --> tests/e2331_match_move_nested_payload.yx:15:35
+   |
+15 |     Wrapped(Str(text)) => { print(text) }
+   |                                   ^^^^
+   = help: check the spelling, scope, and whether the name needs to be imported or qualified
+
+2 error(s). Nothing was generated.

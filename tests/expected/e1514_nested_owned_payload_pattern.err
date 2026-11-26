@@ -4,6 +4,8 @@ error: cannot look inside an owned payload in `match move`
 5 |     Ok(Some(_)) => { print("line") }
   |     ^^
   = moving the payload out and testing its parts at the same time is not supported
-  = help: bind it to a name and `match` the name in the arm body, or use `match e { .. }` to borrow
+  = help: bind the payload to a name and `match move` the name in the arm body: `Wrapped(v) => match move v { Str(t) => .. }`
+  = help: or move the work into a helper that takes the inner enum and matches it there: `fn show(v: Value)`, then `Wrapped(v) => show(v)`
+  = help: or use `match e { .. }` (no `move`) to borrow the payloads instead of moving them
 
 1 error(s). Nothing was generated.

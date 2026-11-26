@@ -4,6 +4,7 @@ error: expected Text but this is String
 4 |   print(t.eq(s))
   |              ^
   = a String is not a Text, and passing it would not copy it
-  = help: compare with the String as receiver instead: `s.eq(t)` accepts a Text
+  = help: declare the parameter as `view String` (a Text literal is lent to it as a String)
+  = help: for a comparison, keep the String as the receiver: `s.eq(t)` accepts a Text
 
 1 error(s). Nothing was generated.

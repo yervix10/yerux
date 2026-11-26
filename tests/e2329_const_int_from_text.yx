@@ -1,0 +1,6 @@
+// A Text initialiser for a numeric const: the message names the text constant form (friction 264).
+const N: Int = "text"
+
+fn main() {
+  print(N)
+}

@@ -1125,6 +1125,7 @@ impl<'a> Checker<'a> {
 
     fn expr_checked(&mut self, e: &mut Expr) -> Ty {
         let pos = e.pos;
+        self.expand_text_const(e);
         // a `const` (not shadowed by a local): its folded value
         if let EK::Var(n, _) = &e.k {
             if self.lookup(n).is_none() {
@@ -1471,6 +1472,15 @@ impl<'a> Checker<'a> {
                         return Ty::Err;
                     }
                 }
+            }
+        }
+        // text consts on either side of a binary operator, and `f(x) == "text"`: the left side of a comparison
+        // has to be a place, so a String call result is stored in a hidden variable first
+        if let EK::Bin(op, a, b) = &mut e.k {
+            self.expand_text_const(a);
+            self.expand_text_const(b);
+            if matches!(*op, "==" | "!=") {
+                self.hoist_string_temp(a);
             }
         }
         // `a == b`, `a < b` on a type that implements Equal / Ordered
@@ -3938,7 +3948,8 @@ impl<'a> Checker<'a> {
                 self.err(
                     diag("expected Text but this is String", apos)
                         .note("a String is not a Text, and passing it would not copy it")
-                        .note("help: compare with the String as receiver instead: `s.eq(t)` accepts a Text"),
+                        .note("help: declare the parameter as `view String` (a Text literal is lent to it as a String)")
+                        .note("help: for a comparison, keep the String as the receiver: `s.eq(t)` accepts a Text"),
                 );
                 continue;
             }
@@ -4149,6 +4160,63 @@ impl<'a> Checker<'a> {
         };
         self.pre.push(Stmt {
             k: SK::Let(name, false, init, id),
+            pos,
+        });
+    }
+
+    /// A text `const` (not shadowed by a local): the literal itself, or a fresh `String` for a String const.
+    fn expand_text_const(&mut self, e: &mut Expr) {
+        let EK::Var(n, _) = &e.k else { return };
+        if self.lookup(n).is_some() {
+            return;
+        }
+        let Some((text, t)) = self.types.text_consts.get(n) else { return };
+        let (text, t, pos) = (text.clone(), *t, e.pos);
+        e.k = if t == Ty::String {
+            EK::Static {
+                ty: Ty::String,
+                f: "from".into(),
+                args: vec![Expr {
+                    k: EK::Text(text),
+                    pos,
+                    ty: Ty::Text,
+                }],
+            }
+        } else {
+            EK::Text(text)
+        };
+        e.ty = t;
+    }
+
+    /// `f(x) == "text"`: `==` on a String calls `eq`, which borrows its left side, so a call result on the left
+    /// becomes a hidden variable and the comparison borrows that.
+    fn hoist_string_temp(&mut self, e: &mut Expr) {
+        if is_place(e) {
+            return;
+        }
+        if !matches!(
+            e.k,
+            EK::Call(..) | EK::Method { .. } | EK::Static { .. } | EK::IfExpr(..) | EK::MatchExpr(..)
+        ) {
+            return;
+        }
+        let t = self.expr(e);
+        if t != Ty::String {
+            return;
+        }
+        let pos = e.pos;
+        let name = format!("cmp__{}", self.vars.len());
+        let id = self.declare(&name, Ty::String, Mode::Own, false);
+        let old = std::mem::replace(
+            e,
+            Expr {
+                k: EK::Var(name.clone(), id),
+                pos,
+                ty: Ty::String,
+            },
+        );
+        self.pre.push(Stmt {
+            k: SK::Let(name, false, old, id),
             pos,
         });
     }
@@ -5786,7 +5854,9 @@ impl<'a> Checker<'a> {
                                         self.err(
                                             diag("cannot look inside an owned payload in `match move`", pos)
                                                 .note("moving the payload out and testing its parts at the same time is not supported")
-                                                .note("help: bind it to a name and `match` the name in the arm body, or use `match e { .. }` to borrow"),
+                                                .note("help: bind the payload to a name and `match move` the name in the arm body: `Wrapped(v) => match move v { Str(t) => .. }`")
+                                                .note("help: or move the work into a helper that takes the inner enum and matches it there: `fn show(v: Value)`, then `Wrapped(v) => show(v)`")
+                                                .note("help: or use `match e { .. }` (no `move`) to borrow the payloads instead of moving them"),
                                         );
                                     }
                                 }

@@ -1,8 +1,0 @@
-error: a const holds a number, Bool or Char: a Text constant is not supported
- --> tests/e2064_const_text.yx:1:19
-  |
-1 | const PAT: Text = "^a+$"
-  |                   ^^^^^^
-  = help: write the text where it is used, or return it from a function: `fn pattern() -> Text { return ".." }`
-
-1 error(s). Nothing was generated.

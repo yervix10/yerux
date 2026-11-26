@@ -1,0 +1,22 @@
+// A nested pattern inside an owned payload of `match move`: the helps offer a nested match, a helper and a borrow
+// (friction 266).
+enum Value {
+  Str(String),
+  Num(Int),
+}
+
+enum Shape {
+  Wrapped(Value),
+  Empty,
+}
+
+fn show(s: Shape) {
+  match move s {
+    Wrapped(Str(text)) => { print(text) }
+    _ => { print("other") }
+  }
+}
+
+fn main() {
+  show(Shape.Wrapped(Value.Str(String.from("x"))))
+}
