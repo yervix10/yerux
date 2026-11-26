@@ -659,7 +659,7 @@ Rules that follow from the language and apply to the calls below:
 - Function arguments are `view fn(..)`: write the closure in place (`|x: view Int| -> Int { return x + 1 }`) or pass a variable holding a function; it may capture local variables.
 - Offsets are byte offsets and always on character boundaries.
 
-**Index** (all 30 modules of `src/std/`; each one is a file of Yerux):
+**Index** (all 31 modules of `src/std/`; each one is a file of Yerux):
 
 | Module | What | Detailed reference |
 |---|---|---|
@@ -669,7 +669,7 @@ Rules that follow from the language and apply to the calls below:
 | `std.hash`, `std.hex`, `std.base64` | FNV-1a/CRC-32/SHA-256, hex, base64 | below |
 | `std.regex`, `std.csv`, `std.toml` | bounded ASCII regex, RFC 4180 CSV, manifest-style TOML | below, [REGEX_CSV_TOML.md](REGEX_CSV_TOML.md) |
 | `std.json` | JSON reader and writer over a `Value` enum | below |
-| `std.args`, `std.env`, `std.io` | command line, environment, raw I/O and `IoError` | below, [STDLIB_IO.md](STDLIB_IO.md) |
+| `std.args`, `std.cli`, `std.env`, `std.io` | command line, subcommands/flags/help, environment, raw I/O and `IoError` | below, [STDLIB_IO.md](STDLIB_IO.md) |
 | `std.fs`, `std.path`, `std.time` | files and directories, path strings, `Duration`/clocks/calendar | below, [STDLIB_IO.md](STDLIB_IO.md), [STDLIB_SYSTEM.md](STDLIB_SYSTEM.md) |
 | `std.process` | run and control child processes, pipes, signals | [STDLIB_PROCESS.md](STDLIB_PROCESS.md) |
 | `std.net`, `std.http` | blocking TCP sockets; small HTTP/1.1 client over them | [NET.md](NET.md), [HTTP.md](HTTP.md) |
@@ -779,6 +779,53 @@ Beyond interpolation. Widths count characters.
 ### `std.args`
 
 `parse(argv)` accepts a `List<String>` including the program name; `parse_process()` uses `std.io.args()`. The schema free parser collects `--name=value` in `options`, long flags in `flags`, splits short flag groups (`-abc`), treats the first positional as `subcommand`, and keeps later values in `positionals`. `--` ends option parsing; `--help` sets `help` and adds the `help` flag. Use `flag(parsed, name)` or `has_flag(parsed, name)` for boolean flags (short like `-v` or long like `--verbose`), `positionals(parsed)` to retrieve positional arguments, `positional(parsed, index) -> Option<String>` for one of them, `option(parsed, name)` (last value wins), `options_all(parsed, name)` (every value of a repeated option, in command-line order), and `help_line(program, usage)` to build a usage line. Options without `=value` are flags because no option schema is provided. With a schema, a valued option that is the last word of argv is reported in `Parsed.errors` (`option --prefix needs a value`). With a schema, `parse_with(argv, valued, with_subcommand)` makes the names in `valued` take the next word (`--title TEXT`, `-o FILE`; `--k=v` still works), and inside a short cluster a valued option takes the rest of the cluster as its value, as in GNU getopt (`-ev pat` is `-e v` plus the positional `pat`, `-n5` is `-n 5`; `-ve` with `e` valued and no more words is reported in `errors`) and, with `with_subcommand` false, leaves the first positional in `positionals`. Typed accessors: `option_or(p, name, default)`, `option_int(p, name) -> Option<Int>`, `option_int_or`, `option_int_checked -> Result<Option<Int>, String>` (tells a missing option from a malformed one), `option_float`, `option_bool(p, name, default)`.
+
+### `std.cli`
+
+Subcommand, flag and option parsing with generated help, built on `std.args`. A `Command` describes one level
+(`command(name, about)`); add flags/options with `add_flag` and nested commands with `add_subcommand`. `flag` and
+`short_flag` build boolean flags; `option` and `short_option` build options that take a value (`--name VALUE`,
+`--name=VALUE`, `-n VALUE`, `-nVALUE`). `set_required` and `set_default` change a flag before it is added;
+`set_usage` replaces the generated `[OPTIONS] <COMMAND>` suffix.
+
+`parse(cmd, argv)` walks argv one level at a time (flags before a subcommand belong to the parent, the first
+positional that names a subcommand selects it) and returns the merged `Matches`; `parse_process(cmd)` uses
+`io.args()`. Unknown options, a valued option with no value and missing required flags/options are collected in
+`Matches.errors`; `ok(m)`, `errors_text(m)` and `m.help_text` report them. Typed accessors: `has(m, name)`,
+`value(m, name)`, `value_or`, `value_int`, `value_int_or`, `value_int_checked`, `value_bool`, `positionals(m)`,
+`positional(m, i)`, `subcommand(m)` (the deepest name) and `path_text(m)` (the whole chain). `help(cmd)` and
+`usage(cmd)` render the generated text; `Matches.help_text` already holds the help of the resolved subcommand, and
+`--help`/`-h` and `--version`/`-V` are recognized at every level. Tests: tests/std_cli.yx, tests/std_cli_errors.yx.
+
+```yerux args=--verbose build src/main.yx
+import std.cli
+import std.io
+
+fn main() {
+  var tool = cli.command("tool", "Build things")
+  cli.add_flag(tool, cli.short_flag("verbose", "v", "Print more"))
+  var build = cli.command("build", "Build the project")
+  cli.add_flag(build, cli.short_option("output", "o", "FILE", "Write here"))
+  cli.add_subcommand(tool, move build)
+  let m = cli.parse_process(tool)
+  if !cli.ok(m) {
+    io.eprintln(cli.errors_text(m))
+    io.exit(2)
+  }
+  print(cli.usage(tool))
+  print(cli.subcommand(m))
+  print(cli.has(m, "verbose"))
+  print(cli.value_or(m, "output", "-"))
+  print(cli.positional(m, 0).unwrap())
+}
+```
+```output
+Usage: tool [OPTIONS] <COMMAND>
+build
+true
+-
+src/main.yx
+```
 
 ### `std.collections`
 

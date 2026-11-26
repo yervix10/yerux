@@ -1,0 +1,18 @@
+true
+build
+build
+true
+true
+out.bin
+info
+src/main.yx
+1
+Usage: build [OPTIONS]
+
+Build the project
+
+Options:
+      --release        Optimize the output
+  -o, --output <FILE>  Write the artifact here
+  -h, --help           Show this help
+

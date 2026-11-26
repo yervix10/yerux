@@ -1,0 +1,586 @@
+// std.cli: subcommand, flag and option parsing with generated help, built on std.args.
+//
+//   import std.cli
+//
+//   var app = cli.command("tool", "Build and inspect projects")
+//   cli.add_flag(app, cli.short_flag("verbose", "v", "Print more detail"))
+//   var build = cli.command("build", "Build the project")
+//   cli.add_flag(build, cli.short_option("output", "o", "FILE", "Write the artifact here"))
+//   cli.add_subcommand(app, build)
+//   let m = cli.parse_process(app)
+//   if !cli.ok(m) { io.eprintln(cli.errors_text(m)); io.exit(2) }
+//   print(cli.subcommand(m))
+//
+// A `Command` describes one level: its own flags/options, its subcommands and an optional usage suffix.
+// `parse` walks the argv one level at a time (flags before a subcommand belong to the parent) and returns
+// the merged `Matches`. `help` renders the generated help of a command; `Matches.help_text` already holds
+// the help of the resolved subcommand.
+import std.args
+import std.fmt
+import std.io
+import std.text
+
+/// One flag or option of a command. `value_name` is empty for a boolean flag.
+pub struct Flag {
+  long: String,
+  short: String,
+  help: String,
+  value_name: String,
+  required: Bool,
+  default_value: String,
+}
+
+derive Clone for Flag
+
+/// One command level: flags, subcommands and an optional usage suffix.
+pub struct Command {
+  name: String,
+  about: String,
+  usage: String,
+  flags: List<Flag>,
+  subcommands: List<Command>,
+}
+
+/// The result of parsing argv against a command tree.
+pub struct Matches {
+  /// Name of the resolved (deepest) command.
+  name: String,
+  /// Subcommand names from the root down to the resolved command; empty when none was given.
+  path: List<String>,
+  /// Canonical long names of the flags that were given.
+  flags: List<String>,
+  /// `(long name, value)` pairs, in command-line order; defaults are appended at the end.
+  values: List < (String, String) >,
+  positionals: List<String>,
+  /// Every flag visible to the resolved command, for name lookup and defaults.
+  defs: List<Flag>,
+  help: Bool,
+  version: Bool,
+  errors: List<String>,
+  /// Generated help of the resolved command.
+  help_text: String,
+}
+
+/// A boolean flag (`--name`).
+pub fn flag(long: view String, help: view String) -> Flag {
+  return Flag { long: String.from(long), short: String.new(), help: String.from(help), value_name: String.new(), required: false, default_value: String.new() }
+}
+
+/// A boolean flag with a short alias (`-s`, `--name`).
+pub fn short_flag(long: view String, short: view String, help: view String) -> Flag {
+  return Flag { long: String.from(long), short: String.from(short), help: String.from(help), value_name: String.new(), required: false, default_value: String.new() }
+}
+
+/// An option that takes a value (`--name VALUE` or `--name=VALUE`).
+pub fn option(long: view String, value_name: view String, help: view String) -> Flag {
+  return Flag { long: String.from(long), short: String.new(), help: String.from(help), value_name: String.from(value_name), required: false, default_value: String.new() }
+}
+
+/// An option that takes a value, with a short alias (`-n VALUE`, `-nVALUE`, `--name=VALUE`).
+pub fn short_option(long: view String, short: view String, value_name: view String, help: view String) -> Flag {
+  return Flag { long: String.from(long), short: String.from(short), help: String.from(help), value_name: String.from(value_name), required: false, default_value: String.new() }
+}
+
+/// Mark a flag or option as required.
+pub fn set_required(f: mut Flag) {
+  f.required = true
+}
+
+/// Give an option a default value (used when it is not on the command line).
+pub fn set_default(f: mut Flag, value: view String) {
+  f.default_value = String.from(value)
+}
+
+/// A command level.
+pub fn command(name: view String, about: view String) -> Command {
+  return Command { name: String.from(name), about: String.from(about), usage: String.new(), flags: List<Flag>.new(), subcommands: List<Command>.new() }
+}
+
+/// Add a flag or option to a command.
+pub fn add_flag(c: mut Command, f: Flag) {
+  c.flags.push(move f)
+}
+
+/// Add a subcommand.
+pub fn add_subcommand(c: mut Command, sub: Command) {
+  c.subcommands.push(move sub)
+}
+
+/// Replace the generated `[OPTIONS] <COMMAND>` suffix of the usage line.
+pub fn set_usage(c: mut Command, usage: view String) {
+  c.usage = String.from(usage)
+}
+
+/// Parse `argv` (including the program name at index 0) against `cmd`.
+pub fn parse(cmd: view Command, argv: view List<String>) -> Matches {
+  var m = parse_level(cmd, argv, List<String>.new())
+  if !m.help && !m.version {
+    finish(m)
+  }
+  return m
+}
+
+/// Parse the process command line (`io.args()`) against `cmd`.
+pub fn parse_process(cmd: view Command) -> Matches {
+  let argv = io.args()
+  return parse(cmd, argv)
+}
+
+fn parse_level(cmd: view Command, argv: view List<String>, prefix: List<String>) -> Matches {
+  let valued = valued_names(cmd)
+  let idx = subcommand_index(cmd, argv, valued)
+  if idx < 0 {
+    var m = parse_tokens(cmd, argv, valued)
+    m.path = move prefix
+    return m
+  }
+  let token = String.from(argv.at(idx))
+  var si = 0
+  while si < cmd.subcommands.len() {
+    if cmd.subcommands.at(si).name == token { break }
+    si = si + 1
+  }
+  let sub = cmd.subcommands.at(si)
+  var before = List<String>.new()
+  var k = 0
+  while k < idx {
+    before.push(String.from(argv.at(k)))
+    k = k + 1
+  }
+  var head = parse_tokens(cmd, before, valued)
+  if head.help || head.version { return head }
+  var sub_argv = List<String>.new()
+  sub_argv.push(String.from(sub.name))
+  k = idx + 1
+  while k < argv.len() {
+    sub_argv.push(String.from(argv.at(k)))
+    k = k + 1
+  }
+  var sub_prefix = prefix.clone()
+  sub_prefix.push(String.from(sub.name))
+  let tail = parse_level(sub, sub_argv, move sub_prefix)
+  merge(head, move tail)
+  return head
+}
+
+fn parse_tokens(cmd: view Command, argv: view List<String>, valued: view List<String>) -> Matches {
+  let p = args.parse_with(argv, valued, false)
+  var m = Matches { name: String.from(cmd.name), path: List<String>.new(), flags: List<String>.new(), values: List < (String, String) >.new(), positionals: args.positionals(p), defs: cmd.flags.clone(), help: p.help, version: false, errors: List<String>.new(), help_text: String.new() }
+  var i = 0
+  while i < p.flags.len() {
+    let k = p.flags.at(i)
+    if k == "version" || k == "V" { m.version = true }
+    i = i + 1
+  }
+  if m.help || m.version {
+    m.help_text = help(cmd)
+    return m
+  }
+  i = 0
+  while i < p.options.len() {
+    let k = String.from(p.options.at(i).0)
+    let v = String.from(p.options.at(i).1)
+    let fi = find_flag(cmd, k)
+    if fi < 0 {
+      m.errors.push(unknown_text(k))
+    } else {
+      m.values.push((String.from(cmd.flags.at(fi).long), move v))
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < p.flags.len() {
+    let k = p.flags.at(i)
+    if k == "help" || k == "h" {
+      m.help = true
+    } else if k == "version" || k == "V" {
+      m.version = true
+    } else {
+      let fi = find_flag(cmd, k)
+      if fi < 0 {
+        m.errors.push(unknown_text(k))
+      } else {
+        let f = cmd.flags.at(fi)
+        if f.value_name.is_empty() {
+          m.flags.push(String.from(f.long))
+        }
+      }
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < p.errors.len() {
+    m.errors.push(String.from(p.errors.at(i)))
+    i = i + 1
+  }
+  m.help_text = help(cmd)
+  return m
+}
+
+fn merge(head: mut Matches, tail: Matches) {
+  var i = 0
+  while i < tail.flags.len() {
+    head.flags.push(String.from(tail.flags.at(i)))
+    i = i + 1
+  }
+  i = 0
+  while i < tail.values.len() {
+    head.values.push((String.from(tail.values.at(i).0), String.from(tail.values.at(i).1)))
+    i = i + 1
+  }
+  i = 0
+  while i < tail.positionals.len() {
+    head.positionals.push(String.from(tail.positionals.at(i)))
+    i = i + 1
+  }
+  i = 0
+  while i < tail.defs.len() {
+    head.defs.push(tail.defs.at(i).clone())
+    i = i + 1
+  }
+  i = 0
+  while i < tail.errors.len() {
+    head.errors.push(String.from(tail.errors.at(i)))
+    i = i + 1
+  }
+  head.name = String.from(tail.name)
+  head.path = tail.path.clone()
+  head.help = tail.help
+  head.version = tail.version
+  head.help_text = String.from(tail.help_text)
+}
+
+fn finish(m: mut Matches) {
+  let defs = m.defs.clone()
+  var i = 0
+  while i < defs.len() {
+    let f = defs.at(i)
+    if !f.value_name.is_empty() {
+      if value(m, f.long).is_none() {
+        if f.required {
+          m.errors.push("missing required option --{f.long}")
+        } else if !f.default_value.is_empty() {
+          m.values.push((String.from(f.long), String.from(f.default_value)))
+        }
+      }
+    } else if f.required && !has(m, f.long) {
+      m.errors.push("missing required flag --{f.long}")
+    }
+    i = i + 1
+  }
+}
+
+fn valued_names(cmd: view Command) -> List<String> {
+  var out = List<String>.new()
+  var i = 0
+  while i < cmd.flags.len() {
+    let f = cmd.flags.at(i)
+    if !f.value_name.is_empty() {
+      out.push(String.from(f.long))
+      if !f.short.is_empty() { out.push(String.from(f.short)) }
+    }
+    i = i + 1
+  }
+  return out
+}
+
+fn is_valued(valued: view List<String>, name: view String) -> Bool {
+  var i = 0
+  while i < valued.len() {
+    if valued.at(i) == name { return true }
+    i = i + 1
+  }
+  return false
+}
+
+fn subcommand_index(cmd: view Command, argv: view List<String>, valued: view List<String>) -> Int {
+  var i = 1
+  var positional_only = false
+  var first_positional = true
+  while i < argv.len() {
+    let a = String.from(argv.at(i))
+    if !positional_only && a == "--" {
+      positional_only = true
+    } else if !positional_only && a.starts_with("--") {
+      if a.find("=") < 0 {
+        let k = a.slice(2, a.len())
+        if is_valued(valued, k) && i + 1 < argv.len() { i = i + 1 }
+      }
+    } else if !positional_only && a.starts_with("-") && a.len() > 1 {
+      var j = 1
+      while j < a.len() {
+        let f = a.slice(j, j + 1)
+        if is_valued(valued, f) {
+          if j + 1 >= a.len() && i + 1 < argv.len() { i = i + 1 }
+          break
+        }
+        j = j + 1
+      }
+    } else if first_positional {
+      var s = 0
+      while s < cmd.subcommands.len() {
+        if cmd.subcommands.at(s).name == a { return i }
+        s = s + 1
+      }
+      first_positional = false
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+fn find_flag(cmd: view Command, name: view String) -> Int {
+  var i = 0
+  while i < cmd.flags.len() {
+    let f = cmd.flags.at(i)
+    if f.long == name { return i }
+    if !f.short.is_empty() && f.short == name { return i }
+    i = i + 1
+  }
+  return -1
+}
+
+fn unknown_text(name: view String) -> String {
+  var s = String.from("unknown option ")
+  if name.len() == 1 {
+    s.push_byte(45)
+    s.push_str(name)
+  } else {
+    s.push_str("--")
+    s.push_str(name)
+  }
+  return s
+}
+
+fn normalize(name: view String) -> String {
+  var clean = String.from(name)
+  if clean.starts_with("--") { return clean.slice(2, clean.len()) }
+  if clean.starts_with("-") && clean.len() > 1 { return clean.slice(1, clean.len()) }
+  return clean
+}
+
+fn canonical(m: view Matches, name: view String) -> String {
+  let clean = normalize(name)
+  var i = 0
+  while i < m.defs.len() {
+    let f = m.defs.at(i)
+    if f.long == clean { return String.from(f.long) }
+    if !f.short.is_empty() && f.short == clean { return String.from(f.long) }
+    i = i + 1
+  }
+  return clean
+}
+
+/// True when the flag was given (`--verbose`, `-v` or `--verbose=true`).
+pub fn has(m: view Matches, name: view String) -> Bool {
+  let c = canonical(m, name)
+  if c == "help" { return m.help }
+  if c == "version" { return m.version }
+  var i = 0
+  while i < m.flags.len() {
+    if m.flags.at(i) == c { return true }
+    i = i + 1
+  }
+  return false
+}
+
+/// The last value given for an option, or its default.
+pub fn value(m: view Matches, name: view String) -> Option<String> {
+  let c = canonical(m, name)
+  var i = m.values.len() - 1
+  while i >= 0 {
+    if m.values.at(i).0 == c { return Some(String.from(m.values.at(i).1)) }
+    i = i - 1
+  }
+  return None
+}
+
+pub fn value_or(m: view Matches, name: view String, default: view String) -> String {
+  match value(m, name) {
+    Some(v) => { return v }
+    None => { return String.from(default) }
+  }
+}
+
+/// The option as an Int: `None` when missing or malformed (use `value_int_checked` to tell them apart).
+pub fn value_int(m: view Matches, name: view String) -> Option<Int> {
+  match value(m, name) {
+    Some(v) => {
+      match text.parse_int(v) {
+        Ok(n) => { return Some(n) }
+        Err(e) => { return None }
+      }
+    }
+    None => { return None }
+  }
+}
+
+pub fn value_int_or(m: view Matches, name: view String, default: Int) -> Int {
+  match value_int(m, name) {
+    Some(n) => { return n }
+    None => { return default }
+  }
+}
+
+/// `Ok(None)` when the option is missing, `Err(message)` when it is present but not an integer.
+pub fn value_int_checked(m: view Matches, name: view String) -> Result<Option<Int>, String> {
+  match value(m, name) {
+    Some(v) => {
+      match text.parse_int(v) {
+        Ok(n) => { return Ok(Some(n)) }
+        Err(e) => {
+          var msg = String.from("--")
+          msg.push_str(name)
+          msg.push_str(": ")
+          msg.push_str(e)
+          return Err(move msg)
+        }
+      }
+    }
+    None => { return Ok(None) }
+  }
+}
+
+/// `--flag`, `--flag=true|false|yes|no|1|0`; missing is `default`.
+pub fn value_bool(m: view Matches, name: view String, default: Bool) -> Bool {
+  match value(m, name) {
+    Some(v) => { return v == "true" || v == "yes" || v == "1" }
+    None => { return default || has(m, name) }
+  }
+}
+
+/// A fresh copy of the positional arguments (the subcommand names are not included).
+pub fn positionals(m: view Matches) -> List<String> {
+  return m.positionals.clone()
+}
+
+pub fn positional(m: view Matches, index: Int) -> Option<String> {
+  if index >= 0 && index < m.positionals.len() {
+    return Some(String.from(m.positionals.at(index)))
+  }
+  return None
+}
+
+/// The deepest subcommand name, or `""` when none was given.
+pub fn subcommand(m: view Matches) -> String {
+  if m.path.is_empty() { return String.new() }
+  return String.from(m.path.at(m.path.len() - 1))
+}
+
+/// The subcommand chain (`"build release"`), or `""` when none was given.
+pub fn path_text(m: view Matches) -> String {
+  return m.path.join(" ")
+}
+
+/// Every problem found, one per line (empty when the parse is clean).
+pub fn errors_text(m: view Matches) -> String {
+  return m.errors.join("\n")
+}
+
+pub fn ok(m: view Matches) -> Bool {
+  return m.errors.is_empty()
+}
+
+/// `Usage: name [OPTIONS] <COMMAND>` (or the suffix set with `set_usage`).
+pub fn usage(cmd: view Command) -> String {
+  var s = String.from("Usage: ")
+  s.push_str(cmd.name)
+  if !cmd.usage.is_empty() {
+    s.push_byte(32)
+    s.push_str(cmd.usage)
+  } else {
+    if cmd.flags.len() > 0 { s.push_str(" [OPTIONS]") }
+    if cmd.subcommands.len() > 0 { s.push_str(" <COMMAND>") }
+  }
+  return s
+}
+
+fn flag_label(f: view Flag) -> String {
+  var s = String.new()
+  if !f.short.is_empty() {
+    s.push_byte(45)
+    s.push_str(f.short)
+    s.push_str(", ")
+  } else {
+    s.push_str("    ")
+  }
+  s.push_str("--")
+  s.push_str(f.long)
+  if !f.value_name.is_empty() {
+    s.push_byte(32)
+    s.push_byte(60)
+    s.push_str(f.value_name)
+    s.push_byte(62)
+  }
+  return s
+}
+
+fn label_width(cmd: view Command) -> Int {
+  var w = String.from("-h, --help").len()
+  var i = 0
+  while i < cmd.flags.len() {
+    let n = flag_label(cmd.flags.at(i)).len()
+    if n > w { w = n }
+    i = i + 1
+  }
+  return w
+}
+
+/// Generated help for one command: usage, about, subcommands and options.
+pub fn help(cmd: view Command) -> String {
+  var s = String.new()
+  s.push_str(usage(cmd))
+  s.push_byte(10)
+  if !cmd.about.is_empty() {
+    s.push_byte(10)
+    s.push_str(cmd.about)
+    s.push_byte(10)
+  }
+  if cmd.subcommands.len() > 0 {
+    s.push_byte(10)
+    s.push_str("Commands:")
+    s.push_byte(10)
+    var w = 0
+    var i = 0
+    while i < cmd.subcommands.len() {
+      let n = cmd.subcommands.at(i).name.len()
+      if n > w { w = n }
+      i = i + 1
+    }
+    i = 0
+    while i < cmd.subcommands.len() {
+      let sub = cmd.subcommands.at(i)
+      s.push_str("  ")
+      s.push_str(fmt.pad_right(sub.name, w, ' '))
+      s.push_str("  ")
+      s.push_str(sub.about)
+      s.push_byte(10)
+      i = i + 1
+    }
+  }
+  s.push_byte(10)
+  s.push_str("Options:")
+  s.push_byte(10)
+  let w = label_width(cmd)
+  var i = 0
+  while i < cmd.flags.len() {
+    let f = cmd.flags.at(i)
+    s.push_str("  ")
+    s.push_str(fmt.pad_right(flag_label(f), w, ' '))
+    s.push_str("  ")
+    s.push_str(f.help)
+    if f.required { s.push_str(" (required)") }
+    if !f.default_value.is_empty() {
+      s.push_str(" [default: ")
+      s.push_str(f.default_value)
+      s.push_byte(93)
+    }
+    s.push_byte(10)
+    i = i + 1
+  }
+  s.push_str("  ")
+  s.push_str(fmt.pad_right(String.from("-h, --help"), w, ' '))
+  s.push_str("  Show this help")
+  s.push_byte(10)
+  return s
+}

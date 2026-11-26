@@ -80,6 +80,7 @@ Stable entries freeze public names, signatures and documented behavior for the t
 | `std.regex`, `std.csv`, `std.toml` | Experimental | tests/std_regex.yx, tests/std_csv.yx, tests/std_toml.yx; grammar in REGEX_CSV_TOML.md still subject to change |
 | `std.json` | Stable | `parse` to the `Value` enum (`Int`/`Float` split, source-order members, 200-level depth limit, errors with byte offset), `to_string`, `to_pretty`, `quote`, `find`, `line_col`, `type_name`; tests/std_json.yx on both backends; used by examples/real/jql |
 | `std.args`, `std.env` | Stable | tests/std_args.yx, tests/std_env_typed.yx, tests/args_flags.yx |
+| `std.cli` (subcommands, flags/options, generated help over `std.args`) | Experimental | tests/std_cli.yx, tests/std_cli_errors.yx; docs/STDLIB.md |
 | `std.io`, `std.fs`, `std.path`, `std.time` | Stable | docs/STDLIB_IO.md, docs/STDLIB_SYSTEM.md; tests/std_fs_metadata.yx, tests/time_duration.yx. Public helpers listed in 6.3 are Internal, tests/std_io_raw_env.yx, tests/std_fs_limit_reader.yx |
 | `io.prompt` and `IoErrorKind.UnexpectedEof` | Stable | Prompt then read a UTF-8 line. `tests/io_prompt.yx` covers line endings, malformed input and EOF. |
 | `std.process` | Experimental | docs/STDLIB_PROCESS.md; tests/process_*.yx |

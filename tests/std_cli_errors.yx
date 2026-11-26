@@ -1,0 +1,23 @@
+// std.cli reports unknown options and a valued option with no value (friction 64)
+import std.cli
+import std.io
+
+fn main() {
+  var tool = cli.command("tool", "Demo")
+  cli.add_flag(tool, cli.flag("verbose", "Print more"))
+
+  var build = cli.command("build", "Build")
+  cli.add_flag(build, cli.short_option("output", "o", "FILE", "Write here"))
+  cli.add_subcommand(tool, move build)
+
+  var argv = List<String>.new()
+  for w in ["tool", "build", "--unknown", "-o"] {
+    argv.push(String.from(w))
+  }
+  let m = cli.parse(tool, argv)
+  if !cli.ok(m) {
+    io.eprintln(cli.errors_text(m))
+    io.exit(2)
+  }
+  print("unexpected success")
+}
