@@ -1,0 +1,39 @@
+// std.json edge cases: integers at the borders of Int. The values that fit keep
+// their spelling through the writer; anything outside Int is rejected before a
+// value is built. Also the number-shaped spellings that must not become Ints.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => {
+      print("{json.type_name(v)} {json.to_string(v)}")
+    }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("0")
+  show("-0")
+  show("1")
+  show("-1")
+  show("9223372036854775807")
+  show("-9223372036854775808")
+  show("9223372036854775808")
+  show("-9223372036854775809")
+  show("18446744073709551615")
+  show("18446744073709551616")
+  show("123456789012345678901234567890")
+  show("[9223372036854775807, -9223372036854775808, 0, -0]")
+  show("00")
+  show("01")
+  show("-01")
+  show("+1")
+  show("1e0")
+  show("1.0")
+  show("-0.0")
+  show("[1, 2, 3]")
+}

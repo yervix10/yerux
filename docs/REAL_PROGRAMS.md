@@ -886,3 +886,31 @@ exit 0, repeated runs identical) and registered in `tests/real_programs.sh` (now
 91. **A multi-line JSON literal cannot be a raw string.** Friction 47 again: the 14-line test document had to be built
     with eight `push_str(r#"..."#)` calls. Not changed (documented limit).
 
+
+## Round 16: std.json edge-case regression tests
+
+Ten programs in `tests/std_json_*.yx` (numbers at the Int/Float borders, Unicode and
+surrogate pairs, every escape, the 200-container nesting limit, duplicate keys,
+whitespace/empty documents, malformed spellings with their offsets, error line/column
+on LF and CRLF input, and compact/pretty round trips), each with a golden
+`tests/expected/<name>.out` + `.code`. All pass on C, native and ASan/UBSan.
+
+### Round 16 frictions (not changed; minimal repros)
+
+112. **`json.quote` and `to_string`/`to_pretty` on a `Str` panic on invalid UTF-8.**
+     `String.push_byte` accepts any byte, and `json.parse` rejects a bad byte with
+     "invalid UTF-8 in string", but the writer side iterates `s.chars()`
+     (`src/std/text.yx:87`, which panics in `char_at`):
+     ```yerux
+     import std.json
+     fn main() {
+       var s = String.from("x")
+       s.push_byte(255)
+       print(json.quote(s))  // panic: invalid UTF-8 sequence, exit 101
+     }
+     ```
+     Same for `json.to_string(json.Value.Str(s))`. The writer cannot fail by type
+     (`quote` returns `String`), so a caller must check `io.valid_utf8` first;
+     either `quote` should escape/replace bad bytes or the panic should say which
+     std.json entry point hit it. Found while probing std.json edge cases for
+     `tests/std_json_escapes.yx`.

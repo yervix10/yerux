@@ -1,0 +1,49 @@
+// std.json edge cases: malformed numbers, literals and structure. Each input is
+// rejected with the offset of the byte where the grammar gives up, so a change in
+// the reader shows up as a moved line/column instead of a silent accept.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => { print("ACCEPTED {json.to_string(v)}") }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1} byte {e.offset}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("01")
+  show("-01")
+  show("00")
+  show("1.")
+  show(".5")
+  show("1e")
+  show("1e+")
+  show("1e-")
+  show("+1")
+  show("--1")
+  show("-")
+  show("1.2.3")
+  show("1..2")
+  show("0x10")
+  show("1_000")
+  show("Infinity")
+  show("-Infinity")
+  show("NaN")
+  show("nan")
+  show("1e999999999999999999999")
+  show("truex")
+  show("tru")
+  show("NULL")
+  show("[1] x")
+  show("1 2")
+  show("- 1")
+  show("[1 2]")
+  show("{{\"a\" 1}}")
+  show("{{a:1}}")
+  show("\"a\" \"b\"")
+  show("]]")
+  show("}}")
+}

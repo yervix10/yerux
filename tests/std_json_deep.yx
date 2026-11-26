@@ -1,0 +1,64 @@
+// std.json edge cases: nesting. The parser accepts at most 200 nested containers;
+// the boundary, one past it and a mixed array/object chain at the boundary must
+// behave the same, and a valid deep document round trips through the writer.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => {
+      let one = json.to_string(v)
+      match json.parse(one) {
+        Ok(_) => { print("OK {one}") }
+        Err(e) => { print("REPARSE ERR {e.message}") }
+      }
+    }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1}: {e.message}")
+    }
+  }
+}
+
+fn nested_arrays(n: Int) -> String {
+  var s = String.new()
+  for i in 0..n { s.push_str("[") }
+  s.push_str("1")
+  for i in 0..n { s.push_str("]") }
+  return s
+}
+
+fn nested_objects(n: Int) -> String {
+  var s = String.new()
+  for i in 0..n { s.push_str("{{\"k\":") }
+  s.push_str("1")
+  for i in 0..n { s.push_str("}}") }
+  return s
+}
+
+fn mixed(n: Int) -> String {
+  var s = String.new()
+  for i in 0..n {
+    if i % 2 == 0 { s.push_str("[") } else { s.push_str("{{\"k\":") }
+  }
+  s.push_str("1")
+  for i in 0..n {
+    let j = n - 1 - i
+    if j % 2 == 0 { s.push_str("]") } else { s.push_str("}}") }
+  }
+  return s
+}
+
+fn main() {
+  show(nested_arrays(1))
+  show(nested_arrays(2))
+  show(nested_arrays(199))
+  show(nested_arrays(200))
+  show(nested_arrays(201))
+  show(nested_arrays(300))
+  show(nested_objects(200))
+  show(nested_objects(201))
+  show(mixed(200))
+  show(mixed(201))
+  show("[]")
+  show("{{}}")
+}

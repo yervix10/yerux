@@ -1,0 +1,49 @@
+{"a":1,"a":2,"a":3}
+{
+  "a": 1,
+  "a": 2,
+  "a": 3
+}
+{"z":1,"a":2,"z":3}
+{
+  "z": 1,
+  "a": 2,
+  "z": 3
+}
+{"a":{"b":1,"b":2},"a":3}
+{
+  "a": {
+    "b": 1,
+    "b": 2
+  },
+  "a": 3
+}
+{"k":true,"k":null,"k":[1,2],"k":"x"}
+{
+  "k": true,
+  "k": null,
+  "k": [
+    1,
+    2
+  ],
+  "k": "x"
+}
+{"a":1,"a":1}
+{
+  "a": 1,
+  "a": 1
+}
+len 3 last a at -1 last z at -1 missing q at -1
+x=1
+x=2
+y=3
+len 5 last a at 4 last z at -1 missing q at -1
+a=1
+b=2
+a=3
+b=4
+a=5
+len 2 last a at -1 last z at -1 missing q at -1
+k={"k":1}
+k=2
+len 0 last a at -1 last z at -1 missing q at -1

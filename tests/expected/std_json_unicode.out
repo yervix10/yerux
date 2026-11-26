@@ -1,0 +1,22 @@
+"😀"
+"😀"
+"𐀀"
+"􏿿"
+"퟿"
+""
+"�"
+"￿"
+ERR 1:8 byte 7: a high surrogate needs a low surrogate
+ERR 1:8 byte 7: a high surrogate needs a low surrogate
+ERR 1:10 byte 9: a high surrogate needs a low surrogate
+ERR 1:10 byte 9: a high surrogate needs a low surrogate
+ERR 1:2 byte 1: a low surrogate without a high surrogate
+ERR 1:8 byte 7: a high surrogate needs a low surrogate
+ERR 1:2 byte 1: a low surrogate without a high surrogate
+"héllo 日本語 😀"
+"é日😀"
+{"ключ":"значение"}
+["αβγ","δ"]
+ERR 1:4 byte 4: unknown escape
+ERR 1:4 byte 7: unterminated string
+"mixed é 日 😀 end"

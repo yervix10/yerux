@@ -1,0 +1,34 @@
+// std.json edge cases: empty input, whitespace-only input and the empty
+// containers. Whitespace around and inside the value is skipped, an empty
+// document is an error at byte 0, and the empty containers round trip.
+import std.json
+
+fn show(src: view String) {
+  match json.parse(src) {
+    Ok(v) => { print("{json.to_string(v)} | {json.to_pretty(v)}") }
+    Err(e) => {
+      let at = json.line_col(src, e.offset)
+      print("ERR {at.0}:{at.1} byte {e.offset}: {e.message}")
+    }
+  }
+}
+
+fn main() {
+  show("")
+  show(" \t\n\r ")
+  show("[]")
+  show("{{}}")
+  show("[ ]")
+  show("{{ }}")
+  show(" \t[1, 2]\t ")
+  show("\n  null  \n")
+  show("\"\"")
+  show("[[],[[]],{{}}]")
+  show("{{\"\":{{\"\":{{}}}}}}")
+  show("[1, 2,]")
+  show("{{\"a\":1,}}")
+  show("[,1]")
+  show("[,]")
+  show("[1,,2]")
+  show("{{\"a\":1,,\"b\":2}}")
+}

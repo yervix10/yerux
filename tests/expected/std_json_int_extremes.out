@@ -1,0 +1,20 @@
+number 0
+number 0
+number 1
+number -1
+number 9223372036854775807
+number -9223372036854775808
+ERR 1:1: integer out of range
+ERR 1:1: integer out of range
+ERR 1:1: integer out of range
+ERR 1:1: integer out of range
+ERR 1:1: integer out of range
+array [9223372036854775807,-9223372036854775808,0,0]
+ERR 1:1: a number cannot start with a leading zero
+ERR 1:1: a number cannot start with a leading zero
+ERR 1:2: a number cannot start with a leading zero
+ERR 1:1: unexpected character
+number 1.0
+number 1.0
+number -0.0
+array [1,2,3]
