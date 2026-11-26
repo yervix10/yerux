@@ -1,0 +1,54 @@
+name: Feature request
+description: Ask for a language, standard-library, tooling or documentation change
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Yerux 1.0 freezes the stable surface: what may change, and how, is written in
+        [docs/COMPATIBILITY.md](https://github.com/yervix10/yerux/blob/main/docs/COMPATIBILITY.md).
+        A request that changes a **Stable** item needs a deprecation path, so say what should happen to
+        existing programs. **Experimental** and **Internal** items can still move in a minor release.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Language (syntax, ownership, types)
+        - Standard library
+        - Compiler diagnostics
+        - Backends (C, native, targets)
+        - Tools (fmt, test, doc, bench, lsp, package manager)
+        - Documentation or examples
+        - Self-hosting
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is awkward today
+      description: The code you wish you could write, or the task that is hard now. A snippet of what you end up writing instead is very useful.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The syntax, API or behaviour you want, with a small example of use.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+      description: What you do today, what other languages do, and why that is not enough.
+      render: text
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Effect on existing programs
+      description: Would any accepted 1.0 code stop compiling or change meaning? Name the items of COMPATIBILITY.md involved if you know them.
+      render: text

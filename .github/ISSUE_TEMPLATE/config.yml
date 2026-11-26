@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: The one-page tour and the book
+    url: https://github.com/yervix10/yerux/blob/main/docs/GUIDE.md
+    about: Every construct of the language with runnable examples (docs/book/ has the 17-chapter tutorial).
+  - name: What is stable in 1.0, and what may still change
+    url: https://github.com/yervix10/yerux/blob/main/docs/COMPATIBILITY.md
+    about: Stability levels per feature, with the test that pins each one. Read this before asking for a language change.
+  - name: "Building, testing and adding a test"
+    url: https://github.com/yervix10/yerux/blob/main/CONTRIBUTING.md
+    about: How to build from source, run a subset of the suite, and add a program with golden outputs.
