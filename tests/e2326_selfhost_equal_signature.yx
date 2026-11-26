@@ -1,0 +1,3 @@
+struct Point { x: Int }
+impl Equal for Point { fn eq(view self, other: Point) -> Bool { return true } }
+fn main() {}

@@ -1,0 +1,11 @@
+struct Shell<T> { id: Int }
+impl<T: Copy> Drop for Shell<T> {
+  fn drop(mut self) { print(self.id) }
+}
+
+fn main() {
+  let shell = Shell<String> { id: 1 }
+  let copy = shell
+  print(shell.id + copy.id)
+  let owned = Shell<Int> { id: 3 }
+}

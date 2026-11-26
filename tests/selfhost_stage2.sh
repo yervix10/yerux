@@ -32,6 +32,23 @@ diff -rq "$tmp/gen1/runtime" "$tmp/gen2/runtime" || status=1
 printf 'fn main() { print(6 * 7) }\n' >"$tmp/hello.yx"
 "$tmp/gen2/yerux-self" "$tmp/hello.yx" -o "$tmp/hello"
 [[ $("$tmp/hello") == 42 ]] || { printf 'selfhost stage2: generation 2 miscompiled a program\n' >&2; status=1; }
+# Context and ownership cases from the Rust/selfhost differential audit.
+for name in conditional_drop const_parameter_width explicit_generic_call generic_closure_returns option_map tuple_concat; do
+  "$tmp/gen2/yerux-self" "tests/selfhost_$name.yx" -o "$tmp/context"
+  "$tmp/context" >"$tmp/context.out"
+  cmp "tests/expected/selfhost_$name.out" "$tmp/context.out"
+done
+for name in e2326_selfhost_equal_signature e2327_selfhost_comptime_recursion e2328_selfhost_const_parameter_overflow; do
+  if "$tmp/gen2/yerux-self" check "tests/$name.yx" >"$tmp/error" 2>&1; then
+    printf 'selfhost stage2: accepted tests/%s.yx\n' "$name" >&2
+    exit 1
+  fi
+  expected=$(head -n 1 "tests/expected/$name.err")
+  grep -Fxq -- "$expected" "$tmp/error"
+done
+"$tmp/gen2/yerux-self" tests/conf_comptime_depth_999.yx -o "$tmp/context"
+"$tmp/context" >"$tmp/context.out"
+cmp tests/expected/conf_comptime_depth_999.out "$tmp/context.out"
 # Recursive Clone emits a finite set of helpers and mutations stay in the copy.
 "$tmp/gen2/yerux-self" tests/clone_box_tree.yx -o "$tmp/clone-box"
 "$tmp/clone-box" >"$tmp/clone-box.out"

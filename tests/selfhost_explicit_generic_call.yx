@@ -1,0 +1,7 @@
+fn convert<A: Copy, B: Copy>(x: A, f: view fn(A) -> B) -> B { return f(x) }
+fn fixed<T: Copy>() -> Int { return 42 }
+fn main() {
+  let r = convert<Int, Bool>(7, |v| v > 5)
+  print(r)
+  print(fixed<Bool>())
+}

@@ -1,0 +1,13 @@
+// A tuple inside Some exposes borrowed String fields, which can be concatenated in sequence.
+fn pair(a: view String, b: view String) -> Option<(String, String)> {
+  if a.len() == 0 { return None }
+  return Some((String.from(a), String.from(b)))
+}
+
+fn main() {
+  let r = pair("a", "b")
+  match r {
+    Some((u, v)) => { print(u + "+" + v) }
+    None => { print("none") }
+  }
+}

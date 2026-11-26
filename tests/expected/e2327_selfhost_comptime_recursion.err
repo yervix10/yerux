@@ -1,0 +1,15 @@
+error: compile-time evaluation recursed too deeply [E-K6]
+ --> tests/e2327_selfhost_comptime_recursion.yx:1:40
+  |
+1 | fn recurse(n: Int) -> Int { return 1 + recurse(n - 1) }
+  |                                        ^^^^^^^^^^^^^^
+  = why: this code was being evaluated by the compiler (comptime), where a panic is a compile error
+  = called from `recurse` (line 1)
+  = called from `recurse` (line 1)
+  = called from `recurse` (line 1)
+  = called from `recurse` (line 1)
+  = called from `recurse` (line 1)
+  = called from `recurse` (line 1)
+  = ... and 994 more calls
+
+1 error(s). Nothing was generated.

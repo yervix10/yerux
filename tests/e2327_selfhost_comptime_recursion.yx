@@ -1,0 +1,2 @@
+fn recurse(n: Int) -> Int { return 1 + recurse(n - 1) }
+fn main() { let value = comptime recurse(999) }

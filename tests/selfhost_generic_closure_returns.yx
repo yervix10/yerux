@@ -1,0 +1,14 @@
+fn apply<T: Copy, R>(x: T, f: fn(T) -> R) -> R { return f(x) }
+
+fn main() {
+  let a = apply(3, |v| {
+    if v > 5 { return None }
+    return Some(v)
+  })
+  let b = apply(7, |v| {
+    if v > 5 { return None }
+    return Some(v)
+  })
+  print(a.unwrap())
+  print(b.is_none())
+}

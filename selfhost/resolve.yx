@@ -196,7 +196,12 @@ fn visit(resolver: mut Resolver, ctx: mut FileContext, tree: view List<ast.AstNo
       resolve_path(resolver, ctx, ast.decoded_name(tree, i), "value")
     }
   } else if tag == "Call" {
-    resolve_name(resolver, ctx, ast.name_at(tree, index, 0), "function")
+    let after_args = tree.at(ast.child(tree, index, 1)).end
+    let explicit = after_args < tree.at(index).end && tree.at(after_args).tag == "ExplicitTypes"
+    // Rust's source-resolution snapshot omits explicit calls. Linking resolves them as ordinary calls.
+    if resolver.link || !explicit {
+      resolve_name(resolver, ctx, ast.name_at(tree, index, 0), "function")
+    }
   } else if tag == "Var" || tag == "Move" {
     resolve_name(resolver, ctx, ast.name_at(tree, index, 0), "value")
   } else if tag == "Let" {
