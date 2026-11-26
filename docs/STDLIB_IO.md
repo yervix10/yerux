@@ -82,8 +82,9 @@ File handles, binary I/O, buffered Reader/Writer, permissions and links, `env.se
 
 ```
 import std.fs
+import std.io   // the error type, `io.IoError`, lives in `std.io`
 
-fn tidy(dir: view String) -> Result<Int, io.IoError> {   // also `import std.io` for the error type
+fn tidy(dir: view String) -> Result<Int, io.IoError> {
   let r = fs.create_dir_all("{dir}/logs")?
   let names = fs.read_dir(dir)?                          // sorted, without . and ..
   for n in names { print(n) }
