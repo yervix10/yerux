@@ -1,0 +1,77 @@
+// wordcount: counts words and letters in four embedded paragraphs in parallel.
+// Each paragraph runs in its own spawned worker; every worker sends one Count over a
+// shared channel, and the collector sums them by chunk index. The arrival order varies
+// between runs, so only per-chunk and total figures are printed (deterministic).
+// No arguments; exit 0.
+import std.text
+
+struct Count { chunk: Int, words: Int, letters: Int }
+
+fn count_chunk(id: Int, text: String) -> Count {
+  var words = 0
+  var letters = 0
+  var in_word = false
+  for i in 0..text.len() {
+    let b = text.byte(i)
+    let is_letter = (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+    if is_letter {
+      letters = letters + 1
+      if !in_word {
+        words = words + 1
+        in_word = true
+      }
+    } else {
+      in_word = false
+    }
+  }
+  return Count { chunk: id, words: words, letters: letters }
+}
+
+fn main() {
+  let chunks = [
+    "The quick brown fox jumps over the lazy dog.",
+    "A fox is quick; a dog is lazy, and the fox knows it.",
+    "Rivers run to the sea. The sea keeps the rivers.",
+    "Little Ada wrote the first program, and Ada was clever.",
+  ]
+  let (tx, rx) = Sender<Count>.unbounded()
+  var got = 0
+  var words = 0
+  var letters = 0
+  var per_chunk = List<Int>.new()
+  for _ in 0..chunks.len() { per_chunk.push(0) }
+
+  scope {
+    var handles = List<JoinHandle<Int>>.new()
+    for i in 0..chunks.len() {
+      let out = tx.clone()
+      let body = String.from(chunks[i])
+      let h = spawn move {
+        out.send(count_chunk(i, move body))
+        return 0
+      }
+      handles.push(move h)
+    }
+    for _ in 0..chunks.len() {
+      let c = rx.recv().unwrap()
+      got = got + 1
+      words = words + c.words
+      letters = letters + c.letters
+      per_chunk.set(c.chunk, c.words)
+    }
+    while handles.len() > 0 {
+      let h = handles.pop()
+      h.join().unwrap()
+    }
+  }
+
+  print("chunks: {chunks.len()}, workers: {chunks.len()}, results: {got}")
+  for i in 0..per_chunk.len() {
+    print("  chunk {i}: {per_chunk.at(i)} words")
+  }
+  print("total words: {words}")
+  print("total letters: {letters}")
+  let avg_x100 = if words == 0 { 0 } else { letters * 100 / words }
+  print("average word length x100: {avg_x100}")
+  print("all chunks reported once: {got == chunks.len()}")
+}
