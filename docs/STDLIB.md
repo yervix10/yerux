@@ -544,8 +544,9 @@ struct Tuple6<A, B, C, D, E, F> { _0: A, _1: B, _2: C, _3: D, _4: E, _5: F }
 ## Text (Immutable Literal)
 
 - `Text` literals: `"hello"` (no `{expr}` inside).
-- A literal passed to a `view String` parameter becomes a temporary owned string. For a value
-  already typed as `Text`, pass `String.from(value)` to such a parameter.
+- A `Text` passed to a `view String` parameter (a literal, a variable, a field of a variable, an
+  element, a function or method result) is lent as a hidden `String` copy. A field of a call result
+  must be bound with `let` first. An owned `String` position converts literals only.
 - Implements `Equal`, `Ordered`, `Show`, `Hash`, `Copy`.
 - `String.from(text)` creates an owned copy.
 - In interpolation, a literal without `{expr}` is `Text`; with `{expr}` it's `String`.
@@ -705,7 +706,7 @@ Rules that follow from the language and apply to the calls below:
 | `parse_int(s) -> Result<Int, String>` | `[+-]digits`, overflow is an `Err` (Int.min parses) |
 | `parse_int_radix(s, base) -> Result<Int, String>` | base 2..36 |
 | `parse_bool(s) -> Result<Bool, String>` | `true` / `false` |
-| `parse_float(s) -> Result<Float, String>` | `[+-]digits[.digits][e[+-]digits]`, `inf`, `-inf`, `nan`. Rounds to the nearest binary64 value, with ties to even, including subnormals and signed zero |
+| `parse_float(s) -> Result<Float, String>` | `[+-]digits[.digits][e[+-]digits]`, `inf`, `-inf`, `nan`. Rounds to the nearest binary64 value, with ties to even, including subnormals and signed zero. A magnitude too large gives `inf` or `-inf`, not an `Err` |
 
 ### `std.hex`, `std.base64`, and `std.hash`
 
@@ -777,7 +778,7 @@ Beyond interpolation. Widths count characters.
 
 ### `std.args`
 
-`parse(argv)` accepts a `List<String>` including the program name; `parse_process()` uses `std.io.args()`. The schema free parser collects `--name=value` in `options`, long flags in `flags`, splits short flag groups (`-abc`), treats the first positional as `subcommand`, and keeps later values in `positionals`. `--` ends option parsing; `--help` sets `help` and adds the `help` flag. Use `flag(parsed, name)` or `has_flag(parsed, name)` for boolean flags (short like `-v` or long like `--verbose`), `positionals(parsed)` to retrieve positional arguments, `option(parsed, name)` (last value wins), `options_all(parsed, name)` (every value of a repeated option, in command-line order), and `help_line(program, usage)` to build a usage line. Options without `=value` are flags because no option schema is provided. With a schema, a valued option that is the last word of argv is reported in `Parsed.errors` (`option --prefix needs a value`). With a schema, `parse_with(argv, valued, with_subcommand)` makes the names in `valued` take the next word (`--title TEXT`, `-o FILE`; `--k=v` still works), and inside a short cluster a valued option takes the rest of the cluster as its value, as in GNU getopt (`-ev pat` is `-e v` plus the positional `pat`, `-n5` is `-n 5`; `-ve` with `e` valued and no more words is reported in `errors`) and, with `with_subcommand` false, leaves the first positional in `positionals`. Typed accessors: `option_or(p, name, default)`, `option_int(p, name) -> Option<Int>`, `option_int_or`, `option_int_checked -> Result<Option<Int>, String>` (tells a missing option from a malformed one), `option_float`, `option_bool(p, name, default)`.
+`parse(argv)` accepts a `List<String>` including the program name; `parse_process()` uses `std.io.args()`. The schema free parser collects `--name=value` in `options`, long flags in `flags`, splits short flag groups (`-abc`), treats the first positional as `subcommand`, and keeps later values in `positionals`. `--` ends option parsing; `--help` sets `help` and adds the `help` flag. Use `flag(parsed, name)` or `has_flag(parsed, name)` for boolean flags (short like `-v` or long like `--verbose`), `positionals(parsed)` to retrieve positional arguments, `positional(parsed, index) -> Option<String>` for one of them, `option(parsed, name)` (last value wins), `options_all(parsed, name)` (every value of a repeated option, in command-line order), and `help_line(program, usage)` to build a usage line. Options without `=value` are flags because no option schema is provided. With a schema, a valued option that is the last word of argv is reported in `Parsed.errors` (`option --prefix needs a value`). With a schema, `parse_with(argv, valued, with_subcommand)` makes the names in `valued` take the next word (`--title TEXT`, `-o FILE`; `--k=v` still works), and inside a short cluster a valued option takes the rest of the cluster as its value, as in GNU getopt (`-ev pat` is `-e v` plus the positional `pat`, `-n5` is `-n 5`; `-ve` with `e` valued and no more words is reported in `errors`) and, with `with_subcommand` false, leaves the first positional in `positionals`. Typed accessors: `option_or(p, name, default)`, `option_int(p, name) -> Option<Int>`, `option_int_or`, `option_int_checked -> Result<Option<Int>, String>` (tells a missing option from a malformed one), `option_float`, `option_bool(p, name, default)`.
 
 ### `std.collections`
 

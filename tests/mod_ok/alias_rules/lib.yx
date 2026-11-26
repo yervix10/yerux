@@ -1,0 +1,4 @@
+// The same module under two names is one module.
+pub struct P { x: Int }
+pub fn one() -> Int { return 1 }
+pub fn make() -> P { return P { x: 7 } }

@@ -167,4 +167,43 @@ untagged_rev=$(git -C ../untagged rev-parse HEAD)
 grep -q "^rev = \"$untagged_rev\"$" yerux.lock
 "$Y" lock --locked
 
+# Search order of an import (docs/SPEC.md 6.4): the standard library, then a declared dependency
+# (src/<name>.yx before src/lib.yx), then a local file; a dotted path names a file under the dependency's src.
+cd "$T"
+pkg dep dep 0.1.0
+mkdir -p dep/src/deep
+printf 'pub fn pick() -> Text { return "dependency lib.yx" }\n' >dep/src/lib.yx
+printf 'pub fn pick() -> Text { return "dependency deep/mod.yx" }\n' >dep/src/deep/mod.yx
+pkg order order 0.1.0
+printf 'dep = "../dep"\n' >>order/yerux.toml
+mkdir -p order/src/std
+printf 'pub fn pick() -> Text { return "local dep.yx" }\n' >order/src/dep.yx
+printf 'pub fn pick() -> Text { return "local near.yx in src" }\n' >order/src/near.yx
+printf 'pub fn is_digit(c: Char) -> Bool { return false }\n' >order/src/std/text.yx
+cat >order/src/main.yx <<'SOURCE'
+import dep
+import dep.deep.mod
+import near
+import std.text
+fn main() {
+  print(dep.pick())
+  print(mod.pick())
+  print(near.pick())
+  print(text.is_digit('7'))
+}
+SOURCE
+cd order
+"$Y" lock >/dev/null
+printf 'dependency lib.yx\ndependency deep/mod.yx\nlocal near.yx in src\ntrue\n' >"$T/order.wanted"
+"$Y" run | diff -u "$T/order.wanted" -
+printf 'pub fn pick() -> Text { return "dependency dep.yx" }\n' >../dep/src/dep.yx
+sed -i 's/^dependency lib.yx$/dependency dep.yx/' "$T/order.wanted"
+"$Y" run | diff -u "$T/order.wanted" -
+# a file outside src/ prefers its own folder and falls back to src/
+mkdir tools
+printf 'import near\nfn main() { print(near.pick()) }\n' >tools/show.yx
+[ "$("$Y" run tools/show.yx)" = "local near.yx in src" ]
+printf 'pub fn pick() -> Text { return "near.yx beside the file" }\n' >tools/near.yx
+[ "$("$Y" run tools/show.yx)" = "near.yx beside the file" ]
+
 printf 'package graph, lock and imports passed\n'

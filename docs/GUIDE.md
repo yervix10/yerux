@@ -428,7 +428,7 @@ fn main() {
 ```
 
 - A literal with `{expr}` is a `String`; without one it stays `Text`. `{{` and `}}` are literal braces.
-- `{expr}` is one expression (variable, field, `l.at(i)`, method call, arithmetic). It cannot contain a quote or a brace.
+- `{expr}` is one expression (variable, field, `l.at(i)`, method call, arithmetic). It may contain string literals but not a `}` or a nested `{`.
 - The value's type needs `Show` (numbers, `Bool`, `Char`, `Text`, `String`, `List`, `Map`, `Set`, `Option`, `Result`, and your own `impl Show`).
 - `print` accepts numbers, `Char`, `Bool`, `Text`, `String` and `String` temporaries. To print any other `Show` value (a list, a map, an `Option`, your own type), interpolate it: `print("{x}")`. Passing the value directly (`print(p)` on a struct) is rejected with a help line showing exactly this.
 - Escapes in literals: `\n \t \r \" \\`.

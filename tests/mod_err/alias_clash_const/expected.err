@@ -1,0 +1,8 @@
+error: 'K' is a module, not a value
+ --> tests/mod_err/alias_clash_const/main.yx:3:7
+  |
+3 | const K = 3
+  |       ^
+  = help: use one of its items: `K.name`
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,8 @@
+error: variable 'lib' does not exist
+ --> tests/mod_err/alias_replaces_name/main.yx:4:9
+  |
+4 |   print(lib.one())
+  |         ^^^
+  = help: check the spelling, scope, and whether the name needs to be imported or qualified
+
+1 error(s). Nothing was generated.

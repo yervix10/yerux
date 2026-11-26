@@ -1,0 +1,3 @@
+import lib
+
+pub fn two() -> Int { return lib.one() + 1 }

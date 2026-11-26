@@ -1,0 +1,24 @@
+// A literal inside a tuple converts to `String` where the tuple type is expected.
+struct Header { pair: (String, Int) }
+fn make() -> (String, String) { return ("a", "b") }
+fn length(t: view (String, Int)) -> Int { return t.0.len() + t.1 }
+fn main() {
+  let t: (String, String) = ("c", "d")
+  var headers = List<(String, String)>.new()
+  headers.push(("Accept", "x"))
+  print(headers.at(0).0)
+  let (x, y) = make()
+  print("{x}{y}{t.1}")
+  print(length(("gh", 1)))
+  let h = Header { pair: ("ij", 2) }
+  print(h.pair.0)
+  let nested: ((String, Int), String) = (("k", 3), "l")
+  print(nested.1)
+  let o: Option<(String, Int)> = Some(("m", 4))
+  print(o.unwrap().0)
+  var v: (String, Int) = ("n", 5)
+  v = ("o", 6)
+  print(v.0)
+  let q: (String, Int) = if v.1 > 0 { ("p", 1) } else { ("q", 2) }
+  print(q.0)
+}

@@ -1,0 +1,5 @@
+struct Maker { n: Int }
+impl Maker { fn convert<R>(view self, f: view fn(Int) -> R) -> R { return f(self.n) } }
+fn main() {
+  print(Maker.convert(|x| x))
+}

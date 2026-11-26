@@ -153,17 +153,16 @@ impl String {
         return true
     }
 
-    // Byte index of the first occurrence of `p` at or after `from`, or -1.
+    // Byte index of the first occurrence of `p` at or after `from`, or -1. A negative `from` panics.
     fn find_from(view self, p: view String, from: Int) -> Int {
         let n = self.len()
         let m = p.len()
-        if m == 0 {
-            if from < 0 { return from }
-            if from <= n { return from }
-            return -1
-        }
         if from < 0 {
             return self.byte(from) // out of range: panics like any other negative index
+        }
+        if m == 0 {
+            if from <= n { return from }
+            return -1
         }
         let first = p.byte(0)
         let last = n - m

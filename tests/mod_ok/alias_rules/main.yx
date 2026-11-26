@@ -1,0 +1,15 @@
+import lib as first
+import lib as second
+import util.lib as other
+
+// a parameter may reuse an alias
+fn add(first: Int) -> Int { return first + second.one() }
+
+fn main() {
+  let p: first.P = second.make()
+  print(p.x)
+  print(first.one() + other.one())
+  print(add(4))
+  let other = other.one() + 1
+  print(other)
+}

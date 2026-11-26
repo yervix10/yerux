@@ -1,0 +1,7 @@
+error: expected 'fn', 'struct', 'enum', 'trait' or 'impl'
+ --> tests/e2201_const_does_not_hide_syntax.yx:1:1
+  |
+1 | comptime fn f(n: Int) -> Int { return n }
+  | ^^^^^^^^
+
+1 error(s). Nothing was generated.

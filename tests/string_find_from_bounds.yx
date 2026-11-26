@@ -1,0 +1,13 @@
+// `find_from` with a start at or past the end: the empty pattern matches up to `len`, anything else gives -1.
+fn main() {
+  let s = String.from("abc")
+  print(s.find_from("", 0))
+  print(s.find_from("", 3))
+  print(s.find_from("", 4))
+  print(s.find_from("c", 2))
+  print(s.find_from("c", 3))
+  print(s.find_from("a", 100))
+  let empty = String.new()
+  print(empty.find_from("", 0))
+  print(empty.find_from("a", 0))
+}

@@ -280,6 +280,10 @@ fn module_items(resolver: mut Resolver, ctx: mut FileContext, tree: view List<as
       if tag == "Const" && tree.at(ast.child(tree, scanned, 0)).tag == "true" && tree.at(ast.child(tree, decl, 1)).tag == "_" {
         issue(resolver, ctx.module_id, String.from("pub-const-untyped"))
       }
+      if tag == "Const" || tag == "Alias" {
+        let declared = ast.name_at(tree, decl, 0)
+        if alias_module(ctx, declared) >= 0 { issue(resolver, ctx.module_id, "module-value:{declared}") }
+      }
       collect_symbol(symbols, tree, scanned, decl)
     }
     scanned = tree.at(scanned).end

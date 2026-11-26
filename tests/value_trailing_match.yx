@@ -1,0 +1,25 @@
+// A `match` that is the last line of a branch is the branch's value, also with bare arms and nested in `if`.
+fn pick(n: Int) -> Int {
+  let r = if n > 0 {
+    match n {
+      1 => 2,
+      _ => 3,
+    }
+  } else if n < -5 {
+    if n < -10 { match n { -11 => 7, _ => 8 } } else { 9 }
+  } else {
+    match n { 0 => { match n { 0 => 5, _ => 6 } }, _ => 0 }
+  }
+  return r
+}
+fn main() {
+  for n in [1, 2, -11, -20, -7, 0, -1] { print(pick(n)) }
+  let s = match pick(1) {
+    2 => {
+      print("two")
+      match pick(0) { 5 => "five", _ => "other" }
+    },
+    _ => "none",
+  }
+  print(s)
+}

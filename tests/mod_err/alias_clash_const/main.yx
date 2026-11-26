@@ -1,0 +1,7 @@
+import lib as K
+
+const K = 3
+
+fn main() {
+  print(K.one())
+}

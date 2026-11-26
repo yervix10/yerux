@@ -193,7 +193,7 @@ static inline bool sc_str_ends_with(String *s, Str part) {
 }
 
 static inline int64_t sc_str_find_from(String *s, Str part, int64_t start) {
-  if (start < 0 && part.n) nx_panic("index out of range");
+  if (start < 0) nx_panic("index out of range");
   return sc_find(nx_str_view(s), part, start);
 }
 

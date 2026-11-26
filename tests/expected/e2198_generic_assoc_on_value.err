@@ -1,0 +1,8 @@
+error: 'make' of Maker takes no `self`: it cannot be called on a value
+ --> tests/e2198_generic_assoc_on_value.yx:5:9
+  |
+5 |   print(m.make(2))
+  |         ^^^^^^^^^
+  = help: call it on the type, `Maker.make(..)`, or give it `view self` / `mut self` / `self`
+
+1 error(s). Nothing was generated.

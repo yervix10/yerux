@@ -227,6 +227,17 @@ mod diagnostic_hint_tests {
     }
 }
 
+#[cfg(test)]
+mod interpolation_tests {
+    use super::lex;
+
+    #[test]
+    fn commas_in_type_arguments_belong_to_one_expression() {
+        assert!(lex(r#"fn main() { print("{pick<Int, Bool>(n, true)}") }"#).is_ok());
+        assert!(lex(r#"fn main() { print("{a, b}") }"#).is_err());
+    }
+}
+
 // ───────────────────────── Lexer ─────────────────────────
 
 #[derive(Clone, Debug, PartialEq)]
@@ -261,6 +272,33 @@ pub const KW: &[&str] = &[
     "struct", "enum", "match", "defer", "trait", "dyn", "impl", "for", "in", "break", "continue",
     "unsafe", "spawn", "parallel", "scope",
 ];
+
+/// The token ranges `<A, B>` of explicit type arguments in an interpolated expression (`{conv<Int, Bool>(x)}`):
+/// a name, then `<`, only type tokens, the matching `>`, then `(` or `.`.
+fn type_argument_spans(t: &[Token]) -> Vec<std::ops::Range<usize>> {
+    let mut spans = vec![];
+    for open in 1..t.len() {
+        if t[open].t != Tok::Sym("<") || !matches!(t[open - 1].t, Tok::Id(_)) {
+            continue;
+        }
+        let mut angles = 0;
+        for k in open..t.len() {
+            match &t[k].t {
+                Tok::Sym("<") => angles += 1,
+                Tok::Sym(">") => angles -= 1,
+                Tok::Id(_) | Tok::Num(_) | Tok::Sym("," | "." | "(" | ")" | "[" | "]" | ";" | "->" | "..") => {}
+                _ => break,
+            }
+            if angles == 0 {
+                if matches!(t.get(k + 1).map(|n| &n.t), Some(Tok::Sym("(" | "."))) {
+                    spans.push(open..k);
+                }
+                break;
+            }
+        }
+    }
+    spans
+}
 
 pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
     let cs: Vec<char> = src.chars().collect();
@@ -543,11 +581,12 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diag> {
                         })?;
                         sub.pop(); // Eof
                         let mut depth = 0i32;
-                        for t in sub.iter_mut() {
+                        let generic = type_argument_spans(&sub);
+                        for (k, t) in sub.iter_mut().enumerate() {
                             match &t.t {
-                                Tok::Sym("(") => depth += 1,
-                                Tok::Sym(")") => depth -= 1,
-                                Tok::Sym(",") if depth == 0 => {
+                                Tok::Sym("(" | "[") => depth += 1,
+                                Tok::Sym(")" | "]") => depth -= 1,
+                                Tok::Sym(",") if depth == 0 && !generic.iter().any(|g| g.contains(&k)) => {
                                     return Err(diag(
                                         "a `{}` in a string holds one expression",
                                         Pos {
@@ -1668,6 +1707,8 @@ pub struct GenFn {
     /// a generic method (`impl<T> Option<T> { fn map<U>(self, ..) }`): token of the impl's self type, re-read
     /// per instantiation to get `Self`; the function is called as `recv.map(..)` through `__gm__Type__map`
     pub self_tok: Option<usize>,
+    /// the first parameter is `self`; a generic function of an impl without it is called as `Type.name(..)`
+    pub receiver: bool,
 }
 
 pub struct TraitMethod {
@@ -1714,6 +1755,12 @@ pub struct FnHeader {
     pub ret: Ty,
 }
 
+fn bare_arm_error(pos: Pos) -> Diag {
+    diag("a `match` statement arm needs a block `{ .. }`", pos)
+        .note("a bare expression arm (`P => e,`) is only for a `match` used as a value")
+        .note("help: write `P => { e }`, or `let x = match v { P => e, .. }` to use the value")
+}
+
 pub struct Parser {
     surface: Option<surface::Surface>, // only used by ast-file, before module loading
     t: Vec<Token>,
@@ -1735,6 +1782,8 @@ pub struct Parser {
     thread_scopes: usize,
     memo: HashMap<(String, Vec<Ty>), Ty>,
     depth: usize,
+    const_error: Option<Diag>, // the first const without a value, reported after the whole file is read
+    bare_arm: Option<Pos>,     // the first bare `match` arm in the value branch being read
     nest: usize, // syntactic nesting (blocks, parentheses, types, patterns): bounded so deep input is a diagnostic
     pub inst_errs: Vec<Diag>,
     /// Non-generic functions of the built-in library: parsed and compiled on first call.
@@ -1873,6 +1922,8 @@ impl Parser {
             in_extern: false,
             saw_variadic: false,
             self_ty: None,
+            const_error: None,
+            bare_arm: None,
             prelude_len,
             thread_scopes: 0,
             memo: HashMap::new(),
@@ -2588,13 +2639,36 @@ impl Parser {
         }
     }
 
+    /// Folds one const in pass 1. An item that reads but has no value is reported after the whole file has been
+    /// read, so that it does not hide a syntax error elsewhere; a placeholder keeps its name usable.
+    fn register_const(&mut self) -> PR<()> {
+        let start = self.i;
+        let Err(error) = self.const_item(true) else { return Ok(()) };
+        self.i = start;
+        self.bump();
+        let (name, _) = self.ident()?;
+        let ty = if self.eat_sym(":") { Some(self.ty()?) } else { None };
+        self.i = start;
+        if self.const_item(false).is_err() {
+            return Err(error);
+        }
+        let placeholder = match ty {
+            Some(t @ Ty::Range(lo, _)) => (lo, t),
+            Some(t @ (Ty::Bool | Ty::Char)) => (0, t),
+            _ => (1, Ty::Int),
+        };
+        self.types.consts.entry(name).or_insert(placeholder);
+        self.const_error.get_or_insert(error);
+        Ok(())
+    }
+
     /// Pass 1: find the generic structs/enums so their uses can be parsed in any order.
     fn register_generics(&mut self) -> PR<()> {
         while !matches!(self.peek(), Tok::Eof) {
             if matches!(self.peek(), Tok::Id(k) if k == "const")
                 && matches!(self.peek_at(1), Tok::Id(_))
             {
-                self.const_item(true)?;
+                self.register_const()?;
                 continue;
             }
             // `type Name = T` has no body: skip its line (skip_item would swallow the next item)
@@ -2657,6 +2731,14 @@ impl Parser {
     }
 
     pub fn program(&mut self) -> PR<Program> {
+        let program = self.program_items()?;
+        match self.const_error.take() {
+            Some(error) => Err(error),
+            None => Ok(program),
+        }
+    }
+
+    fn program_items(&mut self) -> PR<Program> {
         self.register_generics()?;
         self.i = 0;
         let mut funcs = vec![];
@@ -2805,6 +2887,7 @@ impl Parser {
                         params: vec![],
                         ret: Ty::Unit,
                         self_tok: None,
+                        receiver: false,
                     });
                     continue;
                 }
@@ -2845,6 +2928,7 @@ impl Parser {
             let (h, body) = self.parse_fn_at(g.tok, subst, self_ty, g.tok < self.prelude_len)?;
             self.gfns[gi].params = h.params.iter().map(|p| (p.mode, p.ty)).collect();
             self.gfns[gi].ret = h.ret;
+            self.gfns[gi].receiver = g.self_tok.is_some() && h.params.first().is_some_and(|p| p.name == "self");
             if g.tok < self.prelude_len {
                 continue; // the built-in library is trusted: only its instantiations are checked
             }
@@ -3204,6 +3288,7 @@ impl Parser {
                     params: vec![],
                     ret: Ty::Unit,
                     self_tok: Some(self_tok),
+                    receiver: false,
                 });
                 continue;
             }
@@ -3426,6 +3511,46 @@ impl Parser {
                 return Err(diag("missing closing '}'", self.pos()));
             }
             v.push(self.stmt()?);
+        }
+        self.expect_sym("}")?;
+        Ok(v)
+    }
+
+    /// A block whose last statement is its value (a branch of an `if`/`match` used as a value). A trailing
+    /// `if` or `match` is a value too, so its `match` arms may be bare expressions.
+    fn value_block(&mut self) -> PR<Vec<Stmt>> {
+        self.enter()?;
+        let r = self.value_block_inner();
+        self.leave();
+        r
+    }
+    fn value_block_inner(&mut self) -> PR<Vec<Stmt>> {
+        self.expect_sym("{")?;
+        let mut v = vec![];
+        while !self.is_sym("}") {
+            if matches!(self.peek(), Tok::Eof) {
+                return Err(diag("missing closing '}'", self.pos()));
+            }
+            if !self.is_kw("if") && !self.is_kw("match") {
+                v.push(self.stmt()?);
+                continue;
+            }
+            let outer = self.bare_arm.take();
+            let s = if self.is_kw("if") {
+                self.if_stmt_in(true)?
+            } else {
+                let pos = self.pos();
+                let (scrut, arms) = self.match_arms(true)?;
+                Stmt { k: SK::Match(scrut, arms), pos }
+            };
+            // bare arms need a value, so the statement that holds them must end the block
+            if let Some(arm) = self.bare_arm {
+                if !self.is_sym("}") {
+                    return Err(bare_arm_error(arm));
+                }
+            }
+            self.bare_arm = self.bare_arm.or(outer);
+            v.push(s);
         }
         self.expect_sym("}")?;
         Ok(v)
@@ -3682,16 +3807,21 @@ impl Parser {
     }
 
     fn if_stmt(&mut self) -> PR<Stmt> {
+        self.if_stmt_in(false)
+    }
+
+    /// With `value`, the statement may give the value of the enclosing branch (see `value_block`).
+    fn if_stmt_in(&mut self, value: bool) -> PR<Stmt> {
         let pos = self.pos();
         self.bump();
         let c = self.expr()?;
-        let t = self.block()?;
+        let t = if value { self.value_block()? } else { self.block()? };
         let e = if self.is_kw("else") {
             self.bump();
             if self.is_kw("if") {
-                Some(vec![self.if_stmt()?])
+                Some(vec![self.if_stmt_in(value)?])
             } else {
-                Some(self.block()?)
+                Some(if value { self.value_block()? } else { self.block()? })
             }
         } else {
             None
@@ -3716,7 +3846,7 @@ impl Parser {
         let pos = self.pos();
         self.bump();
         let c = self.expr()?;
-        let t = self.block()?;
+        let t = self.value_block()?;
         if !self.is_kw("else") {
             return Err(diag("an `if` used as a value needs an `else`", pos)
                 .note("both branches must produce a value of the same type")
@@ -3724,9 +3854,9 @@ impl Parser {
         }
         self.bump();
         let e = if self.is_kw("if") {
-            vec![self.if_stmt()?]
+            vec![self.if_stmt_in(true)?]
         } else {
-            self.block()?
+            self.value_block()?
         };
         Ok(mk(EK::IfExpr(Box::new(c), t, e), pos))
     }
@@ -3770,6 +3900,7 @@ impl Parser {
             self.bump();
             let body = if as_value && !self.is_sym("{") {
                 let bp = self.pos();
+                self.bare_arm.get_or_insert(bp);
                 let value = self.expr()?;
                 vec![Stmt {
                     k: SK::ExprS(value),
@@ -3777,11 +3908,9 @@ impl Parser {
                 }]
             } else {
                 if !as_value && !self.is_sym("{") {
-                    return Err(diag("a `match` statement arm needs a block `{ .. }`", self.pos())
-                        .note("a bare expression arm (`P => e,`) is only for a `match` used as a value")
-                        .note("help: write `P => { e }`, or `let x = match v { P => e, .. }` to use the value"));
+                    return Err(bare_arm_error(self.pos()));
                 }
-                self.block()?
+                if as_value { self.value_block()? } else { self.block()? }
             };
             self.eat_sym(",");
             // plain `Variant(a, b)` / `_` arms keep the original representation
