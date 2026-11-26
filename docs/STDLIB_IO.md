@@ -134,7 +134,7 @@ Same rules as `std.io` (raw syscalls, `view String` paths, NUL in a path is `Inv
 | `current_exe()` | `Result<String, IoError>` | `readlink("/proc/self/exe")` (89). |
 | `pid()`, `exit(code)` | | `= io.process_id()`, `io.exit(code)`. |
 
-The environment is the read-only block the kernel put on the initial stack: there is no `set`/`remove` (they would need an owned copy of `envp` and would not reach `execve`d children without a process API). Not thread-safe with respect to `set_current_dir` (the working directory is per process).
+`get`, `vars` and the rest read the block the kernel put on the initial stack; `env.set(name, value)` and `env.remove(name)` (STDLIB_SYSTEM.md) copy that block into a heap table on the first change, and every reader sees the changes. It is this process's view only (no libc `setenv`, no process-spawning API yet). Not thread-safe with respect to `set_current_dir` (the working directory is per process).
 
 ## `std.time`: clocks, sleep, UTC calendar
 
