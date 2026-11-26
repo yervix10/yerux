@@ -28,7 +28,7 @@ budget, plus a global budget of 2,000,000 + 4 steps per text byte; a search that
 group whose body can match the empty string and is repeated (`(a*)*`) is stopped by that budget, not detected.
 
 `std.csv.parse` reads quoted fields, doubled quotes, commas, and CRLF, LF or lone CR line ends into
-rows of strings; `write` quotes fields when required and emits RFC 4180 CRLF
+rows of strings; `write` quotes fields when required (a record whose only field is empty is written as `""`, which `parse` and other CSV readers alike read back as one empty field) and emits RFC 4180 CRLF
 records. A record with no fields cannot be expressed in CSV (an empty line is a record with one empty field), so
 `write` panics on it instead of writing a document that reads back differently. `parse` is lenient about quoting (an
 unclosed quote runs to the end of the input) and returns no rows for input over 16 MiB or more than 100000 fields;

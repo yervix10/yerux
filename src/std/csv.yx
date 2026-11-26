@@ -2,7 +2,7 @@
 // `parse` is lenient about malformed quoting (an unclosed quote runs to the end of the input, text after a closing quote
 // is kept) and returns no rows for input over 16 MiB or over 100000 fields (hostile input never crashes the caller).
 // `parse_checked` reports all of these as an Err with a line number instead (LF, CRLF and a lone CR each end a line).
-// `write` panics on a record with no fields: CSV cannot express one (an empty line is a record with one empty field).
+// `write` panics on a record with no fields: CSV cannot express one (an empty line is a record with one empty field, so a lone empty field is written as `""`).
 fn line_of(input: view String, upto: Int) -> Int {
   var line = 1
   var k = 0
@@ -97,7 +97,9 @@ pub fn write(rows: view List<List<String>>) -> String {
     while c < rows.at(r).len() {
       if c > 0 { out.push_char(Char.from_int(44)) }
       let value = rows.at(r).at(c).clone()
-      if value.contains(String.from(",")) || value.contains(String.from("\"")) || value.contains(String.from("\n")) || value.contains(String.from("\r")) {
+      // a lone empty field is quoted: written as an empty line it is a record with no fields to other CSV readers
+      let lone_empty = rows.at(r).len() == 1 && value.len() == 0
+      if lone_empty || value.contains(String.from(",")) || value.contains(String.from("\"")) || value.contains(String.from("\n")) || value.contains(String.from("\r")) {
         out.push_char(Char.from_int(34))
         let escaped = value.replace(String.from("\""), String.from("\"\""))
         out.push_slice(escaped, 0, escaped.len())
