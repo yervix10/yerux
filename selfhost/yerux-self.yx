@@ -13,6 +13,8 @@ struct Build {
   work: String,
   seen: List<String>,
   keep_c: Bool,
+  // the program is one of the compiler stages: it runs on a large stack (c_selfhost_stage.c)
+  stage: Bool,
   debug: Bool,
   optimize: Bool,
 }
@@ -31,6 +33,131 @@ fn invoke(program: view String, args: view List<String>, step: view String) -> O
       if output.status.signal != 0 { report(step, "signal {output.status.signal}") }
       else { report(step, "exit code {output.status.code}") }
       return None
+    }
+  }
+}
+
+// Lexer and parser rejections arrive as `Error:message:line:col:length` (hex message) and `Note:` rows on
+// stdout, like `yerux tokens`; draw them like the Rust compiler does.
+fn front_stage(program: view String, args: view List<String>, step: view String, source: view String,
+    shown: view String) -> Option<String> {
+  match process.run(program, args) {
+    Err(error) => { report(step, error.message); return None }
+    Ok(output) => {
+      if output.stderr.len() > 0 { let written = io.write_stderr(output.stderr) }
+      if output.status.code == 0 { return Some(String.from(output.stdout)) }
+      let rows = output.stdout.split("\n")
+      var first = 0
+      while first < rows.len() && !rows.at(first).starts_with("Error:") { first = first + 1 }
+      if first < rows.len() { draw_error(rows, first, source, shown) }
+      else if output.stdout.len() > 0 { let written = io.write_stderr(output.stdout) }
+      if output.status.signal != 0 { report(step, "signal {output.status.signal}") }
+      else { report(step, "exit code {output.status.code}") }
+      return None
+    }
+  }
+}
+
+fn unhex(s: view String) -> String {
+  var out = String.new()
+  for i in 0..s.len() / 2 {
+    var high = s.byte(i * 2) - 48
+    if high > 9 { high = high - 39 }
+    var low = s.byte(i * 2 + 1) - 48
+    if low > 9 { low = low - 39 }
+    out.push_byte(high * 16 + low)
+  }
+  return out
+}
+
+fn word_byte(byte: Int) -> Bool { return name_byte(byte) || byte >= 128 }
+
+// Characters of the literal that starts at character `at` of `line` (the parser leaves their length at 0)
+fn literal_len(line: view String, offsets: view List<Int>, at: Int) -> Int {
+  if at >= offsets.len() { return 1 }
+  var i = offsets.at(at)
+  var quote = line.byte(i)
+  var raw = false
+  if quote == 114 {
+    var j = i + 1
+    while j < line.len() && line.byte(j) == 35 { j = j + 1 }
+    if j < line.len() && line.byte(j) == 34 { raw = true; quote = 34; i = j }
+  }
+  var end = i + 1
+  if quote == 34 || quote == 39 {
+    while end < line.len() && line.byte(end) != quote {
+      if !raw && line.byte(end) == 92 { end = end + 1 }
+      end = end + 1
+    }
+    end = end + 1
+    if raw { while end < line.len() && line.byte(end) == 35 { end = end + 1 } }
+  } else {
+    let number = quote >= 48 && quote <= 57
+    while end < line.len() && (word_byte(line.byte(end)) ||
+        (number && line.byte(end) == 46 && end + 1 < line.len() && line.byte(end + 1) >= 48 && line.byte(end + 1) <= 57)) {
+      end = end + 1
+    }
+  }
+  var size = 0
+  for k in at..offsets.len() { if offsets.at(k) < end { size = size + 1 } }
+  return max(size, 1)
+}
+
+fn draw_error(rows: view List<String>, first: Int, source: view String, shown: view String) {
+  let parts = rows.at(first).split(":")
+  var line = 0
+  var col = 0
+  var size = 0
+  if parts.len() != 5 || !parts.at(2).parse_int(line) || !parts.at(3).parse_int(col) || !parts.at(4).parse_int(size) {
+    io.eprintln(rows.at(first))
+    return
+  }
+  io.eprintln("error: {unhex(parts.at(1))}")
+  let lines = read_text(source).split("\n")
+  var text = String.new()
+  if line >= 1 && line <= lines.len() { text = String.from(lines.at(line - 1)) }
+  while text.ends_with("\r") { text = text.slice(0, text.len() - 1) }
+  var offsets = List<Int>.new()
+  var at = 0
+  while at < text.len() {
+    offsets.push(at)
+    at = at + text.char_size(at)
+  }
+  if size == 0 { size = literal_len(text, offsets, col - 1) }
+  // a very long line is shown as a window around the column
+  let column = col
+  let total = offsets.len()
+  if total > 200 {
+    let center = min(max(col - 1, 0), total)
+    let start = max(center - 80, 0)
+    let stop = min(center + 80, total)
+    var window = String.new()
+    var lead = 0
+    if start > 0 { window.push_str("..."); lead = 3 }
+    var from = text.len()
+    if start < total { from = offsets.at(start) }
+    var to = text.len()
+    if stop < total { to = offsets.at(stop) }
+    window.push_str(text.slice(from, to))
+    if stop < total { window.push_str("...") }
+    col = center - start + lead + 1
+    size = max(min(size, stop - center), 1)
+    text = move window
+  }
+  let number = "{line}"
+  var pad = String.new()
+  for i in 0..number.len() { pad.push_str(" ") }
+  var marks = String.new()
+  for i in 1..col { marks.push_str(" ") }
+  for i in 0..max(size, 1) { marks.push_str("^") }
+  io.eprintln("{pad}--> {shown}:{line}:{column}")
+  io.eprintln("{pad} |")
+  io.eprintln("{number} | {text}")
+  io.eprintln("{pad} | {marks}")
+  for k in first + 1..rows.len() {
+    if rows.at(k).starts_with("Note:") {
+      let row = rows.at(k)
+      io.eprintln("{pad} = {unhex(row.slice(5, row.len()))}")
     }
   }
 }
@@ -196,6 +323,17 @@ fn derive_source(tree: view List<ast.AstNode>) -> String {
   return out
 }
 
+// A stage whose failure is not reported: the same source is read again, and reported then
+fn quietly(program: view String, args: view List<String>) -> Option<String> {
+  match process.run(program, args) {
+    Err(error) => { return None }
+    Ok(output) => {
+      if output.status.code == 0 { return Some(String.from(output.stdout)) }
+      return None
+    }
+  }
+}
+
 // Source text for `source` with the derived impls appended, or "" when it derives nothing here.
 fn derived_source(build: view Build, source: view String, key: view String) -> String {
   let text = read_text(source)
@@ -206,7 +344,7 @@ fn derived_source(build: view Build, source: view String, key: view String) -> S
   var args = List<String>.new()
   args.push(String.from(source))
   args.push(String.from("--positioned"))
-  match invoke(path.join(build.stages, "lexer"), args, "lexing {source}") {
+  match quietly(path.join(build.stages, "lexer"), args) {
     None => { return String.new() }
     Some(tokens) => { if !write(tokens_path, tokens) { return String.new() } }
   }
@@ -214,7 +352,7 @@ fn derived_source(build: view Build, source: view String, key: view String) -> S
   args.push(String.from(tokens_path))
   args.push(String.from("--build"))
   var generated = String.new()
-  match invoke(path.join(build.stages, "parser"), args, "parsing {source}") {
+  match quietly(path.join(build.stages, "parser"), args) {
     None => { return String.new() }
     Some(contents) => {
       let parsed = ast.decode(move contents)
@@ -227,7 +365,8 @@ fn derived_source(build: view Build, source: view String, key: view String) -> S
   return combined
 }
 
-fn cache_source(build: mut Build, original: view String, key: view String) -> Bool {
+// `shown`: the file named by diagnostics (the user's file when `original` is a generated copy with the preludes)
+fn cache_source(build: mut Build, original: view String, key: view String, shown: view String) -> Bool {
   if build.seen.contains(key) { return true }
   build.seen.push(String.from(key))
   var source = String.from(original)
@@ -239,7 +378,7 @@ fn cache_source(build: mut Build, original: view String, key: view String) -> Bo
   args.push(String.from(source))
   args.push(String.from("--positioned"))
   args.push(String.from("--columns"))
-  match invoke(lexer, args, "lexing {source}") {
+  match front_stage(lexer, args, "lexing {source}", source, shown) {
     None => { return false }
     Some(tokens) => { if !write(tokens_path, tokens) { return false } }
   }
@@ -247,7 +386,7 @@ fn cache_source(build: mut Build, original: view String, key: view String) -> Bo
   args.clear()
   args.push(String.from(tokens_path))
   args.push(String.from("--build"))
-  match invoke(parser, args, "parsing {source}") {
+  match front_stage(parser, args, "parsing {source}", source, shown) {
     None => { return false }
     Some(contents) => {
       let cache_path = path.join(build.work, key)
@@ -281,10 +420,10 @@ fn cache_import(build: mut Build, name: view String) -> Bool {
   let file = "{parts}.yx"
   if name.starts_with("std.") {
     let source = path.join(build.runtime, file)
-    if fs.is_file(source) { return cache_source(build, source, "src/{file}") }
+    if fs.is_file(source) { return cache_source(build, source, "src/{file}", source) }
   }
   let source = path.join(build.root, file)
-  if fs.is_file(source) { return cache_source(build, source, file) }
+  if fs.is_file(source) { return cache_source(build, source, file, source) }
   report("resolving {name}", "source file not found: {source}")
   return false
 }
@@ -453,7 +592,7 @@ fn compile(build: mut Build, source: view String, output: view String, mode: vie
   var origin = String.from(source)
   let combined = with_prelude(build, source)
   if combined.len() > 0 { origin = String.from(combined) }
-  if !cache_source(build, origin, entry) { return false }
+  if !cache_source(build, origin, entry, source) { return false }
   let resolver = path.join(build.stages, "resolve")
   let linked_path = path.join(build.work, "linked.ast")
   var args = List<String>.new()
@@ -501,6 +640,10 @@ fn compile(build: mut Build, source: view String, output: view String, mode: vie
   args.push(move c_file)
   args.push(String.from("-o"))
   args.push(String.from(exe))
+  if build.stage {
+    args.push(String.from("-Dmain=sc_stage_main"))
+    args.push(path.join(build.runtime, "c_selfhost_stage.c"))
+  }
   args.push(String.from("-lm"))
   if build.optimize { args.push(String.from("-O2")) }
   else { args.push(String.from("-O0")) }
@@ -604,6 +747,7 @@ fn build_stage2(stages: view String, runtime: view String, sources: view String,
     args.push(String.from("-o"))
     args.push(path.join(out, name))
     args.push(String.from("--keep-c"))
+    args.push(String.from("--stage"))
     args.push(String.from("--runtime"))
     args.push(String.from(runtime))
     match invoke(driver, args, "building stage {name}") {
@@ -634,6 +778,7 @@ fn main() {
   var release = false
   var no_opt = false
   var stage2 = false
+  var stage = false
   var sources = String.new()
   var i = 1
   if i < cli.len() && (cli.at(i) == "build" || cli.at(i) == "check" || cli.at(i) == "c") {
@@ -649,6 +794,7 @@ fn main() {
     else if arg == "--release" { release = true }
     else if arg == "--no-opt" { no_opt = true }
     else if arg == "--stage2" { stage2 = true }
+    else if arg == "--stage" { stage = true }
     else if arg == "-o" || arg == "--runtime" || arg == "--sources" {
       i = i + 1
       if i >= cli.len() { usage(); env.exit(2); return }
@@ -733,7 +879,7 @@ fn main() {
       var build = Build {
         runtime: move runtime, stages: move stages, root: path.parent(input),
         work: created.slice(0, created.len() - 1), seen: List<String>.new(),
-        keep_c: keep_c, debug: debug, optimize: !(debug || no_opt),
+        keep_c: keep_c, stage: stage, debug: debug, optimize: !(debug || no_opt),
       }
       let success = compile(build, input, output, mode)
       args.clear()

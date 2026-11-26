@@ -1,0 +1,7 @@
+error: expected a variable or a field here
+ --> tests/e2345_deref_chain.yx:3:2
+  |
+3 |  print(1) }
+  |  ^^^^^^^^
+
+1 error(s). Nothing was generated.

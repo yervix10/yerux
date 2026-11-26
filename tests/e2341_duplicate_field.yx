@@ -1,0 +1,6 @@
+// a repeated field is rejected where it is read
+struct Point {
+  x: Int,
+  x: Int,
+}
+fn main() {}

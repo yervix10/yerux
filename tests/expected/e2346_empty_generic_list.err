@@ -1,0 +1,7 @@
+error: a generic list needs at least one type parameter
+ --> tests/e2346_empty_generic_list.yx:2:11
+  |
+2 | fn first<>(x: Int) -> Int { return x }
+  |           ^
+
+1 error(s). Nothing was generated.

@@ -1,0 +1,7 @@
+// the parser rejects a range pattern with ends of two kinds
+fn main() {
+  match 1 {
+    1..='a' => {}
+    _ => {}
+  }
+}

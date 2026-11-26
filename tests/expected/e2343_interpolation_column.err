@@ -1,0 +1,7 @@
+error: expected ')'
+ --> tests/e2343_interpolation_column.yx:4:20
+  |
+4 |   print("total: {n n}")
+  |                    ^
+
+1 error(s). Nothing was generated.

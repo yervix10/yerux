@@ -282,6 +282,18 @@ generic arguments (`generic_explicit_args`), `std.http.server`
 fails if that number grows. The previous run, before those programs existed,
 matched 494 of 495 with none outside the subset.
 
+Lexer and parser diagnostics: both stages report their first rejection as an
+`Error:message:line:col:length` row with `Note:` rows (the parser only in
+`--build` mode; its dump mode keeps `SyntaxError:N`), and the driver draws it
+like the Rust compiler, including the clipped window of a very long line. The
+parser words these like the Rust parser, walks over the braces of every item
+first, and also rejects repeated fields, variants, parameters, methods, types
+and functions. `tests/selfhost_diagnostics.sh` compares the whole text with the
+goldens in `tests/expected/`. The stages are linked with
+`src/c_selfhost_stage.c`, which runs them on a large stack (like the Rust
+compiler's 2 GiB thread), so the 2000-level nesting limit is reached before the
+stack ends. User programs are not changed.
+
 Diagnostics with spans: a type error found by the self-hosted stages is drawn
 like the Rust compiler's (`--> file:line:col`, the source line and `^^^^` under
 the offending expression). The parser's `--build` mode adds `Pos(line,col,length)`
@@ -316,8 +328,10 @@ needs to tell the root file from the library), `unsafe` for FFI. Limit:
 `derive Clone` on a recursive enum (`std.json.Value`) is not generated yet
 (the clone is inlined, so it would not terminate); the corpus test of
 `std.json` avoids `clone`.
+Round 24 added the lexer and parser diagnostics above: the first error now
+matches for 214 of the 369 programs in the corpus.
 `tests/selfhost_codegen.sh` prints these counts and fails if the matching
-number falls below 100 (the program floor is now 503, with at most 8 outside the subset).
+number falls below 200 (the program floor is now 503, with at most 8 outside the subset).
 
 The driver links the typed `Atomic<Int>` and `Atomic<Bool>` prelude and can
 build `std.sync`. It also links the four-lane `parallel for` scheduler for

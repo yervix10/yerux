@@ -2280,6 +2280,11 @@ fn infer_expr(types: mut Types, tree: view List<ast.AstNode>, index: Int, hint: 
     let args = ast.child(tree, index, 2)
     if owner != "?" { return member(types, tree, owner, name, args, -1, hint) }
     let receiver = infer(types, tree, node, unknown())
+    if receiver == "nothing" {
+      // a call without a value (`*print(1)`) is not something a method can borrow
+      issue(types, "expected a variable or a field here")
+      return unknown()
+    }
     let handle = type_terms.base(receiver)
     if name == "drop" && child_count(tree, args) == 0 {
       let held = shape_index(types, receiver)

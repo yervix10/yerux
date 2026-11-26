@@ -1,0 +1,7 @@
+error: missing '{'
+ --> tests/e2342_item_without_body.yx:3:8
+  |
+3 | struct Empty
+  |        ^^^^^
+
+1 error(s). Nothing was generated.

@@ -77,7 +77,7 @@ fn emit_interp(parts: view List<Part>, count: Int, line: Int) {
   emit_row(line, String.from("Sym:28"))
   emit_interp(parts, count - 1, line)
   emit_row(line, String.from("Sym:2c"))
-  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false, line % 1000000, false, parts.at(count - 1).line, parts.at(count - 1).col) }
+  if parts.at(count - 1).expr { lex(parts.at(count - 1).text, false, line % 1000000, line >= 1000000, parts.at(count - 1).line, parts.at(count - 1).col) }
   else { emit(line, "Str:", parts.at(count - 1).text) }
   emit_row(line, String.from("Sym:29"))
 }
@@ -225,7 +225,12 @@ fn lex(src: view String, eof: Bool, first_line: Int, columns: Bool, ol: Int, oc:
   while i < n {
     let b = src.byte(i)
     var tokpos = line
-    if columns && line > 0 { tokpos = line + 1000000 * column_of(src, line_start, i) }
+    if columns && line > 0 {
+      var column = column_of(src, line_start, i)
+      // an interpolated expression starts at column `oc` of its file
+      if !eof { column = column + oc - 1 }
+      tokpos = line + 1000000 * column
+    }
     if (b >= 9 && b <= 13) || b == 32 {
       if b == 10 && line > 0 { line = line + 1; line_start = i + 1 }
       i = i + 1

@@ -57,8 +57,8 @@ done
 [[ -n ${SELFHOST_ERRORS:-} ]] && cp "$tmp/errors.tsv" "$SELFHOST_ERRORS"
 printf 'selfhost error corpus: %d of %d tests/e*.yx give the same first error as the Rust compiler (%d differ in wording, %d fail another way, %d are accepted)\n' \
   "$same" "$errors_total" "$differs" "$other" "$accepts"
-if [[ $same -lt ${SELFHOST_ERROR_FLOOR:-100} ]]; then
-  printf 'selfhost error corpus: fell below %d matching diagnostics\n' "${SELFHOST_ERROR_FLOOR:-100}" >&2
+if [[ $same -lt ${SELFHOST_ERROR_FLOOR:-200} ]]; then
+  printf 'selfhost error corpus: fell below %d matching diagnostics\n' "${SELFHOST_ERROR_FLOOR:-200}" >&2
   exit 1
 fi
 cp -R examples/project "$tmp/project"
@@ -213,7 +213,7 @@ record_rejection() {
     *"generic impl"*|*"trait impl"*|*"declaration Trait"*|*clone*|*generic*) category="generics and traits" ;;
     *pattern*|*"variant"*|*"enum"*) category="enums and patterns" ;;
     *sequence*|*"slice "*|*"iteration "*|*"array "*) category="sequences and iteration" ;;
-    SyntaxError:*|UnsupportedCharacter:*) category="syntax" ;;
+    SyntaxError:*|Error:*|UnsupportedCharacter:*) category="syntax" ;;
     *"type Range"*|*"declaration Alias"*|*"explicit range step"*) category="range types and aliases" ;;
     *"statement Defer"*) category="defer" ;;
     *"type Box"*) category="heap types" ;;
@@ -249,7 +249,8 @@ for file in examples/*.yx tests/*.yx tests/selfhost/codegen/*.yx \
   status=0
   "$tmp/rebuilt/codegen" "$tmp/ast" "$file" "$(wc -l <"$file")" >"$tmp/self.c" 2>"$tmp/codegen.err" || status=$?
   seed_status=0
-  "$tmp/codegen" "$tmp/ast" "$file" "$(wc -l <"$file")" >"$tmp/seed.c" 2>"$tmp/seed.err" || seed_status=$?
+  # the seed is not linked with c_selfhost_stage.c: give it the stack that deeply nested input needs
+  (ulimit -s 262144; exec "$tmp/codegen" "$tmp/ast" "$file" "$(wc -l <"$file")") >"$tmp/seed.c" 2>"$tmp/seed.err" || seed_status=$?
   if [[ $status != "$seed_status" ]] || ! cmp -s "$tmp/self.c" "$tmp/seed.c" ||
       ! cmp -s "$tmp/codegen.err" "$tmp/seed.err"; then
     fail "rebuilt codegen differs from seed (seed $seed_status, rebuilt $status)"
