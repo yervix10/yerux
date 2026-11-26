@@ -1287,10 +1287,10 @@ The harness records each original source and its raw diagnostics.
      parameter in that reproduction. Aligning needs range typing through generics and the same
      static interval checks.
 
-257. **Selfhost accepts an incompatible trait method and rejects a Copy specialization.**
+257. **Closed. Selfhost accepts an incompatible trait method and rejects a Copy specialization.**
      With `struct Point { x: Int }` and an empty main, Rust rejects
      `impl Equal for Point { fn eq(view self, other: Point) -> Bool { return true } }`
-     because the second parameter must be borrowed. Selfhost emits C. The opposite disagreement
+     because the second parameter must be borrowed. Selfhost previously emitted C. The opposite disagreement
      occurs for:
      ```yerux ignore
      struct Shell<T> { id: Int }
@@ -1302,10 +1302,12 @@ The harness records each original source and its raw diagnostics.
      }
      ```
      Rust copies the field-only type because the conditional destructor does not apply.
-     Selfhost treats the existence of the `Drop` impl as enough to deny the copy.
+     Selfhost used to treat the existence of the `Drop` impl as enough to deny the copy.
+     It now checks the `Equal` signature and uses the instantiated bounds for destructor
+     selection. Regressions: `e2326_selfhost_equal_signature` and `selfhost_conditional_drop`.
 
-258. **Selfhost loses context for some generics and closures.** Rust accepts both fragments
-     below, while selfhost rejects the first with `SyntaxError` and cannot infer `None` in
+258. **Closed. Selfhost loses context for some generics and closures.** Rust accepts both fragments
+     below, while selfhost used to reject the first with `SyntaxError` and cannot infer `None` in
      the second. The missing context also leaves `return K` typed as `Int` in
      `fn size<const K: Int>(a: [Int; K]) -> Int32 { return K }` called as `size([1, 2])`,
      where Rust accepts the instantiated constant.
@@ -1327,9 +1329,13 @@ The harness records each original source and its raw diagnostics.
      }
      ```
 
-259. **Some valid Option operations and tuple payload expressions fail in selfhost.** Rust
+     The build parser now retains explicit type arguments. Closure checking revisits bare
+     `None` returns after inference, and a const parameter retains its integer use-site type.
+     The three cases have their own stage2 regressions and goldens.
+
+259. **Closed. Some valid Option operations and tuple payload expressions fail in selfhost.** Rust
      accepts `fn main() { let a = Some(8); print(a.map(|x| x + 1).unwrap()) }`, but selfhost
-     reports that `Option<Int>` has no method `map`. The following compiles in Rust and
+     previously reported that `Option<Int>` has no method `map`. The following compiles in Rust and
      selfhost reports `expected Int but this is String` at the concatenation:
      ```yerux ignore
      fn pair(a: view String, b: view String) -> Option<(String, String)> {
@@ -1345,9 +1351,16 @@ The harness records each original source and its raw diagnostics.
      }
      ```
 
-260. **Selfhost emits comptime recursion as a runtime call.** Rust rejects the following
-     with `E-K6`. Selfhost emits C and the call runs when the program starts. This needs
-     the interpreter and its resource budgets, not just matching the diagnostic.
+     Selfhost now implements consuming `Option.map` with a borrowed callback and accepts
+     concatenation chains that start with a String place. Regressions: `selfhost_option_map`
+     and `selfhost_tuple_concat`.
+
+260. **Partial. Selfhost emits comptime recursion as a runtime call.** The scalar evaluator
+     now folds supported Int and Bool functions with Rust's 1,000-frame and 20-million-step
+     budgets. The following is rejected with `E-K6` in both compilers, while
+     `conf_comptime_depth_999` still runs. The evaluator still falls back to runtime lowering
+     outside its supported subset, including arrays and Char values. Full comptime parity
+     remains open.
      ```yerux ignore
      fn f(n: Int) -> Int { return 1 + f(n - 1) }
      fn main() { let c = comptime f(999) }

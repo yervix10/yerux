@@ -1,0 +1,10 @@
+error: method 'eq' does not match the signature in trait Equal
+ --> tests/e2326_selfhost_equal_signature.yx:2:27
+  |
+2 | impl Equal for Point { fn eq(view self, other: Point) -> Bool { return true } }
+  |                           ^^
+  = trait Equal requires: fn eq(view self, other: view Point) -> Bool
+  = this impl declares: fn eq(view self, other: Point) -> Bool
+  = help: parameter modes (`view`/`mut`), types and the return type must be identical
+
+1 error(s). Nothing was generated.

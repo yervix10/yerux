@@ -3,6 +3,7 @@ import std.env
 import std.fs
 import std.io
 import ast
+import comptime
 import locals
 import types
 import type_terms
@@ -15,7 +16,7 @@ struct Method { owner: String, node: Int, params: Int, trait_name: String }
 struct Instance { node: Int, owner: String, sub: type_terms.Substitution, key: String }
 struct Loop { label: String, id: Int, deferred: Int }
 struct Generator {
-  checked: types.Checked,
+  checked: types.Types,
   locals: locals.Locals,
   structs: List<Int>,
   enums: List<Int>,
@@ -1074,6 +1075,20 @@ fn option_result_method(gen: mut Generator, tree: view List<ast.AstNode>, receiv
     return move result
   }
   let payload = enum_payload(gen, owned, 1, 0)
+  if name == "map" && base == "Option" {
+    let callback = expression(gen, tree, args + 1)
+    let result = temp(gen, tree, ty, String.from("{{ .tag = 2 }}"))
+    let inner = type_terms.arguments(ty)
+    let out = c_type(gen, tree, inner.at(0))
+    let input = c_type(gen, tree, payload.ty)
+    line(gen, "if ({owned.code}.tag == 1) {{")
+    gen.indent = gen.indent + 1
+    line(gen, "{result.code}.v1.p0 = (({out} (*)(void *, {input}))({callback.code}).code)(({callback.code}).env, {transfer(gen, tree, payload)});")
+    line(gen, "{result.code}.tag = 1;")
+    gen.indent = gen.indent - 1
+    line(gen, String.from("}}"))
+    return move result
+  }
   if name == "unwrap_or" {
     let arg = expression(gen, tree, args + 1)
     let fallback = coerce(gen, tree, move arg, ty)
@@ -1440,6 +1455,16 @@ fn call(gen: mut Generator, tree: view List<ast.AstNode>, node: Int, ty: view St
         "{source.code}.tag == 1 ? ({c}){{ .tag = 1, .v1.p0 = {transfer(gen, tree, payload)} }} : ({c}){{ .tag = 2, .v2.p0 = {transfer(gen, tree, error)} }}")
     }
     if name == "__comptime" && tree.at(args).end > args + 1 && tree.at(args + 1).end == tree.at(args).end {
+      let folded = comptime.evaluate(gen.checked, tree, args + 1)
+      if folded.error != "" {
+        io.eprintln("error: {folded.error}")
+        env.exit(1)
+      }
+      if folded.supported {
+        var code = String.new()
+        if ty != "nothing" { code = "{folded.value}" }
+        return Value { ty: String.from(ty), code: move code }
+      }
       return expression(gen, tree, args + 1)
     }
     if name == "unchecked" && tree.at(args).end > args + 1 && tree.at(args + 1).end == tree.at(args).end {
@@ -1595,6 +1620,7 @@ fn method_matches(tree: view List<ast.AstNode>, method: view Method, owner: view
 
 fn trait_method(gen: view Generator, tree: view List<ast.AstNode>, owner: view String,
     trait_name: view String, name: view String) -> Int {
+  if trait_name == "Drop" && !types.has_drop(gen.checked, owner) { return -1 }
   for method in gen.methods {
     if method.trait_name == trait_name && method_matches(tree, method, owner) {
       let candidate = ast.name_at(tree, method.node, 0)
@@ -1713,6 +1739,17 @@ fn emit_call(gen: mut Generator, tree: view List<ast.AstNode>, fun: Int, owner: 
   if gen.externs.contains(fun) { return extern_call(gen, tree, fun, args, ty) }
   let params = ast.child(tree, fun, 2)
   var sub = call_substitution(gen, tree, fun, owner)
+  let marker = tree.at(args).end
+  if marker < tree.len() && tree.at(marker).tag == "ExplicitTypes" {
+    let supplied = ast.child(tree, marker, 0)
+    var at = supplied + 1
+    var i = 0
+    while at < tree.at(supplied).end {
+      sub.values.set(i, declared_for(tree, at, gen.sub))
+      i = i + 1
+      at = tree.at(at).end
+    }
+  }
   var nodes = List<Int>.new()
   var forms = List<String>.new()
   var modes = List<String>.new()
@@ -2786,7 +2823,15 @@ fn expression(gen: mut Generator, tree: view List<ast.AstNode>, node: Int) -> Va
       if name == "None" { return construct_variant(gen, tree, ty, name, -1) }
       let bound = gen.sub.names.index_of(name)
       // a `const K: Int` generic parameter used as a value: the length it was bound to
-      if bound >= 0 && ty == "Int" { return Value { ty: String.from("Int"), code: String.from(gen.sub.values.at(bound)) } }
+      if bound >= 0 && integer_c(ty).len() != 0 {
+        let literal = String.from(gen.sub.values.at(bound))
+        let failure = types.integer_literal_error(literal, ty, false)
+        if failure != "" {
+          io.eprintln("error: {failure}")
+          env.exit(1)
+        }
+        return Value { ty: String.from(ty), code: "(({integer_c(ty)})({literal}))" }
+      }
       let fun = find_named(tree, gen.functions, name)
       if fun >= 0 {
         let params = type_parameters(tree, fun)

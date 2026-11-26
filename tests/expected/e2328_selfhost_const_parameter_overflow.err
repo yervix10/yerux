@@ -1,0 +1,11 @@
+error: the literal 128 does not fit Int8 (-128 to 127)
+ --> tests/e2328_selfhost_const_parameter_overflow.yx:2:19
+  |
+2 | fn main() { print(size([0; 128])) }
+  |                   ^^^^^^^^^^^^^^
+  = a Int8 is expected here, so the literal is read as a Int8
+  = help: pick a type that is big enough (e.g. Int or Int64), or convert a variable at run time with `x.to_int8()` (panics if it does not fit) or `x.truncate_int8()` (keeps the low bits)
+  = instantiated code is defined at line 1
+  = while checking `size` with K = Int<128..128>
+
+1 error(s). Nothing was generated.

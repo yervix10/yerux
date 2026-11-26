@@ -347,6 +347,13 @@ fn after_name(p: mut Parser, name: view String) -> String {
   var generic = missing()
   if sym(p, "<") {
     generic = type_args(p, full_path)
+    let spelling = unhex(name)
+    let first = spelling.byte(0)
+    let function = p.build && start == angle && ((first >= 97 && first <= 122) || first == 95)
+    if !p.failed && function && sym(p, "(") {
+      let values = args(p)
+      return positioned(p, node3("Call", name, values, node1("ExplicitTypes", generic)), start - 1)
+    }
     if p.failed || !(sym(p, ".") || sym(p, "{{")) {
       p.i = angle
       p.failed = false

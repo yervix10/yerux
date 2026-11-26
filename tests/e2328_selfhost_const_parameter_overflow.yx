@@ -1,0 +1,2 @@
+fn size<const K: Int>(a: [Int; K]) -> Int8 { return K }
+fn main() { print(size([0; 128])) }

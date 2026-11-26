@@ -1,0 +1,8 @@
+fn main() {
+  let a = Some(8)
+  print(a.map(|x| x + 1).unwrap())
+  let word = Some(String.from("yerux"))
+  print(word.map(|x| x + "!").unwrap())
+  let absent: Option<Int> = None
+  print(absent.map(|x| x + 1).is_none())
+}

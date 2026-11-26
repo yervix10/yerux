@@ -1,0 +1,188 @@
+// Scalar compile-time execution. Unsupported expressions are left to the legacy lowering path.
+import ast
+import types
+
+pub struct Evaluation { value: Int, supported: Bool, error: String }
+struct Budget { steps: Int, depth: Int, supported: Bool, error: String }
+struct Frame { ids: List<Int>, values: List<Int>, returned: Bool, value: Int }
+
+fn frame() -> Frame {
+  return Frame { ids: List<Int>.new(), values: List<Int>.new(), returned: false, value: 0 }
+}
+
+fn tick(budget: mut Budget) -> Bool {
+  if !budget.supported || budget.error != "" { return false }
+  budget.steps = budget.steps + 1
+  if budget.steps <= 20000000 { return true }
+  budget.error = String.from("compile-time evaluation ran too long (more than 20000000 steps) [E-K2]")
+  return false
+}
+
+fn overflow(budget: mut Budget) -> Int {
+  budget.error = String.from("integer overflow while evaluating a constant [E-K6]")
+  return 0
+}
+
+fn checked(budget: mut Budget, result: Option<Int>) -> Int {
+  match result {
+    Some(value) => { return value }
+    None => { return overflow(budget) }
+  }
+}
+
+fn boolean(value: Bool) -> Int {
+  if value { return 1 }
+  return 0
+}
+
+fn binary(budget: mut Budget, op: view String, left: Int, right: Int) -> Int {
+  if op == "+" { return checked(budget, left.checked_add(right)) }
+  if op == "-" { return checked(budget, left.checked_sub(right)) }
+  if op == "*" { return checked(budget, left.checked_mul(right)) }
+  if op == "/" || op == "%" {
+    if right == 0 {
+      budget.error = String.from("division by zero while evaluating a constant [E-K6]")
+      return 0
+    }
+    if left == -9223372036854775807 - 1 && right == -1 { return overflow(budget) }
+    if op == "/" { return left / right }
+    return left % right
+  }
+  if op == "==" { return boolean(left == right) }
+  if op == "!=" { return boolean(left != right) }
+  if op == "<" { return boolean(left < right) }
+  if op == "<=" { return boolean(left <= right) }
+  if op == ">" { return boolean(left > right) }
+  if op == ">=" { return boolean(left >= right) }
+  budget.supported = false
+  return 0
+}
+
+fn call(program: view types.Types, tree: view List<ast.AstNode>, budget: mut Budget,
+    local: mut Frame, node: Int) -> Int {
+  let name = ast.name_at(tree, node, 0)
+  let args = ast.child(tree, node, 1)
+  if name == "assert" {
+    let value = expression(program, tree, budget, local, args + 1)
+    if budget.supported && budget.error == "" && value == 0 {
+      budget.error = String.from("assertion failed [E-K6]")
+    }
+    return 0
+  }
+  if program.identities.at(node) < 0 {
+    for fun in program.comptime_functions {
+      if !ast.name_at(tree, fun, 0).eq(name) { continue }
+      if budget.depth >= 1000 {
+        budget.error = String.from("compile-time evaluation recursed too deeply [E-K6]")
+        return 0
+      }
+      var called = frame()
+      let params = ast.child(tree, fun, 2)
+      var param = params + 1
+      var arg = args + 1
+      while param < tree.at(params).end && arg < tree.at(args).end {
+        if tree.at(ast.child(tree, param, 1)).tag != "Own" {
+          budget.supported = false
+          return 0
+        }
+        called.ids.push(program.identities.at(param))
+        called.values.push(expression(program, tree, budget, local, arg))
+        param = tree.at(param).end
+        arg = tree.at(arg).end
+      }
+      budget.depth = budget.depth + 1
+      statement(program, tree, budget, called, ast.child(tree, fun, 4))
+      budget.depth = budget.depth - 1
+      return called.value
+    }
+  }
+  budget.supported = false
+  return 0
+}
+
+fn expression(program: view types.Types, tree: view List<ast.AstNode>, budget: mut Budget,
+    local: mut Frame, node: Int) -> Int {
+  if !tick(budget) { return 0 }
+  let ty = program.expressions.at(node)
+  if ty != "Int" && ty != "Bool" && ty != "nothing" && !ty.starts_with("Int<") {
+    budget.supported = false
+    return 0
+  }
+  let tag = String.from(tree.at(node).tag)
+  if tag == "Int" {
+    var value = 0
+    if tree.at(ast.child(tree, node, 0)).tag.parse_int(value) { return value }
+  } else if tag == "Bool" { return boolean(tree.at(ast.child(tree, node, 0)).tag == "true") }
+  else if tag == "Var" {
+    let at = local.ids.index_of(program.identities.at(node))
+    if at >= 0 { return local.values.at(at) }
+  } else if tag == "Call" { return call(program, tree, budget, local, node) }
+  else if tag == "Un" {
+    let op = ast.name_at(tree, node, 0)
+    let value = expression(program, tree, budget, local, ast.child(tree, node, 1))
+    if !budget.supported || budget.error != "" { return 0 }
+    if op == "!" { return boolean(value == 0) }
+    if op == "-" { return checked(budget, 0.checked_sub(value)) }
+  } else if tag == "Bin" {
+    let op = ast.name_at(tree, node, 0)
+    let left = expression(program, tree, budget, local, ast.child(tree, node, 1))
+    if op == "&&" && left == 0 { return 0 }
+    if op == "||" && left != 0 { return 1 }
+    let right = expression(program, tree, budget, local, ast.child(tree, node, 2))
+    if !budget.supported || budget.error != "" { return 0 }
+    if op == "&&" || op == "||" { return right }
+    return binary(budget, op, left, right)
+  }
+  budget.supported = false
+  return 0
+}
+
+fn statement(program: view types.Types, tree: view List<ast.AstNode>, budget: mut Budget,
+    local: mut Frame, node: Int) {
+  let tag = String.from(tree.at(node).tag)
+  if tag == "_" { return }
+  if tag == "Block" || tag == "[" {
+    var at = node + 1
+    while at < tree.at(node).end && !local.returned && budget.supported && budget.error == "" {
+      statement(program, tree, budget, local, at)
+      at = tree.at(at).end
+    }
+    return
+  }
+  if !tick(budget) { return }
+  if tag == "Return" {
+    let value = ast.child(tree, node, 0)
+    if tree.at(value).tag != "_" { local.value = expression(program, tree, budget, local, value) }
+    local.returned = true
+  } else if tag == "Let" {
+    let value = expression(program, tree, budget, local, ast.child(tree, node, 2))
+    let id = program.identities.at(node)
+    let at = local.ids.index_of(id)
+    if at < 0 { local.ids.push(id); local.values.push(value) }
+    else { local.values.set(at, value) }
+  } else if tag == "Assign" && tree.at(ast.child(tree, node, 0)).tag == "Var" {
+    let at = local.ids.index_of(program.identities.at(ast.child(tree, node, 0)))
+    if at < 0 { budget.supported = false }
+    else {
+      let value = expression(program, tree, budget, local, ast.child(tree, node, 1))
+      local.values.set(at, value)
+    }
+  } else if tag == "If" {
+    var branch = 2
+    if expression(program, tree, budget, local, ast.child(tree, node, 0)) != 0 { branch = 1 }
+    statement(program, tree, budget, local, ast.child(tree, node, branch))
+  } else if tag == "While" {
+    while !local.returned && expression(program, tree, budget, local, ast.child(tree, node, 1)) != 0 {
+      statement(program, tree, budget, local, ast.child(tree, node, 2))
+    }
+  } else if tag == "Expr" {
+    let unused = expression(program, tree, budget, local, ast.child(tree, node, 0))
+  } else { budget.supported = false }
+}
+
+pub fn evaluate(program: view types.Types, tree: view List<ast.AstNode>, node: Int) -> Evaluation {
+  var budget = Budget { steps: 0, depth: 0, supported: true, error: String.new() }
+  var local = frame()
+  let value = expression(program, tree, budget, local, node)
+  return Evaluation { value: value, supported: budget.supported, error: String.from(budget.error) }
+}
