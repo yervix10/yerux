@@ -1,0 +1,38 @@
+x	y
+x
+y
+x"y
+x\y
+
+with # hash
+with = eq
+x\ty
+no "escapes"
+open
+open
+x\
+true
+1
+false
+false
+true
+# not comment
+true
+3
+x,y
+z]w
+v#w
+2
+x,y
+z]w
+2
+1
+2
+1
+]
+2
+]x
+2
+2
+1
+trailing

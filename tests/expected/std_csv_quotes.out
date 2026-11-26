@@ -1,0 +1,20 @@
+r0=[a"b]
+r0=[]
+r0=[]|[]
+r0=[a"b]|[c]
+r0=[abcd]
+r0=[a ]|[b]
+r0=[unclosed]
+r0=["]
+std.csv: line 1: text after a closing quote
+std.csv: line 1: text after a closing quote
+std.csv: line 1: text after a closing quote
+std.csv: line 1: unclosed quote
+ok rows=1
+r0=[plain]|[has,comma]|[has"quote]|[haslf]|[has
+nl]|[]|["led]|[trail"]
+wlen=69
+w0=0
+w1=2
+r0=[]
+34 97 44 98 34 44 34 99 34 34 100 34 44 34 101 13 102 34 44 34 103 10 104 34 13 10 

@@ -1030,3 +1030,125 @@ programs).
 161. **A generic function without `self` cannot be called.** `impl S { fn make<T: Copy>(v: T) -> T .. }` is accepted,
     but `S.make(1)` says "S has no function 'make'". A free generic function works.
 
+## Round 18: std.csv / std.toml edge-case regression tests
+
+Eight programs in `tests/std_csv_*.yx` and `tests/std_toml_*.yx` (quotes and
+doubled/unclosed/text-after quotes, LF/CRLF/CR line endings and blank lines,
+empty documents and empty fields, Unicode values/keys/comments and every
+escape, i64 min/max and radix extremes with underscores and signs, and
+`parse_checked` error positions plus the 16 MiB / 100000-field limits), each
+with a golden `tests/expected/<name>.out` + `.code`. All pass on C, native and
+ASan/UBSan.
+
+### Round 18 frictions (not changed; minimal repros)
+
+240. **`csv.line_of` counts only LF, not CR, so a CR-only file reports every
+     error on line 1.** `parse` treats byte 13 as a record separator, but
+     `line_of` (`src/std/csv.yx:5`) only increments on byte 10:
+     ```yerux
+     import std.csv
+     fn main() {
+       match csv.parse_checked("a\rb\r\"unclosed") {
+         Ok(_) => { print("ok") }
+         Err(e) => { print(e) }  // std.csv: line 1: unclosed quote (record 3)
+       }
+     }
+     ```
+     Same for `"a\r\"bad\"x"` → line 1 instead of 2. Found while probing
+     `tests/std_csv_errpos.yx`.
+241. **`parse_checked` size and field-limit errors carry no line number**,
+     although the module header (`src/std/csv.yx:4`) promises "all of these as
+     an Err with a line number":
+     ```yerux
+     import std.csv
+     fn main() {
+       var s = String.new()
+       var n = 0
+       while n < 100000 { s.push_str("x,"); n = n + 1 }
+       s.push_str("x")
+       match csv.parse_checked(s) {
+         Ok(_) => { print("ok") }
+         Err(e) => { print(e) }  // std.csv: more than 100000 fields (no line)
+       }
+     }
+     ```
+     Same shape for input over 16 MiB (`std.csv: input larger than 16 MiB`).
+     Line-scanning errors do report `line N`; these two do not. Golden in
+     `tests/expected/std_csv_errpos.out`.
+242. **A quoted TOML table header keeps its quotes, so its keys are
+     unreachable.** Keys are unquoted on lookup (`find_value`,
+     `src/std/toml.yx:147`) but the table name is only trimmed:
+     ```yerux
+     import std.toml
+     fn main() {
+       print(toml.has("[\"srv\"]\nport = 8080", "srv.port"))  // false
+       print(toml.has("[srv]\nport = 8080", "srv.port"))       // true
+     }
+     ```
+     tomllib accepts `["srv"]` as table `srv`. Golden in
+     `tests/expected/std_toml_quotes.out`.
+243. **A `]` inside a single-quoted literal closes the multi-line array scan
+     early and drops the continuation lines.** `scan_brackets`
+     (`src/std/toml.yx:7`) tracks `"` but not `'`:
+     ```yerux
+     import std.toml
+     fn main() {
+       let a = toml.get_array("a = [']',\n 2]", "a")
+       print(a.len())  // 1, element "]" — the 2 is gone
+       let b = toml.get_array("a = [\"]x\",\n 2]", "a")
+       print(b.len())  // 2: "]x", "2"  (double quotes are tracked)
+     }
+     ```
+     tomllib returns `[' ]', 2]`. Golden in `tests/expected/std_toml_quotes.out`.
+244. **Invalid TOML escapes are accepted with the backslash silently dropped.**
+     tomllib rejects all three; `unquote` (`src/std/toml.yx:30`) falls through
+     to `push_byte(c)`:
+     ```yerux
+     import std.toml
+     fn main() {
+       print(toml.get_string("a = \"x\\qy\"", "a"))   // xqy  (tomllib: error)
+       print(toml.get_string("a = \"\\u00\"", "a"))   // u00  (truncated)
+       print(toml.get_string("a = \"\\uD800\"", "a")) // uD800 (lone surrogate)
+     }
+     ```
+     `get_string` returns `String`, so there is no channel for the failure
+     anyway. Golden in `tests/expected/std_toml_unicode.out`.
+245. **`std.toml` has no error positions: malformed input is
+     indistinguishable from a missing key.** Unlike `csv.parse_checked`
+     (`line N`) and `json.line_col`, every reader returns a default with no
+     line or offset:
+     ```yerux
+     import std.toml
+     fn main() {
+       print(toml.get_int("[bad\ny = 1", "y")) // 0, no line/offset
+       print(toml.has("[bad\ny = 1", "y"))      // false
+       print(toml.get_int("a = xyz", "a"))      // 0 (bare value)
+     }
+     ```
+     Keys before the bad header are still reachable (`x = 9\n[bad` finds `x`),
+     so the abort point is silent. Found in `tests/std_toml_empty.yx`.
+246. **`toml.get_array` does not stop at the matching `]`.** Text after the
+     closing bracket is read as further elements:
+     ```yerux
+     import std.toml
+     fn main() {
+       let a = toml.get_array("a = [1] trailing", "a")
+       print(a.len())  // 2: "1", "trailing"
+     }
+     ```
+     An unterminated multi-line array likewise swallows the rest of the
+     document (`a = [1,\n 2\nb = 3` → elements `1`, `2 b = 3`, while `b`
+     still looks up as 3). Golden in `tests/expected/std_toml_quotes.out`.
+247. **`[]` aborts the whole lookup while `[ ]` acts as the root scope.**
+     `find_value` returns early when a header line is shorter than 3 bytes
+     (`src/std/toml.yx:141`), killing every key after it; a header with a
+     space trims to `""` and continues as if there were no table:
+     ```yerux
+     import std.toml
+     fn main() {
+       print(toml.has("[]\nk = 3", "k"))   // false (abort)
+       print(toml.has("[ ]\nk = 3", "k"))  // true  (root scope)
+       print(toml.get_int("x = 9\n[]\nk = 3", "x")) // 9 (before the abort)
+     }
+     ```
+     tomllib rejects both spellings. Golden in `tests/expected/std_toml_empty.out`.

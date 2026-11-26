@@ -1,0 +1,83 @@
+// std.csv quoting edges: doubled quotes, a quote inside an unquoted field,
+// text after a closing quote (lenient keeps it, checked reports the line),
+// empty quoted fields, unclosed quotes, and what csv.write quotes (comma,
+// quote, CR, LF) with a byte-identical parse(write(..)) round trip.
+import std.csv
+
+fn show_checked(s: view String) {
+  match csv.parse_checked(s) {
+    Ok(r) => { print("ok rows={r.len()}") }
+    Err(e) => { print(e) }
+  }
+}
+
+fn dump(rows: view List<List<String>>) {
+  var i = 0
+  while i < rows.len() {
+    var line = String.from("r{i}=")
+    var j = 0
+    while j < rows.at(i).len() {
+      if j > 0 { line.push_str("|") }
+      line.push_str(String.from("[{rows.at(i).at(j)}]"))
+      j = j + 1
+    }
+    print(line)
+    i = i + 1
+  }
+}
+
+fn main() {
+  dump(csv.parse("\"a\"\"b\""))
+  dump(csv.parse("\"\""))
+  dump(csv.parse("\"\",\"\""))
+  dump(csv.parse("a\"b,c"))
+  dump(csv.parse("\"ab\"cd"))
+  dump(csv.parse("\"a\" ,b"))
+  dump(csv.parse("\"unclosed"))
+  dump(csv.parse("\"\"\""))
+  show_checked("\"ab\"cd")
+  show_checked("a,\"b\" c")
+  show_checked("\"a\" ,b")
+  show_checked("\"unclosed")
+  show_checked("\"ok\",\"\"")
+  // every write trigger: comma, quote, CR, LF, and a plain field
+  var rows = List<List<String>>.new()
+  var r = List<String>.new()
+  r.push("plain")
+  r.push("has,comma")
+  r.push("has\"quote")
+  r.push("has\rlf")
+  r.push("has\nnl")
+  r.push("")
+  r.push("\"led")
+  r.push("trail\"")
+  rows.push(move r)
+  let w = csv.write(rows)
+  dump(csv.parse(w))
+  print("wlen={w.len()}")
+  // write of an empty row list and of a single empty row
+  let none = List<List<String>>.new()
+  print("w0={csv.write(none).len()}")
+  var one = List<List<String>>.new()
+  var empty = List<String>.new()
+  one.push(move empty)
+  let w1 = csv.write(one)
+  print("w1={w1.len()}")
+  dump(csv.parse(w1))
+  // write quotes on every trigger byte: 34 = ", 44 = ,, 13 = CR, 10 = LF
+  var trig = List<List<String>>.new()
+  var tr = List<String>.new()
+  tr.push("a,b")
+  tr.push("c\"d")
+  tr.push("e\rf")
+  tr.push("g\nh")
+  trig.push(move tr)
+  let wt = csv.write(trig)
+  var bytes = String.new()
+  var k = 0
+  while k < wt.len() {
+    bytes.push_str(String.from("{wt.byte(k)} "))
+    k = k + 1
+  }
+  print(bytes)
+}
