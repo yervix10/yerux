@@ -42,3 +42,25 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes "${flags[@]}" \
             dist/VERSION dist/*.tar.gz dist/*.tar.gz.sha256
+
+  vsix:
+    # the VS Code extension of the tagged commit, attached to the release once the archives are published
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Package the extension
+        working-directory: editors/vscode
+        run: |
+          npm ci --no-audit --no-fund
+          npx vsce package
+      - name: Attach the .vsix to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" editors/vscode/*.vsix --clobber

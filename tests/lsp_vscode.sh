@@ -26,4 +26,17 @@ node --check src/extension.js
 Y="${Y:-../../target/release/yerux}"
 a="$("$Y" lsp </dev/null 2>&1; echo $?)"; b="$("$Y" lsp --stdio </dev/null 2>&1; echo $?)"
 [ "$a" = "$b" ] || { echo "yerux lsp --stdio differs from yerux lsp: [$a] vs [$b]"; exit 1; }
+# store metadata: license, repository link, and the probe that tells a missing `yerux` from a real one
+node -e '
+const p = require("./package.json");
+if (p.license !== "MIT OR Apache-2.0") throw new Error("license must match the project: " + p.license);
+if (!p.repository || !/github\.com\/yervix10\/yerux/.test(p.repository.url)) throw new Error("repository link missing");
+if (!p.bugs || !p.homepage || !p.icon) throw new Error("bugs, homepage and icon are required");
+const fs = require("fs");
+for (const f of [p.icon, "LICENSE", "LICENSE-APACHE", "README.md"]) if (!fs.existsSync(f)) throw new Error("missing file: " + f);
+const { probe } = require("./src/server");
+if (probe("/no/such/yerux-binary").reason !== "missing") throw new Error("a missing binary must be reported as missing");
+const real = probe(process.env.Y || "../../target/release/yerux");
+if (!real.ok || !/^yerux /.test(real.version)) throw new Error("probe cannot recognise yerux: " + JSON.stringify(real));
+'
 echo "vscode extension files ok"

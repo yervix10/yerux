@@ -1,11 +1,28 @@
 {
   "name": "yerux",
   "displayName": "Yerux",
-  "description": "Yerux language support: syntax highlighting and the `yerux lsp` language server (diagnostics, completion, outline, go to definition, references, rename, hover types, signature help, semantic tokens, formatting).",
-  "version": "0.2.1",
+  "description": "Yerux language support: syntax highlighting and the `yerux lsp` language server (diagnostics, completion, outline, go to definition, references, rename, hover types, signature help, semantic tokens, formatting). Requires the yerux compiler.",
+  "version": "0.3.0",
   "publisher": "yerux",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "icon": "icons/yerux.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yervix10/yerux.git",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://github.com/yervix10/yerux#readme",
+  "bugs": {
+    "url": "https://github.com/yervix10/yerux/issues"
+  },
+  "keywords": [
+    "yerux",
+    "language",
+    "lsp",
+    "syntax",
+    "highlighting",
+    "compiler"
+  ],
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -71,7 +88,7 @@
     ]
   },
   "scripts": {
-    "package": "vsce package --allow-missing-repository --skip-license"
+    "package": "vsce package"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
