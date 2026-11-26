@@ -101,8 +101,45 @@ if [ -n "$version" ] && [ "$reported" != "yerux $version" ]; then
 fi
 mv -fT -- "$candidate" "$prefix/bin/yerux"
 candidate=
-printf 'installed %s to %s/bin/yerux\n' "$reported" "$prefix"
+
+# ---- summary (plain text unless stdout is a terminal; NO_COLOR disables colors) ----
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
+  b="$(printf '\033[1m')"; g="$(printf '\033[32m')"; y="$(printf '\033[33m')"; d="$(printf '\033[2m')"; z="$(printf '\033[0m')"
+  ok='✓'; warn='!'
+else
+  b=; g=; y=; d=; z=
+  ok='ok'; warn='warning:'
+fi
+size=
+if bytes="$(wc -c < "$prefix/bin/yerux" 2>/dev/null)" && [ -n "$bytes" ]; then
+  size=" ($(( (bytes + 524288) / 1048576 )) MB)"
+fi
+printf '%s%s%s installed %s to %s/bin/yerux%s\n' "$g" "$ok" "$z" "$reported" "$prefix" "$size"
+
 case ":$PATH:" in
-  *":$prefix/bin:"*) ;;
-  *) printf 'add to PATH: export PATH="%s/bin:$PATH"\n' "$prefix" ;;
+  *":$prefix/bin:"*) on_path=1 ;;
+  *) on_path=0 ;;
 esac
+if [ "$on_path" = 0 ]; then
+  shown="$prefix/bin"
+  case "$shown" in "${HOME:-/nonexistent}"/*) shown="\$HOME/${shown#"$HOME"/}" ;; esac
+  printf '\n%s%s%s %s is not in your PATH. Add it for your shell:\n' "$y" "$warn" "$z" "$prefix/bin"
+  sh_name="${SHELL:-}"; sh_name="${sh_name##*/}"
+  case "$sh_name" in
+    zsh)  printf '    echo '"'"'export PATH="%s:$PATH"'"'"' >> ~/.zshrc && exec zsh\n' "$shown" ;;
+    fish) printf '    fish_add_path %s\n' "$shown" ;;
+    bash) printf '    echo '"'"'export PATH="%s:$PATH"'"'"' >> ~/.bashrc && exec bash\n' "$shown" ;;
+    *)    printf '    export PATH="%s:$PATH"   %s(add it to your shell profile)%s\n' "$shown" "$d" "$z" ;;
+  esac
+fi
+
+if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1 && ! command -v clang >/dev/null 2>&1; then
+  printf '\n%s%s%s no C compiler found: the default backend needs one (install gcc or clang);\n  %s--native%s programs build and run without it.\n' "$y" "$warn" "$z" "$b" "$z"
+fi
+
+printf '\n%sNext steps%s\n' "$b" "$z"
+printf '    yerux doctor                       %scheck what this installation can do%s\n' "$d" "$z"
+printf '    yerux new hello && cd hello        %sa project: yerux.toml + src/main.yx%s\n' "$d" "$z"
+printf '    yerux run                          %sbuild and run it%s\n' "$d" "$z"
+printf '  Guide: https://github.com/yervix10/yerux/blob/main/docs/GUIDE.md\n'
+printf '  Bugs:  https://github.com/yervix10/yerux/issues\n'
