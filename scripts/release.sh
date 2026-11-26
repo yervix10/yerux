@@ -53,7 +53,7 @@ if [[ -n "$target" ]]; then
 fi
 mkdir -p "$stage/$name/bin" "$stage/$name/docs"
 install -m 755 "$bin" "$stage/$name/bin/yerux"
-cp VERSION README.md SPEC.md CHANGELOG.md "$stage/$name/"
+cp VERSION README.md SPEC.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$stage/$name/"
 cp docs/{GUIDE,STDLIB,ERRORS,ITERATORS,GENERICS,CLONE,ARRAYS,RELEASING,SELFHOST}.md "$stage/$name/docs/"
 install -m 755 install.sh "$stage/$name/install.sh"
 mkdir -p "$out"
