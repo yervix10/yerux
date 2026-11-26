@@ -83,3 +83,8 @@ they may change. [CONTRIBUTING.md](CONTRIBUTING.md) covers building from source,
 (`tests/run_all.sh PATTERN`, `tests/doctests.sh`, `tests/fmt.sh`), adding a test with golden outputs, and which
 platforms are actually tested. Bugs and feature requests have issue templates; a minimal program that
 reproduces the problem is the most useful thing you can paste.
+
+## License
+
+Yerux is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at
+your option. Copyright (c) 2026 Yervix Dev.

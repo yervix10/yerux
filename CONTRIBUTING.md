@@ -92,3 +92,8 @@ code generators (see [docs/WINDOWS.md](docs/WINDOWS.md) and [BACKEND.md](BACKEND
   (the repository is not yet uniformly formatted, so format the files you touch rather than the whole tree).
 - Rust code follows the existing modules; no new dependencies without a reason in the pull request.
 - A behaviour change needs a `CHANGELOG.md` entry under `## Unreleased` (add that heading at the top when it is not there yet) and a test that pins it.
+
+## License
+
+By contributing you agree that your work is licensed under the same terms as the project: either the Apache License,
+Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)) or the MIT license ([LICENSE-MIT](LICENSE-MIT)), at your option.
