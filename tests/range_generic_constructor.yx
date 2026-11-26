@@ -1,0 +1,10 @@
+// A range written as a type argument of a generic struct constructor is not kept: this is a Map<String, Int>.
+fn main() {
+  var m = Map<String, Int<0..3>>.new()
+  m.insert(String.from("a"), 31)
+  let key = String.from("a")
+  print(m.get_or(key, 1))
+  var small: Int<0..9> = 4
+  small = small + 5
+  print(small)
+}

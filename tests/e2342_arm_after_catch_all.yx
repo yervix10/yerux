@@ -1,0 +1,6 @@
+fn main() {
+  match true {
+    x => {}
+    false => {}
+  }
+}

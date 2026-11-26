@@ -1,0 +1,9 @@
+error: index 65535 is out of bounds for the array [Int; 2]
+ --> tests/e2343_negated_const_index.yx:3:11
+  |
+3 |   print(a[-(-65535)])
+  |           ^^^^^^^^
+  = valid indexes are 0 to 1
+  = help: keep the index between 0 and 1; `a.len()` gives the length
+
+1 error(s). Nothing was generated.
